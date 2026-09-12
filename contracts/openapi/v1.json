@@ -93,6 +93,16 @@
   },
   "components": {
     "schemas": {
+      "Environment": {
+        "type": "string",
+        "enum": [
+          "development",
+          "testing",
+          "production"
+        ],
+        "title": "Environment",
+        "description": "Deployment environments the backend understands."
+      },
       "StatusResponse": {
         "properties": {
           "app_name": {
@@ -104,8 +114,7 @@
             "title": "App Version"
           },
           "environment": {
-            "type": "string",
-            "title": "Environment"
+            "$ref": "#/components/schemas/Environment"
           }
         },
         "type": "object",

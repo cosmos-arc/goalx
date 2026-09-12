@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from loguru import logger
 from pydantic import BaseModel
 
-from goalx_backend.config import Settings, get_settings
+from goalx_backend.config import Environment, Settings, get_settings
 
 OPENAPI_DESCRIPTION = (
     "GoalX backend API. The contract under `contracts/openapi/v1.json` is the "
@@ -22,7 +22,7 @@ class StatusResponse(BaseModel):
 
     app_name: str
     app_version: str
-    environment: str
+    environment: Environment
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -74,7 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return StatusResponse(
             app_name=resolved.app_name,
             app_version=resolved.app_version,
-            environment=resolved.environment.value,
+            environment=resolved.environment,
         )
 
     return app

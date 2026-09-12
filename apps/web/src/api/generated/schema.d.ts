@@ -69,6 +69,12 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * Environment
+         * @description Deployment environments the backend understands.
+         * @enum {string}
+         */
+        Environment: "development" | "testing" | "production";
+        /**
          * StatusResponse
          * @description Machine-readable service identity.
          */
@@ -77,8 +83,7 @@ export interface components {
             app_name: string;
             /** App Version */
             app_version: string;
-            /** Environment */
-            environment: string;
+            environment: components["schemas"]["Environment"];
         };
     };
     responses: never;

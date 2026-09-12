@@ -18,7 +18,7 @@ FastAPI backend + React web monorepo. 技术栈骨架沿用 ditto，剥离量化
 
 ```bash
 brew install uv go-task        # 一次性；node 用 .node-version 对应版本，bun 按 packageManager 锁定
-task bootstrap                 # uv sync + bun install + pre-commit hooks
+task bootstrap                 # uv sync + bun install + Playwright chromium + pre-commit hooks
 task server                    # API @ http://127.0.0.1:8000
 task dev                       # Web @ http://127.0.0.1:5173（/api 代理到后端）
 ```
@@ -27,7 +27,7 @@ task dev                       # Web @ http://127.0.0.1:5173（/api 代理到后
 
 | 命令 | 作用 |
 | --- | --- |
-| `task check` | 本地全量门禁（等价于 CI 要求） |
+| `task check` | 本地全量门禁（含 e2e；CI 的 security 工作流除外） |
 | `task test` / `task test-fast` | 后端测试（含 90% 覆盖率门禁 / 不含覆盖率） |
 | `task type` | basedpyright strict |
 | `task web-coverage` | Web 单测 + 覆盖率阈值 |

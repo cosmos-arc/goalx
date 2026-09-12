@@ -23,8 +23,9 @@ lands.
 All development goes through go-task (`brew install go-task`); every command
 below assumes `task`:
 
-- `task bootstrap` — uv sync + bun install + pre-commit hook install
-- `task check` — the full local gate (what CI enforces); run before committing
+- `task bootstrap` — uv sync + bun install + Playwright chromium + pre-commit hooks
+- `task check` — the full local gate, including e2e (CI additionally runs the
+  CI-only security workflow); run before pushing
 - `task fmt` / `task fmt-check` / `task lint` — ruff format + lint
 - `task type` — basedpyright strict
 - `task test` (coverage gate ≥90%) / `task test-fast` — backend

@@ -7,18 +7,15 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from goalx_backend.config import Environment, Settings
+from goalx_backend.config import Settings
+from goalx_backend.export_openapi import EXPORT_SETTINGS
 from goalx_backend.main import create_app
 
 
 @pytest.fixture
 def settings() -> Settings:
-    """Deterministic settings independent of the ambient environment."""
-    return Settings(
-        app_name="goalx-backend",
-        app_version="0.1.0",
-        environment=Environment.TESTING,
-    )
+    """Deterministic settings shared with the contract exporter."""
+    return EXPORT_SETTINGS
 
 
 @pytest.fixture

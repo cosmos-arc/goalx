@@ -9,10 +9,11 @@ env:
 
 tasks:
   bootstrap:
-    desc: Install everything (Python, Bun, git hooks)
+    desc: Install everything (Python, Bun, browser, git hooks)
     cmds:
       - task: python-install
       - task: bun-install
+      - task: browser-install
       - task: pre-commit-install
 
   python-install:
@@ -171,12 +172,13 @@ tasks:
       - task: web-coverage
 
   check:
-    desc: Full local gate (what CI enforces)
+    desc: Full local gate (what CI enforces, minus the CI-only security workflow)
     cmds:
       - task: check-backend
       - task: check-web
       - task: check-contract
       - task: web-build
+      - task: web-e2e
 
   browser-install:
     desc: Install the Playwright chromium browser

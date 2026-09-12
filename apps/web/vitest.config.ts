@@ -18,8 +18,8 @@ export default defineConfig({
 			exclude: ["src/api/generated/**", "src/test/**", "src/mocks/**", "src/main.tsx", "src/router.tsx"],
 			thresholds: {
 				lines: 85,
-				branches: 75,
-				functions: 80,
+				branches: 85,
+				functions: 85,
 				statements: 85,
 			},
 		},
