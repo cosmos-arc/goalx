@@ -1,0 +1,23 @@
+{
+  "name": "@goalx/workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "apps/web"
+  ],
+  "trustedDependencies": [],
+  "scripts": {
+    "web:lint": "bun run --cwd apps/web lint",
+    "web:type": "bun run --cwd apps/web type",
+    "web:test": "bun run --cwd apps/web test:unit",
+    "web:build": "bun run --cwd apps/web build",
+    "contract:codegen": "bash apps/web/scripts/gen-api.sh",
+    "contract:lint": "bun x @redocly/cli lint goalx@v1"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.51.1",
+    "openapi-typescript": "7.13.0"
+  }
+}

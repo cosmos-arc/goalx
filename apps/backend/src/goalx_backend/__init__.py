@@ -1,0 +1,1 @@
+"""GoalX backend application package."""

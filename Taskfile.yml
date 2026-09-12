@@ -1,0 +1,230 @@
+version: '3'
+
+vars:
+  VENV_PYTHON: '{{.ROOT_DIR}}/.venv/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+
+env:
+  UV_PROJECT_ENVIRONMENT: '{{.ROOT_DIR}}/.venv'
+  UV_PYTHON_DOWNLOADS: never
+
+tasks:
+  bootstrap:
+    desc: Install everything (Python, Bun, git hooks)
+    cmds:
+      - task: python-install
+      - task: bun-install
+      - task: pre-commit-install
+
+  python-install:
+    desc: Sync the locked uv workspace
+    env:
+      UV_PYTHON_DOWNLOADS: automatic
+    cmds:
+      - uv sync --locked --all-packages {{.CLI_ARGS}}
+
+  python-environment-check:
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv lock --check --offline
+      - uv sync --check --locked --offline --all-packages
+
+  bun-install:
+    desc: Install the locked Bun workspace
+    cmds:
+      - bun install --frozen-lockfile --registry=https://registry.npmjs.org {{.CLI_ARGS}}
+
+  lint:
+    desc: Ruff lint
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync ruff check . {{.CLI_ARGS}}
+
+  fmt:
+    desc: Ruff format (write)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync ruff format . {{.CLI_ARGS}}
+
+  fmt-check:
+    desc: Ruff format (check)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync ruff format --check . {{.CLI_ARGS}}
+
+  type:
+    desc: basedpyright strict type check
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync basedpyright {{.CLI_ARGS}}
+
+  test:
+    desc: Backend tests with coverage gate
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pytest --cov=goalx_backend --cov-report=term-missing --cov-report=xml {{.CLI_ARGS}}
+
+  test-fast:
+    desc: Backend tests without coverage
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pytest -q --no-cov -m "not slow" {{.CLI_ARGS}}
+
+  contract-export:
+    desc: Regenerate contracts/openapi/v1.json from the application
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.export_openapi {{.CLI_ARGS}}
+
+  contract-lint:
+    desc: Redocly strict contract lint
+    cmds:
+      - bun run contract:lint {{.CLI_ARGS}}
+
+  contract-codegen:
+    desc: Regenerate web API types from the contract
+    cmds:
+      - bun run contract:codegen {{.CLI_ARGS}}
+
+  contract-conformance:
+    desc: Assert the served OpenAPI document equals the contract
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pytest apps/backend/tests/contract -q --no-cov {{.CLI_ARGS}}
+
+  check-contract:
+    desc: Contract freshness, lint, codegen drift and conformance
+    cmds:
+      - task: contract-export
+      - task: contract-lint
+      - task: contract-codegen
+      - task: contract-conformance
+      - cmd: git diff --exit-code -- contracts/openapi apps/web/src/api/generated
+        desc: Fail if exported contract or generated types drift from committed files
+
+  check-backend:
+    desc: Everything the backend must pass
+    cmds:
+      - task: fmt-check
+      - task: lint
+      - task: type
+      - task: test
+
+  web-lint:
+    desc: Biome lint + format check
+    cmds:
+      - bun run lint {{.CLI_ARGS}}
+    dir: apps/web
+
+  web-type:
+    desc: TypeScript project build (type check)
+    cmds:
+      - bun run type {{.CLI_ARGS}}
+    dir: apps/web
+
+  web-test:
+    desc: Web unit tests
+    cmds:
+      - bun run test:unit {{.CLI_ARGS}}
+    dir: apps/web
+
+  web-coverage:
+    desc: Web unit tests with coverage thresholds
+    cmds:
+      - bun run test:coverage {{.CLI_ARGS}}
+    dir: apps/web
+
+  web-build:
+    desc: Production web build
+    cmds:
+      - bun run build {{.CLI_ARGS}}
+    dir: apps/web
+
+  web-e2e:
+    desc: Playwright e2e + a11y smoke
+    cmds:
+      - bun run e2e {{.CLI_ARGS}}
+    dir: apps/web
+
+  check-web:
+    desc: Everything the web app must pass
+    cmds:
+      - task: web-lint
+      - task: web-type
+      - task: web-coverage
+
+  check:
+    desc: Full local gate (what CI enforces)
+    cmds:
+      - task: check-backend
+      - task: check-web
+      - task: check-contract
+      - task: web-build
+
+  browser-install:
+    desc: Install the Playwright chromium browser
+    cmds:
+      - bun x playwright install chromium {{.CLI_ARGS}}
+    dir: apps/web
+
+  server:
+    desc: Run the API server (granian, 127.0.0.1:8000)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.server goalx_backend.main:app
+        --interface asgi --host 127.0.0.1 --port 8000 {{.CLI_ARGS}}
+
+  dev:
+    desc: Run the web dev server (proxies /api to 127.0.0.1:8000)
+    cmds:
+      - bun run dev {{.CLI_ARGS}}
+    dir: apps/web
+
+  clean:
+    desc: Remove build artifacts and caches
+    cmds:
+      - rm -rf apps/web/dist apps/web/coverage apps/web/test-results apps/web/playwright-report
+        .pytest_cache .ruff_cache htmlcov .coverage coverage.xml coverage.json **/__pycache__
+
+  pre-commit-install:
+    desc: Install git hooks (pre-commit, commit-msg, pre-push)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pre-commit install --hook-type commit-msg --hook-type pre-commit --hook-type pre-push {{.CLI_ARGS}}
+
+  pre-commit-run:
+    desc: Run all pre-commit hooks against all files
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pre-commit run --all-files {{.CLI_ARGS}}
+
+  pre-commit-update:
+    desc: Bump pinned pre-commit hook versions
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync pre-commit autoupdate {{.CLI_ARGS}}

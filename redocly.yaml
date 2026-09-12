@@ -1,0 +1,14 @@
+extends:
+  - recommended-strict
+
+apis:
+  goalx@v1:
+    root: ./contracts/openapi/v1.json
+    x-openapi-ts:
+      output: ./apps/web/src/api/generated/schema.d.ts
+
+rules:
+  # 系统路由（healthz/readyz/status）目前无鉴权设计；引入鉴权后必须移除此豁免。
+  security-defined: off
+  # 现有系统路由无请求输入，不存在真实的 4xx 语义；新增业务端点后必须移除此豁免。
+  operation-4xx-response: off
