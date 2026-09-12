@@ -51,6 +51,12 @@ below assumes `task`:
 
 - uv is version-pinned (`required-version` in `pyproject.toml`) and Python is
   uv-managed (`only-managed`); run `task python-install` to sync, never `pip`.
+- Don't re-add `orjson`/`ORJSONResponse` (deprecated in FastAPI 0.13x). With
+  typed responses the direct pydantic-core path measured ~15× faster than the
+  old `jsonable_encoder` + orjson pipeline on nested models (374 µs vs 5.6 ms
+  per 1000-item page): the old pipeline's cost is the pure-Python
+  `jsonable_encoder` walk, not the dumper. Revisit only for large
+  non-Pydantic dict payloads, where orjson beats stdlib json ~5×.
 - Bun uses the **isolated** linker. Two consequences learned the hard way:
   jest-dom must be imported via `@testing-library/jest-dom/matchers` (the
   `/vitest` entry point fails to resolve vitest), and openapi-fetch captures
