@@ -268,6 +268,9 @@ omit = [
     "**/tests/**",
     # Granian CLI passthrough entrypoint; exercised by process smoke tests only.
     "apps/backend/src/goalx_backend/server.py",
+    # Prefect/CLI 入口式编排层；服务层承载逻辑并有单测，入口由手工冒烟覆盖。
+    "apps/backend/src/goalx_backend/flows.py",
+    "apps/backend/src/goalx_backend/cli.py",
 ]
 
 [tool.coverage.report]
