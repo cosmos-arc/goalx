@@ -89,10 +89,891 @@
           }
         }
       }
+    },
+    "/api/v1/fixtures/today": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "今日竞彩场次对照表",
+        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。",
+        "operationId": "get_today_fixtures_api_v1_fixtures_today_get",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "业务日(北京日期, 默认今天)",
+              "title": "Date"
+            },
+            "description": "业务日(北京日期, 默认今天)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TodayFixtureView"
+                  },
+                  "title": "Response Get Today Fixtures Api V1 Fixtures Today Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixtures/{fixture_id}/odds": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "场次赔率时序",
+        "description": "一场比赛某玩法的全部赔率快照时序(append-only, 票 19 验收)。",
+        "operationId": "get_fixture_odds_api_v1_fixtures__fixture_id__odds_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          },
+          {
+            "name": "market",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "玩法 poolCode",
+              "default": "had",
+              "title": "Market"
+            },
+            "description": "玩法 poolCode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OddsSnapshotView"
+                  },
+                  "title": "Response Get Fixture Odds Api V1 Fixtures  Fixture Id  Odds Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bets": {
+      "post": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "建注(注级建议)",
+        "description": "创建一注(paper/live；未购建议 purchased=false)。",
+        "operationId": "create_bet_api_v1_bets_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "复盘列表(注级)",
+        "description": "全部投注记录：结算状态、盈亏、未购标记。",
+        "operationId": "list_bets_api_v1_bets_get",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/BetMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "only_open",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Only Open"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BetView"
+                  },
+                  "title": "Response List Bets Api V1 Bets Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bet-slips": {
+      "get": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "票列表",
+        "description": "全部投注票及聚合。",
+        "operationId": "list_slips_api_v1_bet_slips_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SlipView"
+                  },
+                  "type": "array",
+                  "title": "Response List Slips Api V1 Bet Slips Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "票级回录",
+        "description": "把勾选的建议注合成一张实际投注票并标记已购。",
+        "operationId": "create_slip_api_v1_bet_slips_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlipCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlipView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/draw-results": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "导入官方开奖(唯一事实源)",
+        "description": "批量导入开奖结果(幂等；修正覆盖)。",
+        "operationId": "create_draw_results_api_v1_draw_results_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawResultImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResultView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "查询开奖结果",
+        "description": "已导入的开奖结果(可按场次过滤)。",
+        "operationId": "list_draw_results_api_v1_draw_results_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fixture Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DrawResultView"
+                  },
+                  "title": "Response List Draw Results Api V1 Draw Results Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settlements/run": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "结算批跑",
+        "description": "对已开赛且有赛果的未结注执行官方规则结算。",
+        "operationId": "run_settlements_api_v1_settlements_run_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bankroll": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "资金池状态",
+        "description": "Bankroll 余额与最近变动(仅 live 模式影响，ADR 0002)。",
+        "operationId": "get_bankroll_api_v1_bankroll_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankrollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "BankrollEventView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "occurred_at": {
+            "type": "string",
+            "title": "Occurred At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "amount_cny": {
+            "type": "number",
+            "title": "Amount Cny"
+          },
+          "balance_after": {
+            "type": "number",
+            "title": "Balance After"
+          },
+          "bet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bet Id"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "occurred_at",
+          "kind",
+          "amount_cny",
+          "balance_after",
+          "bet_id",
+          "note"
+        ],
+        "title": "BankrollEventView",
+        "description": "一条 bankroll 流水。"
+      },
+      "BankrollResponse": {
+        "properties": {
+          "balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/BankrollEventView"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "balance",
+          "events"
+        ],
+        "title": "BankrollResponse",
+        "description": "资金页数据。"
+      },
+      "BetCreate": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/BetMode"
+          },
+          "stake": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Stake"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/LegPayload"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Legs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "stake",
+          "legs"
+        ],
+        "title": "BetCreate",
+        "description": "建注(建议或直接回录)输入。"
+      },
+      "BetLegView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code"
+          },
+          "selection_code": {
+            "type": "string",
+            "title": "Selection Code"
+          },
+          "locked_odds": {
+            "type": "number",
+            "title": "Locked Odds"
+          },
+          "goal_line": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal Line"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "market_code",
+          "selection_code",
+          "locked_odds"
+        ],
+        "title": "BetLegView",
+        "description": "一腿视图。"
+      },
+      "BetMode": {
+        "type": "string",
+        "enum": [
+          "paper",
+          "live"
+        ],
+        "title": "BetMode",
+        "description": "ADR 0002：纸面与真金统一 Bet 实体，以 mode 区分。"
+      },
+      "BetView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "slip_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slip Id"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "market_kind": {
+            "type": "string",
+            "title": "Market Kind"
+          },
+          "purchased": {
+            "type": "boolean",
+            "title": "Purchased"
+          },
+          "stake": {
+            "type": "number",
+            "title": "Stake"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "payout": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payout"
+          },
+          "profit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/BetLegView"
+            },
+            "type": "array",
+            "title": "Legs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slip_id",
+          "mode",
+          "market_kind",
+          "purchased",
+          "stake",
+          "placed_at",
+          "created_at",
+          "status",
+          "payout",
+          "profit",
+          "settled_at",
+          "legs"
+        ],
+        "title": "BetView",
+        "description": "一注的复盘视图。"
+      },
+      "DrawResultImport": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DrawResultPayload"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Results"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "manual"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "DrawResultImport",
+        "description": "批量导入请求。"
+      },
+      "DrawResultPayload": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "home_goals": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Home Goals"
+          },
+          "away_goals": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Away Goals"
+          },
+          "half_home_goals": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Home Goals"
+          },
+          "half_away_goals": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Away Goals"
+          },
+          "void": {
+            "type": "boolean",
+            "title": "Void",
+            "default": false
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "home_goals",
+          "away_goals"
+        ],
+        "title": "DrawResultPayload",
+        "description": "一条开奖结果输入。"
+      },
+      "DrawResultView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "home_goals": {
+            "type": "integer",
+            "title": "Home Goals"
+          },
+          "away_goals": {
+            "type": "integer",
+            "title": "Away Goals"
+          },
+          "half_home_goals": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Home Goals"
+          },
+          "half_away_goals": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Away Goals"
+          },
+          "void": {
+            "type": "boolean",
+            "title": "Void"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "home_goals",
+          "away_goals",
+          "half_home_goals",
+          "half_away_goals",
+          "void",
+          "void_reason",
+          "source",
+          "published_at"
+        ],
+        "title": "DrawResultView",
+        "description": "一条开奖结果。"
+      },
       "Environment": {
         "type": "string",
         "enum": [
@@ -102,6 +983,284 @@
         ],
         "title": "Environment",
         "description": "Deployment environments the backend understands."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImportResultView": {
+        "properties": {
+          "imported": {
+            "type": "integer",
+            "title": "Imported"
+          }
+        },
+        "type": "object",
+        "required": [
+          "imported"
+        ],
+        "title": "ImportResultView",
+        "description": "导入统计。"
+      },
+      "LegPayload": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code"
+          },
+          "selection_code": {
+            "type": "string",
+            "title": "Selection Code"
+          },
+          "locked_odds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Locked Odds"
+          },
+          "goal_line": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal Line"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "market_code",
+          "selection_code",
+          "locked_odds"
+        ],
+        "title": "LegPayload",
+        "description": "一腿输入。"
+      },
+      "OddsSnapshotView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code"
+          },
+          "selection_code": {
+            "type": "string",
+            "title": "Selection Code"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "odds": {
+            "type": "number",
+            "title": "Odds"
+          },
+          "captured_at": {
+            "type": "string",
+            "title": "Captured At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fixture_id",
+          "market_code",
+          "selection_code",
+          "source",
+          "odds",
+          "captured_at"
+        ],
+        "title": "OddsSnapshotView",
+        "description": "一条赔率快照。"
+      },
+      "SelectionTriple": {
+        "properties": {
+          "h": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H"
+          },
+          "d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "D"
+          },
+          "a": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "A"
+          }
+        },
+        "type": "object",
+        "title": "SelectionTriple",
+        "description": "主/平/客三元组（赔率、概率或 EV）。"
+      },
+      "SettlementRunResponse": {
+        "properties": {
+          "settled": {
+            "type": "integer",
+            "title": "Settled"
+          },
+          "still_open": {
+            "type": "integer",
+            "title": "Still Open"
+          },
+          "won": {
+            "type": "integer",
+            "title": "Won"
+          },
+          "lost": {
+            "type": "integer",
+            "title": "Lost"
+          },
+          "void": {
+            "type": "integer",
+            "title": "Void"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settled",
+          "still_open",
+          "won",
+          "lost",
+          "void"
+        ],
+        "title": "SettlementRunResponse",
+        "description": "结算批跑统计。"
+      },
+      "SlipCreate": {
+        "properties": {
+          "bet_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Bet Ids"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bet_ids"
+        ],
+        "title": "SlipCreate",
+        "description": "票级回录输入：勾选实际购买的建议注子集。"
+      },
+      "SlipView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "bet_count": {
+            "type": "integer",
+            "title": "Bet Count"
+          },
+          "stake_total": {
+            "type": "number",
+            "title": "Stake Total"
+          },
+          "profit_total": {
+            "type": "number",
+            "title": "Profit Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "mode",
+          "placed_at",
+          "note",
+          "created_at",
+          "bet_count",
+          "stake_total",
+          "profit_total"
+        ],
+        "title": "SlipView",
+        "description": "一张票的聚合视图。"
       },
       "StatusResponse": {
         "properties": {
@@ -125,6 +1284,147 @@
         ],
         "title": "StatusResponse",
         "description": "Machine-readable service identity."
+      },
+      "TodayFixtureView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "is_single": {
+            "type": "boolean",
+            "title": "Is Single"
+          },
+          "joined": {
+            "type": "boolean",
+            "title": "Joined"
+          },
+          "jc_odds": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "jc_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Updated At"
+          },
+          "books": {
+            "type": "integer",
+            "title": "Books",
+            "default": 0
+          },
+          "eu_prob": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionTriple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionTriple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "competition",
+          "tier",
+          "home_team",
+          "away_team",
+          "kickoff_utc",
+          "is_single",
+          "joined",
+          "jc_odds"
+        ],
+        "title": "TodayFixtureView",
+        "description": "今日页一行：竞彩 vs 欧洲共识对照（票 22）。"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     }
   },
@@ -132,6 +1432,18 @@
     {
       "name": "system",
       "description": "Health, readiness and service identity."
+    },
+    {
+      "name": "fixtures",
+      "description": "竞彩场次对照与赔率时序(今日页)。"
+    },
+    {
+      "name": "bets",
+      "description": "注级建议、票级回录与复盘列表。"
+    },
+    {
+      "name": "results",
+      "description": "开奖导入、结算批跑与资金池。"
     }
   ]
 }
