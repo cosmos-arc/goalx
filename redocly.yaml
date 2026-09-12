@@ -10,6 +10,6 @@ apis:
 rules:
   # 全部路由（含业务端点）目前无鉴权设计；引入鉴权后必须移除此豁免。
   security-defined: off
-  # 系统/只读列表端点（healthz、today、bets、bankroll 等）无 4xx 语义；
-  # 写入端点已带 400/404。保持豁免直至统一错误 envelope 落地。
+  # 系统与纯列表端点（healthz/readyz/status 等）无 4xx 语义，保持豁免；
+  # 会出错的业务端点均已声明 400/404（见各路由 responses）。
   operation-4xx-response: off

@@ -111,6 +111,14 @@ def record_credits(conn: sqlite3.Connection, credits_used: int, note: str) -> No
     )
 
 
+def polite_client() -> httpx.Client:
+    """带连接级重试与限速的采集客户端（票 19 重试+礼貌限速）。"""
+    return httpx.Client(
+        transport=httpx.HTTPTransport(retries=3),
+        limits=httpx.Limits(max_connections=2),
+    )
+
+
 def discover_sport_keys(settings: Settings, client: httpx.Client) -> list[str]:
     """动态发现足球 sport key（过滤前缀与 _winner 盘）。"""
     response = client.get(
@@ -213,9 +221,18 @@ def store_events(
 
 
 def fetch_and_store_odds(
-    conn: sqlite3.Connection, settings: Settings, client: httpx.Client
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    markets: tuple[str, ...] = ("h2h",),
 ) -> OddsIngestStats:
-    """完整欧赔采集：预算检查→发现 sport keys→拉取→join→入库→记账。"""
+    """
+    完整欧赔采集：预算检查→发现 sport keys→拉取→join→入库→记账。
+
+    markets 追加 totals 会按 sport 翻倍 credit 消耗（1 credit/market/sport），
+    CLV 跟踪需要时再开启。
+    """
     check_credit_budget(conn, settings)
     sport_keys = discover_sport_keys(settings, client)
     all_events: list[ParsedEvent] = []
@@ -225,14 +242,16 @@ def fetch_and_store_odds(
             params={
                 "apiKey": settings.odds_api_key,
                 "regions": "eu",
-                "markets": "h2h",
+                "markets": ",".join(markets),
                 "oddsFormat": "decimal",
             },
             timeout=25.0,
         )
         response.raise_for_status()
         all_events.extend(parse_events(sport_key, response.json()))
-    stats = OddsIngestStats(events=len(all_events), credits_used=len(sport_keys))
+    stats = OddsIngestStats(
+        events=len(all_events), credits_used=len(sport_keys) * len(markets)
+    )
     join_report = join_fixtures(conn, all_events)
     stored = store_events(conn, all_events)
     stats.snapshots = stored.snapshots
@@ -280,15 +299,17 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
         ambiguous = len(candidates) > 1 and _event_commence_utc(
             candidates[1]
         ) == _event_commence_utc(best)
+        if ambiguous:
+            # 歧义不落库：留待人工映射（set_odds_api_join method='manual'）
+            report.unmatched.append(
+                {"fixture_id": str(row["id"]), "reason": "ambiguous_time_window"}
+            )
+            continue
         fx_store.set_odds_api_join(
             conn, int(row["id"]), best.event_id, sport_key, "time_window"
         )
         report.joined += 1
         if is_tier1:
             report.tier1_joined += 1
-        if ambiguous:
-            report.unmatched.append(
-                {"fixture_id": str(row["id"]), "reason": "ambiguous_time_window"}
-            )
     conn.commit()
     return report

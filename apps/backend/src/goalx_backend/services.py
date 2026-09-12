@@ -143,10 +143,13 @@ def record_purchase(
 ) -> int:
     """票级回录：勾选实际购买子集，生成一张票；live 注扣减 bankroll。"""
     at = placed_at or utc_now_iso()
-    bets = [bt_store.get_bet(conn, bet_id) for bet_id in bet_ids]
-    if any(bet is None for bet in bets):
-        raise LookupError("bet id 不存在")
-    modes = {bet["mode"] for bet in bets if bet is not None}
+    bets: list[sqlite3.Row] = []
+    for bet_id in bet_ids:
+        bet = bt_store.get_bet(conn, bet_id)
+        if bet is None:
+            raise LookupError(f"bet {bet_id} 不存在")
+        bets.append(bet)
+    modes = {str(bet["mode"]) for bet in bets}
     if len(modes) != 1:
         raise ValueError("一张票内 mode 必须一致")
     mode = BetMode(modes.pop())
@@ -154,8 +157,6 @@ def record_purchase(
     bt_store.attach_bets_to_slip(conn, slip, bet_ids, at)
     if mode is BetMode.LIVE:
         for bet in bets:
-            if bet is None:
-                raise LookupError("bet id 不存在")
             bt_store.record_bankroll_event(
                 conn,
                 "bet_stake",

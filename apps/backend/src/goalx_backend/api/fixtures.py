@@ -53,6 +53,7 @@ class OddsSnapshotView(BaseModel):
     "/{fixture_id}/odds",
     summary="场次赔率时序",
     response_model=list[OddsSnapshotView],
+    responses={404: {"description": "fixture 不存在"}},
 )
 async def get_fixture_odds(
     fixture_id: int,
@@ -74,3 +75,29 @@ async def get_fixture_odds(
         )
         for row in fx_store.odds_history(db, fixture_id, market)
     ]
+
+
+class ManualJoinPayload(BaseModel):
+    """人工映射输入（时间窗 join 残余补齐，票 20）。"""
+
+    event_id: str
+    sport_key: str
+
+
+@router.post(
+    "/{fixture_id}/join",
+    summary="人工映射欧赔事件",
+    response_model=dict[str, str],
+    responses={404: {"description": "fixture 不存在"}},
+)
+async def set_manual_join(
+    fixture_id: int, payload: ManualJoinPayload, db: DbDep
+) -> dict[str, str]:
+    """把 fixture 手工映射到 The Odds API event（join_method=manual）。"""
+    if fx_store.get_fixture(db, fixture_id) is None:
+        raise HTTPException(status_code=404, detail="fixture not found")
+    fx_store.set_odds_api_join(
+        db, fixture_id, payload.event_id, payload.sport_key, "manual"
+    )
+    db.commit()
+    return {"status": "joined", "method": "manual"}

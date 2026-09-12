@@ -104,6 +104,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/{fixture_id}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 人工映射欧赔事件
+         * @description 把 fixture 手工映射到 The Odds API event（join_method=manual）。
+         */
+        post: operations["set_manual_join_api_v1_fixtures__fixture_id__join_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bets": {
         parameters: {
             query?: never;
@@ -146,6 +166,26 @@ export interface paths {
          * @description 把勾选的建议注合成一张实际投注票并标记已购。
          */
         post: operations["create_slip_api_v1_bet_slips_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool-slips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 创建池票(任9/14 场复式)
+         * @description 按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。
+         */
+        post: operations["create_pool_slip_api_v1_pool_slips_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -413,6 +453,16 @@ export interface components {
             goal_line?: number | null;
         };
         /**
+         * ManualJoinPayload
+         * @description 人工映射输入（时间窗 join 残余补齐，票 20）。
+         */
+        ManualJoinPayload: {
+            /** Event Id */
+            event_id: string;
+            /** Sport Key */
+            sport_key: string;
+        };
+        /**
          * OddsSnapshotView
          * @description 一条赔率快照。
          */
@@ -431,6 +481,36 @@ export interface components {
             odds: number;
             /** Captured At */
             captured_at: string;
+        };
+        /**
+         * PoolPickPayload
+         * @description 复式票一格的一选。
+         */
+        PoolPickPayload: {
+            /** Match Seq */
+            match_seq: number;
+            /** Selection Code */
+            selection_code: string;
+            /** Fixture Id */
+            fixture_id?: number | null;
+        };
+        /**
+         * PoolSlipCreate
+         * @description 创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。
+         */
+        PoolSlipCreate: {
+            mode: components["schemas"]["BetMode"];
+            /** Pool Period Id */
+            pool_period_id?: number | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Stake Per Combination
+             * @default 2
+             */
+            stake_per_combination: number;
+            /** Picks */
+            picks: components["schemas"]["PoolPickPayload"][];
         };
         /**
          * SelectionTriple
@@ -680,6 +760,57 @@ export interface operations {
                     "application/json": components["schemas"]["OddsSnapshotView"][];
                 };
             };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_manual_join_api_v1_fixtures__fixture_id__join_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualJoinPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -745,6 +876,13 @@ export interface operations {
                     "application/json": components["schemas"]["BetView"];
                 };
             };
+            /** @description 非法串关(同场多腿) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -786,6 +924,53 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SlipCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlipView"];
+                };
+            };
+            /** @description mode 混用 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bet 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pool_slip_api_v1_pool_slips_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolSlipCreate"];
             };
         };
         responses: {

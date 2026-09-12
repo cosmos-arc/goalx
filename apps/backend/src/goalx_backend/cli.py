@@ -15,12 +15,12 @@ from __future__ import annotations
 import argparse
 import sys
 
-import httpx
 from loguru import logger
 
 from goalx_backend.config import get_settings
 from goalx_backend.db import connect, migrate
 from goalx_backend.ingest import fdhist, oddsapi, sporttery
+from goalx_backend.ingest.oddsapi import polite_client
 from goalx_backend.services import run_settlement
 
 
@@ -38,7 +38,7 @@ def _cmd_ingest_jingcai() -> None:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             payload = sporttery.fetch_calculator_payload(settings, client)
         stats = sporttery.store_matches(conn, sporttery.parse_matches(payload))
         logger.info(
@@ -57,7 +57,7 @@ def _cmd_ingest_odds() -> None:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             stats = oddsapi.fetch_and_store_odds(conn, settings, client)
         logger.info(
             "events={} snapshots={} credits={} unmatched={}",
@@ -76,7 +76,7 @@ def _cmd_ingest_hist() -> None:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             stats = fdhist.import_history(conn, settings, client)
         logger.info(
             "rows={} written={} skipped={}", stats.rows, stats.written, stats.skipped

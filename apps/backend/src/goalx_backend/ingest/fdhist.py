@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -128,5 +129,6 @@ def import_history(
             stats.rows += len(rows)
             stats.skipped += skipped
             stats.written += rs_store.upsert_hist_matches(conn, rows)
+            time.sleep(0.5)  # 对源站礼貌限速
     conn.commit()
     return stats

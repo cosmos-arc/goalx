@@ -43,6 +43,24 @@ class SlipCreate(BaseModel):
     placed_at: str | None = None
 
 
+class PoolPickPayload(BaseModel):
+    """复式票一格的一选。"""
+
+    match_seq: int
+    selection_code: str
+    fixture_id: int | None = None
+
+
+class PoolSlipCreate(BaseModel):
+    """创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。"""
+
+    mode: BetMode
+    pool_period_id: int | None = None
+    note: str | None = None
+    stake_per_combination: float = Field(default=2.0, gt=0)
+    picks: list[PoolPickPayload] = Field(min_length=1)
+
+
 class BetLegView(BaseModel):
     """一腿视图。"""
 
@@ -108,6 +126,7 @@ def _bet_view(row: sqlite3.Row) -> BetView:
     summary="建注(注级建议)",
     status_code=201,
     response_model=BetView,
+    responses={400: {"description": "非法串关(同场多腿)"}},
 )
 async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     """创建一注(paper/live；未购建议 purchased=false)。"""
@@ -154,6 +173,7 @@ async def list_bets(
     summary="票级回录",
     status_code=201,
     response_model=SlipView,
+    responses={400: {"description": "mode 混用"}, 404: {"description": "bet 不存在"}},
 )
 async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
     """把勾选的建议注合成一张实际投注票并标记已购。"""
@@ -163,7 +183,7 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    row = next((r for r in bt_store.list_slips(db) if r["id"] == slip_id), None)
+    row = bt_store.get_slip(db, slip_id)
     if row is None:
         raise HTTPException(status_code=500, detail="slip vanished after insert")
     return _slip_view(row)
@@ -191,3 +211,32 @@ def _slip_view(row: sqlite3.Row) -> SlipView:
 async def list_slips(db: DbDep) -> list[SlipView]:
     """全部投注票及聚合。"""
     return [_slip_view(row) for row in bt_store.list_slips(db)]
+
+
+@router.post(
+    "/api/v1/pool-slips",
+    summary="创建池票(任9/14 场复式)",
+    status_code=201,
+    response_model=SlipView,
+)
+async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
+    """按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。"""
+    slip = bt_store.create_slip(
+        db,
+        payload.mode,
+        pool_period_id=payload.pool_period_id,
+        note=payload.note,
+        source="manual",
+    )
+    for pick in payload.picks:
+        bt_store.add_pool_pick(
+            db, slip, pick.match_seq, pick.selection_code, fixture_id=pick.fixture_id
+        )
+    bt_store.materialize_combinations(
+        db, slip, stake_per_combination=payload.stake_per_combination
+    )
+    db.commit()
+    row = bt_store.get_slip(db, slip)
+    if row is None:
+        raise HTTPException(status_code=500, detail="slip vanished after insert")
+    return _slip_view(row)

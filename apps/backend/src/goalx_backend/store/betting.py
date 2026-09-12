@@ -239,6 +239,22 @@ ORDER BY
     return len(combos)
 
 
+def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:
+    """Fetch one slip with bet aggregates."""
+    return conn.execute(
+        """
+        SELECT s.*,
+        (SELECT COUNT(*) FROM bets b WHERE b.slip_id = s.id) AS bet_count,
+        (SELECT COALESCE(SUM(b.stake), 0) FROM bets b WHERE b.slip_id = s.id)
+        AS stake_total,
+        (SELECT COALESCE(SUM(b.profit), 0) FROM bets b
+        WHERE b.slip_id = s.id AND b.status != 'open') AS profit_total
+        FROM bet_slips s WHERE s.id = ?
+        """,
+        (slip_id,),
+    ).fetchone()
+
+
 def list_slips(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """List slips with bet aggregates."""
     return conn.execute(

@@ -177,3 +177,16 @@ def test_fetch_and_store_end_to_end(db) -> None:
     assert stats.credits_used == 1
     assert stats.snapshots == 5
     assert rs_store.credit_usage(db, "2000-01-01T00:00:00+00:00") == 1.0
+
+
+def test_join_ambiguous_not_persisted(db) -> None:
+    """时间窗内两个同刻事件 → 歧义不落库，留给人工映射。"""
+    seed_jingcai(db)
+    twin = dict(EVENTS[0], id="evt2")
+    report = oddsapi.join_fixtures(
+        db, oddsapi.parse_events("soccer_epl", [EVENTS[0], twin])
+    )
+    assert report.joined == 0
+    assert report.unmatched == [{"fixture_id": "1", "reason": "ambiguous_time_window"}]
+    row = db.execute("SELECT odds_api_event_id FROM fixtures").fetchone()
+    assert row["odds_api_event_id"] is None

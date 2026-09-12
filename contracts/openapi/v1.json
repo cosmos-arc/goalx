@@ -192,6 +192,69 @@
               }
             }
           },
+          "404": {
+            "description": "fixture 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixtures/{fixture_id}/join": {
+      "post": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "人工映射欧赔事件",
+        "description": "把 fixture 手工映射到 The Odds API event（join_method=manual）。",
+        "operationId": "set_manual_join_api_v1_fixtures__fixture_id__join_post",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualJoinPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Set Manual Join Api V1 Fixtures  Fixture Id  Join Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -233,6 +296,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "非法串关(同场多腿)"
           },
           "422": {
             "description": "Validation Error",
@@ -346,6 +412,54 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SlipCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlipView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "mode 混用"
+          },
+          "404": {
+            "description": "bet 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool-slips": {
+      "post": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "创建池票(任9/14 场复式)",
+        "description": "按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。",
+        "operationId": "create_pool_slip_api_v1_pool_slips_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolSlipCreate"
               }
             }
           },
@@ -1052,6 +1166,25 @@
         "title": "LegPayload",
         "description": "一腿输入。"
       },
+      "ManualJoinPayload": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "sport_key": {
+            "type": "string",
+            "title": "Sport Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "sport_key"
+        ],
+        "title": "ManualJoinPayload",
+        "description": "人工映射输入（时间窗 join 残余补齐，票 20）。"
+      },
       "OddsSnapshotView": {
         "properties": {
           "id": {
@@ -1095,6 +1228,86 @@
         ],
         "title": "OddsSnapshotView",
         "description": "一条赔率快照。"
+      },
+      "PoolPickPayload": {
+        "properties": {
+          "match_seq": {
+            "type": "integer",
+            "title": "Match Seq"
+          },
+          "selection_code": {
+            "type": "string",
+            "title": "Selection Code"
+          },
+          "fixture_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixture Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_seq",
+          "selection_code"
+        ],
+        "title": "PoolPickPayload",
+        "description": "复式票一格的一选。"
+      },
+      "PoolSlipCreate": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/BetMode"
+          },
+          "pool_period_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool Period Id"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "stake_per_combination": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Stake Per Combination",
+            "default": 2.0
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PoolPickPayload"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Picks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "picks"
+        ],
+        "title": "PoolSlipCreate",
+        "description": "创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。"
       },
       "SelectionTriple": {
         "properties": {

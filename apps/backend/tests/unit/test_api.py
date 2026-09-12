@@ -237,3 +237,46 @@ def test_bankroll_endpoint(api_client: TestClient) -> None:
     response = api_client.get("/api/v1/bankroll")
     assert response.status_code == 200
     assert response.json() == {"balance": None, "events": []}
+
+
+def test_pool_slip_creation_and_materialization(api_client: TestClient) -> None:
+    fixture_id = _fixture_id(api_client)
+    response = api_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "stake_per_combination": 2.0,
+            "picks": [
+                {"match_seq": 1, "selection_code": "3", "fixture_id": fixture_id},
+                {"match_seq": 1, "selection_code": "1", "fixture_id": fixture_id},
+                {"match_seq": 2, "selection_code": "0"},
+            ],
+        },
+    )
+    assert response.status_code == 201
+    slip = response.json()
+    assert slip["mode"] == "paper"
+    combos = api_client.get("/api/v1/bet-slips")
+    assert any(row["id"] == slip["id"] for row in combos.json())
+
+
+def test_manual_join_endpoint(api_client: TestClient) -> None:
+    fixture_id = _fixture_id(api_client)
+    assert (
+        api_client.post(
+            f"/api/v1/fixtures/{fixture_id}/join",
+            json={"event_id": "evt-manual", "sport_key": "soccer_epl"},
+        ).status_code
+        == 200
+    )
+    today = api_client.get(
+        "/api/v1/fixtures/today", params={"date": "2026-09-12"}
+    ).json()
+    assert today[0]["joined"] is True
+    assert (
+        api_client.post(
+            "/api/v1/fixtures/999/join",
+            json={"event_id": "x", "sport_key": "y"},
+        ).status_code
+        == 404
+    )

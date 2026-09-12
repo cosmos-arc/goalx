@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from goalx_backend.migrations import CRS_EXACT_SCORES
+from goalx_backend.markets import CRS_EXACT_SCORES
 
 CRS_EXACT_SET = frozenset(CRS_EXACT_SCORES)
 MIN_PARLAY_LEGS = 2

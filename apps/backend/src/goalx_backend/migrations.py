@@ -405,4 +405,19 @@ def _apply_v1(conn: sqlite3.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = ((1, _apply_v1),)
+_APPEND_ONLY_TABLES = ("odds_snapshots", "forecasts")
+
+
+def _apply_v2(conn: sqlite3.Connection) -> None:
+    """v2：append-only 触发器（ADR 0001）——禁止修改/删除时点快照。"""
+    for table in _APPEND_ONLY_TABLES:
+        for action in ("UPDATE", "DELETE"):
+            sql = (
+                f"CREATE TRIGGER IF NOT EXISTS {table}_no_{action.lower()} "
+                f"BEFORE {action} ON {table} "
+                f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"
+            )
+            conn.execute(sql)
+
+
+MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = ((1, _apply_v1), (2, _apply_v2))

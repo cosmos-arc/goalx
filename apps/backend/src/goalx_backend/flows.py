@@ -5,20 +5,21 @@ Prefect flows（ADR 0005）：定时采集、历史导入与结算批跑。
 deployment 由本地 Prefect server 调度（见 README「运行采集」）。
 
 - jingcai_snapshot_flow：竞彩全玩法快照（销售期高频，如每 30 分钟）
-- eu_odds_snapshot_flow：欧赔快照 + join + credit 记账（kickoff 前窗口加密）
+- eu_odds_snapshot_flow：欧赔快照 + join + credit 记账（均匀轮询；
+  kickoff −30/−10/−1min 窗口加密在部署侧以更细 cron 间隔实现，见 README）
 - fd_history_import_flow：历史底座一次性导入（幂等可重跑）
 - settlement_flow：开奖后结算批跑（每日数次）
 """
 
 from __future__ import annotations
 
-import httpx
 from loguru import logger
 from prefect import flow, get_run_logger
 
 from goalx_backend.config import get_settings
 from goalx_backend.db import connect, migrate
 from goalx_backend.ingest import fdhist, oddsapi, sporttery
+from goalx_backend.ingest.oddsapi import polite_client
 from goalx_backend.services import run_settlement
 
 
@@ -29,7 +30,7 @@ def jingcai_snapshot_flow() -> dict[str, int]:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             payload = sporttery.fetch_calculator_payload(settings, client)
         stats = sporttery.store_matches(conn, sporttery.parse_matches(payload))
         logger.info(
@@ -50,7 +51,7 @@ def eu_odds_snapshot_flow() -> dict[str, int]:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             stats = oddsapi.fetch_and_store_odds(conn, settings, client)
         logger.info(
             "eu odds: {} events, {} snapshots, credits={}, unmatched={}",
@@ -75,7 +76,7 @@ def fd_history_import_flow() -> dict[str, int]:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        with httpx.Client() as client:
+        with polite_client() as client:
             stats = fdhist.import_history(conn, settings, client)
         get_run_logger().info(
             "fd history: %s rows written, %s skipped", stats.written, stats.skipped
