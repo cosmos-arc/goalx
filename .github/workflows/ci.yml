@@ -1,0 +1,171 @@
+name: CI
+
+'on':
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: 11 1 * * 1
+  workflow_dispatch: null
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-quality:
+    name: Backend format and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Formatting
+        run: task fmt-check
+      - name: Lint
+        run: task lint
+
+  backend-types:
+    name: Backend types
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Strict type check
+        run: task type
+
+  backend-tests:
+    name: Backend tests and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Tests with coverage gate
+        run: task test
+      - name: Upload coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-coverage-${{ github.run_id }}
+          path: |
+            coverage.xml
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+
+  web-quality:
+    name: Web static checks and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Web CI
+        run: task check-web
+
+  web-build:
+    name: Web production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Build production web
+        run: task web-build
+      - name: Upload web build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-dist-${{ github.run_id }}
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+
+  api-contract:
+    name: OpenAPI contract gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Contract freshness, lint, codegen drift and conformance
+        run: task check-contract
+
+  web-e2e:
+    name: Web e2e and a11y smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchain
+      - name: Install browser
+        run: task browser-install -- --with-deps
+      - name: Playwright e2e
+        run: task web-e2e
+      - name: Upload e2e evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-${{ github.run_id }}
+          path: apps/web/playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
+  security-supply-chain:
+    name: Security and supply chain
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/security.yml
+
+  ci-gate:
+    name: CI gate
+    if: ${{ always() }}
+    needs:
+      - backend-quality
+      - backend-types
+      - backend-tests
+      - web-quality
+      - web-build
+      - api-contract
+      - web-e2e
+      - security-supply-chain
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          failures = {name: result.get("result") for name, result in needs.items() if result.get("result") not in {"success", "skipped"}}
+          if failures:
+              raise SystemExit(f"CI fail-closed: {failures}")
+          if needs.get("security-supply-chain", {}).get("result") != "success":
+              raise SystemExit("CI fail-closed: security job missing")
+          PYTHON
