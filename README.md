@@ -112,7 +112,14 @@ flows：`jingcai-snapshot` / `eu-odds-snapshot` / `eu-odds-closing` /
 ### 手工补跑
 
 `task settle`（结算批跑）、`task audit-ledger`（只读旧账与更正历史）、
-`uv run python -m goalx_backend.cli --help`。
+`uv run python -m goalx_backend.cli baseline-compare`（PSC/AvgC 分期质检 +
+对照 run，票 34）、`uv run python -m goalx_backend.cli --help`。
+
+验证口径（票 34）：`/api/v1/validation/progress` 的市场 skill 只来自前瞻
+评分集合（冻结赛前 Forecast × 同期市场基准，`/api/v1/validation/forward-skill`），
+不读取任何历史回测 run；CLV 按单关/2串1 × paper/live 分组报告，分母为去重
+后的唯一 Bet（串关票级联合概率，声明独立性假设）；无复核=未评估、整赛季
+未验收前不通过。
 
 ### 开奖更正与旧账核查
 

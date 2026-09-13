@@ -806,9 +806,24 @@
         "tags": [
           "validation"
         ],
-        "summary": "纸面三条件进度与滚动收益",
-        "description": "验证页主数据：CLV beat / 市场 skill / 复核零错误三条件 + 滚动 yield。\n\n- CLV：来自已对账 clv_records（票 32）；\n- skill：最新回测 run 的 overall RPS skill（票 29）；\n- 复核系统性错误：M3 复核队列落地前恒为「无记录」空态。",
+        "summary": "纸面三条件进度、mode 隔离计数与前瞻评分",
+        "description": "验证页主数据（票 34 边界）：\n\n- CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；\n- 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），\n  不读取任何历史回测 run；\n- 复核：无记录 = 未评估（不做真空通过）；\n- 整赛季：独立显示，未验收前不通过。",
         "operationId": "get_validation_progress_api_v1_validation_progress_get",
+        "parameters": [
+          {
+            "name": "yield_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(paper|live)$",
+              "description": "收益曲线 mode",
+              "default": "paper",
+              "title": "Yield Mode"
+            },
+            "description": "收益曲线 mode"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -816,6 +831,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ValidationProgressView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/validation/forward-skill": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "前瞻评分集合分组报告",
+        "description": "冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。",
+        "operationId": "get_forward_skill_api_v1_validation_forward_skill_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Forward Skill Api V1 Validation Forward Skill Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtest/baseline-quality": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "历史基准分期/来源质检",
+        "description": "PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。",
+        "operationId": "get_baseline_quality_api_v1_backtest_baseline_quality_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Baseline Quality Api V1 Backtest Baseline Quality Get"
                 }
               }
             }
@@ -1714,6 +1787,45 @@
         "title": "ManualJoinPayload",
         "description": "人工映射输入（时间窗 join 残余补齐，票 20）。"
       },
+      "ModeCounts": {
+        "properties": {
+          "bets": {
+            "type": "integer",
+            "title": "Bets"
+          },
+          "unique_bets": {
+            "type": "integer",
+            "title": "Unique Bets"
+          },
+          "legs": {
+            "type": "integer",
+            "title": "Legs"
+          },
+          "fixtures": {
+            "type": "integer",
+            "title": "Fixtures"
+          },
+          "staked": {
+            "type": "number",
+            "title": "Staked"
+          },
+          "profit": {
+            "type": "number",
+            "title": "Profit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bets",
+          "unique_bets",
+          "legs",
+          "fixtures",
+          "staked",
+          "profit"
+        ],
+        "title": "ModeCounts",
+        "description": "一个 mode 的注/腿/场次计数（唯一 Bet 为验证分母，票 34）。"
+      },
       "OddsSnapshotView": {
         "properties": {
           "id": {
@@ -2177,9 +2289,15 @@
             "type": "array",
             "title": "Conditions"
           },
-          "settled_bets": {
+          "paper": {
+            "$ref": "#/components/schemas/ModeCounts"
+          },
+          "live": {
+            "$ref": "#/components/schemas/ModeCounts"
+          },
+          "unpurchased_open": {
             "type": "integer",
-            "title": "Settled Bets"
+            "title": "Unpurchased Open"
           },
           "yield_curve": {
             "items": {
@@ -2188,10 +2306,19 @@
             "type": "array",
             "title": "Yield Curve"
           },
+          "yield_curve_mode": {
+            "type": "string",
+            "title": "Yield Curve Mode"
+          },
           "clv": {
             "additionalProperties": true,
             "type": "object",
             "title": "Clv"
+          },
+          "forward": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Forward"
           },
           "latest_run": {
             "anyOf": [
@@ -2207,12 +2334,16 @@
         "type": "object",
         "required": [
           "conditions",
-          "settled_bets",
+          "paper",
+          "live",
+          "unpurchased_open",
           "yield_curve",
-          "clv"
+          "yield_curve_mode",
+          "clv",
+          "forward"
         ],
         "title": "ValidationProgressView",
-        "description": "验证页数据：三条件进度 + 滚动收益 + CLV 摘要。"
+        "description": "验证页数据：三条件进度 + mode 隔离计数/收益 + CLV + 前瞻评分。"
       },
       "YieldPoint": {
         "properties": {

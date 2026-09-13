@@ -324,14 +324,56 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 纸面三条件进度与滚动收益
-         * @description 验证页主数据：CLV beat / 市场 skill / 复核零错误三条件 + 滚动 yield。
+         * 纸面三条件进度、mode 隔离计数与前瞻评分
+         * @description 验证页主数据（票 34 边界）：
          *
-         *     - CLV：来自已对账 clv_records（票 32）；
-         *     - skill：最新回测 run 的 overall RPS skill（票 29）；
-         *     - 复核系统性错误：M3 复核队列落地前恒为「无记录」空态。
+         *     - CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；
+         *     - 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），
+         *       不读取任何历史回测 run；
+         *     - 复核：无记录 = 未评估（不做真空通过）；
+         *     - 整赛季：独立显示，未验收前不通过。
          */
         get: operations["get_validation_progress_api_v1_validation_progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/validation/forward-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 前瞻评分集合分组报告
+         * @description 冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。
+         */
+        get: operations["get_forward_skill_api_v1_validation_forward_skill_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtest/baseline-quality": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 历史基准分期/来源质检
+         * @description PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。
+         */
+        get: operations["get_baseline_quality_api_v1_backtest_baseline_quality_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -666,6 +708,24 @@ export interface components {
             sport_key: string;
         };
         /**
+         * ModeCounts
+         * @description 一个 mode 的注/腿/场次计数（唯一 Bet 为验证分母，票 34）。
+         */
+        ModeCounts: {
+            /** Bets */
+            bets: number;
+            /** Unique Bets */
+            unique_bets: number;
+            /** Legs */
+            legs: number;
+            /** Fixtures */
+            fixtures: number;
+            /** Staked */
+            staked: number;
+            /** Profit */
+            profit: number;
+        };
+        /**
          * OddsSnapshotView
          * @description 一条赔率快照。
          */
@@ -837,17 +897,25 @@ export interface components {
         };
         /**
          * ValidationProgressView
-         * @description 验证页数据：三条件进度 + 滚动收益 + CLV 摘要。
+         * @description 验证页数据：三条件进度 + mode 隔离计数/收益 + CLV + 前瞻评分。
          */
         ValidationProgressView: {
             /** Conditions */
             conditions: components["schemas"]["ConditionProgress"][];
-            /** Settled Bets */
-            settled_bets: number;
+            paper: components["schemas"]["ModeCounts"];
+            live: components["schemas"]["ModeCounts"];
+            /** Unpurchased Open */
+            unpurchased_open: number;
             /** Yield Curve */
             yield_curve: components["schemas"]["YieldPoint"][];
+            /** Yield Curve Mode */
+            yield_curve_mode: string;
             /** Clv */
             clv: {
+                [key: string]: unknown;
+            };
+            /** Forward */
+            forward: {
                 [key: string]: unknown;
             };
             latest_run?: components["schemas"]["BacktestRunView"] | null;
@@ -1463,7 +1531,10 @@ export interface operations {
     };
     get_validation_progress_api_v1_validation_progress_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 收益曲线 mode */
+                yield_mode?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1477,6 +1548,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationProgressView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_forward_skill_api_v1_validation_forward_skill_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    get_baseline_quality_api_v1_backtest_baseline_quality_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };

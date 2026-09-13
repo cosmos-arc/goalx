@@ -62,8 +62,10 @@ def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
         " away_team_id) VALUES (?, '2026-09-13T02:00:00+00:00', ?, ?)",
         (comp, home, away),
     ).lastrowid
-    for i, (status, stake, profit) in enumerate(
-        [("won", 50.0, 40.0), ("lost", 50.0, -50.0)]
+    # 两个不同决策的单关（不同选项；同决策重试会被去重,票 34）
+    for status, stake, profit, selection in (
+        ("won", 50.0, 40.0, "h"),
+        ("lost", 50.0, -50.0, "a"),
     ):
         bet = conn.execute(
             "INSERT INTO bets (mode, market_kind, stake, created_at, status,"
@@ -74,18 +76,17 @@ def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
         ).lastrowid
         conn.execute(
             "INSERT INTO bet_legs (bet_id, fixture_id, market_code,"
-            " selection_code, locked_odds) VALUES (?, ?, 'had', 'h', 2.0)",
-            (bet, fixture),
+            " selection_code, locked_odds) VALUES (?, ?, 'had', ?, 2.0)",
+            (bet, fixture, selection),
         )
         conn.execute(
             "INSERT INTO clv_records (bet_id, fixture_id, market_code,"
             " selection_code, taken_odds, close_prob, clv_prob, close_source,"
             " minutes_to_kickoff, computed_at)"
-            " VALUES (?, ?, 'had', 'h', 2.0, 0.52, 0.02, 'odds_api_closing',"
+            " VALUES (?, ?, 'had', ?, 2.0, 0.52, 0.02, 'odds_api_closing',"
             " 10.0, '2026-09-13T04:00:00+00:00')",
-            (bet, fixture),
+            (bet, fixture, selection),
         )
-        del i
     conn.commit()
     conn.close()
     with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
@@ -114,18 +115,24 @@ def test_validation_progress_real_state(seeded_client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     by_key = {c["key"]: c for c in body["conditions"]}
-    # 2 注 CLV（beat=100%）但不足 200 注 → 未达成
+    # 2 注 CLV（beat=100%）但不足 200 唯一注 → 未达成
     assert by_key["clv_beat"]["achieved"] is False
-    assert "2 注" in by_key["clv_beat"]["current"]
-    # skill=+0.005 ≥ 0 → 达成
-    assert by_key["market_skill"]["achieved"] is True
-    assert by_key["review_errors"]["achieved"] is True
-    assert body["settled_bets"] == 2
+    assert "2 唯一注" in by_key["clv_beat"]["current"]
+    # 前瞻评分集合为空 → 未评估不通过（票 34：不读最新回测 run）
+    assert by_key["market_skill"]["achieved"] is False
+    assert "无前瞻样本" in by_key["market_skill"]["current"]
+    # 无复核 = 未评估；整赛季独立显示未完成
+    assert by_key["review_errors"]["achieved"] is False
+    assert "未评估" in by_key["review_errors"]["current"]
+    assert by_key["full_season"]["achieved"] is False
+    assert body["paper"]["unique_bets"] == 2
+    assert body["paper"]["legs"] == 2
+    assert body["live"]["unique_bets"] == 0
     assert len(body["yield_curve"]) == 2
     first = body["yield_curve"][0]
     assert first["cumulative_yield"] == pytest.approx(40.0 / 50.0)
-    assert body["clv"]["n_records"] == 2
-    assert body["latest_run"]["label"] == "m2-smoke"
+    assert body["clv"]["denominator"]["unique_bets"] == 2
+    assert body["latest_run"]["label"] == "m2-smoke"  # 仅展示,不供 skill
 
 
 def test_validation_progress_empty_state(tmp_path: Path) -> None:
@@ -138,11 +145,15 @@ def test_validation_progress_empty_state(tmp_path: Path) -> None:
         response = client.get("/api/v1/validation/progress")
     assert response.status_code == 200
     body = response.json()
-    assert all(c["achieved"] is False for c in body["conditions"][:2])
+    # 空库：未知项一律不通过（票 34 验收 1）
+    assert all(c["achieved"] is False for c in body["conditions"])
     assert body["yield_curve"] == []
-    assert body["settled_bets"] == 0
+    assert body["paper"]["unique_bets"] == 0
+    assert body["live"]["unique_bets"] == 0
+    assert body["unpurchased_open"] == 0
     assert body["latest_run"] is None
-    assert body["clv"]["n_records"] == 0
+    assert body["clv"]["denominator"]["unique_bets"] == 0
+    assert body["forward"]["coverage"]["scored"] == 0
 
 
 def test_backtest_runs_empty(tmp_path: Path) -> None:

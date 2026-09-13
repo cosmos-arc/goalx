@@ -198,3 +198,82 @@ def test_compute_run_metrics_stratified(db) -> None:
     ).fetchone()["c"]
     assert again["written"] == written["written"]
     assert count == written["written"]
+
+
+# --- 票 34：串关玩法去重汇总、双 ROI 口径 ---
+
+
+def _seed_run_with_bets(db, bets: list[tuple[str, float, float, list[str]]]) -> int:
+    """(kind, stake, profit, leg markets) → 一个 run 的 backtest_bets。"""
+    db.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('t', '{}', 'done', '2026-09-13T00:00:00+00:00')"
+    )
+    run_id = int(db.execute("SELECT id FROM backtest_runs").fetchone()["id"])
+    for i, (kind, stake, profit, markets) in enumerate(bets):
+        legs = [{"market_code": m, "selection_code": "h", "odds": 2.0} for m in markets]
+        db.execute(
+            "INSERT INTO backtest_bets (run_id, kind, competition, placed_week,"
+            " stake, legs, ev, status, payout, profit) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                run_id,
+                kind,
+                "E0",
+                "2026-W01",
+                stake,
+                json.dumps(legs),
+                0.01,
+                "won",
+                stake + profit,
+                profit,
+            ),
+        )
+        del i
+    db.commit()
+    return run_id
+
+
+def test_parlay_same_market_not_double_counted(db) -> None:
+    """同串关两腿同玩法只计一次；had-only 汇总 == overall（票 34 验收 4）。"""
+    bets = [
+        ("parlay2", 50.0, 40.0, ["had", "had"]),  # 两腿同玩法:曾重复累加
+        ("parlay2", 50.0, -50.0, ["had", "hhad"]),  # 跨玩法串关:曾复制进两个 scope
+        ("single", 50.0, 25.0, ["had"]),
+    ]
+    run_id = _seed_run_with_bets(db, bets)
+    ev.compute_run_metrics(db, run_id)
+    row = lambda scope: json.loads(  # noqa: E731
+        db.execute(
+            "SELECT metrics FROM backtest_metrics WHERE run_id=? AND scope=?",
+            (run_id, scope),
+        ).fetchone()["metrics"]
+    )
+    overall = row("bets:overall")
+    had = row("bets:had")
+    hhad = row("bets:hhad")
+    assert overall["n"] == 3  # 每注一次
+    assert had["n"] == 3  # 三注都含 had 腿,各计一次
+    assert hhad["n"] == 1  # 只有第二注含 hhad 腿
+    assert had["staked"] == overall["staked"]  # had-only 去重汇总 == overall
+    assert had["profit"] == pytest.approx(overall["profit"])
+
+
+def test_dual_roi_reporting(db) -> None:
+    """等权(每注均值)与投入加权 ROI 分列,不等时不得混称（票 34）。"""
+    stats = ev.flat_stake_stats([10.0, -10.0], [10.0, 100.0])
+    assert stats["roi"] == pytest.approx((1.0 + -0.1) / 2)  # 等权 0.45
+    assert stats["roi_stake_weighted"] == pytest.approx(0.0 / 110.0)  # 加权 0
+    assert stats["roi"] != stats["roi_stake_weighted"]
+    run_id = _seed_run_with_bets(
+        db, [("single", 10.0, 10.0, ["had"]), ("single", 100.0, -10.0, ["had"])]
+    )
+    ev.compute_run_metrics(db, run_id)
+    metrics = json.loads(
+        db.execute(
+            "SELECT metrics FROM backtest_metrics"
+            " WHERE run_id=? AND scope='bets:overall'",
+            (run_id,),
+        ).fetchone()["metrics"]
+    )
+    assert metrics["roi"] == pytest.approx(0.45)
+    assert metrics["roi_stake_weighted"] == pytest.approx(0.0)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from goalx_backend import dc_model as dcm
 from goalx_backend import forecast as fc
@@ -247,7 +248,7 @@ def test_forecast_matrix_views_from_payload(db, tmp_path) -> None:
     assert sum(matrix.hafu().values()) > 0.99
 
 
-def test_had_ci_coverage_frequency() -> None:
+def test_had_ci_coverage_frequency(monkeypatch) -> None:
     """票 27 验收：80% CI 的覆盖频率符合名义水平（固定种子确定性）。"""
     import numpy as np
 
@@ -283,7 +284,7 @@ def test_had_ci_coverage_frequency() -> None:
     run = dcm.TrainingRun(
         base=dcm.fit_dc_model(rows, competition="E0"), bootstrap=boots, seed=99
     )
-    fc.CI_ALPHA = 0.2  # 80% 区间
+    monkeypatch.setattr(fc, "CI_ALPHA", 0.2)  # 80% 区间(测试后自动复原)
     covered = 0
     checks = 0
     for home in teams[:6]:
@@ -306,3 +307,37 @@ def test_had_ci_coverage_frequency() -> None:
     coverage = covered / checks
     # 80% 名义水平，小样本/bootstrap 近似 → 宽容带
     assert 0.6 <= coverage <= 0.97, f"coverage={coverage:.2f}"
+
+
+def test_payload_carries_artifact_identity_and_ci_metadata(db, tmp_path) -> None:
+    """票 34 验收 6：工件身份入 payload/model_version；CI 标名义水平与有效样本。"""
+    teams = [
+        "Man United",
+        "Liverpool",
+        "Arsenal",
+        "Chelsea",
+        "Everton",
+        "Fulham",
+        "Burnley",
+        "Brentford",
+    ]
+    seed_league_history(db, teams)
+    dcm.train_competition(db, "E0", models_dir=tmp_path, n_boot=8, seed=3)
+    fixture_id = seed_jingcai_fixture(db)
+    assert (
+        fc.generate_forecasts(
+            db, business_date="2026-09-19", models_dir=str(tmp_path)
+        ).generated
+        == 1
+    )
+    row = db.execute(
+        "SELECT * FROM forecasts WHERE fixture_id = ?", (fixture_id,)
+    ).fetchone()
+    import json
+
+    payload = json.loads(row["payload"])
+    assert payload["artifact_id"] == payload["artifact_id"].strip()
+    assert len(payload["artifact_id"]) == 64  # sha256 工件身份
+    assert row["model_version"] == f"dc-{payload['artifact_id'][:12]}"
+    assert payload["ci_nominal_level"] == pytest.approx(0.9)
+    assert payload["ci_effective_samples"] == len(payload["bootstrap_lambda"])

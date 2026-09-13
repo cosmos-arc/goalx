@@ -6,6 +6,16 @@ function asNumber(value: unknown): number | null {
 	return typeof value === "number" ? value : null;
 }
 
+/** 从 unknown 的嵌套结构里按路径取值(clv/forward 为弱类型字典,票 34)。 */
+function pick(source: unknown, ...keys: string[]): unknown {
+	let cursor: unknown = source;
+	for (const key of keys) {
+		if (typeof cursor !== "object" || cursor === null) return undefined;
+		cursor = (cursor as Record<string, unknown>)[key];
+	}
+	return cursor;
+}
+
 function formatPct(value: number | null | undefined, digits = 1): string {
 	if (value === null || value === undefined) return "—";
 	return `${(value * 100).toFixed(digits)}%`;
@@ -113,6 +123,12 @@ export function ValidationPage() {
 
 	const latest = progress.data?.latest_run ?? runs.data?.[0] ?? null;
 	const metrics = latest?.overall_metrics ?? null;
+	const clv = progress.data?.clv;
+	// 票 34:单关/2串1、paper/live 分开看,不混成一个数
+	const clvPaperSingles = asNumber(pick(clv, "singles", "paper", "beat_rate"));
+	const clvPaperParlay = asNumber(pick(clv, "parlay2", "paper", "beat_rate"));
+	const clvUniqueBets = asNumber(pick(clv, "denominator", "unique_bets")) ?? 0;
+	const forwardScored = asNumber(pick(progress.data?.forward, "coverage", "scored")) ?? 0;
 
 	return (
 		<AppShell title="验证">
@@ -141,30 +157,28 @@ export function ValidationPage() {
 			{metrics ? (
 				<section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 					<MetricCard
-						label="RPS 模型"
+						label="回测 RPS 模型"
 						value={asNumber(metrics["rps_model"])?.toFixed(4) ?? "—"}
 						hint={`市场 ${asNumber(metrics["rps_market"])?.toFixed(4) ?? "—"} (n=${asNumber(metrics["n"]) ?? "—"})`}
 					/>
 					<MetricCard
-						label="RPS skill"
+						label="回测 skill"
 						value={formatSigned(asNumber(metrics["skill_rps"]))}
-						hint={`DM p=${asNumber(metrics["dm_p"])?.toFixed(3) ?? "—"}`}
+						hint={`DM p=${asNumber(metrics["dm_p"])?.toFixed(3) ?? "—"}(探索性)`}
 					/>
+					<MetricCard label="前瞻样本" value={`${forwardScored} 场`} hint="赛前冻结 Forecast × 同期市场基准(票 34)" />
 					<MetricCard
-						label="回测 ROI"
-						value={formatPct(asNumber(latest?.summary?.["roi"]))}
-						hint={`${asNumber(latest?.summary?.["bets"]) ?? "—"} 注 / ${asNumber(latest?.summary?.["predictions"]) ?? "—"} 场`}
-					/>
-					<MetricCard
-						label="CLV beat"
-						value={formatPct(asNumber(progress.data?.clv?.["beat_rate_overall"]))}
-						hint={`${asNumber(progress.data?.clv?.["n_records"]) ?? 0} 注已对账`}
+						label="CLV beat(纸面)"
+						value={formatPct(clvPaperSingles)}
+						hint={`单关 ${formatPct(clvPaperSingles)} · 2串1 ${formatPct(clvPaperParlay)} · 唯一 ${clvUniqueBets} 注`}
 					/>
 				</section>
 			) : null}
 			{progress.data ? (
 				<section className="rounded-lg border border-neutral-200 bg-white p-4">
-					<h2 className="mb-2 text-sm font-semibold">滚动 yield（琥珀 = 滚动 100 注，黑 = 累计）</h2>
+					<h2 className="mb-2 text-sm font-semibold">
+						滚动 yield（琥珀 = 滚动 100 注，黑 = 累计；唯一纸面注，mode={progress.data.yield_curve_mode}）
+					</h2>
 					<YieldCurve points={progress.data.yield_curve} />
 				</section>
 			) : null}

@@ -24,10 +24,10 @@ from datetime import UTC, datetime, timedelta, timezone
 from loguru import logger
 
 from goalx_backend import backtest as bt
+from goalx_backend import baseline, team_align
 from goalx_backend import clv as clv_mod
 from goalx_backend import evaluation as ev
 from goalx_backend import haircut as hc
-from goalx_backend import team_align
 from goalx_backend.config import get_settings
 from goalx_backend.db import connect, migrate
 from goalx_backend.dc_model import TIER1_COMPETITIONS, train_competition
@@ -187,6 +187,7 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             haircut=haircut,
             parlay2=not args.no_parlay,
             min_train_matches=args.min_train,
+            fair_source=args.fair_source,
         )
         result = bt.run_backtest(conn, params, label=args.label)
         ev.compute_run_metrics(conn, result.run_id)
@@ -199,6 +200,31 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             result.profit,
             result.roi,
         )
+    finally:
+        conn.close()
+
+
+def _cmd_baseline_compare() -> None:
+    """基准分期质检报告 + psc/avgc 对照新 run(旧 run 保留,票 34)。"""
+    settings = get_settings()
+    conn = connect(settings.db_path)
+    try:
+        migrate(conn)
+        sys.stdout.write(
+            json.dumps(
+                baseline.baseline_quality_report(conn), ensure_ascii=False, indent=2
+            )
+            + "\n"
+        )
+        haircut, _, _ = hc.calibrated_haircut(conn)
+        results = baseline.run_baseline_comparison(
+            conn,
+            bt.BacktestParams(haircut=haircut),
+            base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
+        )
+        for source, summary in results.items():
+            ev.compute_run_metrics(conn, int(summary["run_id"]))
+            logger.info("baseline {} run={}", source, summary)
     finally:
         conn.close()
 
@@ -339,6 +365,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
         help="每周最小训练样本",
     )
+    backtest.add_argument(
+        "--fair-source",
+        choices=("auto", "psc", "avgc"),
+        default="auto",
+        help="公允基准来源: auto=PSC 优先 AvgC 兜底; psc/avgc=只用该源(票 34)",
+    )
+    sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
@@ -360,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
         "align-report": _cmd_align_report,
         "set-alias": lambda: _cmd_set_alias(args),
         "backtest": lambda: _cmd_backtest(args),
+        "baseline-compare": _cmd_baseline_compare,
         "calibrate-haircut": _cmd_calibrate_haircut,
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,

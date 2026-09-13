@@ -23,6 +23,7 @@ import math
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
+from importlib import metadata
 from pathlib import Path
 
 from numpy import random as np_random
@@ -35,6 +36,17 @@ TIER1_COMPETITIONS = ("E0", "SP1", "I1", "D1", "F1")
 DEFAULT_HALF_LIFE_DAYS = 365.0
 ARTIFACT_SCHEMA_VERSION = 1
 _MIN_TEAMS = 2
+
+
+def implementation_versions() -> dict[str, str]:
+    """实现与关键依赖版本（进工件身份；版本变化 ≠ 同一工件，票 34 验收 6）。"""
+    versions = {"artifact_schema": str(ARTIFACT_SCHEMA_VERSION)}
+    for dist in ("goalx-backend", "penaltyblog"):
+        try:
+            versions[dist] = metadata.version(dist)
+        except metadata.PackageNotFoundError:  # 环境未装分发包时如实标注
+            versions[dist] = "unknown"
+    return versions
 
 
 @dataclass(frozen=True)
@@ -159,13 +171,33 @@ class TrainingRun:
     bootstrap: list[DCArtifact] = field(default_factory=list)
     seed: int = 0
 
+    def artifact_id(self) -> str:
+        """
+        工件身份 = 数据指纹 + 训练配置(half-life) + seed + 实现/依赖版本。
+
+        票 34 验收 6：同数据不同 half-life/seed/实现版本必须生成不同身份；
+        身份决定文件名（内容寻址、不互相覆盖，旧工件可追溯）。
+        """
+        canonical = json.dumps(
+            {
+                "data_fingerprint": self.base.data_fingerprint,
+                "half_life_days": self.base.half_life_days,
+                "seed": self.seed,
+                "versions": implementation_versions(),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
     def to_payload(self) -> dict[str, object]:
         """Serialize to the on-disk JSON payload shape."""
         return {
             "schema_version": ARTIFACT_SCHEMA_VERSION,
+            "artifact_id": self.artifact_id(),
             "base": asdict(self.base),
             "bootstrap": [asdict(boot) for boot in self.bootstrap],
             "seed": self.seed,
+            "versions": implementation_versions(),
         }
 
     @classmethod
@@ -210,8 +242,8 @@ def bootstrap_dc_models(
 
 
 def run_filename(run: TrainingRun) -> str:
-    """内容寻址文件名：数据指纹保证同数据同文件（幂等重训）。"""
-    return f"{run.base.competition}-{run.base.data_fingerprint[:16]}.json"
+    """内容寻址文件名：工件身份（数据+配置+seed+版本）决定，不同配置不覆盖。"""
+    return f"{run.base.competition}-{run.artifact_id()[:16]}.json"
 
 
 def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
