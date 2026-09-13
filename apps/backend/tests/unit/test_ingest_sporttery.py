@@ -1,10 +1,14 @@
-"""sporttery 竞彩采集测试（解析纯函数 + 入库幂等）。"""
+"""sporttery 竞彩采集测试（解析纯函数 + 入库幂等；票 35 证据/状态/改期）。"""
 
 from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 
+from goalx_backend import observations
 from goalx_backend.config import Settings
 from goalx_backend.ingest import sporttery
 from goalx_backend.store import fixtures as fx_store
@@ -135,3 +139,119 @@ def test_fetch_raises_on_error_code() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(ValueError, match="E0001"):
         sporttery.fetch_calculator_payload(Settings(), client)
+
+
+# --- 票 35：观测证据 / 销售状态 / 改期 ---
+
+
+def test_capture_records_observation_and_reparse(tmp_path, db) -> None:
+    """原始响应可重解析、重复观测可审计（票 35 验收 2）。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            handler=lambda _: httpx.Response(200, json=SAMPLE)
+        )
+    )
+    fixed = datetime(2026, 9, 12, 14, 30, tzinfo=UTC)
+    stats = sporttery.capture_jingcai(
+        db, Settings(), client, raw_root=tmp_path, now=fixed
+    )
+    assert stats.observation_id is not None
+    obs = db.execute(
+        "SELECT * FROM quote_observations WHERE id = ?", (stats.observation_id,)
+    ).fetchone()
+    assert obs["observed_at"] == "2026-09-12T14:30:00+00:00"
+    assert obs["source"] == "sporttery"
+    assert obs["raw_ref"] is not None
+    # 快照携带证据列：源时间=调盘时间，观测时间=固定时钟
+    snap = db.execute(
+        "SELECT * FROM odds_snapshots WHERE market_code='had' ORDER BY id LIMIT 1"
+    ).fetchone()
+    assert snap["observed_at"] == "2026-09-12T14:30:00+00:00"
+    assert snap["source_updated_at"] == "2026-09-12T14:29:36+00:00"
+    assert snap["observation_id"] == stats.observation_id
+    # 原始响应可重解析出同一批比赛
+    raw = observations.read_raw(tmp_path, str(obs["raw_ref"]))
+    reparsed = sporttery.parse_matches(json.loads(raw))
+    assert [m.source_match_id for m in reparsed] == ["2041430"]
+    # 重复观测：快照去重，但观测行 +1（再次观测有证据）
+    second = sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 14, 40, tzinfo=UTC),
+    )
+    assert second.snapshots == 0
+    assert second.duplicate_snapshots == stats.snapshots
+    count = db.execute("SELECT COUNT(*) AS n FROM quote_observations").fetchone()["n"]
+    assert count == 2
+    # 密钥/请求参数不落证据文件
+    assert "apiKey" not in raw.decode()
+
+
+def test_capture_parses_sale_status_and_single(tmp_path, db) -> None:
+    payload = json.loads(json.dumps(SAMPLE))
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "0"
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["had"]["single"] = "1"
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            handler=lambda _: httpx.Response(200, json=payload)
+        )
+    )
+    sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 14, 30, tzinfo=UTC),
+    )
+    fixture = db.execute("SELECT id FROM fixtures").fetchone()["id"]
+    had = db.execute(
+        "SELECT * FROM sale_statuses WHERE fixture_id=? AND market_code='had'",
+        (fixture,),
+    ).fetchone()
+    assert had["sale_state"] == "on_sale"
+    assert had["single_eligible"] == 1
+    # 未知 sellStatus 值 → unknown，不伪造
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "9"
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["had"].pop("single")
+    sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 14, 35, tzinfo=UTC),
+    )
+    latest = db.execute(
+        "SELECT * FROM sale_statuses WHERE fixture_id=? AND market_code='had'"
+        " ORDER BY id DESC LIMIT 1",
+        (fixture,),
+    ).fetchone()
+    assert latest["sale_state"] == "unknown"
+    # had 块 single 未知，但比赛级 bettingSingle=0 → 该场无单关（False，非未知）
+    assert latest["single_eligible"] == 0
+
+
+def test_single_eligibility_match_level_veto() -> None:
+    match = sporttery.parse_matches(SAMPLE)[0]
+    assert match.had_single_eligible() is False  # bettingSingle=0 → 无单关
+    sample_single = json.loads(json.dumps(SAMPLE))
+    sample_single["value"]["matchInfoList"][0]["subMatchList"][0]["bettingSingle"] = 1
+    match2 = sporttery.parse_matches(sample_single)[0]
+    assert match2.had_single_eligible() is None  # 比赛级开放但 had 块未知
+
+
+def test_reschedule_updates_kickoff_not_new_fixture(db) -> None:
+    """改期不新造比赛：同 matchId 的新开球时间更新原 fixture（票 35 验收 3）。"""
+    first = json.loads(json.dumps(SAMPLE))
+    sporttery.store_matches(db, sporttery.parse_matches(first))
+    fixture_id = db.execute("SELECT id FROM fixtures").fetchone()["id"]
+    moved = json.loads(json.dumps(SAMPLE))
+    sub = moved["value"]["matchInfoList"][0]["subMatchList"][0]
+    sub["matchDate"] = "2026-09-14"
+    sub["matchTime"] = "02:00:00"
+    sporttery.store_matches(db, sporttery.parse_matches(moved))
+    rows = db.execute("SELECT * FROM fixtures").fetchall()
+    assert len(rows) == 1  # 同一 fixture
+    assert rows[0]["id"] == fixture_id
+    assert rows[0]["kickoff_utc"] == "2026-09-13T18:00:00+00:00"

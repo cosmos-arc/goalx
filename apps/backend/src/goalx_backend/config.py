@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # --- 存储（ADR 0003：SQLite WAL 单机） ---
     db_path: Path = Path("data/goalx.db")
+    observations_dir: Path = Path("data/observations")  # 原始响应 gzip 存档（票 35）
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")

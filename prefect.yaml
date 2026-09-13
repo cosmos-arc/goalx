@@ -1,0 +1,44 @@
+# Prefect 可复现部署定义（票 35）。启动：
+#   uv run prefect server start                       # 本地 server
+#   uv run prefect work-pool create goalx-local --type process
+#   uv run prefect deploy --all
+#   uv run prefect worker start --pool goalx-local
+#
+# 预算注记：每次 eu-odds 运行 ≈ 8 sport × 1 credit ≈ 8 credits，
+# 日预算 40 → 欧赔类部署默认合计 ≤ 3 次/日。窗口与频次在票 37 运行协议
+# 冻结前只作工程默认，不构成采集承诺。
+
+name: goalx
+
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: "."
+
+deployments:
+  - name: jingcai-snapshot
+    entrypoint: goalx_backend.flows:jingcai_snapshot_flow
+    schedules:
+      - cron: "*/30 8-23 * * *"
+        timezone: "Asia/Shanghai"
+    parameters: {}
+    work_pool:
+      name: goalx-local
+
+  - name: eu-odds-snapshot
+    entrypoint: goalx_backend.flows:eu_odds_snapshot_flow
+    schedules:
+      - cron: "0 15 * * *"
+        timezone: "Asia/Shanghai"
+    parameters: {}
+    work_pool:
+      name: goalx-local
+
+  - name: eu-odds-closing
+    entrypoint: goalx_backend.flows:eu_odds_closing_flow
+    schedules:
+      - cron: "30 19,22 * * *"
+        timezone: "Asia/Shanghai"
+    parameters:
+      window_minutes: 35
+    work_pool:
+      name: goalx-local

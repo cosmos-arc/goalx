@@ -124,6 +124,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/{fixture_id}/had-quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * as-of had 报价证据判定
+         * @description 按 as-of 取 had 报价证据，返回 有效/未知/拒绝、原因、age 与两源时差。
+         */
+        get: operations["get_had_quote_verdict_api_v1_fixtures__fixture_id__had_quote_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bets": {
         parameters: {
             query?: never;
@@ -565,6 +585,53 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HadQuoteVerdictView
+         * @description 某 as-of 时点的 had 报价判定（票 35 交接契约）。
+         */
+        HadQuoteVerdictView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** As Of */
+            as_of: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Status */
+            status: string;
+            /** Reasons */
+            reasons: string[];
+            /** Sale State */
+            sale_state?: string | null;
+            /** Single Eligible */
+            single_eligible?: boolean | null;
+            /** Jc Odds */
+            jc_odds: {
+                [key: string]: number;
+            };
+            /** Jc Source Updated At */
+            jc_source_updated_at?: string | null;
+            /** Jc Age Seconds */
+            jc_age_seconds?: number | null;
+            /**
+             * Eu Books
+             * @default 0
+             */
+            eu_books: number;
+            /** Eu Probabilities */
+            eu_probabilities?: {
+                [key: string]: number;
+            } | null;
+            /** Eu Fair Odds */
+            eu_fair_odds?: {
+                [key: string]: number;
+            } | null;
+            /** Eu Source Updated At */
+            eu_source_updated_at?: string | null;
+            /** Pair Gap Seconds */
+            pair_gap_seconds?: number | null;
+            /** Sources */
+            sources: string[];
+        };
+        /**
          * ImportResultView
          * @description 导入统计。
          */
@@ -967,6 +1034,51 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_had_quote_verdict_api_v1_fixtures__fixture_id__had_quote_get: {
+        parameters: {
+            query?: {
+                /** @description 决策时点(UTC ISO);默认现在 */
+                as_of?: string | null;
+                /** @description 源新鲜度上限(秒),工程初值300 */
+                freshness_seconds?: number;
+                /** @description 两源时差上限(秒),工程初值300 */
+                max_pair_gap_seconds?: number;
+            };
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HadQuoteVerdictView"];
                 };
             };
             /** @description fixture 不存在 */

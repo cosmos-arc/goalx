@@ -548,9 +548,102 @@ def _apply_v4(conn: sqlite3.Connection) -> None:
             """)
 
 
+def _apply_v5(conn: sqlite3.Connection) -> None:
+    """
+    v5（票 35）：报价观测证据层——时间语义、原始证据与销售状态。
+
+    - quote_observations：一次 HTTP 观测的脱敏原始证据（哈希/文件引用、
+      解析版本、observed_at 本机收到时间、可空的源更新/历史快照时间）。
+    - odds_snapshots 增列 observed_at/source_updated_at/observation_id；
+      旧行保持 NULL（时间语义按源解释，未知不倒填）。
+    - sale_statuses：国内销售状态与 had 单固资格（append-only 时序）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE quote_observations (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'live'
+                CHECK (purpose IN ('live', 'historical')),
+            observed_at TEXT NOT NULL,
+            source_updated_at TEXT,
+            snapshot_at TEXT,
+            endpoint TEXT,
+            parse_version TEXT NOT NULL,
+            raw_sha256 TEXT NOT NULL,
+            raw_ref TEXT,
+            summary TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_observations_source_time
+            ON quote_observations(source, observed_at)
+        """
+    )
+    conn.execute("ALTER TABLE odds_snapshots ADD COLUMN observed_at TEXT")
+    conn.execute("ALTER TABLE odds_snapshots ADD COLUMN source_updated_at TEXT")
+    conn.execute(
+        """
+        ALTER TABLE odds_snapshots ADD COLUMN observation_id INTEGER
+            REFERENCES quote_observations(id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_snapshots_observation
+            ON odds_snapshots(observation_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE sale_statuses (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            market_code TEXT,
+            sale_state TEXT NOT NULL
+                CHECK (sale_state IN ('on_sale', 'stopped', 'unknown')),
+            single_eligible INTEGER,
+            observed_at TEXT NOT NULL,
+            source_updated_at TEXT,
+            observation_id INTEGER REFERENCES quote_observations(id),
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sale_statuses_lookup
+            ON sale_statuses(fixture_id, market_code, observed_at)
+        """
+    )
+    for table in ("quote_observations", "sale_statuses"):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(f"""
+                CREATE TRIGGER {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END
+            """)
+    conn.execute(
+        """
+        ALTER TABLE haircut_calibrations ADD COLUMN n_fixtures INTEGER
+            NOT NULL DEFAULT 0
+        """
+    )
+    conn.execute(
+        """
+        ALTER TABLE haircut_calibrations ADD COLUMN method_version TEXT
+            NOT NULL DEFAULT 'shin_mean_v0'
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
     (3, _apply_v3),
     (4, _apply_v4),
+    (5, _apply_v5),
 )

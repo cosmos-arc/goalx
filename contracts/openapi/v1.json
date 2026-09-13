@@ -268,6 +268,96 @@
         }
       }
     },
+    "/api/v1/fixtures/{fixture_id}/had-quote": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "as-of had 报价证据判定",
+        "description": "按 as-of 取 had 报价证据，返回 有效/未知/拒绝、原因、age 与两源时差。",
+        "operationId": "get_had_quote_verdict_api_v1_fixtures__fixture_id__had_quote_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "决策时点(UTC ISO);默认现在",
+              "title": "As Of"
+            },
+            "description": "决策时点(UTC ISO);默认现在"
+          },
+          {
+            "name": "freshness_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "源新鲜度上限(秒),工程初值300",
+              "default": 300.0,
+              "title": "Freshness Seconds"
+            },
+            "description": "源新鲜度上限(秒),工程初值300"
+          },
+          {
+            "name": "max_pair_gap_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "description": "两源时差上限(秒),工程初值300",
+              "default": 300.0,
+              "title": "Max Pair Gap Seconds"
+            },
+            "description": "两源时差上限(秒),工程初值300"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HadQuoteVerdictView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bets": {
       "post": {
         "tags": [
@@ -1397,6 +1487,158 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HadQuoteVerdictView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "sale_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale State"
+          },
+          "single_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Eligible"
+          },
+          "jc_odds": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Jc Odds"
+          },
+          "jc_source_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Source Updated At"
+          },
+          "jc_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Age Seconds"
+          },
+          "eu_books": {
+            "type": "integer",
+            "title": "Eu Books",
+            "default": 0
+          },
+          "eu_probabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eu Probabilities"
+          },
+          "eu_fair_odds": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eu Fair Odds"
+          },
+          "eu_source_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eu Source Updated At"
+          },
+          "pair_gap_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pair Gap Seconds"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "as_of",
+          "kickoff_utc",
+          "status",
+          "reasons",
+          "jc_odds",
+          "sources"
+        ],
+        "title": "HadQuoteVerdictView",
+        "description": "某 as-of 时点的 had 报价判定（票 35 交接契约）。"
       },
       "ImportResultView": {
         "properties": {
