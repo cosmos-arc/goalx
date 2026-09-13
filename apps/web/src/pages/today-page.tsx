@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, fetchTodayFixtures, type HadQuoteStatus, type TodayFixture } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
+import { errorText, SELECTION_LABELS } from "../lib/ui";
 
 const FLAG_LABELS: Record<string, string> = {
 	ev_deviation: "EV 偏差≥5%(非机会)",
@@ -31,8 +32,6 @@ const SALE_LABELS: Record<string, string> = {
 	stopped: "停售",
 	unknown: "未知",
 };
-
-const SELECTION_LABELS: Record<string, string> = { h: "主胜", d: "平", a: "客胜" };
 
 type PickedLeg = {
 	fixture_id: number;
@@ -200,6 +199,8 @@ export function TodayPage() {
 									<th className="px-2 py-2">欧共识 p</th>
 									<th className="px-2 py-2">EV H/D/A</th>
 									<th className="px-2 py-2">books</th>
+									<th className="px-2 py-2">源调盘</th>
+									<th className="px-2 py-2">源调盘</th>
 									<th className="px-2 py-2">资格</th>
 									<th className="px-2 py-2">标记</th>
 								</tr>
@@ -267,6 +268,9 @@ export function TodayPage() {
 												)}
 											</td>
 											<td className="px-2 py-1.5 text-center tabular-nums">{fixture.books || "—"}</td>
+											<td className="px-2 py-1.5 text-neutral-500" data-testid={`source-updated-${fixture.fixture_id}`}>
+												{formatLocal(fixture.had_quote?.jc_source_updated_at ?? fixture.jc_updated_at ?? "") || "—"}
+											</td>
 											<td className="px-2 py-1.5">{eligibilityCell(fixture.had_quote, fixture.is_single)}</td>
 											<td className="px-2 py-1.5">
 												{(fixture.flags ?? []).length === 0 ? (
@@ -372,15 +376,4 @@ export function TodayPage() {
 			</section>
 		</AppShell>
 	);
-}
-
-function errorText(error: unknown): string {
-	if (typeof error === "object" && error !== null && "detail" in error) {
-		const detail = (error as { detail: unknown }).detail;
-		if (typeof detail === "string") {
-			return detail;
-		}
-		return JSON.stringify(detail);
-	}
-	return String(error);
 }

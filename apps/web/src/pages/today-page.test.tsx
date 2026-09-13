@@ -32,6 +32,9 @@ test("renders the fixture comparison table with flags and eligibility", async ()
 	expect(screen.getByTestId("flag-few_books")).toHaveTextContent("样本少");
 	// EV 列渲染（阿森纳主胜 +4.0%），偏差标记不冒充机会
 	expect(screen.getAllByTestId("ev-cell")[0]).toHaveTextContent("+4.0%");
+	// 源调盘时点（票 36：源与观测时点）
+	expect(screen.getByTestId("source-updated-1")).toHaveTextContent(/\d{2}\/\d{2} \d{2}:\d{2}/);
+	expect(screen.getByTestId("source-updated-3")).toHaveTextContent("—");
 	// 资格列：可投/单固、停售拒绝、证据未知（票 35 判定）
 	expect(screen.getByTestId("had-quote-valid")).toHaveTextContent("可投");
 	expect(screen.getByTestId("had-quote-valid")).toHaveTextContent("单固");

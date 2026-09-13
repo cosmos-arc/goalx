@@ -494,8 +494,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "票级回录(提交时重新校验停售/过期; live 可附实际条款)",
-        "description": "把勾选的建议注合成一张票并标记已购; 服务器按共享证据再校验。",
+        "summary": "票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)",
+        "description": "把勾选的建议注合成一张票并标记已购。\n\npaper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live\n回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。",
         "operationId": "create_slip_api_v1_bet_slips_post",
         "requestBody": {
           "content": {
@@ -519,7 +519,7 @@
             }
           },
           "400": {
-            "description": "mode 混用或 had 资格不满足(停售/已开赛/非单固)"
+            "description": "mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固)"
           },
           "404": {
             "description": "bet 不存在"

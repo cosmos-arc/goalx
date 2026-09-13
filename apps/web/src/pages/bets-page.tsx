@@ -4,6 +4,7 @@ import {
 	type Bet,
 	fetchBets,
 	fetchDrawResults,
+	fetchSlips,
 	fetchTodayFixtures,
 	importDrawResults,
 	previewDrawResults,
@@ -11,6 +12,7 @@ import {
 	runSettlement,
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
+import { errorText, SELECTION_LABELS } from "../lib/ui";
 
 const STATUS_LABELS: Record<string, string> = {
 	open: "未结",
@@ -18,12 +20,6 @@ const STATUS_LABELS: Record<string, string> = {
 	lost: "负",
 	void: "退款",
 	partial: "部分",
-};
-
-const SELECTION_LABELS: Record<string, string> = {
-	h: "主胜",
-	d: "平",
-	a: "客胜",
 };
 
 const FORWARD_LABELS: Record<string, string> = {
@@ -62,17 +58,6 @@ function reviewText(bet: Bet): string {
 
 function profitText(bet: Bet): string {
 	return bet.profit === null ? "—" : `${bet.profit >= 0 ? "+" : ""}${bet.profit.toFixed(2)}`;
-}
-
-function errorText(error: unknown): string {
-	if (typeof error === "object" && error !== null && "detail" in error) {
-		const detail = (error as { detail: unknown }).detail;
-		if (typeof detail === "string") {
-			return detail;
-		}
-		return JSON.stringify(detail);
-	}
-	return String(error);
 }
 
 function BetTable({ bets, children }: { bets: Bet[]; children?: (bet: Bet) => React.ReactNode }) {
@@ -147,12 +132,14 @@ export function BetsPage() {
 	const bets = useQuery({ queryKey: ["bets"], queryFn: () => fetchBets() });
 	const drawResults = useQuery({ queryKey: ["draw-results"], queryFn: () => fetchDrawResults() });
 	const today = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
+	const slips = useQuery({ queryKey: ["slips"], queryFn: () => fetchSlips() });
 
 	function refresh() {
 		void queryClient.invalidateQueries({ queryKey: ["bets"] });
 		void queryClient.invalidateQueries({ queryKey: ["draw-results"] });
 		void queryClient.invalidateQueries({ queryKey: ["bankroll"] });
 		void queryClient.invalidateQueries({ queryKey: ["validation-progress"] });
+		void queryClient.invalidateQueries({ queryKey: ["slips"] });
 	}
 
 	const lockPaper = useMutation({
@@ -389,6 +376,41 @@ export function BetsPage() {
 					<p className="text-sm text-neutral-500">无真实回录。</p>
 				) : (
 					<BetTable bets={liveRecords} />
+				)}
+			</section>
+
+			<section className="mb-8" data-testid="section-slips">
+				<h2 className="mb-2 text-sm font-semibold">票级状态（{slips.data?.length ?? 0}）</h2>
+				{slips.data && slips.data.length > 0 ? (
+					<table className="w-full text-sm">
+						<thead>
+							<tr className="border-b border-neutral-200 text-left text-xs text-neutral-500">
+								<th className="px-2 py-2">#</th>
+								<th className="px-2 py-2">模式</th>
+								<th className="px-2 py-2">注数</th>
+								<th className="px-2 py-2">票金</th>
+								<th className="px-2 py-2">票盈亏</th>
+								<th className="px-2 py-2">回录时点</th>
+							</tr>
+						</thead>
+						<tbody className="divide-y divide-neutral-100">
+							{slips.data.map((slip) => (
+								<tr key={slip.id} data-testid="slip-row">
+									<td className="px-2 py-1.5">{slip.id}</td>
+									<td className="px-2 py-1.5">{slip.mode === "live" ? "真金" : "纸面"}</td>
+									<td className="px-2 py-1.5 tabular-nums">{slip.bet_count}</td>
+									<td className="px-2 py-1.5 tabular-nums">¥{slip.stake_total.toFixed(2)}</td>
+									<td className="px-2 py-1.5 tabular-nums">
+										{slip.profit_total >= 0 ? "+" : ""}
+										{slip.profit_total.toFixed(2)}
+									</td>
+									<td className="px-2 py-1.5 text-neutral-500">{slip.created_at.slice(5, 16).replace("T", " ")}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				) : (
+					<p className="text-sm text-neutral-500">无回录票。</p>
 				)}
 			</section>
 

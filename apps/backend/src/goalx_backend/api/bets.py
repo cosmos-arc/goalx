@@ -277,16 +277,23 @@ async def list_bets(
 
 @router.post(
     "/api/v1/bet-slips",
-    summary="票级回录(提交时重新校验停售/过期; live 可附实际条款)",
+    summary="票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)",
     status_code=201,
     response_model=SlipView,
     responses={
-        400: {"description": "mode 混用或 had 资格不满足(停售/已开赛/非单固)"},
+        400: {
+            "description": "mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固)"
+        },
         404: {"description": "bet 不存在"},
     },
 )
 async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
-    """把勾选的建议注合成一张票并标记已购; 服务器按共享证据再校验。"""
+    """
+    把勾选的建议注合成一张票并标记已购。
+
+    paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live
+    回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
+    """
     actuals: dict[int, ActualTerms] = {
         int(bet_id): ActualTerms(
             stake=terms.stake,
@@ -298,23 +305,27 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
         for bet_id, terms in payload.actuals.items()
     }
     try:
+        bets_by_id: dict[int, sqlite3.Row] = {}
         for bet_id in payload.bet_ids:
             row = bt_store.get_bet(db, bet_id)
             if row is None:
                 raise LookupError(f"bet {bet_id} 不存在")
-            validate_had_selections(
-                db,
-                [
-                    LegInput(
-                        fixture_id=int(leg["fixture_id"]),
-                        market_code=str(leg["market_code"]),
-                        selection_code=str(leg["selection_code"]),
-                        locked_odds=float(leg["locked_odds"]),
-                        goal_line=leg["goal_line"],
-                    )
-                    for leg in json.loads(row["legs"])
-                ],
-            )
+            bets_by_id[bet_id] = row
+        if all(str(row["mode"]) == "paper" for row in bets_by_id.values()):
+            for row in bets_by_id.values():
+                validate_had_selections(
+                    db,
+                    [
+                        LegInput(
+                            fixture_id=int(leg["fixture_id"]),
+                            market_code=str(leg["market_code"]),
+                            selection_code=str(leg["selection_code"]),
+                            locked_odds=float(leg["locked_odds"]),
+                            goal_line=leg["goal_line"],
+                        )
+                        for leg in json.loads(row["legs"])
+                    ],
+                )
         slip_id = record_purchase(
             db, payload.bet_ids, payload.placed_at, actuals=actuals
         )

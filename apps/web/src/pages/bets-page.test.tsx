@@ -206,6 +206,16 @@ test("surfaces settlement errors", async () => {
 	expect(await screen.findByTestId("bets-message")).toHaveTextContent("结算失败");
 });
 
+test("lists slip-level status with stake and profit totals", async () => {
+	renderBets();
+
+	const row = await screen.findByTestId("slip-row");
+	const section = screen.getByTestId("section-slips");
+	expect(section).toHaveTextContent("票级状态（1）");
+	expect(row).toHaveTextContent("纸面");
+	expect(row).toHaveTextContent("¥100.00");
+});
+
 test("shows empty states honestly when there are no bets", async () => {
 	server.use(http.get("*/api/v1/bets", () => HttpResponse.json([])));
 	renderBets();
@@ -213,4 +223,5 @@ test("shows empty states honestly when there are no bets", async () => {
 	expect(await screen.findByText("无未锁定建议。")).toBeInTheDocument();
 	expect(screen.getByText("无已锁定纸面注。")).toBeInTheDocument();
 	expect(screen.getByText("无真实回录。")).toBeInTheDocument();
+	expect(screen.getByText("无回录票。")).toBeInTheDocument();
 });

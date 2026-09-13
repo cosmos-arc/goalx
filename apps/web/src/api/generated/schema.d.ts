@@ -182,8 +182,11 @@ export interface paths {
         get: operations["list_slips_api_v1_bet_slips_get"];
         put?: never;
         /**
-         * 票级回录(提交时重新校验停售/过期; live 可附实际条款)
-         * @description 把勾选的建议注合成一张票并标记已购; 服务器按共享证据再校验。
+         * 票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)
+         * @description 把勾选的建议注合成一张票并标记已购。
+         *
+         *     paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live
+         *     回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
          */
         post: operations["create_slip_api_v1_bet_slips_post"];
         delete?: never;
@@ -1470,7 +1473,7 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
-            /** @description mode 混用或 had 资格不满足(停售/已开赛/非单固) */
+            /** @description mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固) */
             400: {
                 headers: {
                     [name: string]: unknown;

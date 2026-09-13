@@ -315,10 +315,14 @@ def test_lock_revalidates_sale_stop(tmp_path: Path) -> None:
     fixture_id = int(seed_demo(conn)["fixture_ids"][0])  # type: ignore[index]
     conn.close()
     with _make_client(db_path) as client:
-        bet_id = client.post(
+        paper_id = client.post(
             "/api/v1/bets", json=_had_leg_payload(fixture_id, "h")
         ).json()["id"]
-        # 销售状态追加停售后, 同一建议的提交被服务器拒绝
+        live_id = client.post(
+            "/api/v1/bets",
+            json={**_had_leg_payload(fixture_id, "h"), "mode": "live"},
+        ).json()["id"]
+        # 销售状态追加停售后, paper 锁定被服务器拒绝
         conn = connect(db_path)
         fx_store.append_sale_status(
             conn,
@@ -331,10 +335,17 @@ def test_lock_revalidates_sale_stop(tmp_path: Path) -> None:
         )
         conn.commit()
         conn.close()
-        locked = client.post("/api/v1/bet-slips", json={"bet_ids": [bet_id]})
+        locked = client.post("/api/v1/bet-slips", json={"bet_ids": [paper_id]})
         assert locked.status_code == 400
         assert "sale_stopped" in locked.json()["detail"]
         assert client.get("/api/v1/bets").json()[0]["purchased"] is False
+        # live 回录是事后记账: 停售/开赛后仍可入账, 由前瞻资格排除(交接契约)
+        recorded = client.post("/api/v1/bet-slips", json={"bet_ids": [live_id]})
+        assert recorded.status_code == 201
+        live_bets = [
+            bet for bet in client.get("/api/v1/bets").json() if bet["id"] == live_id
+        ]
+        assert live_bets[0]["purchased"] is True
 
 
 def test_draw_results_import_and_settlement_loop(api_client: TestClient) -> None:
