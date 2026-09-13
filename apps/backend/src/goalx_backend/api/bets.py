@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
+from goalx_backend.db import atomic
 from goalx_backend.models import BetMode, LegInput
 from goalx_backend.services import BetDraft, create_bet_with_legs, record_purchase
 from goalx_backend.store import betting as bt_store
@@ -146,7 +147,7 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     )
     try:
         bet_id = create_bet_with_legs(db, draft)
-    except ValueError as exc:
+    except (ValueError, sqlite3.IntegrityError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = bt_store.get_bet(db, bet_id)
     if row is None:
@@ -181,7 +182,7 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
         slip_id = record_purchase(db, payload.bet_ids, payload.placed_at)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
+    except (ValueError, sqlite3.IntegrityError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = bt_store.get_slip(db, slip_id)
     if row is None:
@@ -215,27 +216,36 @@ async def list_slips(db: DbDep) -> list[SlipView]:
 
 @router.post(
     "/api/v1/pool-slips",
-    summary="创建池票(任9/14 场复式)",
+    summary="创建待结算的 paper 池票草稿",
+    responses={400: {"description": "暂不支持 live 奖池票"}},
     status_code=201,
     response_model=SlipView,
 )
 async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
-    """按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。"""
-    slip = bt_store.create_slip(
-        db,
-        payload.mode,
-        pool_period_id=payload.pool_period_id,
-        note=payload.note,
-        source="manual",
-    )
-    for pick in payload.picks:
-        bt_store.add_pool_pick(
-            db, slip, pick.match_seq, pick.selection_code, fixture_id=pick.fixture_id
+    """按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。"""
+    if payload.mode is BetMode.LIVE:
+        raise HTTPException(
+            status_code=400, detail="奖池奖金未实现, 暂不支持 live 池票"
         )
-    bt_store.materialize_combinations(
-        db, slip, stake_per_combination=payload.stake_per_combination
-    )
-    db.commit()
+    with atomic(db):
+        slip = bt_store.create_slip(
+            db,
+            payload.mode,
+            pool_period_id=payload.pool_period_id,
+            note=payload.note,
+            source="manual",
+        )
+        for pick in payload.picks:
+            bt_store.add_pool_pick(
+                db,
+                slip,
+                pick.match_seq,
+                pick.selection_code,
+                fixture_id=pick.fixture_id,
+            )
+        bt_store.materialize_combinations(
+            db, slip, stake_per_combination=payload.stake_per_combination
+        )
     row = bt_store.get_slip(db, slip)
     if row is None:
         raise HTTPException(status_code=500, detail="slip vanished after insert")

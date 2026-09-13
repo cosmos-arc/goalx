@@ -4,7 +4,7 @@ Settlement 引擎：按官方规则兑付（纯函数，无存储依赖）。
 规则来源（研究 01 / 票 06 边界裁决）：
 - 赛果口径：全场 90 分钟（含补时），不含加时/点球。
 - 无效场次（取消/延期/腰斩未重赛）：单关退款；串关该腿赔率按 1 计算、
-  其余腿正常结算；去除后不足 2 关整单退款。
+  其余腿正常结算；全部无效才整单退款。
 - 竞彩串关奖金 = 各腿赔率连乘 × 注金；禁止同场串关（写入侧校验）。
 - 传统足彩（任9/14场）：无效场次以官方摇奖公告为准——M1 以「任意选择算
   命中」近似并在 detail 标注，等官方公告数值接入后替换。
@@ -19,7 +19,6 @@ from typing import Any
 from goalx_backend.markets import CRS_EXACT_SCORES
 
 CRS_EXACT_SET = frozenset(CRS_EXACT_SCORES)
-MIN_PARLAY_LEGS = 2
 _POOL_WDL = {"h": "3", "d": "1", "a": "0"}
 
 
@@ -185,7 +184,7 @@ def settle_fixed_bet(
     结算一注竞彩（单关或串关）。
 
     - 任一腿没有对应赛果 → 整注 open（等待开奖）。
-    - 单关遇无效场次 → 退款；串关去除无效腿后不足 2 关 → 整单退款。
+    - 单关或串关全部场次无效 → 退款；剩一腿仍按其结果及赔率计奖。
     - 串关无效腿赔率按 1；其余腿全中按有效腿连乘兑付，任一未中则输。
     """
     if not legs:
@@ -211,9 +210,8 @@ def settle_fixed_bet(
     live_legs = [(leg, outcome) for leg, outcome in judged if not outcome.void]
 
     single_void = len(legs) == 1 and bool(void_legs)
-    parlay_degenerate = len(legs) > 1 and len(live_legs) < MIN_PARLAY_LEGS
-    if single_void or parlay_degenerate:
-        note = "single_void_refund" if single_void else "parlay_below_two_legs_refund"
+    if not live_legs:
+        note = "single_void_refund" if single_void else "all_void_refund"
         return SettlementOutcome(
             status="void",
             stake=stake,
@@ -227,12 +225,12 @@ def settle_fixed_bet(
         leg, outcome = live_legs[0]
         if outcome.hit is None:
             raise ValueError("open 检查后仍出现未判定腿")
-        payout = stake * leg.locked_odds if outcome.hit else 0.0
+        payout = round(stake * leg.locked_odds, 2) if outcome.hit else 0.0
         return SettlementOutcome(
             status="won" if outcome.hit else "lost",
             stake=stake,
             payout=payout,
-            profit=payout - stake,
+            profit=round(payout - stake, 2),
             legs=leg_outcomes,
         )
 

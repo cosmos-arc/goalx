@@ -31,7 +31,11 @@ def test_draw_result_upsert(db) -> None:
     second = rs.upsert_draw_result(  # 修正覆盖
         db,
         DrawResultInput(
-            fixture_id=fixture, home_goals=2, away_goals=2, source="official"
+            fixture_id=fixture,
+            home_goals=2,
+            away_goals=2,
+            source="official",
+            correction_reason="official correction",
         ),
     )
     assert second == first

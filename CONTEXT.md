@@ -37,7 +37,7 @@ _Avoid_: Odds（泛指时用）， Price
 _Avoid_: Final odds, 收盘价（口语）
 
 **ImpliedProbability**:
-对赔率去晦（Shin）后得到的概率。
+在明确去水假设下由报价估计的市场隐含概率，不等同真实发生概率。
 
 ### 奖池
 
@@ -96,7 +96,7 @@ _Avoid_: Expense
 ### 事实与结算
 
 **DrawResult**:
-官方开奖结果，含无效场次标记；系统唯一的事实源。
+经来源核验的官方开奖结果，含无效场次标记；开奖与结算的唯一事实源，更正必须可追溯。
 _Avoid_: Result（泛指）
 
 **Settlement**:

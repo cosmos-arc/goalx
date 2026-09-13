@@ -12,6 +12,26 @@ from goalx_backend.models import DrawResultInput
 
 def upsert_draw_result(conn: sqlite3.Connection, result: DrawResultInput) -> int:
     """Import an official draw result (唯一事实源，ADR 0001；修正可覆盖)。"""
+    previous = get_draw_result(conn, result.fixture_id)
+    replacement = result.model_dump(exclude={"correction_reason"})
+    if previous is not None:
+        old = {key: previous[key] for key in replacement}
+        if old == replacement:
+            return int(previous["id"])
+        if not result.correction_reason or not result.correction_reason.strip():
+            raise ValueError("更正已有开奖结果必须提供 correction_reason")
+        conn.execute(
+            """INSERT INTO draw_result_revisions
+               (fixture_id, previous, replacement, reason, recorded_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                result.fixture_id,
+                json.dumps(dict(previous)),
+                json.dumps(replacement),
+                result.correction_reason.strip(),
+                utc_now_iso(),
+            ),
+        )
     conn.execute(
         """
             INSERT INTO draw_results

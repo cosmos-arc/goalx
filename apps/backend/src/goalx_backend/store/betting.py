@@ -274,8 +274,14 @@ FROM bet_slips s
     ).fetchall()
 
 
-def save_settlement(conn: sqlite3.Connection, record: SettlementInput) -> int:
+def save_settlement(
+    conn: sqlite3.Connection, record: SettlementInput, *, reason: str = "settlement"
+) -> int:
     """Persist a settlement (upsert by bet or slip)；同步 bet 状态。"""
+    previous = conn.execute(
+        "SELECT * FROM settlements WHERE bet_id = ? OR slip_id = ?",
+        (record.bet_id, record.slip_id),
+    ).fetchone()
     payload = json.dumps(record.detail, ensure_ascii=False)
     at = utc_now_iso()
     if record.bet_id is not None:
@@ -341,6 +347,24 @@ ON
         ).fetchone()
     if row is None:
         raise RuntimeError("settlement upsert 后未找到行")
+    conn.execute(
+        """INSERT INTO settlement_revisions
+           (settlement_id, previous, replacement, reason, recorded_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (
+            int(row["id"]),
+            json.dumps(dict(previous)) if previous else None,
+            record.model_dump_json(),
+            reason,
+            at,
+        ),
+    )
+    if record.bet_id is not None and record.detail.get("status") == "open":
+        conn.execute(
+            """UPDATE bets SET status='open', payout=NULL, profit=NULL, settled_at=NULL
+               WHERE id=?""",
+            (record.bet_id,),
+        )
     return int(row["id"])
 
 

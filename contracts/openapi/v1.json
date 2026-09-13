@@ -452,8 +452,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "创建池票(任9/14 场复式)",
-        "description": "按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。",
+        "summary": "创建待结算的 paper 池票草稿",
+        "description": "按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。",
         "operationId": "create_pool_slip_api_v1_pool_slips_post",
         "requestBody": {
           "content": {
@@ -476,6 +476,9 @@
               }
             }
           },
+          "400": {
+            "description": "暂不支持 live 奖池票"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -495,7 +498,7 @@
           "results"
         ],
         "summary": "导入官方开奖(唯一事实源)",
-        "description": "批量导入开奖结果(幂等；修正覆盖)。",
+        "description": "批量导入开奖结果; 更正需原因, 保留历史并原子重算与冲正。",
         "operationId": "create_draw_results_api_v1_draw_results_post",
         "requestBody": {
           "required": true,
@@ -517,6 +520,12 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "更正缺少原因或账务需人工核查"
+          },
+          "404": {
+            "description": "比赛不存在"
           },
           "422": {
             "description": "Validation Error",
@@ -601,6 +610,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "旧账异常, 需人工核查"
           }
         }
       }
@@ -1259,6 +1271,17 @@
               }
             ],
             "title": "Published At"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
           }
         },
         "type": "object",

@@ -31,6 +31,7 @@ class DrawResultPayload(BaseModel):
     void: bool = False
     void_reason: str | None = None
     published_at: str | None = None
+    correction_reason: str | None = None
 
 
 class DrawResultImport(BaseModel):
@@ -90,32 +91,42 @@ class BankrollResponse(BaseModel):
 
 
 @router.post(
-    "/api/v1/draw-results", summary="导入官方开奖(唯一事实源)", status_code=201
+    "/api/v1/draw-results",
+    summary="导入官方开奖(唯一事实源)",
+    status_code=201,
+    responses={
+        400: {"description": "更正缺少原因或账务需人工核查"},
+        404: {"description": "比赛不存在"},
+    },
 )
 async def create_draw_results(payload: DrawResultImport, db: DbDep) -> ImportResultView:
-    """批量导入开奖结果(幂等；修正覆盖)。"""
+    """批量导入开奖结果; 更正需原因, 保留历史并原子重算与冲正。"""
     for item in payload.results:
         if fx_store.get_fixture(db, item.fixture_id) is None:
             raise HTTPException(
                 status_code=404, detail=f"fixture {item.fixture_id} not found"
             )
-    imported = import_draw_results(
-        db,
-        [
-            DrawResultInput(
-                fixture_id=item.fixture_id,
-                home_goals=item.home_goals,
-                away_goals=item.away_goals,
-                half_home_goals=item.half_home_goals,
-                half_away_goals=item.half_away_goals,
-                void=item.void,
-                void_reason=item.void_reason,
-                source=payload.source,
-                published_at=item.published_at,
-            )
-            for item in payload.results
-        ],
-    )
+    try:
+        imported = import_draw_results(
+            db,
+            [
+                DrawResultInput(
+                    fixture_id=item.fixture_id,
+                    home_goals=item.home_goals,
+                    away_goals=item.away_goals,
+                    half_home_goals=item.half_home_goals,
+                    half_away_goals=item.half_away_goals,
+                    void=item.void,
+                    void_reason=item.void_reason,
+                    source=payload.source,
+                    published_at=item.published_at,
+                    correction_reason=item.correction_reason,
+                )
+                for item in payload.results
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ImportResultView(imported=imported)
 
 
@@ -149,10 +160,17 @@ async def list_draw_results(
     ]
 
 
-@router.post("/api/v1/settlements/run", summary="结算批跑")
+@router.post(
+    "/api/v1/settlements/run",
+    summary="结算批跑",
+    responses={400: {"description": "旧账异常, 需人工核查"}},
+)
 async def run_settlements(db: DbDep) -> SettlementRunResponse:
     """对已开赛且有赛果的未结注执行官方规则结算。"""
-    stats = run_settlement(db)
+    try:
+        stats = run_settlement(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SettlementRunResponse(**stats)
 
 

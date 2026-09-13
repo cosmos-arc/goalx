@@ -126,6 +126,7 @@ def _yield_curve(db: sqlite3.Connection) -> list[YieldPoint]:
         """
         SELECT stake, profit FROM bets
         WHERE status IN ('won', 'lost', 'void') AND market_kind = 'fixed'
+          AND purchased = 1
         ORDER BY settled_at, id
         """
     ).fetchall()
@@ -214,7 +215,8 @@ async def get_validation_progress(db: DbDep) -> ValidationProgressView:
         )
     )
     settled = db.execute(
-        "SELECT COUNT(*) AS c FROM bets WHERE status IN ('won','lost','void')"
+        """SELECT COUNT(*) AS c FROM bets WHERE status IN ('won','lost','void')
+           AND purchased = 1 AND market_kind = 'fixed'"""
     ).fetchone()["c"]
     return ValidationProgressView(
         conditions=conditions,

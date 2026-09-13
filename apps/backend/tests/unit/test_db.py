@@ -13,8 +13,8 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    assert db.migrate(conn) == 3
-    assert db.migrate(conn) == 3  # 重跑幂等
+    assert db.migrate(conn) == 4
+    assert db.migrate(conn) == 4  # 重跑幂等
 
     tables = {
         row["name"]
@@ -132,4 +132,35 @@ def test_append_only_triggers_block_mutation() -> None:
         conn.execute("UPDATE odds_snapshots SET odds = 3.0")
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("DELETE FROM odds_snapshots")
+    conn.close()
+
+
+def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import json
+
+    from goalx_backend.cli import main
+    from goalx_backend.ledger_audit import audit_ledger
+
+    path = tmp_path / "legacy.db"
+    conn = db.connect(path)
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "MIGRATIONS", db.MIGRATIONS[:3])
+        assert db.migrate(conn) == 3
+    conn.execute(
+        "INSERT INTO bankroll_events (occurred_at, kind, amount_cny, balance_after)"
+        " VALUES ('t', 'deposit', 100, 100)"
+    )
+    conn.commit()
+    before = [dict(row) for row in conn.execute("SELECT * FROM bankroll_events")]
+    assert audit_ledger(conn)["schema_version"] == 3
+    monkeypatch.setenv("GOALX_DB_PATH", str(path))
+    assert main(["audit-ledger"]) == 0
+    assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
+    assert db.current_version(conn) == 3
+    assert db.migrate(conn) == 4
+    assert [
+        dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
+    ] == before
     conn.close()

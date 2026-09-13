@@ -182,8 +182,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 创建池票(任9/14 场复式)
-         * @description 按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。
+         * 创建待结算的 paper 池票草稿
+         * @description 按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
          */
         post: operations["create_pool_slip_api_v1_pool_slips_post"];
         delete?: never;
@@ -207,7 +207,7 @@ export interface paths {
         put?: never;
         /**
          * 导入官方开奖(唯一事实源)
-         * @description 批量导入开奖结果(幂等；修正覆盖)。
+         * @description 批量导入开奖结果; 更正需原因, 保留历史并原子重算与冲正。
          */
         post: operations["create_draw_results_api_v1_draw_results_post"];
         delete?: never;
@@ -526,6 +526,8 @@ export interface components {
             void_reason?: string | null;
             /** Published At */
             published_at?: string | null;
+            /** Correction Reason */
+            correction_reason?: string | null;
         };
         /**
          * DrawResultView
@@ -1146,6 +1148,13 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
+            /** @description 暂不支持 live 奖池票 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -1210,6 +1219,20 @@ export interface operations {
                     "application/json": components["schemas"]["ImportResultView"];
                 };
             };
+            /** @description 更正缺少原因或账务需人工核查 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 比赛不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -1238,6 +1261,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SettlementRunResponse"];
                 };
+            };
+            /** @description 旧账异常, 需人工核查 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
