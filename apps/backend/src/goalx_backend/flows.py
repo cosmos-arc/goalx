@@ -17,10 +17,15 @@ Prefect server 调度（见 README「运行采集」）。
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from typing import Any
+
 from loguru import logger
 from prefect import flow
 
 from goalx_backend import tasks
+from goalx_backend.betting.ledger_audit import audit_ledger
+from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
 
@@ -100,3 +105,28 @@ def settlement_flow() -> dict[str, int]:
     stats = tasks.settlement_sweep()
     logger.info("settlement: {}", stats)
     return stats
+
+
+@flow(name="daily-capture", log_prints=True)
+def daily_capture_flow() -> dict[str, object]:
+    """销售日两拍采集（票 37 协议 v1）：竞彩→预测→范围内欧赔，顺序固定。"""
+    jingcai = jingcai_snapshot_flow()
+    forecast = forecast_daily_flow()
+    eu = eu_odds_snapshot_flow()
+    return {"jingcai": jingcai, "forecast": forecast, "eu": eu}
+
+
+@flow(name="daily-wrap", log_prints=True)
+def daily_wrap_flow() -> dict[str, object]:
+    """日终收尾（票 37）：结算批跑 + CLV 对账 + 只读账务核查。"""
+    settlement = settlement_flow()
+    with tasks.task_conn() as conn:
+        clv_stats: dict[str, Any] = asdict(clv_mod.reconcile_clv(conn))
+        findings = len(audit_ledger(conn)["manual_review"])
+    logger.info(
+        "daily wrap: settlement={}, clv={}, audit_findings={}",
+        settlement,
+        clv_stats,
+        findings,
+    )
+    return {"settlement": settlement, "clv": clv_stats, "audit_findings": findings}
