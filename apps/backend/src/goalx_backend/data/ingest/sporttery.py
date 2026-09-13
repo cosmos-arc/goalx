@@ -28,8 +28,9 @@ from typing import Any
 
 import httpx
 
-from goalx_backend import observations
 from goalx_backend.config import Settings
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import observations
 from goalx_backend.db import utc_now_iso
 from goalx_backend.models import (
     MatchCodeInput,
@@ -39,7 +40,6 @@ from goalx_backend.models import (
     SnapshotInput,
     Tier,
 )
-from goalx_backend.store import fixtures as fx_store
 
 CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
 POOL_CODES = ("had", "hhad", "crs", "ttg", "hafu")

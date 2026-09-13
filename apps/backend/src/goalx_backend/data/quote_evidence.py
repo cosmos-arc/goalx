@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.store import fixtures as fx_store
 
 DEFAULT_FRESHNESS_SECONDS = 300.0
 DEFAULT_PAIR_GAP_SECONDS = 300.0

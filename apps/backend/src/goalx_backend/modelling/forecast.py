@@ -20,11 +20,11 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from goalx_backend.dc_model import TrainingRun, load_latest_run
-from goalx_backend.score_matrix import ScoreMatrix
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import forecasts as fc_store
-from goalx_backend.team_align import match_model_team
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.db import utc_now_iso
+from goalx_backend.modelling.dc_model import TrainingRun, load_latest_run
+from goalx_backend.modelling.score_matrix import ScoreMatrix
+from goalx_backend.modelling.team_align import match_model_team
 
 # 竞彩联赛名（competitions.name）→ fd 历史底座代码（票 26 五大主动）
 FD_LEAGUE_MAP: dict[str, str] = {
@@ -134,6 +134,41 @@ def build_forecast_payload(
     }
 
 
+def insert_forecast(
+    conn: sqlite3.Connection,
+    *,
+    fixture_id: int,
+    track: str,
+    model_version: str,
+    content_hash: str,
+    payload: dict[str, object],
+) -> int | None:
+    """
+    Append 一条 Forecast（forecasts 表归本模块）。
+
+    同 (fixture_id, content_hash) 重复插入被吸收；返回新行 id，已存在返回
+    None（幂等重跑）。
+    """
+    cur = conn.execute(
+        """
+        INSERT OR IGNORE INTO forecasts
+        (fixture_id, track, model_version, issued_at, content_hash, payload)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            fixture_id,
+            track,
+            model_version,
+            utc_now_iso(),
+            content_hash,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    if cur.rowcount > 0 and cur.lastrowid:
+        return int(cur.lastrowid)
+    return None
+
+
 def generate_forecasts(
     conn: sqlite3.Connection,
     *,
@@ -197,7 +232,7 @@ def generate_forecasts(
             home_model_team=home_model,
             away_model_team=away_model,
         )
-        inserted = fc_store.insert_forecast(
+        inserted = insert_forecast(
             conn,
             fixture_id=fixture_id,
             track="ml",

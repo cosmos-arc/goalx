@@ -9,12 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
-from goalx_backend.ingest.results import import_draw_results
+from goalx_backend.betting import store as bt_store
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import DrawResultInput
 from goalx_backend.services import run_settlement
-from goalx_backend.store import betting as bt_store
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
 
 router = APIRouter(tags=["results"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -143,7 +143,7 @@ async def list_draw_results(
         row = rs_store.get_draw_result(db, fixture_id)
         rows = [row] if row is not None else []
     else:
-        rows = db.execute("SELECT * FROM draw_results ORDER BY fixture_id").fetchall()
+        rows = rs_store.list_draw_results(db)
     return [
         DrawResultView(
             fixture_id=int(row["fixture_id"]),

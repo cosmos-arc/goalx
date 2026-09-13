@@ -16,8 +16,8 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from goalx_backend import backtest as bt
 from goalx_backend import odds_math as om
+from goalx_backend.evaluation import backtest as bt
 from goalx_backend.markets import SELECTIONS
 
 FD_PSC_REVIEW_DATE = "2025-07-23"

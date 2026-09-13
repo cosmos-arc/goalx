@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import sqlite3
 
+from goalx_backend.data import results as rs_store
 from goalx_backend.db import atomic
 from goalx_backend.models import DrawResultInput
 from goalx_backend.services import (
     resettle_corrected_results,
     validate_correction_targets,
 )
-from goalx_backend.store import results as rs_store
 
 
 def import_draw_results(

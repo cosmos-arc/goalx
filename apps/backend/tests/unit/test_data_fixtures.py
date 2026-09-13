@@ -5,8 +5,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from goalx_backend.data import fixtures as fx
 from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
-from goalx_backend.store import fixtures as fx
 
 
 def seed_fixture(

@@ -146,8 +146,8 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
 ) -> None:
     import json
 
+    from goalx_backend.betting.ledger_audit import audit_ledger
     from goalx_backend.cli import main
-    from goalx_backend.ledger_audit import audit_ledger
 
     path = tmp_path / "legacy.db"
     conn = db.connect(path)

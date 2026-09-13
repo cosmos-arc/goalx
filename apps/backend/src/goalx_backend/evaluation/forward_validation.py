@@ -23,10 +23,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from goalx_backend import odds_math as om
-from goalx_backend.evaluation import evaluate_predictions
-from goalx_backend.forecast import forecast_matrix_from_payload
+from goalx_backend.data.quote_evidence import effective_observed_at
+from goalx_backend.evaluation.metrics import evaluate_predictions
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.quote_evidence import effective_observed_at
+from goalx_backend.modelling.forecast import forecast_matrix_from_payload
 
 FROZEN_RULE = "latest_forecast_before_kickoff_v1"
 MIN_GROUP_SAMPLES = 30  # 小于该数标「样本不足」，不作通过依据

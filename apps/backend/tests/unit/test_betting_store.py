@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from goalx_backend.betting import store as bt
+from goalx_backend.data import fixtures as fx
 from goalx_backend.models import (
     BetMode,
     BetStatus,
@@ -12,8 +14,6 @@ from goalx_backend.models import (
     MarketKind,
     SettlementInput,
 )
-from goalx_backend.store import betting as bt
-from goalx_backend.store import fixtures as fx
 
 
 def seed_fixtures(db: sqlite3.Connection, count: int) -> list[int]:

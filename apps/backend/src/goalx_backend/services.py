@@ -8,6 +8,9 @@ import sqlite3
 from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
+from goalx_backend.betting import store as bt_store
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
     BetMode,
@@ -23,9 +26,6 @@ from goalx_backend.settlement import (
     detail_payload,
     settle_fixed_bet,
 )
-from goalx_backend.store import betting as bt_store
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
 
 EV_FLAG_THRESHOLD = 0.05  # 今日页 EV 偏差标记阈值（票 08 report 口径）
 MIN_BOOKS_FOR_CONSENSUS = 3  # books 少于该数标记样本不足

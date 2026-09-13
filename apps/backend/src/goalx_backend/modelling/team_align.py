@@ -18,6 +18,9 @@ import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
 
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
+
 # 俱乐部法律形态词元（两侧都剥离，使 "FC Koln"↔"Koln" 等价）
 STRIP_TOKENS = frozenset(
     {
@@ -178,14 +181,7 @@ def build_alignment_report(conn: sqlite3.Connection) -> AlignmentReport:
     """逐联赛报告 hist 队名解析覆盖率；未匹配清单逐条列出（明确可查）。"""
     report = AlignmentReport()
     index = alias_index(conn)
-    rows = conn.execute(
-        """
-        SELECT competition, home_team AS team FROM hist_matches
-        UNION
-        SELECT competition, away_team AS team FROM hist_matches
-        ORDER BY competition, team
-        """
-    ).fetchall()
+    rows = rs_store.hist_team_names(conn)
     by_comp: dict[str, list[str]] = {}
     for row in rows:
         by_comp.setdefault(str(row["competition"]), []).append(str(row["team"]))
@@ -216,14 +212,7 @@ def backfill_aliases_from_events(
     if not events:
         return 0
     by_event = {event_id: (home, away) for event_id, home, away in events}
-    placeholders = ", ".join("?" for _ in by_event)
-    rows = conn.execute(
-        f"""
-        SELECT odds_api_event_id, home_team_id, away_team_id FROM fixtures
-        WHERE odds_api_event_id IN ({placeholders})
-        """,  # noqa: S608
-        tuple(by_event),
-    ).fetchall()
+    rows = fx_store.fixtures_for_events(conn, list(by_event))
     added = 0
     for row in rows:
         names = by_event.get(str(row["odds_api_event_id"]))
@@ -243,3 +232,18 @@ def backfill_aliases_from_events(
             if cur.rowcount > 0:
                 added += 1
     return added
+
+
+def set_manual_alias(conn: sqlite3.Connection, team: str, alias: str) -> None:
+    """人工覆盖：给 canonical 球队追加 manual 别名（即时生效，票 25）。"""
+    row = fx_store.find_team_by_name(conn, team)
+    if row is None:
+        raise LookupError(f"球队不存在: {team}")
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+        VALUES (?, 'manual', ?)
+        """,
+        (int(row["id"]), alias),
+    )
+    conn.commit()

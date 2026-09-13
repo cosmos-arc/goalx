@@ -49,7 +49,7 @@ def api_client(tmp_path: Path) -> Iterator[TestClient]:
     db_path = tmp_path / "api-test.db"
     conn = connect(db_path)
     migrate(conn)
-    from goalx_backend.ingest import sporttery
+    from goalx_backend.data.ingest import sporttery
 
     sporttery.store_matches(conn, sporttery.parse_matches(JINGCAI_PAYLOAD))
     conn.close()

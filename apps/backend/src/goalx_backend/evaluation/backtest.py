@@ -35,15 +35,15 @@ from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
 from goalx_backend.db import utc_now_iso
-from goalx_backend.dc_model import (
+from goalx_backend.markets import SELECTIONS
+from goalx_backend.modelling.dc_model import (
     TIER1_COMPETITIONS,
     DCArtifact,
     TrainingRow,
     fit_dc_model,
     implementation_versions,
 )
-from goalx_backend.markets import SELECTIONS
-from goalx_backend.score_matrix import ScoreMatrix
+from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
 MARKET_MAX_GOAL_ERROR = 0.02  # 市场隐含 λ 反推的 had 拟合误差上限

@@ -23,9 +23,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from goalx_backend import odds_math as om
+from goalx_backend.data.quote_evidence import effective_observed_at
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.quote_evidence import effective_observed_at
 
 DEFAULT_HAIRCUT = 0.10
 MIN_SAMPLES = 30  # 样本不足回落默认（票 30 验收）

@@ -10,13 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from goalx_backend.api.deps import get_db
-from goalx_backend.quote_evidence import (
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
     DEFAULT_PAIR_GAP_SECONDS,
     adjudicate_had_quote,
 )
 from goalx_backend.services import TodayFixtureView, build_today_view
-from goalx_backend.store import fixtures as fx_store
 
 router = APIRouter(prefix="/api/v1/fixtures", tags=["fixtures"])
 

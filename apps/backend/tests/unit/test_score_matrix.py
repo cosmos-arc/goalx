@@ -8,7 +8,7 @@ import pytest
 from penaltyblog.models import DixonColesGoalModel
 
 from goalx_backend.markets import CRS_EXACT_SCORES
-from goalx_backend.score_matrix import (
+from goalx_backend.modelling.score_matrix import (
     HALF_SPLIT,
     ScoreMatrix,
     combination_probability,

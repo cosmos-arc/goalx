@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
+from goalx_backend.betting import store as bt_store
 from goalx_backend.db import atomic
 from goalx_backend.models import BetMode, LegInput
 from goalx_backend.services import BetDraft, create_bet_with_legs, record_purchase
-from goalx_backend.store import betting as bt_store
 
 router = APIRouter(tags=["bets"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]

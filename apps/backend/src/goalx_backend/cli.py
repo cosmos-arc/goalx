@@ -23,18 +23,19 @@ from datetime import UTC, datetime, timedelta, timezone
 
 from loguru import logger
 
-from goalx_backend import backtest as bt
-from goalx_backend import baseline, team_align
-from goalx_backend import clv as clv_mod
-from goalx_backend import evaluation as ev
-from goalx_backend import haircut as hc
+from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import get_settings
+from goalx_backend.data.ingest import fdhist, oddsapi, sporttery
+from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
-from goalx_backend.dc_model import TIER1_COMPETITIONS, train_competition
-from goalx_backend.forecast import generate_forecasts
-from goalx_backend.ingest import fdhist, oddsapi, sporttery
-from goalx_backend.ingest.oddsapi import polite_client
-from goalx_backend.ledger_audit import audit_ledger
+from goalx_backend.evaluation import backtest as bt
+from goalx_backend.evaluation import baseline
+from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation import haircut as hc
+from goalx_backend.evaluation import metrics as ev
+from goalx_backend.modelling import team_align
+from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
+from goalx_backend.modelling.forecast import generate_forecasts
 from goalx_backend.services import run_settlement
 
 
@@ -53,8 +54,9 @@ def _cmd_ingest_jingcai() -> None:
     try:
         migrate(conn)
         with polite_client() as client:
-            payload = sporttery.fetch_calculator_payload(settings, client)
-        stats = sporttery.store_matches(conn, sporttery.parse_matches(payload))
+            stats = sporttery.capture_jingcai(
+                conn, settings, client, raw_root=settings.observations_dir
+            )
         logger.info(
             "matches={} snapshots={} dup={}",
             stats.matches,
@@ -72,7 +74,9 @@ def _cmd_ingest_odds() -> None:
     try:
         migrate(conn)
         with polite_client() as client:
-            stats = oddsapi.fetch_and_store_odds(conn, settings, client)
+            stats = oddsapi.fetch_and_store_odds(
+                conn, settings, client, raw_root=settings.observations_dir
+            )
         logger.info(
             "events={} snapshots={} credits={} unmatched={}",
             stats.events,
@@ -247,7 +251,12 @@ def _cmd_closing_snapshot() -> None:
     try:
         migrate(conn)
         with polite_client() as client:
-            stats = oddsapi.fetch_closing_window(conn, settings, client)
+            stats = oddsapi.fetch_closing_window(
+                conn,
+                settings,
+                client,
+                raw_root=settings.observations_dir,
+            )
         logger.info(
             "closing: events={} snapshots={} credits={}",
             stats.events,
@@ -275,19 +284,10 @@ def _cmd_set_alias(args: argparse.Namespace) -> None:
     conn = connect()
     try:
         migrate(conn)
-        row = conn.execute(
-            "SELECT id FROM teams WHERE canonical_name = ?", (args.team,)
-        ).fetchone()
-        if row is None:
-            raise SystemExit(f"球队不存在: {args.team}")
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
-            VALUES (?, 'manual', ?)
-            """,
-            (int(row["id"]), args.alias),
-        )
-        conn.commit()
+        try:
+            team_align.set_manual_alias(conn, args.team, args.alias)
+        except LookupError as exc:
+            raise SystemExit(str(exc)) from exc
         logger.info("alias set: {} -> {}", args.alias, args.team)
     finally:
         conn.close()

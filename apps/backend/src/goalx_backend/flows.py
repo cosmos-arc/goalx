@@ -21,11 +21,11 @@ from loguru import logger
 from prefect import flow, get_run_logger
 
 from goalx_backend.config import get_settings
+from goalx_backend.data.ingest import fdhist, oddsapi, sporttery
+from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
-from goalx_backend.dc_model import TIER1_COMPETITIONS, train_competition
-from goalx_backend.forecast import generate_forecasts
-from goalx_backend.ingest import fdhist, oddsapi, sporttery
-from goalx_backend.ingest.oddsapi import polite_client
+from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
+from goalx_backend.modelling.forecast import generate_forecasts
 from goalx_backend.services import run_settlement
 
 

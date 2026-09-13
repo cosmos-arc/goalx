@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 
-from goalx_backend import forward_validation as fwd
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.evaluation import forward_validation as fwd
 from goalx_backend.models import DrawResultInput, MatchCodeInput, SnapshotInput, Tier
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
 
 KICKOFF = "2026-09-13T18:00:00+00:00"
 

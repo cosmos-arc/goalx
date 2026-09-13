@@ -9,10 +9,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from goalx_backend import baseline
-from goalx_backend import clv as clv_mod
-from goalx_backend import forward_validation as fwd
 from goalx_backend.api.deps import get_db
+from goalx_backend.evaluation import baseline
+from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation import forward_validation as fwd
 
 router = APIRouter(tags=["validation"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]

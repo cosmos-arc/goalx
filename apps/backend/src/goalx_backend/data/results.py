@@ -76,6 +76,11 @@ def get_draw_result(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | 
     ).fetchone()
 
 
+def list_draw_results(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """全部已导入的开奖结果（按场次稳定排序）。"""
+    return conn.execute("SELECT * FROM draw_results ORDER BY fixture_id").fetchall()
+
+
 def draw_results_for_fixtures(
     conn: sqlite3.Connection, fixture_ids: list[int]
 ) -> dict[int, sqlite3.Row]:
@@ -130,6 +135,42 @@ DO
         if cur.rowcount > 0:
             count += 1
     return count
+
+
+def latest_hist_date(conn: sqlite3.Connection, competition: str) -> str | None:
+    """某联赛历史底座的最新比赛日（训练 as-of 上界的缺省值）。"""
+    row = conn.execute(
+        "SELECT MAX(match_date) AS d FROM hist_matches WHERE competition = ?",
+        (competition,),
+    ).fetchone()
+    return str(row["d"]) if row and row["d"] is not None else None
+
+
+def hist_rows_through(
+    conn: sqlite3.Connection, competition: str, as_of: str
+) -> list[sqlite3.Row]:
+    """某联赛 as_of（含）之前的全部历史行（防前视：上界由调用方给出）。"""
+    return conn.execute(
+        """
+        SELECT match_date, home_team, away_team, fthg, ftag
+        FROM hist_matches
+        WHERE competition = ? AND match_date <= ?
+        ORDER BY match_date
+        """,
+        (competition, as_of),
+    ).fetchall()
+
+
+def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """历史底座的逐联赛队名清单（对齐覆盖率报告用）。"""
+    return conn.execute(
+        """
+        SELECT competition, home_team AS team FROM hist_matches
+        UNION
+        SELECT competition, away_team AS team FROM hist_matches
+        ORDER BY competition, team
+        """
+    ).fetchall()
 
 
 def hist_match_stats(

@@ -29,7 +29,8 @@ from pathlib import Path
 from numpy import random as np_random
 from penaltyblog.models import DixonColesGoalModel
 
-from goalx_backend.score_matrix import MATRIX_SIZE, ScoreMatrix
+from goalx_backend.data import results as rs_store
+from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
 
 # Tier1 五大 fd 代码（票 26：五大主动；Tier2 如 N1 荷甲扩导列为可选项）
 TIER1_COMPETITIONS = ("E0", "SP1", "I1", "D1", "F1")
@@ -286,15 +287,6 @@ def training_rows_for(
     conn: sqlite3.Connection, competition: str, *, as_of: str
 ) -> list[TrainingRow]:
     """某联赛 as_of（含）之前的全部 hist 行（防前视：上界由调用方给出）。"""
-    rows = conn.execute(
-        """
-        SELECT match_date, home_team, away_team, fthg, ftag
-        FROM hist_matches
-        WHERE competition = ? AND match_date <= ?
-        ORDER BY match_date
-        """,
-        (competition, as_of),
-    ).fetchall()
     return [
         TrainingRow(
             match_date=str(row["match_date"]),
@@ -303,7 +295,7 @@ def training_rows_for(
             fthg=int(row["fthg"]),
             ftag=int(row["ftag"]),
         )
-        for row in rows
+        for row in rs_store.hist_rows_through(conn, competition, as_of)
     ]
 
 
@@ -318,13 +310,7 @@ def train_competition(
     seed: int = 0,
 ) -> TrainingRun:
     """训练一个联赛并落盘（基准 + 可选 bootstrap）。"""
-    resolved_as_of = (
-        as_of
-        or conn.execute(
-            "SELECT MAX(match_date) AS d FROM hist_matches WHERE competition = ?",
-            (competition,),
-        ).fetchone()["d"]
-    )
+    resolved_as_of = as_of or rs_store.latest_hist_date(conn, competition)
     rows = training_rows_for(conn, competition, as_of=str(resolved_as_of))
     base = fit_dc_model(rows, competition=competition, half_life_days=half_life_days)
     as_of_date = date.fromisoformat(str(resolved_as_of))

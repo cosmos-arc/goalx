@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from goalx_backend import haircut as hc
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.evaluation import haircut as hc
 from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
-from goalx_backend.store import fixtures as fx_store
 
 
 def seed_paired_fixture(

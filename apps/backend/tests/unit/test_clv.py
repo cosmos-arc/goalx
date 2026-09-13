@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from goalx_backend import clv
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.evaluation import clv
 from goalx_backend.models import BetMode, LegInput, SnapshotInput, Tier
 from goalx_backend.services import BetDraft, create_bet_with_legs
-from goalx_backend.store import fixtures as fx_store
 
 KICKOFF = "2026-09-12T19:00:00+00:00"
 

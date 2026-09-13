@@ -53,6 +53,15 @@ excluded.api_football_league_id,
     return _lookup_id(conn, "SELECT id FROM competitions WHERE name = ?", (name,))
 
 
+def find_team_by_name(
+    conn: sqlite3.Connection, canonical_name: str
+) -> sqlite3.Row | None:
+    """按 canonical 队名查球队行（人工别名覆盖用）。"""
+    return conn.execute(
+        "SELECT id FROM teams WHERE canonical_name = ?", (canonical_name,)
+    ).fetchone()
+
+
 def upsert_team(conn: sqlite3.Connection, canonical_name: str) -> int:
     """Insert a team by canonical name (idempotent); return its id."""
     conn.execute(
@@ -425,6 +434,22 @@ def unset_odds_api_join(conn: sqlite3.Connection, fixture_id: int) -> None:
         """,
         (fixture_id,),
     )
+
+
+def fixtures_for_events(
+    conn: sqlite3.Connection, event_ids: list[str]
+) -> list[sqlite3.Row]:
+    """按 Odds API event id 批量取场次行（别名回填用）。"""
+    if not event_ids:
+        return []
+    placeholders = ", ".join("?" for _ in event_ids)
+    return conn.execute(
+        f"""
+        SELECT id, odds_api_event_id, home_team_id, away_team_id FROM fixtures
+        WHERE odds_api_event_id IN ({placeholders})
+        """,  # noqa: S608
+        event_ids,
+    ).fetchall()
 
 
 def pending_jingcai_fixtures(

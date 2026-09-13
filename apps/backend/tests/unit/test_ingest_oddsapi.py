@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from goalx_backend.config import Settings
-from goalx_backend.ingest import oddsapi, sporttery
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.data.ingest import oddsapi, sporttery
 
 SPORTS = [
     {"key": "soccer_epl", "group": "Soccer", "title": "EPL"},

@@ -5,7 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 
-from goalx_backend import observations
+from goalx_backend.data import observations
 
 
 def test_save_and_read_roundtrip(tmp_path) -> None:

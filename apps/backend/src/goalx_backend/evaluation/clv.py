@@ -22,9 +22,9 @@ from datetime import datetime
 from typing import Any
 
 from goalx_backend import odds_math as om
+from goalx_backend.data.quote_evidence import effective_observed_at
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.quote_evidence import effective_observed_at
 
 MINUTES_BUCKETS = ((0, 10), (10, 30), (30, 10**9))
 CLOSE_LOOKBACK_MINUTES = 90  # closing 快照须落在开球前该窗口内

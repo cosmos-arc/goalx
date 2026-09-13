@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from goalx_backend.betting import store as bt
 from goalx_backend.db import current_version
 from goalx_backend.services import evaluate_bet
-from goalx_backend.store import betting as bt
 
 REVISION_SCHEMA_VERSION = 4
 
