@@ -17,9 +17,10 @@ from typing import Any
 
 import httpx
 
+from goalx_backend import team_align
 from goalx_backend.config import Settings
 from goalx_backend.db import utc_now_iso
-from goalx_backend.models import SnapshotInput
+from goalx_backend.models import SnapshotInput, SnapshotPurpose
 from goalx_backend.store import fixtures as fx_store
 from goalx_backend.store import results as rs_store
 
@@ -187,11 +188,18 @@ def _event_commence_utc(event: ParsedEvent) -> datetime:
 
 
 def store_events(
-    conn: sqlite3.Connection, events: list[ParsedEvent]
+    conn: sqlite3.Connection,
+    events: list[ParsedEvent],
+    *,
+    purpose: SnapshotPurpose = SnapshotPurpose.LIVE_CAPTURE,
 ) -> OddsIngestStats:
-    """欧赔快照 append-only 入库（只写已 join 的 fixture）。"""
+    """欧赔快照 append-only 入库（只写已 join 的 fixture）+ 事件英文名回填别名。"""
     stats = OddsIngestStats(events=len(events))
     by_event = {event.event_id: event for event in events}
+    team_align.backfill_aliases_from_events(
+        conn,
+        [(event.event_id, event.home_team, event.away_team) for event in events],
+    )
     joined_fixtures = conn.execute(
         "SELECT id, odds_api_event_id FROM fixtures WHERE odds_api_event_id IS NOT NULL"
     ).fetchall()
@@ -210,6 +218,7 @@ def store_events(
                         source=f"odds_api:{book}",
                         odds=odds,
                         captured_at=utc_now_iso(),
+                        purpose=purpose,
                     ),
                 )
                 if snapshot_id is None:
@@ -262,12 +271,58 @@ def fetch_and_store_odds(
     return stats
 
 
+def fetch_closing_window(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    window_minutes: int = 35,
+    markets: tuple[str, ...] = ("h2h",),
+) -> OddsIngestStats:
+    """
+    收盘窗口尽力快照（票 32）：kickoff 前 window_minutes 内开球的已 join 场次。
+
+    只拉窗口内事件（commence_time_from/to），purpose=closing 入库；部署侧
+    cron 在 −30/−10/−1min 附近多次触发（credit 按 sport×market 计）。
+    """
+    check_credit_budget(conn, settings)
+    now = datetime.now(UTC)
+    window_end = now + timedelta(minutes=window_minutes)
+    sport_keys = discover_sport_keys(settings, client)
+    all_events: list[ParsedEvent] = []
+    for sport_key in sport_keys:
+        response = client.get(
+            f"{settings.odds_api_base_url}/sports/{sport_key}/odds",
+            params={
+                "apiKey": settings.odds_api_key,
+                "regions": "eu",
+                "markets": ",".join(markets),
+                "oddsFormat": "decimal",
+                "commence_time_from": now.isoformat(),
+                "commence_time_to": window_end.isoformat(),
+            },
+            timeout=25.0,
+        )
+        response.raise_for_status()
+        all_events.extend(parse_events(sport_key, response.json()))
+    stats = OddsIngestStats(
+        events=len(all_events), credits_used=len(sport_keys) * len(markets)
+    )
+    stored = store_events(conn, all_events, purpose=SnapshotPurpose.CLOSING)
+    stats.snapshots = stored.snapshots
+    stats.duplicate_snapshots = stored.duplicate_snapshots
+    record_credits(conn, stats.credits_used, f"closing:sports={len(sport_keys)}")
+    conn.commit()
+    return stats
+
+
 def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinReport:
     """联赛 + 开球时间窗冷启动 join；结果持久化（残余人工映射表补齐）。"""
     report = JoinReport()
     rows = conn.execute(
         """
-        SELECT f.id, f.kickoff_utc, c.odds_api_sport_key, c.tier
+        SELECT f.id, f.kickoff_utc, f.odds_api_event_id, f.home_team_id,
+               f.away_team_id, c.odds_api_sport_key, c.tier
         FROM fixtures f
         JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
         JOIN competitions c ON c.id = f.competition_id
@@ -277,6 +332,14 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
     by_sport: dict[str, list[ParsedEvent]] = {}
     for event in events:
         by_sport.setdefault(event.sport_key, []).append(event)
+    # 事件 1:1 不可复用：同刻多场（如两场意甲同 16:30 开球）时，
+    # 已被其他 fixture 占用的事件不能再作为候选（否则别名映射会被污染）。
+    used_events = {
+        str(row["odds_api_event_id"])
+        for row in conn.execute(
+            "SELECT odds_api_event_id FROM fixtures WHERE odds_api_event_id IS NOT NULL"
+        ).fetchall()
+    }
     for row in rows:
         sport_key = str(row["odds_api_sport_key"])
         is_tier1 = row["tier"] == "tier1"
@@ -284,17 +347,20 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
             report.tier1_total += 1
         kickoff = datetime.fromisoformat(str(row["kickoff_utc"]))
         window = timedelta(minutes=JOIN_WINDOW_MINUTES)
-        candidates = [
-            event
-            for event in by_sport.get(sport_key, [])
-            if abs(_event_commence_utc(event) - kickoff) <= window
-        ]
+        candidates = sorted(
+            (
+                event
+                for event in by_sport.get(sport_key, [])
+                if abs(_event_commence_utc(event) - kickoff) <= window
+                and event.event_id not in used_events
+            ),
+            key=lambda e: abs(_event_commence_utc(e) - kickoff),
+        )
         if not candidates:
             report.unmatched.append(
                 {"fixture_id": str(row["id"]), "reason": "no_event_in_window"}
             )
             continue
-        candidates.sort(key=lambda e: abs(_event_commence_utc(e) - kickoff))
         best = candidates[0]
         ambiguous = len(candidates) > 1 and _event_commence_utc(
             candidates[1]
@@ -308,6 +374,19 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
         fx_store.set_odds_api_join(
             conn, int(row["id"]), best.event_id, sport_key, "time_window"
         )
+        used_events.add(best.event_id)
+        # join 时同步持久化事件英文名（训练域↔预测域对齐输入，票 25）
+        for team_id, alias in (
+            (int(row["home_team_id"]), best.home_team),
+            (int(row["away_team_id"]), best.away_team),
+        ):
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+                VALUES (?, 'odds_api', ?)
+                """,
+                (team_id, alias),
+            )
         report.joined += 1
         if is_tier1:
             report.tier1_joined += 1
