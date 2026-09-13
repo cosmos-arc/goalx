@@ -1,7 +1,10 @@
 """
 goalx 命令行入口：迁移与一次性采集/训练/预测任务。
 
-日常定时采集走 Prefect deployments；本 CLI 覆盖初始化与手工补跑：
+与 Prefect flows 对应的命令调用 goalx_backend.tasks 的同一实现（证据
+契约只有一份）；无 flow 对应的运维命令（回测/校准/报表）直接用
+task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始化与
+手工补跑：
 
     uv run python -m goalx_backend.cli migrate
     uv run python -m goalx_backend.cli ingest-jingcai
@@ -19,15 +22,13 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 from loguru import logger
 
+from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
-from goalx_backend.betting.settle import run_settlement
-from goalx_backend.config import get_settings
-from goalx_backend.data.ingest import fdhist, oddsapi, sporttery
-from goalx_backend.data.ingest.oddsapi import polite_client
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -35,8 +36,8 @@ from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.modelling import team_align
-from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
-from goalx_backend.modelling.forecast import generate_forecasts
+from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
+from goalx_backend.tasks import task_conn
 
 
 def _cmd_migrate() -> None:
@@ -48,59 +49,34 @@ def _cmd_migrate() -> None:
 
 
 def _cmd_ingest_jingcai() -> None:
-    """手动拉一次竞彩快照。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        with polite_client() as client:
-            stats = sporttery.capture_jingcai(
-                conn, settings, client, raw_root=settings.observations_dir
-            )
-        logger.info(
-            "matches={} snapshots={} dup={}",
-            stats.matches,
-            stats.snapshots,
-            stats.duplicate_snapshots,
-        )
-    finally:
-        conn.close()
+    """手动拉一次竞彩快照（与 flow 同一实现：证据落盘 + 入库）。"""
+    stats = tasks.jingcai_snapshot()
+    logger.info(
+        "matches={} snapshots={} dup={}",
+        stats.matches,
+        stats.snapshots,
+        stats.duplicate_snapshots,
+    )
 
 
 def _cmd_ingest_odds() -> None:
     """手动拉一次欧赔(走 credit 护栏)。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        with polite_client() as client:
-            stats = oddsapi.fetch_and_store_odds(
-                conn, settings, client, raw_root=settings.observations_dir
-            )
-        logger.info(
-            "events={} snapshots={} credits={} unmatched={}",
-            stats.events,
-            stats.snapshots,
-            stats.credits_used,
-            stats.unmatched,
-        )
-    finally:
-        conn.close()
+    stats = tasks.eu_odds_snapshot()
+    logger.info(
+        "events={} snapshots={} credits={} unmatched={}",
+        stats.events,
+        stats.snapshots,
+        stats.credits_used,
+        stats.unmatched,
+    )
 
 
 def _cmd_ingest_hist() -> None:
     """导入历史底座(五大三季)。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        with polite_client() as client:
-            stats = fdhist.import_history(conn, settings, client)
-        logger.info(
-            "rows={} written={} skipped={}", stats.rows, stats.written, stats.skipped
-        )
-    finally:
-        conn.close()
+    stats = tasks.fd_history_import()
+    logger.info(
+        "rows={} written={} skipped={}", stats.rows, stats.written, stats.skipped
+    )
 
 
 def _cmd_audit_ledger() -> None:
@@ -116,71 +92,36 @@ def _cmd_audit_ledger() -> None:
 
 def _cmd_settle() -> None:
     """手动结算批跑。"""
-    conn = connect()
-    try:
-        migrate(conn)
-        logger.info("settlement: {}", run_settlement(conn))
-    finally:
-        conn.close()
+    logger.info("settlement: {}", tasks.settlement_sweep())
 
 
 def _cmd_train_models(args: argparse.Namespace) -> None:
     """训练五大 DC 模型（基准 + bootstrap 工件落盘）。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        for competition in args.competitions:
-            run = train_competition(
-                conn,
-                competition,
-                models_dir=settings.models_dir,
-                half_life_days=args.half_life,
-                n_boot=args.bootstrap,
-                seed=settings.bootstrap_seed,
-            )
-            logger.info(
-                "trained {}: matches={} window={}~{} boots={}",
-                competition,
-                run.base.n_matches,
-                run.base.train_window_start,
-                run.base.train_window_end,
-                len(run.bootstrap),
-            )
-    finally:
-        conn.close()
+    matches = tasks.weekly_train(
+        tuple(args.competitions),
+        half_life_days=args.half_life,
+        n_boot=args.bootstrap,
+    )
+    for competition, n_matches in matches.items():
+        logger.info("trained {}: matches={}", competition, n_matches)
 
 
 def _cmd_forecast(args: argparse.Namespace) -> None:
     """对一个业务日生成 ML Forecast（幂等）。"""
-    settings = get_settings()
-    cst = timezone(timedelta(hours=8))
-    business_date = args.date or datetime.now(UTC).astimezone(cst).strftime("%Y-%m-%d")
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        stats = generate_forecasts(
-            conn,
-            business_date=business_date,
-            models_dir=str(settings.models_dir),
-        )
-        logger.info(
-            "forecasts for {}: generated={} dup={} skipped={}",
-            business_date,
-            stats.generated,
-            stats.duplicates,
-            stats.skipped,
-        )
-    finally:
-        conn.close()
+    business_date = args.date or fx_store.beijing_business_date()
+    stats = tasks.forecast_daily(business_date)
+    logger.info(
+        "forecasts for {}: generated={} dup={} skipped={}",
+        business_date,
+        stats["generated"],
+        stats["duplicates"],
+        stats["skipped"],
+    )
 
 
 def _cmd_backtest(args: argparse.Namespace) -> None:
     """跑一次回测（walk-forward）+ 指标分层汇总。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         haircut, source, n = hc.calibrated_haircut(conn)
         if args.haircut != "auto":
             haircut, source = args.haircut, "cli"
@@ -204,16 +145,11 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             result.profit,
             result.roi,
         )
-    finally:
-        conn.close()
 
 
 def _cmd_baseline_compare() -> None:
     """基准分期质检报告 + psc/avgc 对照新 run(旧 run 保留,票 34)。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         sys.stdout.write(
             json.dumps(
                 baseline.baseline_quality_report(conn), ensure_ascii=False, indent=2
@@ -229,75 +165,47 @@ def _cmd_baseline_compare() -> None:
         for source, summary in results.items():
             ev.compute_run_metrics(conn, int(summary["run_id"]))
             logger.info("baseline {} run={}", source, summary)
-    finally:
-        conn.close()
 
 
 def _cmd_calibrate_haircut() -> None:
     """竞彩 vs 欧共识配对样本 → haircut 分布校准。"""
-    conn = connect()
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         for row in hc.calibrate_haircuts(conn):
             logger.info("{}", row)
-    finally:
-        conn.close()
 
 
 def _cmd_closing_snapshot() -> None:
     """收盘窗口尽力快照（kickoff 前 35 分钟内的场次）。"""
-    settings = get_settings()
-    conn = connect(settings.db_path)
-    try:
-        migrate(conn)
-        with polite_client() as client:
-            stats = oddsapi.fetch_closing_window(
-                conn,
-                settings,
-                client,
-                raw_root=settings.observations_dir,
-            )
-        logger.info(
-            "closing: events={} snapshots={} credits={}",
-            stats.events,
-            stats.snapshots,
-            stats.credits_used,
-        )
-    finally:
-        conn.close()
+    stats = tasks.eu_odds_closing()
+    logger.info(
+        "closing: events={} snapshots={} credits={}",
+        stats.events,
+        stats.snapshots,
+        stats.credits_used,
+    )
 
 
 def _cmd_clv_reconcile() -> None:
     """已结算注单 CLV 对账 + 报表。"""
-    conn = connect()
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         stats = clv_mod.reconcile_clv(conn)
         logger.info("recorded={} skipped={}", stats.recorded, len(stats.skipped))
         logger.info("report: {}", clv_mod.clv_report(conn))
-    finally:
-        conn.close()
 
 
 def _cmd_set_alias(args: argparse.Namespace) -> None:
     """人工覆盖：给 canonical 球队追加 manual 别名（即时生效，票 25）。"""
-    conn = connect()
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         try:
             team_align.set_manual_alias(conn, args.team, args.alias)
         except LookupError as exc:
             raise SystemExit(str(exc)) from exc
         logger.info("alias set: {} -> {}", args.alias, args.team)
-    finally:
-        conn.close()
 
 
 def _cmd_align_report() -> None:
     """五大 hist 队名对当前别名的覆盖率报告。"""
-    conn = connect()
-    try:
-        migrate(conn)
+    with task_conn() as conn:
         report = team_align.build_alignment_report(conn)
         for competition, item in sorted(report.per_competition.items()):
             logger.info(
@@ -306,8 +214,6 @@ def _cmd_align_report() -> None:
         logger.info("overall coverage: {:.1%}", report.coverage)
         if report.unmatched:
             logger.warning("unmatched: {}", report.unmatched)
-    finally:
-        conn.close()
 
 
 def build_parser() -> argparse.ArgumentParser:

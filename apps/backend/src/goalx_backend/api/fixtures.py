@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data.fixtures import beijing_business_date
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
     DEFAULT_PAIR_GAP_SECONDS,
@@ -20,13 +21,7 @@ from goalx_backend.data.today import TodayFixtureView, build_today_view
 
 router = APIRouter(prefix="/api/v1/fixtures", tags=["fixtures"])
 
-CST = timezone(timedelta(hours=8))  # businessDate 为北京日期(spec §3 坑位备忘)
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
-
-
-def _today_business_date() -> str:
-    """北京时间今天的销售日。"""
-    return datetime.now(UTC).astimezone(CST).strftime("%Y-%m-%d")
 
 
 @router.get(
@@ -39,7 +34,7 @@ async def get_today_fixtures(
     date: Annotated[str | None, Query(description="业务日(北京日期, 默认今天)")] = None,
 ) -> list[TodayFixtureView]:
     """竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。"""
-    return build_today_view(db, date or _today_business_date())
+    return build_today_view(db, date or beijing_business_date())
 
 
 class OddsSnapshotView(BaseModel):

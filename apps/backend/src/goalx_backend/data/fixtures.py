@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
@@ -14,6 +15,13 @@ from goalx_backend.models import (
     SnapshotInput,
     Tier,
 )
+
+CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
+
+
+def beijing_business_date(now: datetime | None = None) -> str:
+    """业务日 = 北京时区日历日（spec §3；全仓唯一出处）。"""
+    return (now or datetime.now(UTC)).astimezone(CST).strftime("%Y-%m-%d")
 
 
 def _lookup_id(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> int:
