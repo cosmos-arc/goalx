@@ -26,3 +26,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 goalx_backend = ["py.typed"]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+]

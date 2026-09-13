@@ -37,12 +37,13 @@ tasks:
       - bun install --frozen-lockfile --registry=https://registry.npmjs.org {{.CLI_ARGS}}
 
   lint:
-    desc: Ruff lint
+    desc: Ruff lint + import 分层契约(ADR-0008)
     preconditions:
       - sh: 'test -f "{{.VENV_PYTHON}}"'
         msg: Python environment is missing; run task python-install explicitly.
     cmds:
       - uv run --no-sync ruff check . {{.CLI_ARGS}}
+      - uv run --no-sync lint-imports {{.CLI_ARGS}}
 
   fmt:
     desc: Ruff format (write)

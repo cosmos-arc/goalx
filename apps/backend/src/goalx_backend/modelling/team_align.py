@@ -247,3 +247,25 @@ def set_manual_alias(conn: sqlite3.Connection, team: str, alias: str) -> None:
         (int(row["id"]), alias),
     )
     conn.commit()
+
+
+def odds_api_aliases_for_team(conn: sqlite3.Connection, team_id: int) -> set[str]:
+    """该 canonical 队已知的 Odds API 侧英文名集合（join 匹配用）。"""
+    return {
+        str(row["alias"])
+        for row in conn.execute(
+            "SELECT alias FROM team_aliases WHERE team_id = ? AND source = 'odds_api'",
+            (team_id,),
+        )
+    }
+
+
+def record_odds_api_alias(conn: sqlite3.Connection, team_id: int, alias: str) -> None:
+    """Join 命中时回填一条 Odds API 别名（幂等）。"""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+        VALUES (?, 'odds_api', ?)
+        """,
+        (team_id, alias),
+    )

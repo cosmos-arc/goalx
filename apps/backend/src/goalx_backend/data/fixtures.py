@@ -85,29 +85,6 @@ ON
     )
 
 
-def upsert_team_alias(
-    conn: sqlite3.Connection, team_id: int, source: str, alias: str
-) -> None:
-    """Persist an external-name mapping for a team (idempotent)."""
-    conn.execute(
-        """
-            INSERT INTO team_aliases (team_id, source, alias) VALUES (?, ?, ?)
-ON
-            CONFLICT(source, alias) DO NOTHING
-        """,
-        (team_id, source, alias),
-    )
-
-
-def resolve_team(conn: sqlite3.Connection, source: str, alias: str) -> int | None:
-    """Find the canonical team id behind an external alias, if mapped."""
-    row = conn.execute(
-        "SELECT team_id FROM team_aliases WHERE source = ? AND alias = ?",
-        (source, alias),
-    ).fetchone()
-    return int(row["team_id"]) if row is not None else None
-
-
 def upsert_fixture(
     conn: sqlite3.Connection,
     competition_id: int,

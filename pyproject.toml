@@ -257,6 +257,31 @@ addopts = [
 ]
 
 # ===================================================================
+# Importlinter (ADR-0008 方向执法；task lint 执行)
+# ===================================================================
+[tool.importlinter]
+root_package = "goalx_backend"
+
+[[tool.importlinter.contracts]]
+name = "领域分层（ADR-0008）：shared < data < modelling < betting < evaluation < ingest < api/tasks < main < cli/flows"
+type = "layers"
+layers = [
+    "goalx_backend.cli | goalx_backend.flows | goalx_backend.export_openapi",
+    "goalx_backend.main",
+    "goalx_backend.api | goalx_backend.tasks | goalx_backend.server",
+    # ingest 是采集用例编排（可用 modelling/betting/data；与 api/tasks 同级语义）
+    "goalx_backend.data.ingest",
+    "goalx_backend.evaluation",
+    "goalx_backend.betting",
+    "goalx_backend.modelling",
+    "goalx_backend.data.today",
+    "goalx_backend.data.results | goalx_backend.data.quote_evidence | goalx_backend.data.observations",
+    "goalx_backend.data.fixtures",
+    "goalx_backend.db | goalx_backend.settlement",
+    "goalx_backend.config | goalx_backend.markets | goalx_backend.odds_math | goalx_backend.models",
+]
+
+# ===================================================================
 # Coverage
 # ===================================================================
 [tool.coverage.run]

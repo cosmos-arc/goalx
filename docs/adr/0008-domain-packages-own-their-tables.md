@@ -24,3 +24,15 @@ odds_snapshots。两条约定都付了成本，哪条都无法在 review 中执�
 
 不选"反向做大 store/"：评估簇的 SQL 与回放循环交织，抽到仓储层只会产生
 浅模块。本裁决与 ADR-0003（SQLite 单机）正交，不改变存储选型。
+
+## 执法（2026-09-13 补）
+
+- **方向**：importlinter 分层契约（`task lint` / CI）。
+  `data.ingest` 是采集用例编排，与 api/tasks 同级——可调
+  modelling/betting/data，因此 `ingest/results → betting.settle`（事务
+  耦合）是合法分层而非例外。
+- **表归属**：`test_sql_ownership.py` 扫全部 SQL 字符串字面量，表名必须
+  登记在归属包；新表落地时同步登记 OWNERS。
+- 顺带裁决：`team_aliases` 归 modelling（对齐域）；data 侧死代码
+  `upsert_team_alias`/`resolve_team` 删除，oddsapi 的别名读写改走
+  team_align。
