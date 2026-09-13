@@ -77,6 +77,10 @@ _Avoid_: Value（泛）
 一个选项组合及其金额的记录，可以是未锁定建议、正式锁定纸面或实际购买。仅实际购买的真金记录影响 Bankroll；纸面锁定不代表发生了购买。
 _Avoid_: Order, Wager
 
+**DecisionKey**:
+一注的冻结决策身份：mode + 选项组合与锁定赔率 + 锁定时点（不含金额）。同身份的重试/拆分金额注在验证分母与 CLV 报表中只计一次；全仓唯一公式在 betting 包。
+_Avoid_: 去重键（口语）
+
 **BetLeg**:
 串关投注中的一腿：引用一个 Selection 及下注时锁定的 OddsSnapshot。
 _Avoid_: Pick
