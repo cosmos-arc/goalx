@@ -122,12 +122,16 @@ jobs:
         run: task browser-install -- --with-deps
       - name: Playwright e2e
         run: task web-e2e
+      - name: Paper-loop e2e (isolated real API/DB)
+        run: task web-e2e-loop
       - name: Upload e2e evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: web-e2e-${{ github.run_id }}
-          path: apps/web/playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
           if-no-files-found: warn
           retention-days: 14
 

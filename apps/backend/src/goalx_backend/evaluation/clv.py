@@ -187,6 +187,16 @@ def _close_records(conn: sqlite3.Connection) -> dict[tuple[int, int], sqlite3.Ro
     return {(int(r["bet_id"]), int(r["fixture_id"])): r for r in rows}
 
 
+def closing_leg_counts(conn: sqlite3.Connection) -> dict[int, int]:
+    """
+    每注已有的 closing 记录腿数（复盘页缺 closing 标记，票 36）。
+
+    只有 reconcile_clv 跑过之后才有数据；缺失即诚实显示「缺 closing」。
+    """
+    rows = conn.execute("SELECT bet_id, COUNT(*) AS n FROM clv_records GROUP BY bet_id")
+    return {int(r["bet_id"]): int(r["n"]) for r in rows}
+
+
 def _collect_bets(conn: sqlite3.Connection) -> tuple[list[_BetView], dict[str, int]]:
     """
     已结算已购注 → 去重前的注级视图 + 分母统计（读取走 betting 共享口径）。

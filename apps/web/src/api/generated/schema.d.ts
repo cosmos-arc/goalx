@@ -152,14 +152,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 复盘列表(注级)
-         * @description 全部投注记录：结算状态、盈亏、未购标记。
+         * 复盘列表(注级; 含前瞻资格与 closing 完整性)
+         * @description 全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。
          */
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
         /**
-         * 建注(注级建议)
-         * @description 创建一注(paper/live；未购建议 purchased=false)。
+         * 建注(注级建议; 服务端校验 had 资格)
+         * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
          */
         post: operations["create_bet_api_v1_bets_post"];
         delete?: never;
@@ -182,8 +182,11 @@ export interface paths {
         get: operations["list_slips_api_v1_bet_slips_get"];
         put?: never;
         /**
-         * 票级回录
-         * @description 把勾选的建议注合成一张实际投注票并标记已购。
+         * 票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)
+         * @description 把勾选的建议注合成一张票并标记已购。
+         *
+         *     paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live
+         *     回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
          */
         post: operations["create_slip_api_v1_bet_slips_post"];
         delete?: never;
@@ -236,6 +239,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/draw-results/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 开奖导入影响预览(只读)
+         * @description 预览结果变化与受影响注的当前 vs 投影结算; 不落库、不冲正。
+         */
+        post: operations["preview_draw_results_api_v1_draw_results_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settlements/run": {
         parameters: {
             query?: never;
@@ -268,6 +291,26 @@ export interface paths {
          * @description Bankroll 余额与最近变动(仅 live 模式影响，ADR 0002)。
          */
         get: operations["get_bankroll_api_v1_bankroll_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/costs/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 期间成本摘要(金额/credits 分列)
+         * @description 已记账成本聚合; 未记录的成本不在内, 不视为总成本已覆盖。
+         */
+        get: operations["get_cost_summary_api_v1_costs_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -387,6 +430,48 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ActualLegOddsPayload
+         * @description 真实回录一腿的实际赔率。
+         */
+        ActualLegOddsPayload: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Odds */
+            odds: number;
+        };
+        /**
+         * ActualTermsPayload
+         * @description 一注的实际执行条款（结算按实际，建议快照保留）。
+         */
+        ActualTermsPayload: {
+            /** Stake */
+            stake: number;
+            /** Leg Odds */
+            leg_odds?: components["schemas"]["ActualLegOddsPayload"][];
+        };
+        /**
+         * AffectedBetPreviewView
+         * @description 预览里一注受影响注的当前 vs 投影结算。
+         */
+        AffectedBetPreviewView: {
+            /** Bet Id */
+            bet_id: number;
+            /** Mode */
+            mode: string;
+            /** Purchased */
+            purchased: boolean;
+            /** Status Current */
+            status_current: string;
+            /** Payout Current */
+            payout_current: number | null;
+            /** Status Projected */
+            status_projected: string;
+            /** Payout Projected */
+            payout_projected: number | null;
+            /** Delta Payout */
+            delta_payout: number | null;
+        };
+        /**
          * BacktestRunDetailView
          * @description run 详情：分层指标（overall/联赛/赛季/玩法）。
          */
@@ -480,6 +565,8 @@ export interface components {
             stake: number;
             /** Legs */
             legs: components["schemas"]["LegPayload"][];
+            /** Strategy Version */
+            strategy_version?: string | null;
         };
         /**
          * BetLegView
@@ -494,6 +581,8 @@ export interface components {
             selection_code: string;
             /** Locked Odds */
             locked_odds: number;
+            /** Actual Odds */
+            actual_odds?: number | null;
             /** Goal Line */
             goal_line?: number | null;
         };
@@ -503,6 +592,18 @@ export interface components {
          * @enum {string}
          */
         BetMode: "paper" | "live";
+        /**
+         * BetReviewView
+         * @description 复盘资格摘要（票 36）：前瞻纳入/排除原因与 closing 完整性。
+         */
+        BetReviewView: {
+            /** Locked Pre Kickoff */
+            locked_pre_kickoff?: boolean | null;
+            /** Closing Present */
+            closing_present?: boolean | null;
+            /** Forward */
+            forward: string;
+        };
         /**
          * BetView
          * @description 一注的复盘视图。
@@ -520,8 +621,14 @@ export interface components {
             purchased: boolean;
             /** Stake */
             stake: number;
+            /** Actual Stake */
+            actual_stake?: number | null;
+            /** Strategy Version */
+            strategy_version?: string | null;
             /** Placed At */
             placed_at: string | null;
+            /** Locked At */
+            locked_at?: string | null;
             /** Created At */
             created_at: string;
             /** Status */
@@ -534,6 +641,7 @@ export interface components {
             settled_at: string | null;
             /** Legs */
             legs: components["schemas"]["BetLegView"][];
+            review?: components["schemas"]["BetReviewView"] | null;
         };
         /**
          * ConditionProgress
@@ -550,6 +658,52 @@ export interface components {
             current: string;
             /** Target */
             target: string;
+        };
+        /**
+         * CostItemView
+         * @description 一类已记账成本。
+         */
+        CostItemView: {
+            /** Category */
+            category: string;
+            /** Units */
+            units: number;
+            /** Amount Cny */
+            amount_cny: number;
+            /** Entries */
+            entries: number;
+        };
+        /**
+         * CostSummaryView
+         * @description 期间成本摘要(金额与 credits 分列；仅统计已记账成本)。
+         */
+        CostSummaryView: {
+            /** Since */
+            since?: string | null;
+            /** Total Cny */
+            total_cny: number;
+            /** Credits Used */
+            credits_used: number;
+            /** Items */
+            items: components["schemas"]["CostItemView"][];
+        };
+        /**
+         * DrawResultChangeView
+         * @description 预览里一条结果变化。
+         */
+        DrawResultChangeView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Is Correction */
+            is_correction: boolean;
+            /** Previous */
+            previous?: {
+                [key: string]: unknown;
+            } | null;
+            /** Replacement */
+            replacement: {
+                [key: string]: unknown;
+            };
         };
         /**
          * DrawResultImport
@@ -592,6 +746,16 @@ export interface components {
             correction_reason?: string | null;
         };
         /**
+         * DrawResultPreviewResponse
+         * @description 开奖导入影响预览(只读；导入才执行重算与冲正)。
+         */
+        DrawResultPreviewResponse: {
+            /** Results */
+            results: components["schemas"]["DrawResultChangeView"][];
+            /** Affected Bets */
+            affected_bets: components["schemas"]["AffectedBetPreviewView"][];
+        };
+        /**
          * DrawResultView
          * @description 一条开奖结果。
          */
@@ -625,6 +789,29 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HadQuoteStatus
+         * @description 今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。
+         */
+        HadQuoteStatus: {
+            /** As Of */
+            as_of: string;
+            /** Status */
+            status: string;
+            /** Reasons */
+            reasons?: string[];
+            /** Sale State */
+            sale_state?: string | null;
+            /** Single Eligible */
+            single_eligible?: boolean | null;
+            /** Jc Source Updated At */
+            jc_source_updated_at?: string | null;
+            /**
+             * Eu Books
+             * @default 0
+             */
+            eu_books: number;
         };
         /**
          * HadQuoteVerdictView
@@ -805,13 +992,17 @@ export interface components {
         };
         /**
          * SlipCreate
-         * @description 票级回录输入：勾选实际购买的建议注子集。
+         * @description 票级回录输入：勾选实际购买的建议注子集；live 可附实际条款。
          */
         SlipCreate: {
             /** Bet Ids */
             bet_ids: number[];
             /** Placed At */
             placed_at?: string | null;
+            /** Actuals */
+            actuals?: {
+                [key: string]: components["schemas"]["ActualTermsPayload"];
+            };
         };
         /**
          * SlipView
@@ -848,7 +1039,7 @@ export interface components {
         };
         /**
          * TodayFixtureView
-         * @description 今日页一行：竞彩 vs 欧洲共识对照（票 22）。
+         * @description 今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。
          */
         TodayFixtureView: {
             /** Fixture Id */
@@ -881,6 +1072,7 @@ export interface components {
             ev?: components["schemas"]["SelectionTriple"] | null;
             /** Flags */
             flags?: string[];
+            had_quote?: components["schemas"]["HadQuoteStatus"] | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1221,7 +1413,7 @@ export interface operations {
                     "application/json": components["schemas"]["BetView"];
                 };
             };
-            /** @description 非法串关(同场多腿) */
+            /** @description 非法串关(同场多腿)或 had 资格不满足(停售/已开赛/非单固) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1281,7 +1473,7 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
-            /** @description mode 混用 */
+            /** @description mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1424,6 +1616,46 @@ export interface operations {
             };
         };
     };
+    preview_draw_results_api_v1_draw_results_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawResultImport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawResultPreviewResponse"];
+                };
+            };
+            /** @description 比赛不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_settlements_api_v1_settlements_run_post: {
         parameters: {
             query?: never;
@@ -1467,6 +1699,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BankrollResponse"];
+                };
+            };
+        };
+    };
+    get_cost_summary_api_v1_costs_summary_get: {
+        parameters: {
+            query?: {
+                /** @description 期间起点(UTC ISO); 默认全部已记账 */
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostSummaryView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

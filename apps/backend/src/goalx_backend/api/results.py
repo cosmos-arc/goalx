@@ -1,16 +1,16 @@
-"""事实与结算 API：开奖导入、结算批跑、bankroll(票 23)。"""
+"""事实与结算 API：开奖导入、影响预览、结算批跑、bankroll 与成本摘要(票 23/36)。"""
 
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
-from goalx_backend.betting.settle import run_settlement
+from goalx_backend.betting.settle import preview_draw_result_change, run_settlement
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest.results import import_draw_results
@@ -61,6 +61,53 @@ class ImportResultView(BaseModel):
     imported: int
 
 
+class DrawResultChangeView(BaseModel):
+    """预览里一条结果变化。"""
+
+    fixture_id: int
+    is_correction: bool
+    previous: dict[str, Any] | None = None
+    replacement: dict[str, Any]
+
+
+class AffectedBetPreviewView(BaseModel):
+    """预览里一注受影响注的当前 vs 投影结算。"""
+
+    bet_id: int
+    mode: str
+    purchased: bool
+    status_current: str
+    payout_current: float | None
+    status_projected: str
+    payout_projected: float | None
+    delta_payout: float | None
+
+
+class DrawResultPreviewResponse(BaseModel):
+    """开奖导入影响预览(只读；导入才执行重算与冲正)。"""
+
+    results: list[DrawResultChangeView]
+    affected_bets: list[AffectedBetPreviewView]
+
+
+class CostItemView(BaseModel):
+    """一类已记账成本。"""
+
+    category: str
+    units: float
+    amount_cny: float
+    entries: int
+
+
+class CostSummaryView(BaseModel):
+    """期间成本摘要(金额与 credits 分列；仅统计已记账成本)。"""
+
+    since: str | None = None
+    total_cny: float
+    credits_used: float
+    items: list[CostItemView]
+
+
 class SettlementRunResponse(BaseModel):
     """结算批跑统计。"""
 
@@ -108,26 +155,71 @@ async def create_draw_results(payload: DrawResultImport, db: DbDep) -> ImportRes
             )
     try:
         imported = import_draw_results(
-            db,
-            [
-                DrawResultInput(
-                    fixture_id=item.fixture_id,
-                    home_goals=item.home_goals,
-                    away_goals=item.away_goals,
-                    half_home_goals=item.half_home_goals,
-                    half_away_goals=item.half_away_goals,
-                    void=item.void,
-                    void_reason=item.void_reason,
-                    source=payload.source,
-                    published_at=item.published_at,
-                    correction_reason=item.correction_reason,
-                )
-                for item in payload.results
-            ],
+            db, [_to_input(item, payload.source) for item in payload.results]
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ImportResultView(imported=imported)
+
+
+def _to_input(item: DrawResultPayload, source: str) -> DrawResultInput:
+    """API 载荷 → 仓储输入。"""
+    return DrawResultInput(
+        fixture_id=item.fixture_id,
+        home_goals=item.home_goals,
+        away_goals=item.away_goals,
+        half_home_goals=item.half_home_goals,
+        half_away_goals=item.half_away_goals,
+        void=item.void,
+        void_reason=item.void_reason,
+        source=source,
+        published_at=item.published_at,
+        correction_reason=item.correction_reason,
+    )
+
+
+@router.post(
+    "/api/v1/draw-results/preview",
+    summary="开奖导入影响预览(只读)",
+    response_model=DrawResultPreviewResponse,
+    responses={404: {"description": "比赛不存在"}},
+)
+async def preview_draw_results(
+    payload: DrawResultImport, db: DbDep
+) -> DrawResultPreviewResponse:
+    """预览结果变化与受影响注的当前 vs 投影结算; 不落库、不冲正。"""
+    for item in payload.results:
+        if fx_store.get_fixture(db, item.fixture_id) is None:
+            raise HTTPException(
+                status_code=404, detail=f"fixture {item.fixture_id} not found"
+            )
+    preview = preview_draw_result_change(
+        db, [_to_input(item, payload.source) for item in payload.results]
+    )
+    return DrawResultPreviewResponse(
+        results=[
+            DrawResultChangeView(
+                fixture_id=change.fixture_id,
+                is_correction=change.is_correction,
+                previous=change.previous,
+                replacement=change.replacement,
+            )
+            for change in preview.results
+        ],
+        affected_bets=[
+            AffectedBetPreviewView(
+                bet_id=bet.bet_id,
+                mode=bet.mode,
+                purchased=bet.purchased,
+                status_current=bet.status_current,
+                payout_current=bet.payout_current,
+                status_projected=bet.status_projected,
+                payout_projected=bet.payout_projected,
+                delta_payout=bet.delta_payout,
+            )
+            for bet in preview.affected_bets
+        ],
+    )
 
 
 @router.get(
@@ -190,3 +282,36 @@ async def get_bankroll(db: DbDep) -> BankrollResponse:
         for row in bt_store.list_bankroll_events(db)
     ]
     return BankrollResponse(balance=bt_store.bankroll_balance(db), events=events)
+
+
+@router.get(
+    "/api/v1/costs/summary",
+    summary="期间成本摘要(金额/credits 分列)",
+    response_model=CostSummaryView,
+)
+async def get_cost_summary(
+    db: DbDep,
+    since: Annotated[
+        str | None, Query(description="期间起点(UTC ISO); 默认全部已记账")
+    ] = None,
+) -> CostSummaryView:
+    """已记账成本聚合; 未记录的成本不在内, 不视为总成本已覆盖。"""
+    rows = rs_store.cost_summary(db, since)
+    items = [
+        CostItemView(
+            category=str(row["category"]),
+            units=float(row["units"] or 0),
+            amount_cny=float(row["amount_cny"] or 0),
+            entries=int(row["entries"]),
+        )
+        for row in rows
+    ]
+    credits_total = next(
+        (item.units for item in items if item.category == "odds_api_credit"), 0.0
+    )
+    return CostSummaryView(
+        since=since,
+        total_cny=round(sum(item.amount_cny for item in items), 2),
+        credits_used=credits_total,
+        items=items,
+    )
