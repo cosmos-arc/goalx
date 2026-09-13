@@ -280,3 +280,95 @@ def test_manual_join_endpoint(api_client: TestClient) -> None:
         ).status_code
         == 404
     )
+
+
+def test_live_purchase_correction_and_counterfactual_exclusion(
+    api_client: TestClient,
+) -> None:
+    fixture = _fixture_id(api_client)
+    draft = {
+        "mode": "live",
+        "stake": 10,
+        "legs": [
+            {
+                "fixture_id": fixture,
+                "market_code": "had",
+                "selection_code": "h",
+                "locked_odds": 2,
+            }
+        ],
+    }
+    purchased = api_client.post("/api/v1/bets", json=draft).json()["id"]
+    api_client.post("/api/v1/bets", json=draft)  # unpurchased counterfactual
+    assert (
+        api_client.post(
+            "/api/v1/bet-slips", json={"bet_ids": [purchased, purchased]}
+        ).status_code
+        == 400
+    )
+    assert api_client.get("/api/v1/bankroll").json()["events"] == []
+    assert (
+        api_client.post("/api/v1/bet-slips", json={"bet_ids": [purchased]}).status_code
+        == 201
+    )
+    assert (
+        api_client.post("/api/v1/bet-slips", json={"bet_ids": [purchased]}).status_code
+        == 400
+    )
+    assert api_client.get("/api/v1/bankroll").json()["balance"] == -10
+    result = {"fixture_id": fixture, "home_goals": 2, "away_goals": 0}
+    assert (
+        api_client.post("/api/v1/draw-results", json={"results": [result]}).status_code
+        == 201
+    )
+    assert api_client.post("/api/v1/settlements/run").status_code == 200
+    assert api_client.get("/api/v1/bankroll").json()["balance"] == 10
+    progress = api_client.get("/api/v1/validation/progress").json()
+    assert progress["settled_bets"] == 1
+    assert len(progress["yield_curve"]) == 1
+    correction = {**result, "home_goals": 0, "away_goals": 2}
+    assert (
+        api_client.post(
+            "/api/v1/draw-results", json={"results": [correction]}
+        ).status_code
+        == 400
+    )
+    assert api_client.get("/api/v1/bankroll").json()["balance"] == 10
+    correction["correction_reason"] = "official corrected result"
+    for _ in range(2):
+        assert (
+            api_client.post(
+                "/api/v1/draw-results", json={"results": [correction]}
+            ).status_code
+            == 201
+        )
+    bank = api_client.get("/api/v1/bankroll").json()
+    assert bank["balance"] == -10
+    assert len(bank["events"]) == 3
+    assert bank["events"][0]["note"].startswith("draw_result_revisions:")
+
+
+def test_live_pool_rejected_and_invalid_bet_rolled_back(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/v1/pool-slips",
+        json={"mode": "live", "picks": [{"match_seq": 1, "selection_code": "3"}]},
+    )
+    assert response.status_code == 400
+    assert api_client.get("/api/v1/bet-slips").json() == []
+    response = api_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "live",
+            "stake": 10,
+            "legs": [
+                {
+                    "fixture_id": 999,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 2,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert api_client.get("/api/v1/bets").json() == []

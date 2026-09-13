@@ -1,6 +1,22 @@
 # goalx
 
-FastAPI backend + React web monorepo. 技术栈骨架沿用 ditto，剥离量化/业务依赖。
+个人大陆足彩分析与记录系统，FastAPI backend + React web monorepo；本地运行、人工下单。
+
+## 当前状态与下一阶段（2026-09-13）
+
+M1/M2已实现数据采集、DC模型、合成报价回测与部分页面/API；结算与资金生命周期纠偏已实现并通过本地全量门禁。验证统计、赛前证据、浏览器纸面全流程与持续运行仍未验收。当前阶段为**可信纸面闭环**：
+
+1. 结算规则与资金生命周期纠偏已实现：无效腿、已购约束、事务回录、更正冲正及只读旧账核查；
+2. 修正验证统计与赛前证据边界；
+3. 补齐报价观测、匹配与可购买状态；
+4. 完成had纸面用户闭环；
+5. 验收至少3个有目标比赛的销售日及真实纸面/收盘对账，报告成本与缺失。
+
+保留现有技术栈与had-only范围；完整LLM融合、奖池优化、其他玩法、新框架和订阅暂缓。
+代码/CI通过不替代真实使用证据；短期运行不替代整赛季及既定纸面通过条件。
+按本仓库约定，详细计划和实施票保存在gitignored的本地
+`.scratch/goalx-quant/spec.md` 与 `issues/33-37` 文件中；新克隆不会包含这些本地票。
+以下命令是组件运行入口，不代表纸面验证或持续运行已经验收。
 
 ## Stack
 
@@ -46,7 +62,7 @@ M1 = 记录复盘工具：竞彩采集 → 欧赔对照 → 投注建议/回录 
 ### 一次性初始化
 
 ```bash
-task db-migrate        # 建 schema（v1：六域 25 表）
+task db-migrate        # 建/升级 schema（当前 v4 含更正审计表）
 task ingest-hist       # 五大 2023-26 三季回测底座（~5,257 行，幂等可重跑）
 ```
 
@@ -66,19 +82,40 @@ uv run prefect deploy goalx_backend.flows:jingcai-snapshot   # 后续按需设 c
 
 flows：`jingcai-snapshot` / `eu-odds-snapshot` / `fd-history-import` / `settlement-sweep`。
 
-### 纸面闭环（票 23 验收路径）
+### 纸面流程（目标与当前缺口）
 
 1. 今日页（`task dev` → `/`）：竞彩 vs 欧洲共识（Shin 去晦）、EV、books、调盘时点；
-2. 投注页（`/bets`）：建注建议 → 勾选实际购买子集做票级回录；
+2. 当前建注仅有API，今日/投注页建建议入口待补；投注页（`/bets`）可勾选已有建议回录；
 3. 赛后：投注页导入官方比分（DrawResult，唯一事实源）→「结算批跑」；
-4. 复盘列表展示状态/盈亏；资金页（`/bankroll`）只受真金（live）影响。
+4. 复盘列表展示状态/盈亏；资金页（`/bankroll`）仅受已购live影响；重复回录拒绝，更正保留历史并按兑付差额冲正。
 
-结算口径（研究 01/票 06）：单关退款、串关无效腿赔率按 1、去除后不足 2 关整单退款、
-任9 复式按组合逐个判定。
+正确口径：单关无效退款；串关无效腿赔率按1，其余腿按原报价与赛果计奖，
+2串1剩一腿继续计奖，全无效才整单退款。相关引擎与回归已修正。
+奖池奖金未实现：live池票API拒绝，paper组合草稿保持待结算，不保存0元已完成。
+[无效场次官方说明](https://www.gdlottery.cn/html/ticaidongtai/20240108/89644.html)。
 
 ### 手工补跑
 
-`task settle`（结算批跑）、`uv run python -m goalx_backend.cli --help`。
+`task settle`（结算批跑）、`task audit-ledger`（只读旧账与更正历史）、
+`uv run python -m goalx_backend.cli --help`。
+
+### 开奖更正与旧账核查
+
+已有库升级前先运行 `task audit-ledger` 保存核查结果，再按正常升级流程备份库并执行
+`task db-migrate`。v4只新增两个append-only审计表，不重算或改写旧资金流水。
+核查报告列出重复/缺失注金、未购兑付、票据绑定、余额和当前规则下结算差异；
+发现异常需凭真实票据人工处理，系统不自动补购、删账或修复。报告同时支持v3旧库。
+
+通过 `POST /api/v1/draw-results` 更正已有事实时，给对应结果项传入
+`correction_reason`；相同事实重试不会重复记账。旧新事实记录在
+`draw_result_revisions`，重算历史在 `settlement_revisions`；冲正流水的note关联更正ID，
+`task audit-ledger`可查询。结果更正、结算更新及差额流水在同一事务内完成。
+半场事实被撤回时，受影响Bet退回open并冲回旧兑付，Settlement以partial保留待核状态；
+补全后重新计奖。若旧账本身不一致则拒绝更正，避免顺带修复历史异常。
+当前页面尚未提供更正原因输入，先使用API；完整页面流程在后继票验收。
+
+未购建议可以保存反事实结果，但不进入正式收益曲线、已结注数或CLV。
+paper/live分别统计、注/腿分母、赛前时点与验证资格仍由后继票完善。
 
 ## M2 运行手册（ML 线 + 回测）
 
@@ -99,7 +136,7 @@ uv run python -m goalx_backend.cli train-models --bootstrap 50   # 五大 DC + b
 
 ```bash
 uv run python -m goalx_backend.cli forecast         # 每日：在售场次 ML Forecast（幂等，跳过清单入日志）
-uv run python -m goalx_backend.cli train-models     # 每周：重估工件（内容寻址，自动版本化）
+uv run python -m goalx_backend.cli train-models     # 重估工件；完整配置/依赖版本身份待修
 ```
 
 Prefect flows：`weekly-train` / `forecast-daily`（与 M1 采集 flows 并存）。
@@ -111,30 +148,36 @@ uv run python -m goalx_backend.cli calibrate-haircut   # 竞彩 vs 欧共识 →
 uv run python -m goalx_backend.cli backtest --label m2   # 三季 walk-forward（--haircut auto 用校准值）
 ```
 
-口径（ADR 0007 + 用户裁决 2026-09-13，含一处实现期偏离）：fair = Pinnacle
-收盘 Shin（AvgC 兜底）；模拟竞彩价 = fair × (1−haircut)；EV≥1.5% + 1/4
-Kelly（单注 1% 上限）；每周每联赛至多一笔 2串1；结算复用 Settlement 引擎；
-防前视断言常开。
+当前实现优先PSC、缺失用AvgC，经Shin得到市场概率p；模拟十进制赔率
+`O_sim=(1-haircut)/p`。EV≥1.5% + 1/4 Kelly（参考资金单注1%上限），
+每周每联赛至多一笔2串1，复用Settlement，训练窗防前视断言常开。
+这是合成报价模型实验，尚未重现真实销售资格、共同购买时点或动态资金纪律。
+[ADR 0007](docs/adr/0007-euro-close-proxy-backtest-baseline.md)已修订来源质量和使用边界，代码待对齐。
 
 **偏离记录（had-only）**：裁决原为模拟 had+hhad+ttg，但实现期实测发现
 1X2→比分矩阵反推（penaltyblog goal_expectancy）在总进球维度系统性欠分散
 （6,174 场对照：ttg 桶 5 隐含 7.1% vs 实际 9.1%；hhad 实际 33% < 隐含
 40%），由反推派生的 hhad/ttg 模拟价会制造假 edge。v1 回测只对 had 下注
-（定价直接来自 fair 1X2，无反推）；待真实 totals/handicap 报价接入后再
-启用另两玩法。三季基线结果：RPS skill −3.75%（DM p≈1e-18，市场显著更
-优）、flat ROI −25.3%（t=−8.6）——与文献共识一致，验证了「模型须先 ≥
-市场才谈下注」的通过线设计。
+（定价直接来自fair 1X2，无反推）。恢复其他玩法还需真实报价、同义结算映射
+与校准验证；国际totals/handicap接入本身不充分。
+
+2026-09-13旧run记录RPS skill约−3.75%、投入加权ROI约−25.33%，不能作为实盘或陈盘结果。
+football-data警告2025-07-23后Pinnacle报价陈旧；旧run中893条预测使用该时期PSC，
+需来源/分期对照。统计相关性、玩法重复计数亦待修，精确p值暂不作为可靠结论。
+[数据源质量说明](https://football-data.co.uk/data.php)。
 
 ### CLV 收盘窗口（票 32）
 
-部署 cron 在 kickoff −30/−10/−1min 附近触发（每 sport×market 记 1 credit；
-按当前在售规模 ~5 sport × 8 次/日 ≈ 40 credits/日，与日预算持平——建议只在
-有 Tier1 场次开球的日子开窗，或把日预算调到 60）：
+目标是在开球前窗口采样；当前CLI可手工运行，但可复现部署与真实窗口证据待验收。
+按一个region、5 sport × 8次/日估算约40 credits/日，月480只够约12天，
+且普通采集与收盘共享预算。应缩小目标赛事与窗口，不通过提高日限额绕过月限额。
 
 ```bash
 uv run python -m goalx_backend.cli closing-snapshot   # 窗口内(35min)场次 purpose=closing 快照
 uv run python -m goalx_backend.cli clv-reconcile      # 已结算注单 CLV 对账 + beat rate/回归报表
 ```
 
-CLV_proxy = Shin(收盘) − 1/竞彩买入价（概率域）；验证页三条件之一
-（≥200 注 beat≥60%）。
+CLV_proxy = p_close − 1/买入价（概率域）。当前实现按had腿计算多book共识，
+与完整票级验证不同；赛后窗口、样本分组和未知状态待修。正式200注须按唯一票级Bet，
+另列腿数/场次数，单关与2串1分开；缺失closing或复核不能显示通过。
+本轮不变更整赛季等长期要求，也不做真钱推荐放行。

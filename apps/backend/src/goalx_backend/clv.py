@@ -107,6 +107,7 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
         JOIN bet_legs l ON l.bet_id = b.id
         JOIN fixtures f ON f.id = l.fixture_id
         WHERE b.status IN ('won', 'lost', 'void') AND l.market_code = 'had'
+          AND b.purchased = 1
         """
     ).fetchall()
     for row in rows:
@@ -171,6 +172,7 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
         JOIN bets b ON b.id = r.bet_id
         JOIN fixtures f ON f.id = r.fixture_id
         JOIN competitions c ON c.id = f.competition_id
+        WHERE b.purchased = 1 AND b.status IN ('won', 'lost', 'void')
         """
     ).fetchall()
     buckets: dict[str, dict[str, float]] = {}

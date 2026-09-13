@@ -16,6 +16,7 @@ goalx 命令行入口：迁移与一次性采集/训练/预测任务。
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
@@ -33,6 +34,7 @@ from goalx_backend.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.forecast import generate_forecasts
 from goalx_backend.ingest import fdhist, oddsapi, sporttery
 from goalx_backend.ingest.oddsapi import polite_client
+from goalx_backend.ledger_audit import audit_ledger
 from goalx_backend.services import run_settlement
 
 
@@ -92,6 +94,17 @@ def _cmd_ingest_hist() -> None:
             stats = fdhist.import_history(conn, settings, client)
         logger.info(
             "rows={} written={} skipped={}", stats.rows, stats.written, stats.skipped
+        )
+    finally:
+        conn.close()
+
+
+def _cmd_audit_ledger() -> None:
+    """Read legacy balances and corrections without migration or ledger writes."""
+    conn = connect(readonly=True)
+    try:
+        sys.stdout.write(
+            json.dumps(audit_ledger(conn), ensure_ascii=False, indent=2) + "\n"
         )
     finally:
         conn.close()
@@ -279,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ingest-jingcai", help="手动拉一次竞彩快照")
     sub.add_parser("ingest-odds", help="手动拉一次欧赔(走 credit 护栏)")
     sub.add_parser("ingest-hist", help="导入五大三季历史底座")
+    sub.add_parser("audit-ledger", help="只读核查旧账与更正历史")
     sub.add_parser("settle", help="手动结算批跑")
     train = sub.add_parser("train-models", help="训练五大 DC 模型(票 26)")
     train.add_argument(
@@ -340,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-odds": _cmd_ingest_odds,
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
+        "audit-ledger": _cmd_audit_ledger,
         "train-models": lambda: _cmd_train_models(args),
         "forecast": lambda: _cmd_forecast(args),
         "align-report": _cmd_align_report,

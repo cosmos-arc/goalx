@@ -517,8 +517,40 @@ def _apply_v3(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _apply_v4(conn: sqlite3.Connection) -> None:
+    """Append-only correction evidence; existing results and ledger stay unchanged."""
+    conn.execute("""
+        CREATE TABLE draw_result_revisions (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            previous TEXT NOT NULL,
+            replacement TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK(length(trim(reason)) > 0),
+            recorded_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE settlement_revisions (
+            id INTEGER PRIMARY KEY,
+            settlement_id INTEGER NOT NULL REFERENCES settlements(id),
+            previous TEXT,
+            replacement TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+    """)
+    for table in ("draw_result_revisions", "settlement_revisions"):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(f"""
+                CREATE TRIGGER {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'revision history is append-only'); END
+            """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
     (3, _apply_v3),
+    (4, _apply_v4),
 )

@@ -306,9 +306,9 @@ def test_settlement_with_void_fixture(db: sqlite3.Connection) -> None:
     run_settlement(db)
     row = bt_store.get_bet(db, parlay)
     assert row is not None
-    # 2串1 去除无效腿后仅剩 1 关 → 整单退款
-    assert row["status"] == "void"
-    assert row["payout"] == 2.0
+    # 剩余有效腿赔率 6.5 命中。
+    assert row["status"] == "won"
+    assert row["payout"] == 13.0
     assert utc_now_iso()  # sanity
 
 
@@ -343,12 +343,12 @@ def test_pool_slip_settlement_flow(db: sqlite3.Connection) -> None:
         ],
     )
     stats = run_settlement(db)
-    assert stats["settled"] >= 1
+    assert stats["settled"] == 0
+    assert stats["still_open"] == 2
     settled = db.execute(
         "SELECT status, detail FROM settlements WHERE slip_id = ?", (slip,)
     ).fetchone()
-    assert settled is not None
-    assert settled["status"] == "won"  # 组合 {1:3, 2:0} 全中
+    assert settled is None  # 未实现奖金分配, 不得用 0 元标记已完成
 
 
 def test_record_purchase_errors(db: sqlite3.Connection) -> None:

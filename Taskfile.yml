@@ -227,6 +227,11 @@ tasks:
     cmds:
       - uv run --no-sync python -m goalx_backend.cli ingest-hist {{.CLI_ARGS}}
 
+  audit-ledger:
+    desc: Read-only legacy ledger and revision inspection (no migration)
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli audit-ledger {{.CLI_ARGS}}
+
   settle:
     desc: Run the settlement sweep over bets with draw results
     preconditions:

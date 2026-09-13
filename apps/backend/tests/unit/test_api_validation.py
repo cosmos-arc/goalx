@@ -67,8 +67,9 @@ def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
     ):
         bet = conn.execute(
             "INSERT INTO bets (mode, market_kind, stake, created_at, status,"
-            " profit, settled_at) VALUES ('paper','fixed',?, '2026-09-13T03:00:00"
-            "+00:00', ?, ?, '2026-09-13T04:00:00+00:00')",
+            " profit, settled_at, purchased) VALUES ('paper','fixed',?,"
+            " '2026-09-13T03:00:00"
+            "+00:00', ?, ?, '2026-09-13T04:00:00+00:00', 1)",
             (stake, status, profit),
         ).lastrowid
         conn.execute(

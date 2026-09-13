@@ -134,17 +134,16 @@ def test_parlay_void_leg_counts_odds_one() -> None:
     assert "void_legs_odds_1:1" in out.notes
 
 
-def test_two_leg_parlay_one_void_refunds() -> None:
+def test_two_leg_parlay_one_void_keeps_remaining_odds() -> None:
     results = {
         1: ResultFacts(home_goals=1, away_goals=0),
         2: ResultFacts(home_goals=0, away_goals=0, void=True),
     }
-    # 2 串 1 去除无效腿后仅剩 1 关 → 整单退款
+    # 2 串 1 无效腿按 1, 有效腿继续按原赔率计奖
     out = settle_fixed_bet(
         2.0, [leg(1, sel="h", odds=1.85), leg(2, sel="d", odds=3.2)], results
     )
-    assert (out.status, out.payout, out.profit) == ("void", 2.0, 0.0)
-    assert "parlay_below_two_legs_refund" in out.notes
+    assert (out.status, out.payout, out.profit) == ("won", 3.7, 1.7)
 
 
 def test_parlay_two_void_legs_full_refund() -> None:
@@ -154,7 +153,7 @@ def test_parlay_two_void_legs_full_refund() -> None:
     }
     out = settle_fixed_bet(2.0, [leg(1, sel="h"), leg(2, sel="d")], results)
     assert (out.status, out.payout, out.profit) == ("void", 2.0, 0.0)
-    assert "parlay_below_two_legs_refund" in out.notes
+    assert "all_void_refund" in out.notes
 
 
 def test_parlay_partial_void_miss_loses() -> None:

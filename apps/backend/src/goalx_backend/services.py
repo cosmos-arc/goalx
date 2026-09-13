@@ -8,7 +8,7 @@ import sqlite3
 from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
-from goalx_backend.db import utc_now_iso
+from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
     BetMode,
     BetStatus,
@@ -19,9 +19,9 @@ from goalx_backend.models import (
 from goalx_backend.settlement import (
     LegSpec,
     ResultFacts,
+    SettlementOutcome,
     detail_payload,
     settle_fixed_bet,
-    settle_pool_combination,
 )
 from goalx_backend.store import betting as bt_store
 from goalx_backend.store import fixtures as fx_store
@@ -120,8 +120,8 @@ class BetDraft(BaseModel):
     """一注建议/回录的输入（API 反序列化后）。"""
 
     mode: BetMode
-    stake: float
-    legs: list[LegInput]
+    stake: float = Field(gt=0, allow_inf_nan=False)
+    legs: list[LegInput] = Field(min_length=1)
 
 
 def create_bet_with_legs(conn: sqlite3.Connection, draft: BetDraft) -> int:
@@ -131,10 +131,10 @@ def create_bet_with_legs(conn: sqlite3.Connection, draft: BetDraft) -> int:
         if leg.fixture_id in seen:
             raise SameFixtureParlayError(f"fixture {leg.fixture_id} 重复出现在串关中")
         seen.add(leg.fixture_id)
-    bet = bt_store.create_bet(conn, draft.mode, MarketKind.FIXED, draft.stake)
-    for leg in draft.legs:
-        bt_store.add_leg(conn, bet, leg)
-    conn.commit()
+    with atomic(conn):
+        bet = bt_store.create_bet(conn, draft.mode, MarketKind.FIXED, draft.stake)
+        for leg in draft.legs:
+            bt_store.add_leg(conn, bet, leg)
     return bet
 
 
@@ -142,29 +142,49 @@ def record_purchase(
     conn: sqlite3.Connection, bet_ids: list[int], placed_at: str | None = None
 ) -> int:
     """票级回录：勾选实际购买子集，生成一张票；live 注扣减 bankroll。"""
-    at = placed_at or utc_now_iso()
-    bets: list[sqlite3.Row] = []
-    for bet_id in bet_ids:
-        bet = bt_store.get_bet(conn, bet_id)
-        if bet is None:
-            raise LookupError(f"bet {bet_id} 不存在")
-        bets.append(bet)
-    modes = {str(bet["mode"]) for bet in bets}
-    if len(modes) != 1:
-        raise ValueError("一张票内 mode 必须一致")
-    mode = BetMode(modes.pop())
-    slip = bt_store.create_slip(conn, mode, placed_at=at)
-    bt_store.attach_bets_to_slip(conn, slip, bet_ids, at)
-    if mode is BetMode.LIVE:
-        for bet in bets:
-            bt_store.record_bankroll_event(
-                conn,
-                "bet_stake",
-                -float(bet["stake"]),
-                bet_id=int(bet["id"]),
-                note=f"slip {slip}",
-            )
-    conn.commit()
+    if not bet_ids or len(set(bet_ids)) != len(bet_ids):
+        raise ValueError("bet_ids 必须非空且不能重复")
+    with atomic(conn):
+        at = placed_at or utc_now_iso()
+        bets: list[sqlite3.Row] = []
+        for bet_id in bet_ids:
+            bet = bt_store.get_bet(conn, bet_id)
+            if bet is None:
+                raise LookupError(f"bet {bet_id} 不存在")
+            if (
+                bet["purchased"]
+                or bet["slip_id"] is not None
+                or bet["status"] != "open"
+            ):
+                raise ValueError(f"bet {bet_id} 已购、已绑定或已结, 不能再次回录")
+            if (
+                conn.execute(
+                    """SELECT 1 FROM bankroll_events WHERE bet_id=? UNION ALL
+                   SELECT 1 FROM settlements WHERE bet_id=?""",
+                    (bet_id, bet_id),
+                ).fetchone()
+                is not None
+            ):
+                raise ValueError(f"bet {bet_id} 已有结算或资金记录, 请人工核查")
+            if bet["market_kind"] != "fixed":
+                raise ValueError("奖池奖金尚未支持, 不能回录")
+            bets.append(bet)
+        modes = {str(bet["mode"]) for bet in bets}
+        if len(modes) != 1:
+            raise ValueError("一张票内 mode 必须一致")
+        mode = BetMode(modes.pop())
+        slip = bt_store.create_slip(conn, mode, placed_at=at)
+        bt_store.attach_bets_to_slip(conn, slip, bet_ids, at)
+        if mode is BetMode.LIVE:
+            for bet in bets:
+                bt_store.record_bankroll_event(
+                    conn,
+                    "bet_stake",
+                    -float(bet["stake"]),
+                    bet_id=int(bet["id"]),
+                    slip_id=slip,
+                    note=f"slip {slip}",
+                )
     return slip
 
 
@@ -184,8 +204,8 @@ def _result_facts(row: sqlite3.Row) -> ResultFacts:
     )
 
 
-def _settle_one_bet(conn: sqlite3.Connection, bet: sqlite3.Row) -> str:
-    """结算一注（竞彩固定赔率）；返回结算后状态。"""
+def evaluate_bet(conn: sqlite3.Connection, bet: sqlite3.Row) -> SettlementOutcome:
+    """Project a fixed bet against current results without changing stored facts."""
     legs_raw = json.loads(bet["legs"])
     leg_specs = [
         LegSpec(
@@ -203,120 +223,126 @@ def _settle_one_bet(conn: sqlite3.Connection, bet: sqlite3.Row) -> str:
             conn, [int(leg["fixture_id"]) for leg in legs_raw]
         ).items()
     }
-    outcome = settle_fixed_bet(float(bet["stake"]), leg_specs, results)
-    if not outcome.settled:
+    return settle_fixed_bet(float(bet["stake"]), leg_specs, results)
+
+
+def _settle_one_bet(
+    conn: sqlite3.Connection, bet: sqlite3.Row, *, reason: str = "settlement"
+) -> str:
+    """Persist settlement and append only the change in purchased live entitlement."""
+    outcome = evaluate_bet(conn, bet)
+    if not outcome.settled and bet["status"] == "open":
         return "open"
+    real = bet["mode"] == "live" and bool(bet["purchased"])
+    previous_payout = float(bet["payout"] or 0)
+    events = conn.execute(
+        """SELECT kind, amount_cny, slip_id FROM bankroll_events
+           WHERE bet_id = ?""",
+        (bet["id"],),
+    ).fetchall()
+    stakes = [event for event in events if event["kind"] == "bet_stake"]
+    paid = sum(
+        float(event["amount_cny"]) for event in events if event["kind"] == "bet_payout"
+    )
+    if real:
+        consistent = (
+            len(stakes) == 1
+            and round(float(stakes[0]["amount_cny"]), 2)
+            == -round(float(bet["stake"]), 2)
+            and bet["slip_id"] is not None
+            and stakes[0]["slip_id"] in (None, bet["slip_id"])
+            and round(paid - previous_payout, 2) == 0
+        )
+    else:
+        consistent = not events
+    if not consistent:
+        raise ValueError(f"bet {bet['id']} 旧账异常, 请先执行 audit-ledger 并人工核查")
+    delta = round(outcome.payout - previous_payout, 2)
     bt_store.save_settlement(
         conn,
         SettlementInput(
             bet_id=int(bet["id"]),
-            status=BetStatus(outcome.status),
+            status=BetStatus(outcome.status) if outcome.settled else BetStatus.PARTIAL,
             stake=outcome.stake,
             payout=outcome.payout,
             profit=outcome.profit,
             detail=detail_payload(outcome),
         ),
+        reason=reason,
     )
-    if bet["mode"] == "live" and outcome.payout > 0:
+    if real and delta:
         bt_store.record_bankroll_event(
             conn,
             "bet_payout",
-            outcome.payout,
+            delta,
             bet_id=int(bet["id"]),
-            note="settlement",
+            slip_id=int(bet["slip_id"]),
+            note=reason,
         )
     return outcome.status
 
 
-def _settle_pool_slip(conn: sqlite3.Connection, slip_id: int) -> str:
-    """结算一张池票：materialize 组合并逐个判定（票 23）。"""
-    combos = conn.execute(
-        "SELECT id, selections FROM combinations WHERE slip_id = ? ORDER BY seq",
-        (slip_id,),
-    ).fetchall()
-    if not combos:
-        bt_store.materialize_combinations(conn, slip_id)
-        combos = conn.execute(
-            "SELECT id, selections FROM combinations WHERE slip_id = ? ORDER BY seq",
-            (slip_id,),
-        ).fetchall()
-    seq_to_fixture = {
-        int(r["match_seq"]): (
-            int(r["fixture_id"]) if r["fixture_id"] is not None else None
+def validate_correction_targets(
+    conn: sqlite3.Connection, fixture_ids: set[int]
+) -> None:
+    """Refuse to silently repair legacy settlement errors while correcting facts."""
+    for bet in bt_store.list_bets(conn):
+        if bet["status"] == "open" or bet["market_kind"] != "fixed":
+            continue
+        if not any(
+            int(leg["fixture_id"]) in fixture_ids for leg in json.loads(bet["legs"])
+        ):
+            continue
+        prior = evaluate_bet(conn, bet)
+        if prior.status != bet["status"] or round(
+            prior.payout - float(bet["payout"] or 0), 2
+        ):
+            raise ValueError(
+                f"bet {bet['id']} 原结算与当前规则/事实不符, 请先 audit-ledger"
+            )
+
+
+def resettle_corrected_results(
+    conn: sqlite3.Connection, fixture_ids: set[int], *, reason: str
+) -> None:
+    """Recompute affected finalized bets inside the result import transaction."""
+    for bet in bt_store.list_bets(conn):
+        if bet["market_kind"] != "fixed":
+            continue
+        if (
+            bet["status"] == "open"
+            and conn.execute(
+                "SELECT 1 FROM settlements WHERE bet_id = ?", (bet["id"],)
+            ).fetchone()
+            is None
+        ):
+            continue
+        affected = any(
+            int(leg["fixture_id"]) in fixture_ids for leg in json.loads(bet["legs"])
         )
-        for r in conn.execute(
-            "SELECT match_seq, fixture_id FROM pool_picks WHERE slip_id = ?", (slip_id,)
-        )
-    }
-    all_fixture_ids = {fid for fid in seq_to_fixture.values() if fid is not None}
-    results = {
-        int(fid): _result_facts(row)
-        for fid, row in rs_store.draw_results_for_fixtures(
-            conn, sorted(all_fixture_ids)
-        ).items()
-    }
-    if not results:
-        return "open"
-    hit_count = 0
-    for row in combos:
-        selections = json.loads(row["selections"])
-        mapping: dict[int, str] = {}
-        unmapped = False
-        for pick in selections:
-            fixture = seq_to_fixture.get(int(pick["match_seq"]))
-            if fixture is None:
-                unmapped = True
-                break
-            mapping[fixture] = str(pick["selection_code"])
-        if unmapped:
-            return "open"  # 场次未映射，无法判定
-        hit, _notes = settle_pool_combination(mapping, results)
-        if hit is None:
-            return "open"
-        if hit:
-            hit_count += 1
-    status = BetStatus.WON if hit_count else BetStatus.LOST
-    bt_store.save_settlement(
-        conn,
-        SettlementInput(
-            slip_id=slip_id,
-            status=status,
-            stake=0.0,
-            payout=0.0,
-            profit=0.0,
-            detail={
-                "combinations": len(combos),
-                "hits": hit_count,
-                "note": "prize_awaiting_official_pool_allocation",
-            },
-        ),
-    )
-    return status.value
+        if affected:
+            _settle_one_bet(conn, bet, reason=reason)
 
 
 def run_settlement(conn: sqlite3.Connection) -> dict[str, int]:
     """结算批跑：所有已开赛且有赛果的未结注/池票；返回统计。"""
     stats = {"settled": 0, "still_open": 0, "won": 0, "lost": 0, "void": 0}
-    for bet in bt_store.list_bets(conn, only_open=True):
-        status = _settle_one_bet(conn, bet)
-        if status == "open":
-            stats["still_open"] += 1
-        else:
-            stats["settled"] += 1
-            stats[status] += 1
-    slip_rows = conn.execute(
-        """
-        SELECT s.id FROM bet_slips s
-        WHERE EXISTS (SELECT 1 FROM pool_picks p WHERE p.slip_id = s.id)
-        AND NOT EXISTS (SELECT 1 FROM settlements st WHERE st.slip_id = s.id)
-        """
-    ).fetchall()
-    for row in slip_rows:
-        status = _settle_pool_slip(conn, int(row["id"]))
-        if status == "open":
-            stats["still_open"] += 1
-        else:
-            stats["settled"] += 1
-            stats[status] = stats.get(status, 0) + 1
-    conn.commit()
+    with atomic(conn):
+        for bet in bt_store.list_bets(conn, only_open=True):
+            status = (
+                _settle_one_bet(conn, bet) if bet["market_kind"] == "fixed" else "open"
+            )
+            if status == "open":
+                stats["still_open"] += 1
+            else:
+                stats["settled"] += 1
+                stats[status] += 1
+        # Pool awards are unsupported: keep drafts pending, never finalize at zero.
+        stats["still_open"] += int(
+            conn.execute(
+                """SELECT COUNT(*) FROM bet_slips s
+               WHERE EXISTS (SELECT 1 FROM pool_picks p WHERE p.slip_id = s.id)
+               AND NOT EXISTS (SELECT 1 FROM settlements st WHERE st.slip_id = s.id)"""
+            ).fetchone()[0]
+        )
     return stats

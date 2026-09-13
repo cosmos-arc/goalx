@@ -391,3 +391,4 @@ class DrawResultInput(BaseModel):
     void_reason: str | None = None
     source: str = "manual"
     published_at: str | None = None
+    correction_reason: str | None = None

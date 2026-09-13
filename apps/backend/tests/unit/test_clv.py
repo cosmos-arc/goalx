@@ -50,7 +50,8 @@ def seed_closing_snapshots(
 
 def settle_bet(db, bet_id: int, *, status: str = "won") -> None:
     db.execute(
-        "UPDATE bets SET status = ?, settled_at = '2026-09-12T21:00:00+00:00',"
+        "UPDATE bets SET purchased = 1, status = ?,"
+        " settled_at = '2026-09-12T21:00:00+00:00',"
         " profit = 10.0 WHERE id = ?",
         (status, bet_id),
     )
@@ -184,3 +185,28 @@ def test_regression_slope_positive_when_clv_predicts_profit(db) -> None:
     assert r2 is not None
     assert r2 > 0.95
     assert clv._ols_slope([1.0], [1.0]) == (None, None)
+
+
+def test_unpurchased_counterfactual_is_excluded_even_with_legacy_clv(db) -> None:
+    fixture = seed_fixture(db)
+    seed_closing_snapshots(db, fixture, (2.0, 3.5, 3.5))
+    bet = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode=BetMode.PAPER,
+            stake=10,
+            legs=[
+                LegInput(
+                    fixture_id=fixture,
+                    market_code="had",
+                    selection_code="h",
+                    locked_odds=2,
+                )
+            ],
+        ),
+    )
+    settle_bet(db, bet)
+    assert clv.reconcile_clv(db).recorded == 1
+    db.execute("UPDATE bets SET purchased=0 WHERE id=?", (bet,))
+    assert clv.reconcile_clv(db).recorded == 0
+    assert clv.clv_report(db)["n_records"] == 0

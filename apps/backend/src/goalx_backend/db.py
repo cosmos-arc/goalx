@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -72,3 +74,24 @@ version INTEGER PRIMARY KEY,
         )
         conn.commit()
     return current_version(conn)
+
+
+@contextmanager
+def atomic(conn: sqlite3.Connection) -> Generator[None]:
+    """Serialize read/write decisions and roll back the entire operation on failure."""
+    nested = conn.in_transaction
+    conn.execute("SAVEPOINT lifecycle" if nested else "BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        if nested:
+            conn.execute("ROLLBACK TO lifecycle")
+            conn.execute("RELEASE lifecycle")
+        else:
+            conn.rollback()
+        raise
+    else:
+        if nested:
+            conn.execute("RELEASE lifecycle")
+        else:
+            conn.commit()
