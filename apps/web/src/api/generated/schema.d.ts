@@ -256,10 +256,128 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backtest/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 回测 run 列表
+         * @description 全部回测 run（新→旧），附 overall 指标摘要。
+         */
+        get: operations["list_backtest_runs_api_v1_backtest_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtest/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 回测 run 详情(分层指标)
+         * @description 一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧）。
+         */
+        get: operations["get_backtest_run_api_v1_backtest_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/validation/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 纸面三条件进度与滚动收益
+         * @description 验证页主数据：CLV beat / 市场 skill / 复核零错误三条件 + 滚动 yield。
+         *
+         *     - CLV：来自已对账 clv_records（票 32）；
+         *     - skill：最新回测 run 的 overall RPS skill（票 29）；
+         *     - 复核系统性错误：M3 复核队列落地前恒为「无记录」空态。
+         */
+        get: operations["get_validation_progress_api_v1_validation_progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BacktestRunDetailView
+         * @description run 详情：分层指标（overall/联赛/赛季/玩法）。
+         */
+        BacktestRunDetailView: {
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Overall Metrics */
+            overall_metrics?: {
+                [key: string]: unknown;
+            } | null;
+            /** Metrics */
+            metrics?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /**
+         * BacktestRunView
+         * @description 一行回测 run。
+         */
+        BacktestRunView: {
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Overall Metrics */
+            overall_metrics?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /**
          * BankrollEventView
          * @description 一条 bankroll 流水。
@@ -354,6 +472,22 @@ export interface components {
             settled_at: string | null;
             /** Legs */
             legs: components["schemas"]["BetLegView"][];
+        };
+        /**
+         * ConditionProgress
+         * @description 纸面转真金三条件之一的进度（票 10）。
+         */
+        ConditionProgress: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Achieved */
+            achieved: boolean;
+            /** Current */
+            current: string;
+            /** Target */
+            target: string;
         };
         /**
          * DrawResultImport
@@ -631,6 +765,35 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ValidationProgressView
+         * @description 验证页数据：三条件进度 + 滚动收益 + CLV 摘要。
+         */
+        ValidationProgressView: {
+            /** Conditions */
+            conditions: components["schemas"]["ConditionProgress"][];
+            /** Settled Bets */
+            settled_bets: number;
+            /** Yield Curve */
+            yield_curve: components["schemas"]["YieldPoint"][];
+            /** Clv */
+            clv: {
+                [key: string]: unknown;
+            };
+            latest_run?: components["schemas"]["BacktestRunView"] | null;
+        };
+        /**
+         * YieldPoint
+         * @description 累计/滚动收益曲线上的一个点。
+         */
+        YieldPoint: {
+            /** Index */
+            index: number;
+            /** Cumulative Yield */
+            cumulative_yield: number;
+            /** Rolling Yield */
+            rolling_yield?: number | null;
         };
     };
     responses: never;
@@ -1094,6 +1257,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BankrollResponse"];
+                };
+            };
+        };
+    };
+    list_backtest_runs_api_v1_backtest_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestRunView"][];
+                };
+            };
+        };
+    };
+    get_backtest_run_api_v1_backtest_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestRunDetailView"];
+                };
+            };
+            /** @description run 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_validation_progress_api_v1_validation_progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationProgressView"];
                 };
             };
         };

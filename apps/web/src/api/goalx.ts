@@ -14,6 +14,9 @@ export type BankrollEvent = Schemas["BankrollEventView"];
 export type BetCreateInput = Schemas["BetCreate"];
 export type SlipCreateInput = Schemas["SlipCreate"];
 export type DrawResultImportInput = Schemas["DrawResultImport"];
+export type BacktestRun = Schemas["BacktestRunView"];
+export type BacktestRunDetail = Schemas["BacktestRunDetailView"];
+export type ValidationProgress = Schemas["ValidationProgressView"];
 
 type FetchResult<T> = { data: T; error?: never } | { data?: never; error: unknown };
 
@@ -82,4 +85,20 @@ export function runSettlement(): Promise<SettlementRun> {
 
 export function fetchBankroll(): Promise<Bankroll> {
 	return unwrap(client.GET("/api/v1/bankroll"));
+}
+
+export function fetchBacktestRuns(): Promise<BacktestRun[]> {
+	return unwrap(client.GET("/api/v1/backtest/runs"));
+}
+
+export function fetchBacktestRun(runId: number): Promise<BacktestRunDetail> {
+	return unwrap(
+		client.GET("/api/v1/backtest/runs/{run_id}", {
+			params: { path: { run_id: runId } },
+		}),
+	);
+}
+
+export function fetchValidationProgress(): Promise<ValidationProgress> {
+	return unwrap(client.GET("/api/v1/validation/progress"));
 }
