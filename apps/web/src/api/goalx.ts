@@ -3,14 +3,18 @@ import type { components } from "./generated/schema";
 
 type Schemas = components["schemas"];
 export type TodayFixture = Schemas["TodayFixtureView"];
+export type HadQuoteStatus = Schemas["HadQuoteStatus"];
 export type OddsSnapshot = Schemas["OddsSnapshotView"];
 export type Bet = Schemas["BetView"];
 export type BetLeg = Schemas["BetLegView"];
+export type BetReview = Schemas["BetReviewView"];
 export type Slip = Schemas["SlipView"];
 export type DrawResultView = Schemas["DrawResultView"];
+export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];
 export type SettlementRun = Schemas["SettlementRunResponse"];
 export type Bankroll = Schemas["BankrollResponse"];
 export type BankrollEvent = Schemas["BankrollEventView"];
+export type CostSummary = Schemas["CostSummaryView"];
 export type BetCreateInput = Schemas["BetCreate"];
 export type SlipCreateInput = Schemas["SlipCreate"];
 export type DrawResultImportInput = Schemas["DrawResultImport"];
@@ -65,6 +69,18 @@ export function fetchSlips(): Promise<Slip[]> {
 
 export function recordPurchase(payload: SlipCreateInput): Promise<Slip> {
 	return unwrap(client.POST("/api/v1/bet-slips", { body: payload }));
+}
+
+export function previewDrawResults(payload: DrawResultImportInput): Promise<DrawResultPreview> {
+	return unwrap(client.POST("/api/v1/draw-results/preview", { body: payload }));
+}
+
+export function fetchCostSummary(since?: string): Promise<CostSummary> {
+	return unwrap(
+		client.GET("/api/v1/costs/summary", {
+			params: { query: since === undefined ? {} : { since } },
+		}),
+	);
 }
 
 export function importDrawResults(payload: DrawResultImportInput): Promise<{ imported: number }> {

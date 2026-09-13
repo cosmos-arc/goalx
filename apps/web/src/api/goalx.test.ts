@@ -5,11 +5,13 @@ import {
 	createBet,
 	fetchBankroll,
 	fetchBets,
+	fetchCostSummary,
 	fetchDrawResults,
 	fetchFixtureOdds,
 	fetchSlips,
 	fetchTodayFixtures,
 	importDrawResults,
+	previewDrawResults,
 	recordPurchase,
 	runSettlement,
 } from "./goalx";
@@ -18,15 +20,18 @@ test("fetchers round-trip against msw handlers", async () => {
 	const today = await fetchTodayFixtures("2026-09-12");
 	expect(today).toHaveLength(3);
 	expect(today[0]?.jc_odds.h).toBe(6.5);
+	expect(today[2]?.had_quote?.status).toBe("unknown");
 
 	const odds = await fetchFixtureOdds(1);
 	expect(odds[0]?.source).toBe("sporttery");
 
 	const bets = await fetchBets({ mode: "paper", only_open: false });
-	expect(bets).toHaveLength(3);
+	expect(bets).toHaveLength(4);
 
 	const allBets = await fetchBets();
-	expect(allBets).toHaveLength(3);
+	expect(allBets).toHaveLength(4);
+	expect(allBets[3]?.actual_stake).toBe(12);
+	expect(allBets[3]?.review?.forward).toBe("live_separate");
 
 	const created = await createBet({
 		mode: "paper",
@@ -47,6 +52,13 @@ test("fetchers round-trip against msw handlers", async () => {
 	const filtered = await fetchDrawResults(1);
 	expect(filtered).toHaveLength(1);
 
+	const preview = await previewDrawResults({
+		source: "manual",
+		results: [{ fixture_id: 1, home_goals: 0, away_goals: 1, void: false }],
+	});
+	expect(preview.results[0]?.is_correction).toBe(true);
+	expect(preview.affected_bets[0]?.delta_payout).toBe(-28.6);
+
 	const imported = await importDrawResults({
 		source: "manual",
 		results: [{ fixture_id: 1, home_goals: 2, away_goals: 0, void: false }],
@@ -58,6 +70,10 @@ test("fetchers round-trip against msw handlers", async () => {
 
 	const bankroll = await fetchBankroll();
 	expect(bankroll.balance).toBe(5004.2);
+
+	const costs = await fetchCostSummary();
+	expect(costs.credits_used).toBe(38);
+	expect(costs.total_cny).toBe(12.5);
 });
 
 test("fetchers surface HTTP errors", async () => {
