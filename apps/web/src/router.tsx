@@ -1,6 +1,9 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { ErrorBoundary } from "react-error-boundary";
-import { HomePage } from "./pages/home-page";
+import { BankrollPage } from "./pages/bankroll-page";
+import { BetsPage } from "./pages/bets-page";
+import { PlaceholderPage } from "./pages/placeholder-page";
+import { TodayPage } from "./pages/today-page";
 
 function RootLayout() {
 	return (
@@ -18,10 +21,42 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/",
-	component: HomePage,
+	component: TodayPage,
+});
+const reviewRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/review",
+	component: () => <PlaceholderPage title="复核" milestone="M3（LLM 线 + 双线融合）" />,
+});
+const betsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/bets",
+	component: BetsPage,
+});
+const bankrollRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/bankroll",
+	component: BankrollPage,
+});
+const validationRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/validation",
+	component: () => <PlaceholderPage title="验证" milestone="M2（回测引擎 + 验证看板）" />,
+});
+const settingsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/settings",
+	component: () => <PlaceholderPage title="设置" milestone="M4（参数与数据源健康）" />,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+const routeTree = rootRoute.addChildren([
+	indexRoute,
+	reviewRoute,
+	betsRoute,
+	bankrollRoute,
+	validationRoute,
+	settingsRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

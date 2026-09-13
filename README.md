@@ -37,3 +37,45 @@ task dev                       # Web @ http://127.0.0.1:5173（/api 代理到后
 | `task pre-commit-run` | 全仓跑一遍 git hooks |
 
 修改 API 后：`task contract-export && task contract-codegen`，把 `contracts/` 与 `apps/web/src/api/generated/` 的 diff 一起提交（CI 的 `check-contract` 会校验无漂移）。
+
+## M1 运行手册（数据地基）
+
+M1 = 记录复盘工具：竞彩采集 → 欧赔对照 → 投注建议/回录 → 开奖导入 → 结算 → 复盘。
+数据落 `data/goalx.db`（SQLite WAL，已 gitignore）；凭据在 `.env`（见 `.env.template`）。
+
+### 一次性初始化
+
+```bash
+task db-migrate        # 建 schema（v1：六域 25 表）
+task ingest-hist       # 五大 2023-26 三季回测底座（~5,257 行，幂等可重跑）
+```
+
+### 每日采集
+
+```bash
+task ingest-jingcai    # 竞彩官方全玩法快照（append-only，保留调盘时点）
+task ingest-odds       # The Odds API 欧赔 + join（credit 护栏：日 40/月 480）
+```
+
+销售期高频轮询走 Prefect（ADR 0005）：
+
+```bash
+uv run prefect server start          # 本地 server（另一个终端）
+uv run prefect deploy goalx_backend.flows:jingcai-snapshot   # 后续按需设 cron
+```
+
+flows：`jingcai-snapshot` / `eu-odds-snapshot` / `fd-history-import` / `settlement-sweep`。
+
+### 纸面闭环（票 23 验收路径）
+
+1. 今日页（`task dev` → `/`）：竞彩 vs 欧洲共识（Shin 去晦）、EV、books、调盘时点；
+2. 投注页（`/bets`）：建注建议 → 勾选实际购买子集做票级回录；
+3. 赛后：投注页导入官方比分（DrawResult，唯一事实源）→「结算批跑」；
+4. 复盘列表展示状态/盈亏；资金页（`/bankroll`）只受真金（live）影响。
+
+结算口径（研究 01/票 06）：单关退款、串关无效腿赔率按 1、去除后不足 2 关整单退款、
+任9 复式按组合逐个判定。
+
+### 手工补跑
+
+`task settle`（结算批跑）、`uv run python -m goalx_backend.cli --help`。

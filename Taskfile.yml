@@ -195,6 +195,46 @@ tasks:
       - uv run --no-sync python -m goalx_backend.server goalx_backend.main:app
         --interface asgi --host 127.0.0.1 --port 8000 {{.CLI_ARGS}}
 
+  db-migrate:
+    desc: Apply SQLite schema migrations (data/goalx.db)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli migrate {{.CLI_ARGS}}
+
+  ingest-jingcai:
+    desc: Pull one jingcai snapshot from sporttery (all 5 pool codes)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli ingest-jingcai {{.CLI_ARGS}}
+
+  ingest-odds:
+    desc: Pull one EU odds snapshot via The Odds API (credit-guarded)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli ingest-odds {{.CLI_ARGS}}
+
+  ingest-hist:
+    desc: Import football-data.co.uk backtest base (big five, 3 seasons)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli ingest-hist {{.CLI_ARGS}}
+
+  settle:
+    desc: Run the settlement sweep over bets with draw results
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.cli settle {{.CLI_ARGS}}
+
   dev:
     desc: Run the web dev server (proxies /api to 127.0.0.1:8000)
     cmds:

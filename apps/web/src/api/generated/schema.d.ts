@@ -64,16 +64,514 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 今日竞彩场次对照表
+         * @description 竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。
+         */
+        get: operations["get_today_fixtures_api_v1_fixtures_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fixtures/{fixture_id}/odds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 场次赔率时序
+         * @description 一场比赛某玩法的全部赔率快照时序(append-only, 票 19 验收)。
+         */
+        get: operations["get_fixture_odds_api_v1_fixtures__fixture_id__odds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fixtures/{fixture_id}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 人工映射欧赔事件
+         * @description 把 fixture 手工映射到 The Odds API event（join_method=manual）。
+         */
+        post: operations["set_manual_join_api_v1_fixtures__fixture_id__join_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 复盘列表(注级)
+         * @description 全部投注记录：结算状态、盈亏、未购标记。
+         */
+        get: operations["list_bets_api_v1_bets_get"];
+        put?: never;
+        /**
+         * 建注(注级建议)
+         * @description 创建一注(paper/live；未购建议 purchased=false)。
+         */
+        post: operations["create_bet_api_v1_bets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bet-slips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 票列表
+         * @description 全部投注票及聚合。
+         */
+        get: operations["list_slips_api_v1_bet_slips_get"];
+        put?: never;
+        /**
+         * 票级回录
+         * @description 把勾选的建议注合成一张实际投注票并标记已购。
+         */
+        post: operations["create_slip_api_v1_bet_slips_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool-slips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 创建池票(任9/14 场复式)
+         * @description 按 picks 建复式票并 materialize 全部组合(结算逐组合判定)。
+         */
+        post: operations["create_pool_slip_api_v1_pool_slips_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/draw-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询开奖结果
+         * @description 已导入的开奖结果(可按场次过滤)。
+         */
+        get: operations["list_draw_results_api_v1_draw_results_get"];
+        put?: never;
+        /**
+         * 导入官方开奖(唯一事实源)
+         * @description 批量导入开奖结果(幂等；修正覆盖)。
+         */
+        post: operations["create_draw_results_api_v1_draw_results_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settlements/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 结算批跑
+         * @description 对已开赛且有赛果的未结注执行官方规则结算。
+         */
+        post: operations["run_settlements_api_v1_settlements_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bankroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 资金池状态
+         * @description Bankroll 余额与最近变动(仅 live 模式影响，ADR 0002)。
+         */
+        get: operations["get_bankroll_api_v1_bankroll_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BankrollEventView
+         * @description 一条 bankroll 流水。
+         */
+        BankrollEventView: {
+            /** Id */
+            id: number;
+            /** Occurred At */
+            occurred_at: string;
+            /** Kind */
+            kind: string;
+            /** Amount Cny */
+            amount_cny: number;
+            /** Balance After */
+            balance_after: number;
+            /** Bet Id */
+            bet_id: number | null;
+            /** Note */
+            note: string | null;
+        };
+        /**
+         * BankrollResponse
+         * @description 资金页数据。
+         */
+        BankrollResponse: {
+            /** Balance */
+            balance: number | null;
+            /** Events */
+            events: components["schemas"]["BankrollEventView"][];
+        };
+        /**
+         * BetCreate
+         * @description 建注(建议或直接回录)输入。
+         */
+        BetCreate: {
+            mode: components["schemas"]["BetMode"];
+            /** Stake */
+            stake: number;
+            /** Legs */
+            legs: components["schemas"]["LegPayload"][];
+        };
+        /**
+         * BetLegView
+         * @description 一腿视图。
+         */
+        BetLegView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Market Code */
+            market_code: string;
+            /** Selection Code */
+            selection_code: string;
+            /** Locked Odds */
+            locked_odds: number;
+            /** Goal Line */
+            goal_line?: number | null;
+        };
+        /**
+         * BetMode
+         * @description ADR 0002：纸面与真金统一 Bet 实体，以 mode 区分。
+         * @enum {string}
+         */
+        BetMode: "paper" | "live";
+        /**
+         * BetView
+         * @description 一注的复盘视图。
+         */
+        BetView: {
+            /** Id */
+            id: number;
+            /** Slip Id */
+            slip_id: number | null;
+            /** Mode */
+            mode: string;
+            /** Market Kind */
+            market_kind: string;
+            /** Purchased */
+            purchased: boolean;
+            /** Stake */
+            stake: number;
+            /** Placed At */
+            placed_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Status */
+            status: string;
+            /** Payout */
+            payout: number | null;
+            /** Profit */
+            profit: number | null;
+            /** Settled At */
+            settled_at: string | null;
+            /** Legs */
+            legs: components["schemas"]["BetLegView"][];
+        };
+        /**
+         * DrawResultImport
+         * @description 批量导入请求。
+         */
+        DrawResultImport: {
+            /** Results */
+            results: components["schemas"]["DrawResultPayload"][];
+            /**
+             * Source
+             * @default manual
+             */
+            source: string;
+        };
+        /**
+         * DrawResultPayload
+         * @description 一条开奖结果输入。
+         */
+        DrawResultPayload: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Home Goals */
+            home_goals: number;
+            /** Away Goals */
+            away_goals: number;
+            /** Half Home Goals */
+            half_home_goals?: number | null;
+            /** Half Away Goals */
+            half_away_goals?: number | null;
+            /**
+             * Void
+             * @default false
+             */
+            void: boolean;
+            /** Void Reason */
+            void_reason?: string | null;
+            /** Published At */
+            published_at?: string | null;
+        };
+        /**
+         * DrawResultView
+         * @description 一条开奖结果。
+         */
+        DrawResultView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Home Goals */
+            home_goals: number;
+            /** Away Goals */
+            away_goals: number;
+            /** Half Home Goals */
+            half_home_goals: number | null;
+            /** Half Away Goals */
+            half_away_goals: number | null;
+            /** Void */
+            void: boolean;
+            /** Void Reason */
+            void_reason: string | null;
+            /** Source */
+            source: string;
+            /** Published At */
+            published_at: string | null;
+        };
         /**
          * Environment
          * @description Deployment environments the backend understands.
          * @enum {string}
          */
         Environment: "development" | "testing" | "production";
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * ImportResultView
+         * @description 导入统计。
+         */
+        ImportResultView: {
+            /** Imported */
+            imported: number;
+        };
+        /**
+         * LegPayload
+         * @description 一腿输入。
+         */
+        LegPayload: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Market Code */
+            market_code: string;
+            /** Selection Code */
+            selection_code: string;
+            /** Locked Odds */
+            locked_odds: number;
+            /** Goal Line */
+            goal_line?: number | null;
+        };
+        /**
+         * ManualJoinPayload
+         * @description 人工映射输入（时间窗 join 残余补齐，票 20）。
+         */
+        ManualJoinPayload: {
+            /** Event Id */
+            event_id: string;
+            /** Sport Key */
+            sport_key: string;
+        };
+        /**
+         * OddsSnapshotView
+         * @description 一条赔率快照。
+         */
+        OddsSnapshotView: {
+            /** Id */
+            id: number;
+            /** Fixture Id */
+            fixture_id: number;
+            /** Market Code */
+            market_code: string;
+            /** Selection Code */
+            selection_code: string;
+            /** Source */
+            source: string;
+            /** Odds */
+            odds: number;
+            /** Captured At */
+            captured_at: string;
+        };
+        /**
+         * PoolPickPayload
+         * @description 复式票一格的一选。
+         */
+        PoolPickPayload: {
+            /** Match Seq */
+            match_seq: number;
+            /** Selection Code */
+            selection_code: string;
+            /** Fixture Id */
+            fixture_id?: number | null;
+        };
+        /**
+         * PoolSlipCreate
+         * @description 创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。
+         */
+        PoolSlipCreate: {
+            mode: components["schemas"]["BetMode"];
+            /** Pool Period Id */
+            pool_period_id?: number | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Stake Per Combination
+             * @default 2
+             */
+            stake_per_combination: number;
+            /** Picks */
+            picks: components["schemas"]["PoolPickPayload"][];
+        };
+        /**
+         * SelectionTriple
+         * @description 主/平/客三元组（赔率、概率或 EV）。
+         */
+        SelectionTriple: {
+            /** H */
+            h?: number | null;
+            /** D */
+            d?: number | null;
+            /** A */
+            a?: number | null;
+        };
+        /**
+         * SettlementRunResponse
+         * @description 结算批跑统计。
+         */
+        SettlementRunResponse: {
+            /** Settled */
+            settled: number;
+            /** Still Open */
+            still_open: number;
+            /** Won */
+            won: number;
+            /** Lost */
+            lost: number;
+            /** Void */
+            void: number;
+        };
+        /**
+         * SlipCreate
+         * @description 票级回录输入：勾选实际购买的建议注子集。
+         */
+        SlipCreate: {
+            /** Bet Ids */
+            bet_ids: number[];
+            /** Placed At */
+            placed_at?: string | null;
+        };
+        /**
+         * SlipView
+         * @description 一张票的聚合视图。
+         */
+        SlipView: {
+            /** Id */
+            id: number;
+            /** Mode */
+            mode: string;
+            /** Placed At */
+            placed_at: string | null;
+            /** Note */
+            note: string | null;
+            /** Created At */
+            created_at: string;
+            /** Bet Count */
+            bet_count: number;
+            /** Stake Total */
+            stake_total: number;
+            /** Profit Total */
+            profit_total: number;
+        };
         /**
          * StatusResponse
          * @description Machine-readable service identity.
@@ -84,6 +582,55 @@ export interface components {
             /** App Version */
             app_version: string;
             environment: components["schemas"]["Environment"];
+        };
+        /**
+         * TodayFixtureView
+         * @description 今日页一行：竞彩 vs 欧洲共识对照（票 22）。
+         */
+        TodayFixtureView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Match Code */
+            match_code: string;
+            /** Competition */
+            competition: string;
+            /** Tier */
+            tier: string;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Is Single */
+            is_single: boolean;
+            /** Joined */
+            joined: boolean;
+            jc_odds: components["schemas"]["SelectionTriple"];
+            /** Jc Updated At */
+            jc_updated_at?: string | null;
+            /**
+             * Books
+             * @default 0
+             */
+            books: number;
+            eu_prob?: components["schemas"]["SelectionTriple"] | null;
+            ev?: components["schemas"]["SelectionTriple"] | null;
+            /** Flags */
+            flags?: string[];
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;
@@ -154,6 +701,399 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    get_today_fixtures_api_v1_fixtures_today_get: {
+        parameters: {
+            query?: {
+                /** @description 业务日(北京日期, 默认今天) */
+                date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodayFixtureView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fixture_odds_api_v1_fixtures__fixture_id__odds_get: {
+        parameters: {
+            query?: {
+                /** @description 玩法 poolCode */
+                market?: string;
+            };
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OddsSnapshotView"][];
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_manual_join_api_v1_fixtures__fixture_id__join_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualJoinPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_bets_api_v1_bets_get: {
+        parameters: {
+            query?: {
+                mode?: components["schemas"]["BetMode"] | null;
+                only_open?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BetView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_bet_api_v1_bets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BetCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BetView"];
+                };
+            };
+            /** @description 非法串关(同场多腿) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_slips_api_v1_bet_slips_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlipView"][];
+                };
+            };
+        };
+    };
+    create_slip_api_v1_bet_slips_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlipCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlipView"];
+                };
+            };
+            /** @description mode 混用 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bet 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pool_slip_api_v1_pool_slips_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolSlipCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlipView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_draw_results_api_v1_draw_results_get: {
+        parameters: {
+            query?: {
+                fixture_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawResultView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_draw_results_api_v1_draw_results_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawResultImport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResultView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_settlements_api_v1_settlements_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettlementRunResponse"];
+                };
+            };
+        };
+    };
+    get_bankroll_api_v1_bankroll_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankrollResponse"];
                 };
             };
         };

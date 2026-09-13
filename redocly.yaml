@@ -8,7 +8,8 @@ apis:
       output: ./apps/web/src/api/generated/schema.d.ts
 
 rules:
-  # 系统路由（healthz/readyz/status）目前无鉴权设计；引入鉴权后必须移除此豁免。
+  # 全部路由（含业务端点）目前无鉴权设计；引入鉴权后必须移除此豁免。
   security-defined: off
-  # 现有系统路由无请求输入，不存在真实的 4xx 语义；新增业务端点后必须移除此豁免。
+  # 系统与纯列表端点（healthz/readyz/status 等）无 4xx 语义，保持豁免；
+  # 会出错的业务端点均已声明 400/404（见各路由 responses）。
   operation-4xx-response: off
