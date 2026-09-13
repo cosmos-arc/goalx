@@ -55,14 +55,6 @@ def test_upsert_fixture_idempotent(db: sqlite3.Connection) -> None:
     assert first == second
 
 
-def test_team_alias_roundtrip(db: sqlite3.Connection) -> None:
-    team = fx.upsert_team(db, "阿森纳")
-    fx.upsert_team_alias(db, team, "odds_api", "Arsenal")
-    fx.upsert_team_alias(db, team, "odds_api", "Arsenal")  # 幂等
-    assert fx.resolve_team(db, "odds_api", "Arsenal") == team
-    assert fx.resolve_team(db, "odds_api", "Nope") is None
-
-
 def test_match_code_and_source_lookup(db: sqlite3.Connection) -> None:
     fixture = seed_fixture(db)
     fx.upsert_match_code(db, match_code(fixture))

@@ -495,13 +495,7 @@ def fetch_closing_window(
 
 def _known_odds_api_aliases(conn: sqlite3.Connection, team_id: int) -> set[str]:
     """该 canonical 队已知的 Odds API 侧英文名集合。"""
-    return {
-        str(row["alias"])
-        for row in conn.execute(
-            "SELECT alias FROM team_aliases WHERE team_id = ? AND source = 'odds_api'",
-            (team_id,),
-        )
-    }
+    return team_align.odds_api_aliases_for_team(conn, team_id)
 
 
 def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinReport:
@@ -594,13 +588,7 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
             (int(row["home_team_id"]), best.home_team),
             (int(row["away_team_id"]), best.away_team),
         ):
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
-                VALUES (?, 'odds_api', ?)
-                """,
-                (team_id, alias),
-            )
+            team_align.record_odds_api_alias(conn, team_id, alias)
         report.joined += 1
         if is_tier1:
             report.tier1_joined += 1

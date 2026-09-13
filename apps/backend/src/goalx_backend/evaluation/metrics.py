@@ -25,6 +25,7 @@ from typing import Any
 
 from scipy.stats import norm
 
+from goalx_backend.data import results as rs_store
 from goalx_backend.markets import SELECTIONS
 
 ECE_BINS = 10
@@ -242,18 +243,15 @@ def compute_run_metrics(conn: sqlite3.Connection, run_id: int) -> dict[str, int]
     返回写入的 scope 数。
     """
     rows = conn.execute(
-        """
-        SELECT p.*, h.ftr FROM backtest_predictions p
-        JOIN hist_matches h ON h.id = p.hist_match_id
-        WHERE p.run_id = ?
-        """,
+        "SELECT * FROM backtest_predictions WHERE run_id = ?",
         (run_id,),
     ).fetchall()
+    ftr = rs_store.ftr_for_hist_ids(conn, [int(r["hist_match_id"]) for r in rows])
     samples = [
         {
             "had_probs": json.loads(str(row["had_probs"])),
             "fair_probs": json.loads(str(row["fair_probs"])),
-            "ftr": str(row["ftr"]),
+            "ftr": ftr[int(row["hist_match_id"])],
             "competition": str(row["competition"]),
             "season": str(row["season"]),
         }
