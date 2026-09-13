@@ -5,11 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from goalx_backend import dc_model as dcm
-from goalx_backend import forecast as fc
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.modelling import dc_model as dcm
+from goalx_backend.modelling import forecast as fc
 from goalx_backend.models import MatchCodeInput, Tier
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
 
 
 def seed_league_history(db, teams: list[str], rounds: int = 30, seed: int = 9):
@@ -252,7 +252,7 @@ def test_had_ci_coverage_frequency(monkeypatch) -> None:
     """票 27 验收：80% CI 的覆盖频率符合名义水平（固定种子确定性）。"""
     import numpy as np
 
-    from goalx_backend.score_matrix import ScoreMatrix
+    from goalx_backend.modelling.score_matrix import ScoreMatrix
 
     rng = np.random.default_rng(31)
     teams = [f"T{i}" for i in range(8)]

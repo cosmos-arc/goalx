@@ -6,17 +6,13 @@ import sqlite3
 
 import pytest
 
+from goalx_backend.betting import store as bt_store
+from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.settle import run_settlement
+from goalx_backend.data.ingest import oddsapi, sporttery
+from goalx_backend.data.today import build_today_view
 from goalx_backend.db import utc_now_iso
-from goalx_backend.ingest import oddsapi, sporttery
 from goalx_backend.models import DrawResultInput, LegInput
-from goalx_backend.services import (
-    BetDraft,
-    build_today_view,
-    create_bet_with_legs,
-    record_purchase,
-    run_settlement,
-)
-from goalx_backend.store import betting as bt_store
 
 JINGCAI_PAYLOAD = {
     "errorCode": "0",
@@ -205,7 +201,7 @@ def test_paper_full_loop(db: sqlite3.Connection) -> None:
     assert stats["still_open"] == 2
 
     # 官方开奖导入：阿森纳 3:1、利物浦 0:2
-    from goalx_backend.ingest import results as results_ingest
+    from goalx_backend.data.ingest import results as results_ingest
 
     imported = results_ingest.import_draw_results(
         db,
@@ -253,7 +249,7 @@ def test_live_bankroll_flow(db: sqlite3.Connection) -> None:
     )
     record_purchase(db, [bet])
     assert bt_store.bankroll_balance(db) == 4900.0
-    from goalx_backend.ingest import results as results_ingest
+    from goalx_backend.data.ingest import results as results_ingest
 
     results_ingest.import_draw_results(
         db, [DrawResultInput(fixture_id=arsenal, home_goals=3, away_goals=1)]
@@ -288,7 +284,7 @@ def test_settlement_with_void_fixture(db: sqlite3.Connection) -> None:
             ],
         ),
     )
-    from goalx_backend.ingest import results as results_ingest
+    from goalx_backend.data.ingest import results as results_ingest
 
     results_ingest.import_draw_results(
         db,
@@ -317,8 +313,8 @@ def test_pool_slip_settlement_flow(db: sqlite3.Connection) -> None:
     fixture_ids = seed(db)
     arsenal, liverpool = fixture_ids
 
+    from goalx_backend.betting import store as bt
     from goalx_backend.models import BetMode
-    from goalx_backend.store import betting as bt
 
     slip = bt.create_slip(db, BetMode.PAPER, pool_period_id=None)
     bt.add_pool_pick(db, slip, 1, "3", fixture_id=arsenal)
@@ -333,7 +329,7 @@ def test_pool_slip_settlement_flow(db: sqlite3.Connection) -> None:
     stats = run_settlement(db)
     assert stats["still_open"] >= 1
 
-    from goalx_backend.ingest import results as results_ingest
+    from goalx_backend.data.ingest import results as results_ingest
 
     results_ingest.import_draw_results(
         db,
@@ -355,8 +351,8 @@ def test_record_purchase_errors(db: sqlite3.Connection) -> None:
     fixture_ids = seed(db)
     import pytest
 
+    from goalx_backend.betting import store as bt
     from goalx_backend.models import BetMode
-    from goalx_backend.store import betting as bt
 
     with pytest.raises(LookupError):
         record_purchase(db, [999])
@@ -377,8 +373,8 @@ def from_kind_market_kind():
 def test_live_won_bet_records_payout_event(db: sqlite3.Connection) -> None:
     fixture_ids = seed(db)
     arsenal = fixture_ids[0]
+    from goalx_backend.betting import store as bt
     from goalx_backend.models import BetMode
-    from goalx_backend.store import betting as bt
 
     bt.record_bankroll_event(db, "deposit", 5000.0)
     bet = create_bet_with_legs(
@@ -398,7 +394,7 @@ def test_live_won_bet_records_payout_event(db: sqlite3.Connection) -> None:
     )
     record_purchase(db, [bet])
     assert bt.bankroll_balance(db) == 4900.0
-    from goalx_backend.ingest import results as results_ingest
+    from goalx_backend.data.ingest import results as results_ingest
 
     results_ingest.import_draw_results(
         db, [DrawResultInput(fixture_id=arsenal, home_goals=2, away_goals=0)]

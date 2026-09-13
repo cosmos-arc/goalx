@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from goalx_backend import quote_evidence as qe
 from goalx_backend.config import Settings
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence as qe
 from goalx_backend.models import MatchCodeInput, SaleStatusInput, SnapshotInput, Tier
-from goalx_backend.store import fixtures as fx_store
 
 KICKOFF = "2026-09-13T18:00:00+00:00"
 AS_OF = "2026-09-13T14:04:00+00:00"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
@@ -14,6 +15,143 @@ from goalx_backend.models import (
     MarketKind,
     SettlementInput,
 )
+
+
+@dataclass(frozen=True)
+class LegSummary:
+    """已结注的一腿投影（决策身份与报表用）。"""
+
+    fixture_id: int
+    market_code: str
+    selection_code: str
+    locked_odds: float
+
+
+DecisionKey = tuple[str, tuple[tuple[int, str, str, float], ...], str | None]
+
+
+@dataclass(frozen=True)
+class SettledBet:
+    """一注已结算已购注的领域视图（腿内联，票 34 验证分母的读取口径）。"""
+
+    bet_id: int
+    mode: str
+    status: str
+    market_kind: str
+    placed_at: str | None
+    settled_at: str | None
+    created_at: str | None
+    stake: float
+    profit: float | None
+    legs: tuple[LegSummary, ...]
+
+    @property
+    def decision_key(self) -> DecisionKey:
+        """该注的决策身份（全仓唯一公式；CLV 与验证看板共用，票 34）。"""
+        return decision_key(self.mode, self.legs, self.placed_at)
+
+
+def decision_key(
+    mode: str, legs: tuple[LegSummary, ...], placed_at: str | None
+) -> DecisionKey:
+    """
+    冻结的决策身份：mode + 选项组合与锁定赔率 + 锁定时点（不含金额）。
+
+    同身份的重试/拆分金额注在验证分母里只计一次（重试是同一决策）。
+    """
+    combo = tuple(
+        sorted(
+            (leg.fixture_id, leg.market_code, leg.selection_code, leg.locked_odds)
+            for leg in legs
+        )
+    )
+    return (mode, combo, placed_at)
+
+
+def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
+    """全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。"""
+    rows = conn.execute(
+        """
+        SELECT b.id AS bet_id, b.mode, b.status, b.market_kind, b.placed_at,
+               b.settled_at, b.created_at, b.stake, b.profit,
+               l.fixture_id, l.market_code AS leg_market, l.selection_code,
+               l.locked_odds
+        FROM bets b
+        JOIN bet_legs l ON l.bet_id = b.id
+        WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
+        ORDER BY b.settled_at, b.id, l.id
+        """
+    ).fetchall()
+    by_bet: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        entry = by_bet.setdefault(int(row["bet_id"]), {"row": row, "legs": []})
+        entry["legs"].append(
+            LegSummary(
+                fixture_id=int(row["fixture_id"]),
+                market_code=str(row["leg_market"]),
+                selection_code=str(row["selection_code"]),
+                locked_odds=float(row["locked_odds"]),
+            )
+        )
+    bets = [
+        SettledBet(
+            bet_id=int(entry["row"]["bet_id"]),
+            mode=str(entry["row"]["mode"]),
+            status=str(entry["row"]["status"]),
+            market_kind=str(entry["row"]["market_kind"]),
+            placed_at=(
+                str(entry["row"]["placed_at"])
+                if entry["row"]["placed_at"] is not None
+                else None
+            ),
+            settled_at=(
+                str(entry["row"]["settled_at"])
+                if entry["row"]["settled_at"] is not None
+                else None
+            ),
+            created_at=(
+                str(entry["row"]["created_at"])
+                if entry["row"]["created_at"] is not None
+                else None
+            ),
+            stake=float(entry["row"]["stake"]),
+            profit=(
+                float(entry["row"]["profit"])
+                if entry["row"]["profit"] is not None
+                else None
+            ),
+            legs=tuple(entry["legs"]),
+        )
+        for entry in by_bet.values()
+    ]
+    return sorted(bets, key=lambda b: (b.settled_at or "", b.bet_id))
+
+
+def count_unpurchased_open(conn: sqlite3.Connection) -> int:
+    """未回录且未结算的固定注数（验证页「待回录」计数）。"""
+    return int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM bets WHERE purchased = 0
+              AND status = 'open' AND market_kind = 'fixed'
+            """
+        ).fetchone()[0]
+    )
+
+
+def dedupe_by_decision(bets: list[SettledBet]) -> tuple[list[SettledBet], int]:
+    """按决策身份去重（重试/拆分金额只计一次）；返回 (唯一注, 重复数)。"""
+    seen: dict[DecisionKey, SettledBet] = {}
+    duplicates = 0
+    for bet in bets:
+        key = bet.decision_key
+        if key in seen:
+            duplicates += 1
+        else:
+            seen[key] = bet
+    return sorted(
+        seen.values(), key=lambda b: (b.settled_at or "", b.bet_id)
+    ), duplicates
 
 
 def _insert_id(cur: sqlite3.Cursor) -> int:
@@ -408,3 +546,42 @@ def list_bankroll_events(
     return conn.execute(
         "SELECT * FROM bankroll_events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
+
+
+def bankroll_events_for_bet(conn: sqlite3.Connection, bet_id: int) -> list[sqlite3.Row]:
+    """一注的全部资金流水（结算冲正的一致性核查用）。"""
+    return conn.execute(
+        "SELECT kind, amount_cny, slip_id FROM bankroll_events WHERE bet_id = ?",
+        (bet_id,),
+    ).fetchall()
+
+
+def has_settlement_or_bankroll_event(conn: sqlite3.Connection, bet_id: int) -> bool:
+    """回录守卫：已有结算或资金记录的注不可再次回录。"""
+    return (
+        conn.execute(
+            """SELECT 1 FROM bankroll_events WHERE bet_id=? UNION ALL
+               SELECT 1 FROM settlements WHERE bet_id=?""",
+            (bet_id, bet_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def settlement_exists(conn: sqlite3.Connection, bet_id: int) -> bool:
+    """该注是否已有结算行（更正重算的跳过条件之一）。"""
+    return (
+        conn.execute("SELECT 1 FROM settlements WHERE bet_id = ?", (bet_id,)).fetchone()
+        is not None
+    )
+
+
+def count_pending_pool_slips(conn: sqlite3.Connection) -> int:
+    """无结算行的奖池票数（奖池兑付未支持前保持待结，不清零）。"""
+    return int(
+        conn.execute(
+            """SELECT COUNT(*) FROM bet_slips s
+           WHERE EXISTS (SELECT 1 FROM pool_picks p WHERE p.slip_id = s.id)
+           AND NOT EXISTS (SELECT 1 FROM settlements st WHERE st.slip_id = s.id)"""
+        ).fetchone()[0]
+    )

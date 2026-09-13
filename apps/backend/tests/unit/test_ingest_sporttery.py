@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from goalx_backend import observations
 from goalx_backend.config import Settings
-from goalx_backend.ingest import sporttery
-from goalx_backend.store import fixtures as fx_store
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import observations
+from goalx_backend.data.ingest import sporttery
 
 SAMPLE = {
     "errorCode": "0",

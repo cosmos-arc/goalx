@@ -8,8 +8,8 @@ from datetime import date
 import numpy as np
 import pytest
 
-from goalx_backend import dc_model as dcm
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.modelling import dc_model as dcm
 
 
 def synthetic_rows(n: int = 240, seed: int = 5) -> list[dcm.TrainingRow]:

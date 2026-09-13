@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from goalx_backend import backtest as bt
-from goalx_backend import baseline
+from goalx_backend.evaluation import backtest as bt
+from goalx_backend.evaluation import baseline
 
 
 def seed_hist(

@@ -23,17 +23,18 @@ from typing import Any
 
 import httpx
 
-from goalx_backend import observations, team_align
 from goalx_backend.config import Settings
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import observations
+from goalx_backend.data import results as rs_store
 from goalx_backend.db import utc_now_iso
+from goalx_backend.modelling import team_align
 from goalx_backend.models import (
     ObservationInput,
     ObservationPurpose,
     SnapshotInput,
     SnapshotPurpose,
 )
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
 
 # 想要覆盖的赛事前缀（Tier 1 全量 + 常见 Tier 2；_winner 类排除）
 WANTED_PREFIXES = (

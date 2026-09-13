@@ -271,6 +271,7 @@ omit = [
     # Prefect/CLI 入口式编排层；服务层承载逻辑并有单测，入口由手工冒烟覆盖。
     "apps/backend/src/goalx_backend/flows.py",
     "apps/backend/src/goalx_backend/cli.py",
+    "apps/backend/src/goalx_backend/tasks.py",
 ]
 
 [tool.coverage.report]

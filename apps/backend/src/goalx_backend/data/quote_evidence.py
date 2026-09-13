@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.store import fixtures as fx_store
 
 DEFAULT_FRESHNESS_SECONDS = 300.0
 DEFAULT_PAIR_GAP_SECONDS = 300.0
@@ -95,7 +95,7 @@ class HadQuoteVerdict:
         self.reasons.append(reason)
 
 
-def _latest_per_selection(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
+def latest_per_selection(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
     """按 captured_at 取每选项最新一行（并列时 id 大者胜）。"""
     latest: dict[str, sqlite3.Row] = {}
     for row in rows:
@@ -105,6 +105,107 @@ def _latest_per_selection(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
         if current is None or key >= (str(current["captured_at"]), int(current["id"])):
             latest[sel] = row
     return latest
+
+
+def had_snapshot_rows(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    *,
+    market_code: str = "had",
+    purpose: str | None = None,
+) -> list[sqlite3.Row]:
+    """一场比赛某市场的欧赔快照行（odds_api 源，按 captured_at,id 稳定排序）。"""
+    sql = """
+        SELECT * FROM odds_snapshots
+        WHERE fixture_id = ? AND market_code = ? AND source LIKE 'odds_api:%'
+    """
+    params: tuple[str | int, ...] = (fixture_id, market_code)
+    if purpose is not None:
+        sql += " AND purpose = ?"
+        params = (*params, purpose)
+    sql += " ORDER BY captured_at, id"
+    return conn.execute(sql, params).fetchall()
+
+
+def books_complete_asof(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    market_code: str = "had",
+    purpose: str | None = None,
+    exclusive: bool = False,
+    max_age_seconds: float | None = None,
+) -> dict[str, dict[str, float]]:
+    """
+    as_of 时点可用的各 book 完整三向最新报价（本包统一的报价读取口径）。
+
+    资格按行判定：观测时间（旧行按源解释）须不晚于 as_of（exclusive=True
+    时严格早于）；给 max_age_seconds 时还须不早于 as_of − 该窗。每 book 按
+    captured_at 取各选项最新行，三向不完整的 book 剔除。
+    """
+    by_book: dict[str, list[sqlite3.Row]] = {}
+    for row in had_snapshot_rows(
+        conn, fixture_id, market_code=market_code, purpose=purpose
+    ):
+        observed = effective_observed_at(row)
+        if observed is None:
+            continue
+        if (observed >= as_of) if exclusive else (observed > as_of):
+            continue
+        if (
+            max_age_seconds is not None
+            and _seconds_between(as_of, observed) > max_age_seconds
+        ):
+            continue
+        by_book.setdefault(str(row["source"]), []).append(row)
+    books: dict[str, dict[str, float]] = {}
+    for book, book_rows in by_book.items():
+        latest = latest_per_selection(book_rows)
+        if set(latest) != set(SELECTIONS):
+            continue
+        books[book] = {sel: float(r["odds"]) for sel, r in latest.items()}
+    return books
+
+
+def eu_consensus_asof(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str, *, market_code: str = "had"
+) -> dict[str, float] | None:
+    """as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。"""
+    books = books_complete_asof(conn, fixture_id, as_of, market_code=market_code)
+    if not books:
+        return None
+    consensus = om.consensus_odds(
+        [{b: books[b][s] for b in sorted(books)} for s in SELECTIONS]
+    )
+    if consensus is None:
+        return None
+    probs = om.shin_implied(consensus)
+    return dict(zip(SELECTIONS, probs, strict=True))
+
+
+def market_rows_with_competition(
+    conn: sqlite3.Connection, *, market_code: str = "had"
+) -> list[sqlite3.Row]:
+    """
+    全量比赛的市场快照行（sporttery + odds_api），带联赛名。
+
+    haircut 批量配对用；按 captured_at,id 稳定排序。
+    """
+    return conn.execute(
+        """
+        SELECT f.id AS fixture_id, c.name AS competition,
+               s.id AS id, s.selection_code, s.source, s.odds, s.captured_at,
+               s.observed_at, s.source_updated_at
+        FROM odds_snapshots s
+        JOIN fixtures f ON f.id = s.fixture_id
+        JOIN competitions c ON c.id = f.competition_id
+        WHERE s.market_code = ?
+          AND (s.source = 'sporttery' OR s.source LIKE 'odds_api:%')
+        ORDER BY s.captured_at, s.id
+        """,
+        (market_code,),
+    ).fetchall()
 
 
 def adjudicate_had_quote(
@@ -177,7 +278,7 @@ def _adjudicate_jc(
         # 有报价但无法证明 as_of 前已观测（含旧行 observed_at 未知）
         verdict.mark_unknown("jc_observed_at_unknown")
         return
-    latest = _latest_per_selection(eligible)
+    latest = latest_per_selection(eligible)
     if set(latest) != set(SELECTIONS):
         verdict.reject("jc_three_way_incomplete")
         return
@@ -209,7 +310,7 @@ def _book_asof(
 
     prices 为 None 时 note 说明剔除原因（三向不完整/源时间未知/超配对窗）。
     """
-    latest = _latest_per_selection(book_rows)
+    latest = latest_per_selection(book_rows)
     if set(latest) != set(SELECTIONS):
         return None, None, f"{book}:three_way_incomplete"
     source_times = [
@@ -273,14 +374,7 @@ def _adjudicate_eu(
     *,
     max_pair_gap_seconds: float,
 ) -> None:
-    rows = conn.execute(
-        """
-        SELECT * FROM odds_snapshots
-        WHERE fixture_id = ? AND market_code = 'had' AND source LIKE 'odds_api:%'
-        ORDER BY captured_at, id
-        """,
-        (verdict.fixture_id,),
-    ).fetchall()
+    rows = had_snapshot_rows(conn, verdict.fixture_id)
     if not rows:
         verdict.mark_unknown("eu_no_quote")
         return

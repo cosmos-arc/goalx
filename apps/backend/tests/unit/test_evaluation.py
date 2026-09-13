@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from penaltyblog.metrics import multiclass_brier_score, rps_average
 
-from goalx_backend import backtest as bt
-from goalx_backend import evaluation as ev
+from goalx_backend.evaluation import backtest as bt
+from goalx_backend.evaluation import metrics as ev
 
 
 def test_rps_matches_penaltyblog() -> None:
@@ -123,7 +123,7 @@ def seed_synthetic_league(db, *, rounds: int = 14, season: str = "2324") -> None
     """与 test_backtest 相同的合成联赛（importlib 模式下不跨文件导入）。"""
     from datetime import date, timedelta
 
-    from goalx_backend.store import results as rs_store
+    from goalx_backend.data import results as rs_store
 
     rng = np.random.default_rng(21)
     teams = sorted(STRENGTH)

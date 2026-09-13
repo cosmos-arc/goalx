@@ -6,17 +6,13 @@ import sqlite3
 
 import pytest
 
-from goalx_backend.ingest.results import import_draw_results
+from goalx_backend.betting import store as bt
+from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.settle import run_settlement
+from goalx_backend.data import fixtures as fx
+from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import BetMode, DrawResultInput, LegInput
-from goalx_backend.services import (
-    BetDraft,
-    create_bet_with_legs,
-    record_purchase,
-    run_settlement,
-)
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
-from goalx_backend.store import betting as bt
-from goalx_backend.store import fixtures as fx
 
 
 def make_bet(db: sqlite3.Connection, mode: BetMode = BetMode.LIVE) -> tuple[int, int]:
@@ -120,7 +116,7 @@ def test_result_correction_reverses_money_once(db: sqlite3.Connection) -> None:
 def test_loss_to_win_correction_and_audit(
     db: sqlite3.Connection, mode: BetMode
 ) -> None:
-    from goalx_backend.ledger_audit import audit_ledger
+    from goalx_backend.betting.ledger_audit import audit_ledger
 
     bet, fixture = make_bet(db, mode)
     record_purchase(db, [bet])
@@ -334,7 +330,7 @@ def test_correction_can_reopen_then_finalize_without_double_payment(
 
 
 def test_legacy_anomalies_are_reported_without_repair(db: sqlite3.Connection) -> None:
-    from goalx_backend.ledger_audit import audit_ledger
+    from goalx_backend.betting.ledger_audit import audit_ledger
 
     bet, fixture = make_bet(db)
     import_draw_results(

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from goalx_backend.data import fixtures as fx
+from goalx_backend.data import results as rs
 from goalx_backend.models import DrawResultInput
-from goalx_backend.store import fixtures as fx
-from goalx_backend.store import results as rs
 
 
 def seed_fixtures(db: sqlite3.Connection, count: int) -> list[int]:

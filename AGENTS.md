@@ -7,12 +7,17 @@ Guidance for ZCode agents working in this repository.
 **goalx** — FastAPI backend + React web monorepo under the `cosmos-arc` org
 (remote: `git@github.com:cosmos-arc/goalx.git`), MIT licensed. The tech-stack
 skeleton is ported from the `ditto` repo with quant/business libraries
-removed; project structure is intentionally minimal until the domain design
-lands.
+removed; the backend is organized into domain packages (see ADR-0008).
 
 ## Layout
 
 - `apps/backend/` — Python package `goalx_backend` (uv workspace member, src layout)
+  with domain packages `data/` (fixtures/odds/results + `data/ingest/`),
+  `modelling/` (DC model, score matrix, forecast), `evaluation/` (backtest,
+  baseline, CLV, haircut, validation), `betting/` (lifecycle, settlement
+  orchestration, ledger audit); `api/`, `cli.py`, `flows.py`, `main.py` are
+  delivery. Each domain package owns its tables' SQL — no raw SQL outside the
+  owning package (ADR-0008).
 - `apps/web/` — `@goalx/web` React app (bun workspace member)
 - `contracts/openapi/v1.json` — reviewed OpenAPI contract, single source of truth
 - `docs/agents/` — agent-skill configuration (issue tracker, triage labels, domain docs)

@@ -7,9 +7,9 @@ import json
 import numpy as np
 import pytest
 
-from goalx_backend import backtest as bt
-from goalx_backend.dc_model import TrainingRow
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.evaluation import backtest as bt
+from goalx_backend.modelling.dc_model import TrainingRow
 
 STRENGTH = {"A": 0.5, "B": 0.2, "C": -0.1, "D": -0.3, "E": 0.0, "F": -0.4}
 
@@ -166,7 +166,7 @@ def test_kelly_stake_cap_and_threshold() -> None:
 def test_candidates_had_only_respect_price_bounds() -> None:
     # v1 had-only：极端热门市场（尾部隐含概率 <2%）不产生候选（竞彩实际不报价）
     params = bt.BacktestParams(max_sim_odds=50.0, haircut=0.11)
-    from goalx_backend.score_matrix import ScoreMatrix
+    from goalx_backend.modelling.score_matrix import ScoreMatrix
 
     matrix = ScoreMatrix.from_lambdas(2.4, 1.0)
     extreme_jc = bt.simulated_jc_odds({"h": 0.91, "d": 0.05, "a": 0.04}, 0.11)

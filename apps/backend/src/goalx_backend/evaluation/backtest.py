@@ -34,16 +34,17 @@ from typing import Any
 from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import results as rs_store
 from goalx_backend.db import utc_now_iso
-from goalx_backend.dc_model import (
+from goalx_backend.markets import SELECTIONS
+from goalx_backend.modelling.dc_model import (
     TIER1_COMPETITIONS,
     DCArtifact,
     TrainingRow,
     fit_dc_model,
     implementation_versions,
 )
-from goalx_backend.markets import SELECTIONS
-from goalx_backend.score_matrix import ScoreMatrix
+from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
 MARKET_MAX_GOAL_ERROR = 0.02  # 市场隐含 λ 反推的 had 拟合误差上限
@@ -215,16 +216,7 @@ def _backtest_rows(
     conn: sqlite3.Connection, params: BacktestParams
 ) -> dict[str, list[sqlite3.Row]]:
     """取回测范围内的 hist 行（按联赛分组、按日期排序）。"""
-    placeholders = ", ".join("?" for _ in params.seasons)
-    rows = conn.execute(
-        f"""
-        SELECT * FROM hist_matches
-        WHERE competition IN ({", ".join("?" for _ in params.competitions)})
-        AND season IN ({placeholders})
-        ORDER BY competition, match_date
-        """,  # noqa: S608
-        (*params.competitions, *params.seasons),
-    ).fetchall()
+    rows = rs_store.hist_rows_in_seasons(conn, params.competitions, params.seasons)
     by_comp: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         by_comp.setdefault(str(row["competition"]), []).append(row)
@@ -332,14 +324,7 @@ def _week_training_rows(
 ) -> list[TrainingRow]:
     """该比赛周的训练集：match_date 严格早于周内最早比赛日（防前视）。"""
     cutoff = (date.fromisoformat(min(week_dates)) - timedelta(days=1)).isoformat()
-    hist_rows = conn.execute(
-        """
-        SELECT match_date, home_team, away_team, fthg, ftag
-        FROM hist_matches WHERE competition = ? AND match_date <= ?
-        ORDER BY match_date
-        """,
-        (competition, cutoff),
-    ).fetchall()
+    hist_rows = rs_store.hist_rows_through(conn, competition, cutoff)
     return [
         TrainingRow(
             match_date=str(r["match_date"]),

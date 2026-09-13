@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from goalx_backend.config import Settings
-from goalx_backend.ingest import fdhist
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.data.ingest import fdhist
 
 CSV_TEXT = (
     "\ufeffDiv,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,PSCH,PSCD,PSCA,AvgCH,AvgCD,AvgCA\n"

@@ -18,7 +18,7 @@ from datetime import datetime
 import httpx
 
 from goalx_backend.config import Settings
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import results as rs_store
 
 # 五大联赛 fd 代码（票 12 范围）
 FD_COMPETITIONS: tuple[str, ...] = ("E0", "D1", "SP1", "I1", "F1")

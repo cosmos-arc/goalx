@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from goalx_backend import team_align as ta
-from goalx_backend.store import fixtures as fx_store
-from goalx_backend.store import results as rs_store
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import results as rs_store
+from goalx_backend.modelling import team_align as ta
 
 
 def seed_teams_with_aliases(db, entries: list[tuple[str, list[tuple[str, str]]]]):
