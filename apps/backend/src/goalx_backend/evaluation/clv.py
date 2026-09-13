@@ -22,6 +22,8 @@ from datetime import datetime
 from typing import Any
 
 from goalx_backend import odds_math as om
+from goalx_backend.betting import store as bt_store
+from goalx_backend.betting.store import DecisionKey
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence
 from goalx_backend.db import utc_now_iso
@@ -85,55 +87,52 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
     已结算注单自动对账（幂等：UNIQUE(bet_id, fixture_id) 吸收重跑）。
 
     只处理 had 腿（v1 可映射口径）；串关逐腿写记录，票级指标在报表层聚合。
+    注单读取走 betting 共享口径（settled_purchased_bets）。
     """
     stats = ReconcileStats()
-    rows = conn.execute(
-        """
-        SELECT b.id AS bet_id, b.status, b.placed_at,
-               l.fixture_id, l.market_code, l.selection_code, l.locked_odds,
-               f.kickoff_utc
-        FROM bets b
-        JOIN bet_legs l ON l.bet_id = b.id
-        JOIN fixtures f ON f.id = l.fixture_id
-        WHERE b.status IN ('won', 'lost', 'void') AND l.market_code = 'had'
-          AND b.purchased = 1
-        """
-    ).fetchall()
-    for row in rows:
-        fixture_id = int(row["fixture_id"])
-        selection = str(row["selection_code"])
-        close = _closing_prob(conn, fixture_id, selection)
-        if close is None:
-            stats.skipped.append(f"no_pre_kickoff_close:bet={row['bet_id']}")
-            continue
-        close_prob, close_source = close
-        taken_odds = float(row["locked_odds"])
-        clv = close_prob - 1.0 / taken_odds
-        minutes = _minutes_to_kickoff(
-            str(row["placed_at"]) if row["placed_at"] else None,
-            str(row["kickoff_utc"]),
-        )
-        cur = conn.execute(
-            """
-            INSERT OR IGNORE INTO clv_records
-            (bet_id, fixture_id, market_code, selection_code, taken_odds,
-             close_prob, clv_prob, close_source, minutes_to_kickoff, computed_at)
-            VALUES (?, ?, 'had', ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                int(row["bet_id"]),
-                fixture_id,
-                selection,
-                taken_odds,
-                close_prob,
-                clv,
-                close_source,
-                minutes,
-                utc_now_iso(),
-            ),
-        )
-        if cur.rowcount > 0:
-            stats.recorded += 1
+    kickoffs: dict[int, str] = {}
+    for bet in bt_store.settled_purchased_bets(conn):
+        for leg in bet.legs:
+            if leg.market_code != "had":
+                continue
+            fixture_id = leg.fixture_id
+            kickoff = kickoffs.get(fixture_id)
+            if kickoff is None:
+                fixture = fx_store.get_fixture(conn, fixture_id)
+                if fixture is None:
+                    stats.skipped.append(f"fixture_missing:bet={bet.bet_id}")
+                    continue
+                kickoff = str(fixture["kickoff_utc"])
+                kickoffs[fixture_id] = kickoff
+            close = _closing_prob(conn, fixture_id, leg.selection_code)
+            if close is None:
+                stats.skipped.append(f"no_pre_kickoff_close:bet={bet.bet_id}")
+                continue
+            close_prob, close_source = close
+            taken_odds = leg.locked_odds
+            clv = close_prob - 1.0 / taken_odds
+            minutes = _minutes_to_kickoff(bet.placed_at, kickoff)
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO clv_records
+                (bet_id, fixture_id, market_code, selection_code, taken_odds,
+                 close_prob, clv_prob, close_source, minutes_to_kickoff, computed_at)
+                VALUES (?, ?, 'had', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bet.bet_id,
+                    fixture_id,
+                    leg.selection_code,
+                    taken_odds,
+                    close_prob,
+                    clv,
+                    close_source,
+                    minutes,
+                    utc_now_iso(),
+                ),
+            )
+            if cur.rowcount > 0:
+                stats.recorded += 1
     conn.commit()
     return stats
 
@@ -160,18 +159,11 @@ class _BetView:
     ]  # (fixture, sel, taken, close_p, clv)
     profit: float | None
     minutes_to_kickoff: float | None
+    decision: DecisionKey  # betting 共享公式冻结的决策身份（票 34）
 
     @property
     def kind(self) -> str:
         return "single" if len(self.legs) == 1 else "parlay2"
-
-    @property
-    def decision_key(
-        self,
-    ) -> tuple[str, tuple[tuple[int, str, float], ...], str | None]:
-        """冻结的决策身份：mode + 选项组合与锁定赔率 + 锁定时点（不含金额）。"""
-        combo = tuple(sorted((fx, sel, odds) for fx, sel, odds, _, _ in self.legs))
-        return (self.mode, combo, self.placed_at)
 
     @property
     def clv_ticket(self) -> float:
@@ -184,87 +176,69 @@ class _BetView:
         return joint_close - joint_implied
 
 
+def _close_records(conn: sqlite3.Connection) -> dict[tuple[int, int], sqlite3.Row]:
+    """clv_records 全量，按 (bet_id, fixture_id) 索引（本表归本模块）。"""
+    rows = conn.execute(
+        """
+        SELECT bet_id, fixture_id, close_prob, clv_prob, minutes_to_kickoff
+        FROM clv_records
+        """
+    ).fetchall()
+    return {(int(r["bet_id"]), int(r["fixture_id"])): r for r in rows}
+
+
 def _collect_bets(conn: sqlite3.Connection) -> tuple[list[_BetView], dict[str, int]]:
     """
-    已结算已购注 → 去重前的注级视图 + 分母统计。
+    已结算已购注 → 去重前的注级视图 + 分母统计（读取走 betting 共享口径）。
 
     只收全部腿均为 had 且腿数为 1（单关）或 2（2串1）的注——
     含非 had 腿或多腿串关注单整注排除并计数（v1 可映射口径之外）。
     """
-    rows = conn.execute(
-        """
-        SELECT b.id AS bet_id, b.mode, b.status, b.placed_at, b.profit,
-               l.fixture_id, l.market_code, l.selection_code, l.locked_odds,
-               r.close_prob, r.clv_prob, r.minutes_to_kickoff
-        FROM bets b
-        JOIN bet_legs l ON l.bet_id = b.id
-        LEFT JOIN clv_records r ON r.bet_id = b.id AND r.fixture_id = l.fixture_id
-        WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
-        ORDER BY b.id, l.id
-        """
-    ).fetchall()
-    by_bet: dict[int, dict[str, Any]] = {}
+    records = _close_records(conn)
     stats = {
         "settled_bets": 0,
         "legs": 0,
         "no_close_bets": 0,
         "unsupported_bets": 0,
     }
-    for row in rows:
-        bet_id = int(row["bet_id"])
-        entry = by_bet.setdefault(
-            bet_id,
-            {
-                "mode": str(row["mode"]),
-                "placed_at": row["placed_at"],
-                "profit": row["profit"],
-                "minutes": row["minutes_to_kickoff"],
-                "legs": [],
-                "n_legs_total": 0,
-                "has_close": True,
-                "supported": True,
-            },
-        )
-        entry["n_legs_total"] += 1
-        stats["legs"] += 1
-        if str(row["market_code"]) != "had":
-            entry["supported"] = False
-        if row["close_prob"] is None:
-            entry["has_close"] = False
-            continue
-        entry["legs"].append(
-            (
-                int(row["fixture_id"]),
-                str(row["selection_code"]),
-                float(row["locked_odds"]),
-                float(row["close_prob"]),
-                float(row["clv_prob"]),
-            )
-        )
     views: list[_BetView] = []
-    for bet_id, entry in by_bet.items():
+    for bet in bt_store.settled_purchased_bets(conn):
         stats["settled_bets"] += 1
-        supported_shape = entry["supported"] and entry["n_legs_total"] in (1, 2)
-        if not supported_shape:
+        stats["legs"] += len(bet.legs)
+        supported = all(leg.market_code == "had" for leg in bet.legs)
+        legs: list[tuple[int, str, float, float, float]] = []
+        has_close = True
+        for leg in bet.legs:
+            record = records.get((bet.bet_id, leg.fixture_id))
+            if record is None or record["close_prob"] is None:
+                has_close = False
+                continue
+            legs.append(
+                (
+                    leg.fixture_id,
+                    leg.selection_code,
+                    leg.locked_odds,
+                    float(record["close_prob"]),
+                    float(record["clv_prob"]),
+                )
+            )
+        if not (supported and len(bet.legs) in (1, 2)):
             stats["unsupported_bets"] += 1
             continue
-        if not entry["has_close"] or not entry["legs"]:
+        if not has_close or not legs:
             stats["no_close_bets"] += 1
             continue
+        first = records[(bet.bet_id, bet.legs[0].fixture_id)]
+        minutes = first["minutes_to_kickoff"]
         views.append(
             _BetView(
-                bet_id=bet_id,
-                mode=str(entry["mode"]),
-                placed_at=(
-                    str(entry["placed_at"]) if entry["placed_at"] is not None else None
-                ),
-                legs=tuple(entry["legs"]),
-                profit=(
-                    float(entry["profit"]) if entry["profit"] is not None else None
-                ),
-                minutes_to_kickoff=(
-                    float(entry["minutes"]) if entry["minutes"] is not None else None
-                ),
+                bet_id=bet.bet_id,
+                mode=bet.mode,
+                placed_at=bet.placed_at,
+                legs=tuple(legs),
+                profit=bet.profit,
+                minutes_to_kickoff=(float(minutes) if minutes is not None else None),
+                decision=bet.decision_key,
             )
         )
     return views, stats
@@ -274,16 +248,13 @@ def _dedup_by_decision(
     views: list[_BetView],
 ) -> tuple[list[_BetView], int]:
     """按决策身份去重（重试/拆分金额只计一次）；返回 (唯一注, 重复数)。"""
-    seen: dict[
-        tuple[str, tuple[tuple[int, str, float], ...], str | None], _BetView
-    ] = {}
+    seen: dict[DecisionKey, _BetView] = {}
     duplicates = 0
     for view in views:
-        key = view.decision_key
-        if key in seen:
+        if view.decision in seen:
             duplicates += 1
         else:
-            seen[key] = view
+            seen[view.decision] = view
     return sorted(seen.values(), key=lambda v: v.bet_id), duplicates
 
 
