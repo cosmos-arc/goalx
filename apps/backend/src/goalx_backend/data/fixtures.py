@@ -460,6 +460,21 @@ def get_fixture(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None
     return conn.execute("SELECT * FROM fixtures WHERE id = ?", (fixture_id,)).fetchone()
 
 
+def joined_fixtures_in_window(
+    conn: sqlite3.Connection, start_utc: str, end_utc: str
+) -> list[sqlite3.Row]:
+    """已 join 且开赛时间落在 [start, end] 的场次（closing 前置检查，票 37）。"""
+    return conn.execute(
+        """
+        SELECT * FROM fixtures
+        WHERE odds_api_event_id IS NOT NULL
+          AND kickoff_utc >= ? AND kickoff_utc <= ?
+        ORDER BY kickoff_utc
+        """,
+        (start_utc, end_utc),
+    ).fetchall()
+
+
 def kickoffs_for_fixtures(
     conn: sqlite3.Connection, fixture_ids: list[int]
 ) -> dict[int, str]:
