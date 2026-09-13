@@ -14,6 +14,7 @@
     "test:unit": "vitest run src",
     "test:coverage": "vitest run src --coverage",
     "e2e": "playwright test",
+    "e2e:loop": "playwright test -c playwright.loop.config.ts",
     "gen:api": "bash scripts/gen-api.sh"
   },
   "dependencies": {

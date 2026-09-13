@@ -165,6 +165,12 @@ tasks:
       - bun run e2e {{.CLI_ARGS}}
     dir: apps/web
 
+  web-e2e-loop:
+    desc: 纸面用户闭环 e2e(隔离真实 API/DB, 票 36 验收)
+    cmds:
+      - bun run e2e:loop {{.CLI_ARGS}}
+    dir: apps/web
+
   check-web:
     desc: Everything the web app must pass
     cmds:
@@ -180,6 +186,7 @@ tasks:
       - task: check-contract
       - task: web-build
       - task: web-e2e
+      - task: web-e2e-loop
 
   browser-install:
     desc: Install the Playwright chromium browser
