@@ -65,7 +65,11 @@ below assumes `task`:
 - Node fetch rejects relative URLs in jsdom tests; the API client resolves its
   base from `globalThis.location.origin` (override with `VITE_API_BASE_URL`).
 - The `.gitignore` covers Python/Bun/coverage artifacts and `.scratch/` (local
-  issue tracker files are intentionally untracked).
+  issue tracker files are intentionally untracked). `.scratch/` is working
+  memory only: when a feature or review cycle closes, copy its durable
+  artifacts (spec, research notes, audit reports) into `docs/plans/` and commit
+  them — preserving the relative layout so cross-links keep resolving (see
+  `docs/plans/goalx-quant/` for the pattern).
 - Branching: `main` is protected (`no-commit-to-branch` hook + fail-closed CI);
   land changes via short-lived branches and PRs, as in ditto.
 
