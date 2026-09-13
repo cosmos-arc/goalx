@@ -161,6 +161,21 @@ def hist_rows_through(
     ).fetchall()
 
 
+def settled_jingcai_fixtures(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """已结算（非无效）的竞彩场次：前瞻评分集合的底盘（票 34）。"""
+    return conn.execute(
+        """
+        SELECT f.id AS fixture_id, f.kickoff_utc, c.name AS competition,
+               d.home_goals, d.away_goals
+        FROM fixtures f
+        JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
+        JOIN competitions c ON c.id = f.competition_id
+        JOIN draw_results d ON d.fixture_id = f.id AND d.void = 0
+        ORDER BY f.kickoff_utc
+        """
+    ).fetchall()
+
+
 def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """历史底座的逐联赛队名清单（对齐覆盖率报告用）。"""
     return conn.execute(
@@ -169,6 +184,33 @@ def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         UNION
         SELECT competition, away_team AS team FROM hist_matches
         ORDER BY competition, team
+        """
+    ).fetchall()
+
+
+def hist_rows_in_seasons(
+    conn: sqlite3.Connection, competitions: tuple[str, ...], seasons: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """回测范围的历史行（联赛×赛季过滤，按联赛、日期排序）。"""
+    comp_ph = ", ".join("?" for _ in competitions)
+    season_ph = ", ".join("?" for _ in seasons)
+    return conn.execute(
+        f"""
+        SELECT * FROM hist_matches
+        WHERE competition IN ({comp_ph}) AND season IN ({season_ph})
+        ORDER BY competition, match_date
+        """,  # noqa: S608
+        (*competitions, *seasons),
+    ).fetchall()
+
+
+def hist_close_odds_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """全量历史行的收盘基准列（PSC/AvgC，基准分期质检用）。"""
+    return conn.execute(
+        """
+        SELECT competition, season, match_date, psc_home, psc_draw, psc_away,
+               avgc_home, avgc_draw, avgc_away FROM hist_matches
+        ORDER BY competition, match_date
         """
     ).fetchall()
 

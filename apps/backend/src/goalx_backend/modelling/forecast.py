@@ -169,6 +169,22 @@ def insert_forecast(
     return None
 
 
+def forecasts_for_track(conn: sqlite3.Connection, track: str) -> list[sqlite3.Row]:
+    """
+    某轨道全部 Forecast 行，按 (fixture, issued_at, id) 排序。
+
+    前瞻评分冻结规则要求赛前最新一条，排序保证「最后一条即最新」。
+    """
+    return conn.execute(
+        """
+        SELECT fixture_id, id, model_version, issued_at, payload
+        FROM forecasts WHERE track = ?
+        ORDER BY fixture_id, issued_at, id
+        """,
+        (track,),
+    ).fetchall()
+
+
 def generate_forecasts(
     conn: sqlite3.Connection,
     *,

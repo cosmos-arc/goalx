@@ -17,6 +17,7 @@ from dataclasses import replace
 from typing import Any
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.markets import SELECTIONS
 
@@ -35,13 +36,7 @@ def _period(match_date: str) -> str:
 
 def baseline_quality_report(conn: sqlite3.Connection) -> dict[str, Any]:
     """分期 × 来源的基准数据质检（数量/缺失/overround/两源差异）。"""
-    rows = conn.execute(
-        """
-        SELECT competition, season, match_date, psc_home, psc_draw, psc_away,
-               avgc_home, avgc_draw, avgc_away FROM hist_matches
-        ORDER BY competition, match_date
-        """
-    ).fetchall()
+    rows = rs_store.hist_close_odds_rows(conn)
     buckets: dict[str, dict[str, Any]] = {}
     for row in rows:
         period = _period(str(row["match_date"]))

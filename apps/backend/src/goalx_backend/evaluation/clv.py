@@ -22,7 +22,8 @@ from datetime import datetime
 from typing import Any
 
 from goalx_backend import odds_math as om
-from goalx_backend.data.quote_evidence import effective_observed_at
+from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -45,53 +46,29 @@ def _closing_prob(
     """
     该场 had 选择的收盘公允概率（closing 快照多 book 完整三向共识 Shin）。
 
-    有效快照 = 观测时间（observed_at，旧行按源解释为 captured_at）不晚于
-    kickoff 且在开球前 CLOSE_LOOKBACK_MINUTES 内——开赛后才查到的快照
-    只能作历史研究，不能倒填前瞻 closing（票 34）。
+    有效快照 = 观测时间（observed_at，旧行按源解释为 captured_at）严格
+    早于 kickoff 且在开球前 CLOSE_LOOKBACK_MINUTES 内——开赛后才查到的
+    快照只能作历史研究，不能倒填前瞻 closing（票 34）。
     """
-    rows = conn.execute(
-        """
-        SELECT selection_code, source, odds, captured_at, observed_at,
-               f.kickoff_utc
-        FROM odds_snapshots s JOIN fixtures f ON f.id = s.fixture_id
-        WHERE s.fixture_id = ? AND s.market_code = 'had'
-          AND s.purpose = 'closing' AND s.source LIKE 'odds_api:%'
-        ORDER BY s.captured_at, s.id
-        """,
-        (fixture_id,),
-    ).fetchall()
-    if not rows:
+    fixture = fx_store.get_fixture(conn, fixture_id)
+    if fixture is None:
         return None
-    kickoff = str(rows[0]["kickoff_utc"])
-    latest_by_book: dict[str, dict[str, float]] = {}
-    for row in rows:
-        sel = str(row["selection_code"])
-        book = str(row["source"])
-        observed = effective_observed_at(row)
-        if observed is None or not _before_kickoff_window(observed, kickoff):
-            continue
-        latest_by_book.setdefault(book, {})[sel] = float(row["odds"])
-    books_with_all = [
-        book
-        for book, prices in latest_by_book.items()
-        if all(sel in prices for sel in SELECTIONS)
-    ]
-    if not books_with_all:
+    kickoff = str(fixture["kickoff_utc"])
+    books = quote_evidence.books_complete_asof(
+        conn,
+        fixture_id,
+        kickoff,
+        purpose="closing",
+        exclusive=True,
+        max_age_seconds=CLOSE_LOOKBACK_MINUTES * 60,
+    )
+    if not books:
         return None
     consensus = tuple(
-        sum(latest_by_book[book][sel] for book in books_with_all) / len(books_with_all)
-        for sel in SELECTIONS
+        sum(books[book][sel] for book in books) / len(books) for sel in SELECTIONS
     )
     probs = om.shin_implied(consensus)
     return probs[SELECTIONS.index(selection)], "odds_api_closing"
-
-
-def _before_kickoff_window(observed_at: str, kickoff_utc: str) -> bool:
-    """观测须严格早于 kickoff，且距开赛不超过回看窗（迟到 closing 排除）。"""
-    observed = datetime.fromisoformat(observed_at)
-    kickoff = datetime.fromisoformat(kickoff_utc)
-    minutes_to_kickoff = (kickoff - observed).total_seconds() / 60.0
-    return 0 < minutes_to_kickoff <= CLOSE_LOOKBACK_MINUTES
 
 
 def _minutes_to_kickoff(placed_at: str | None, kickoff_utc: str) -> float | None:

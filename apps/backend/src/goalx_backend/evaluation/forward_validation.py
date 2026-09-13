@@ -22,11 +22,14 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from goalx_backend import odds_math as om
-from goalx_backend.data.quote_evidence import effective_observed_at
+from goalx_backend.data import quote_evidence
+from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation.metrics import evaluate_predictions
 from goalx_backend.markets import SELECTIONS
-from goalx_backend.modelling.forecast import forecast_matrix_from_payload
+from goalx_backend.modelling.forecast import (
+    forecast_matrix_from_payload,
+    forecasts_for_track,
+)
 
 FROZEN_RULE = "latest_forecast_before_kickoff_v1"
 MIN_GROUP_SAMPLES = 30  # 小于该数标「样本不足」，不作通过依据
@@ -51,38 +54,7 @@ def market_baseline_asof(
     conn: sqlite3.Connection, fixture_id: int, as_of: str
 ) -> dict[str, float] | None:
     """as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。"""
-    rows = conn.execute(
-        """
-        SELECT selection_code, source, odds, captured_at, observed_at
-        FROM odds_snapshots
-        WHERE fixture_id = ? AND market_code = 'had' AND source LIKE 'odds_api:%'
-        ORDER BY captured_at, id
-        """,
-        (fixture_id,),
-    ).fetchall()
-    by_book: dict[str, dict[str, tuple[str, float]]] = {}
-    for row in rows:
-        observed = effective_observed_at(row)
-        if observed is None or observed > as_of:
-            continue
-        book = str(row["source"])
-        by_book.setdefault(book, {})[str(row["selection_code"])] = (
-            str(row["captured_at"]),
-            float(row["odds"]),
-        )
-    complete: dict[str, dict[str, float]] = {}
-    for book, prices in by_book.items():
-        if set(prices) >= set(SELECTIONS):
-            complete[book] = {sel: prices[sel][1] for sel in SELECTIONS}
-    if not complete:
-        return None
-    consensus = om.consensus_odds(
-        [{b: complete[b][s] for b in complete} for s in SELECTIONS]
-    )
-    if consensus is None:
-        return None
-    probs = om.shin_implied(consensus)
-    return dict(zip(SELECTIONS, probs, strict=True))
+    return quote_evidence.eu_consensus_asof(conn, fixture_id, as_of)
 
 
 def _ftr(home_goals: int, away_goals: int) -> str:
@@ -96,21 +68,20 @@ def build_forward_samples(
     conn: sqlite3.Connection, *, track: str = "ml"
 ) -> tuple[list[ForwardSample], dict[str, int]]:
     """构建前瞻评分集合；返回 (样本, 排除/覆盖计数)。"""
-    rows = conn.execute(
-        """
-        SELECT f.id AS fixture_id, f.kickoff_utc, c.name AS competition,
-               d.home_goals, d.away_goals,
-               fc.id AS forecast_id, fc.model_version, fc.issued_at, fc.payload
-        FROM fixtures f
-        JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
-        JOIN competitions c ON c.id = f.competition_id
-        JOIN draw_results d ON d.fixture_id = f.id AND d.void = 0
-        LEFT JOIN forecasts fc ON fc.fixture_id = f.id AND fc.track = ?
-        ORDER BY f.kickoff_utc, fc.issued_at, fc.id
-        """,
-        (track,),
-    ).fetchall()
+    forecasts_by_fixture: dict[int, list[sqlite3.Row]] = {}
+    for forecast in forecasts_for_track(conn, track):
+        forecasts_by_fixture.setdefault(int(forecast["fixture_id"]), []).append(
+            forecast
+        )
     by_fixture: dict[int, dict[str, Any]] = {}
+    for row in rs_store.settled_jingcai_fixtures(conn):
+        fixture_id = int(row["fixture_id"])
+        entry = by_fixture.setdefault(fixture_id, {"row": row, "pre": [], "post": 0})
+        for forecast in forecasts_by_fixture.get(fixture_id, []):
+            if str(forecast["issued_at"]) < str(row["kickoff_utc"]):
+                entry["pre"].append(forecast)
+            else:
+                entry["post"] += 1
     counts = {
         "settled_fixtures": 0,
         "no_forecast": 0,
@@ -118,18 +89,6 @@ def build_forward_samples(
         "no_market_baseline": 0,
         "scored": 0,
     }
-    for row in rows:
-        fixture_id = int(row["fixture_id"])
-        entry = by_fixture.setdefault(
-            fixture_id,
-            {"row": row, "pre": [], "post": 0},
-        )
-        if row["forecast_id"] is None:
-            continue
-        if str(row["issued_at"]) < str(row["kickoff_utc"]):
-            entry["pre"].append(row)
-        else:
-            entry["post"] += 1
     samples: list[ForwardSample] = []
     for fixture_id, entry in sorted(by_fixture.items()):
         row = entry["row"]

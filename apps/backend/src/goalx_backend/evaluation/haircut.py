@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import quote_evidence
 from goalx_backend.data.quote_evidence import effective_observed_at
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
@@ -108,20 +109,7 @@ def build_haircut_samples(
     max_pair_gap_seconds: float = MAX_PAIR_GAP_SECONDS,
 ) -> list[HaircutSample]:
     """全部 as-of 配对样本（确定性排序：fixture, selection）。"""
-    rows = conn.execute(
-        """
-        SELECT f.id AS fixture_id, c.name AS competition,
-               s.id AS id, s.selection_code, s.source, s.odds, s.captured_at,
-               s.observed_at, s.source_updated_at
-        FROM odds_snapshots s
-        JOIN fixtures f ON f.id = s.fixture_id
-        JOIN competitions c ON c.id = f.competition_id
-        WHERE s.market_code = ?
-          AND (s.source = 'sporttery' OR s.source LIKE 'odds_api:%')
-        ORDER BY s.captured_at, s.id
-        """,
-        (market_code,),
-    ).fetchall()
+    rows = quote_evidence.market_rows_with_competition(conn, market_code=market_code)
     jc_rows: dict[int, list[sqlite3.Row]] = {}
     eu_rows: dict[int, list[sqlite3.Row]] = {}
     competitions: dict[int, str] = {}
@@ -135,7 +123,7 @@ def build_haircut_samples(
 
     samples: list[HaircutSample] = []
     for fixture_id in sorted(jc_rows):
-        jc_latest = _latest_per_selection(jc_rows[fixture_id])
+        jc_latest = quote_evidence.latest_per_selection(jc_rows[fixture_id])
         if set(jc_latest) != set(SELECTIONS):
             continue  # 竞彩三向不完整 → 无配对
         pair_time = max(str(r["captured_at"]) for r in jc_latest.values())
@@ -159,22 +147,16 @@ def build_haircut_samples(
     return samples
 
 
-def _latest_per_selection(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
-    """按 captured_at 取每选项最新一行。"""
-    latest: dict[str, sqlite3.Row] = {}
-    for row in rows:
-        sel = str(row["selection_code"])
-        current = latest.get(sel)
-        key = (str(row["captured_at"]), int(row["id"]))
-        if current is None or key >= (str(current["captured_at"]), int(current["id"])):
-            latest[sel] = row
-    return latest
-
-
 def _books_asof(
     rows: list[sqlite3.Row], pair_time: str, max_pair_gap_seconds: float
 ) -> dict[str, dict[str, float]]:
-    """as-of 时刻可配对的各 book 完整三向（观测晚于 as-of 的剔除）。"""
+    """
+    as-of 时刻可配对的各 book 完整三向（观测晚于 as-of 的剔除）。
+
+    与 quote_evidence.books_complete_asof 的差别：配对窗按「该 book 入选
+    各选项最新行的最大观测时间」判定（配对语义），不逐行截断——校准数字
+    的历史口径保持不变。
+    """
     by_book: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         observed = effective_observed_at(row)
@@ -183,7 +165,7 @@ def _books_asof(
         by_book.setdefault(str(row["source"]), []).append(row)
     books: dict[str, dict[str, float]] = {}
     for book, book_rows in by_book.items():
-        latest = _latest_per_selection(book_rows)
+        latest = quote_evidence.latest_per_selection(book_rows)
         if set(latest) != set(SELECTIONS):
             continue  # 同公司完整三向才可比较（票 35）
         newest_observed = max(
