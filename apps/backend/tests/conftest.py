@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+
+# 测试不继承本地部署配置（票 37：本地 .env 冻结的采集范围会改变采集行为）
+os.environ["GOALX_ODDS_API_SPORT_SCOPE"] = ""
 
 from goalx_backend.config import Settings
 from goalx_backend.db import connect, migrate
