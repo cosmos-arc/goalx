@@ -1,6 +1,6 @@
 # Goalx 足彩量化投注与预测系统 — 设计 Spec v1.0
 
-> 2026-09-13 由 wayfinder 地图（.scratch/goalx-quant/，18 张决策票闭环）汇编。术语以仓库根 [CONTEXT.md](../../CONTEXT.md) 为准，架构决策见 [docs/adr/](../../docs/adr/)（0001-0007）。
+> 2026-09-13 由 wayfinder 地图（.scratch/goalx-quant/，18 张决策票闭环）汇编。术语以仓库根 [CONTEXT.md](../../../CONTEXT.md) 为准，架构决策见 [docs/adr/](../../../docs/adr/)（0001-0007）。
 
 ## 1. 目标与定位
 

@@ -2,6 +2,22 @@
 
 个人大陆足彩分析与记录系统，FastAPI backend + React web monorepo；本地运行、人工下单。
 
+## 新开发者导览
+
+按序读完即可建立全貌（均为仓库内文件，克隆即得）：
+
+1. 本 README——定位、Stack、运行手册（下文）；
+2. [CONTEXT.md](CONTEXT.md)——领域术语表，先统一语言；
+3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)——架构总览：数据流、领域包、运行形态、决策索引；
+4. [docs/plans/goalx-quant/spec.md](docs/plans/goalx-quant/spec.md)——当前生效计划（可信纸面闭环）与五张实施票；
+5. [docs/adr/](docs/adr/)——8 条不可逆技术决策及其理由；
+6. [AGENTS.md](AGENTS.md)——仓库工作约定（面向 AI agent，人读同样适用）。
+
+历史与证据：wayfinder 设计地图、运行协议与票 37 验收报告、spec v1.0 与 9 篇调研见
+[docs/plans/goalx-quant/](docs/plans/goalx-quant/)；2026-09 目标/设计审视见
+[docs/plans/goalx-review-20260913/](docs/plans/goalx-review-20260913/)。
+`.scratch/`（gitignored）是本地工作记忆：进行中的票、日志与探针数据，克隆不含，以 docs/plans 为准。
+
 ## 当前状态与下一阶段（2026-09-13）
 
 M1/M2已实现数据采集、DC模型、合成报价回测与部分页面/API；结算与资金生命周期纠偏已实现并通过本地全量门禁。验证统计、赛前证据、浏览器纸面全流程与持续运行仍未验收。当前阶段为**可信纸面闭环**：
@@ -16,8 +32,8 @@ M1/M2已实现数据采集、DC模型、合成报价回测与部分页面/API；
 代码/CI通过不替代真实使用证据；短期运行不替代整赛季及既定纸面通过条件。
 结算修复已合并；剩余工作按“报价证据→验证统计→页面闭环→真实运行”串行交接，
 具体职责、样本口径和可直接交给实施模型的指令见[可信纸面实施安排](docs/plans/trusted-paper-handoff.md)。
-按本仓库约定，详细计划和实施票保存在gitignored的本地
-`.scratch/goalx-quant/spec.md` 与 `issues/33-37` 文件中；新克隆不会包含这些本地票。
+计划与实施票已转正至 [docs/plans/goalx-quant/](docs/plans/goalx-quant/)
+（spec v1.1、issues/ 实施票、运行协议与验收报告）；`.scratch/` 仅存进行中的本地工作记忆。
 以下命令是组件运行入口，不代表纸面验证或持续运行已经验收。
 
 ## Stack

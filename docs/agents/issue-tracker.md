@@ -9,6 +9,7 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- Implementation tickets carry a short `## 不变量与人裁决项` section: the domain rules, edge cases, and acceptance checks that only the human owner may decide. Mechanical detail (naming, internal structure, helper design) is deliberately left to the implementing agent — the ticket fixes *what is correct*; the agent decides *how*. Spec-driven does not mean a detailed-design doc per ticket.
 
 ## When a skill says "publish to the issue tracker"
 
