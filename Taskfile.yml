@@ -194,6 +194,14 @@ tasks:
       - bun x playwright install chromium {{.CLI_ARGS}}
     dir: apps/web
 
+  serve-schedules:
+    desc: Prefect 连续运行调度(票37 协议 v1;单进程 serve, tmux/launchd 常驻)
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.schedules {{.CLI_ARGS}}
+
   server:
     desc: Run the API server (granian, 127.0.0.1:8000)
     preconditions:

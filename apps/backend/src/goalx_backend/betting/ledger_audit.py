@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from goalx_backend.betting.settle import evaluate_bet
 from goalx_backend.db import current_version
@@ -45,9 +46,9 @@ def _legacy_safe_bets(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(sql).fetchall()
 
 
-def audit_ledger(conn: sqlite3.Connection) -> dict[str, object]:
+def audit_ledger(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return manual review evidence and correction history without writes."""
-    findings: list[dict[str, object]] = []
+    findings: list[dict[str, Any]] = []
     balance = 0.0
     for event in conn.execute("SELECT * FROM bankroll_events ORDER BY id"):
         balance += float(event["amount_cny"])
