@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 
-from goalx_backend.betting import store as bt
 from goalx_backend.betting.settle import evaluate_bet
 from goalx_backend.db import current_version
 
@@ -26,7 +25,17 @@ def audit_ledger(conn: sqlite3.Connection) -> dict[str, object]:
                     "stored": event["balance_after"],
                 }
             )
-    for bet in bt.list_bets(conn):
+    for bet in conn.execute(
+        """
+        SELECT b.*, s.created_at AS locked_at,
+        (SELECT json_group_array(json_object(
+            'fixture_id', l.fixture_id, 'market_code', l.market_code,
+            'selection_code', l.selection_code, 'locked_odds', l.locked_odds,
+            'goal_line', json_extract(l.meta, '$.goal_line')))
+         FROM bet_legs l WHERE l.bet_id = b.id) AS legs
+        FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id ORDER BY b.id
+        """
+    ):
         events = conn.execute(
             "SELECT * FROM bankroll_events WHERE bet_id=? ORDER BY id", (bet["id"],)
         ).fetchall()

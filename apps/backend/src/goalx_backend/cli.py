@@ -216,6 +216,19 @@ def _cmd_align_report() -> None:
             logger.warning("unmatched: {}", report.unmatched)
 
 
+def _cmd_seed_demo() -> None:
+    """写入演示/E2E 种子（拒绝非隔离库；票 36）。"""
+    from goalx_backend.data.ingest.demo import seed_demo  # noqa: PLC0415
+
+    conn = connect()
+    try:
+        migrate(conn)
+        info = seed_demo(conn)
+        logger.info("demo seeded: {}", info)
+    finally:
+        conn.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     """CLI 参数。"""
     parser = argparse.ArgumentParser(prog="goalx", description="goalx 运维命令")
@@ -281,6 +294,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
+    sub.add_parser(
+        "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
+    )
     return parser
 
 
@@ -303,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-haircut": _cmd_calibrate_haircut,
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
+        "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()
     return 0

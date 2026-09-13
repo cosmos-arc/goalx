@@ -1,4 +1,4 @@
-"""今日页读模型：竞彩 vs 欧洲共识对照（票 22；EV 偏差标记票 08 口径）。"""
+"""今日页读模型：竞彩 vs 欧洲共识对照（票 22/36；EV 偏差标记票 08 口径）。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
+from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
 EV_FLAG_THRESHOLD = 0.05  # 今日页 EV 偏差标记阈值（票 08 report 口径）
@@ -22,8 +24,20 @@ class SelectionTriple(BaseModel):
     a: float | None = None
 
 
+class HadQuoteStatus(BaseModel):
+    """今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。"""
+
+    as_of: str
+    status: str  # valid | unknown | rejected
+    reasons: list[str] = Field(default_factory=list)
+    sale_state: str | None = None
+    single_eligible: bool | None = None
+    jc_source_updated_at: str | None = None
+    eu_books: int = 0
+
+
 class TodayFixtureView(BaseModel):
-    """今日页一行：竞彩 vs 欧洲共识对照（票 22）。"""
+    """今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。"""
 
     fixture_id: int
     match_code: str
@@ -40,12 +54,14 @@ class TodayFixtureView(BaseModel):
     eu_prob: SelectionTriple | None = None
     ev: SelectionTriple | None = None
     flags: list[str] = Field(default_factory=list)
+    had_quote: HadQuoteStatus | None = None
 
 
 def build_today_view(
-    conn: sqlite3.Connection, business_date: str
+    conn: sqlite3.Connection, business_date: str, *, as_of: str | None = None
 ) -> list[TodayFixtureView]:
-    """组装竞彩场次对照表（竞彩 vs 欧洲共识、EV、books 数、调盘时点）。"""
+    """组装竞彩场次对照表（竞彩 vs 欧洲共识、EV、资格判定、books 数、调盘时点）。"""
+    moment = as_of or utc_now_iso()
     rows: list[TodayFixtureView] = []
     for fixture in fx_store.fixtures_for_business_date(conn, business_date):
         fixture_id = int(fixture["id"])
@@ -64,6 +80,16 @@ def build_today_view(
             joined=fixture["odds_api_event_id"] is not None,
             jc_odds=jc_odds,
             jc_updated_at=max((at for _, at in jc.values()), default=None),
+        )
+        verdict = quote_evidence.adjudicate_had_quote(conn, fixture_id, moment)
+        view.had_quote = HadQuoteStatus(
+            as_of=moment,
+            status=verdict.status,
+            reasons=verdict.reasons,
+            sale_state=verdict.sale_state,
+            single_eligible=verdict.single_eligible,
+            jc_source_updated_at=verdict.jc_source_updated_at,
+            eu_books=verdict.eu_books,
         )
         if all(s in books for s in SELECTIONS):
             consensus = om.consensus_odds([books[s] for s in SELECTIONS])

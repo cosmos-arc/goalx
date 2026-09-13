@@ -628,10 +628,24 @@ def _apply_v5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v6(conn: sqlite3.Connection) -> None:
+    """
+    v6（票 36）：建议与实际执行条款分离——结算用实际条款，原建议不覆盖。
+
+    - bets.strategy_version：建注时声明的策略/方法版本（paper 锁定语义）。
+    - bets.actual_stake / bet_legs.actual_odds：真实回录的实际金额/赔率；
+      NULL 表示按建议条款（paper 锁定即建议条款）。
+    """
+    conn.execute("ALTER TABLE bets ADD COLUMN strategy_version TEXT")
+    conn.execute("ALTER TABLE bets ADD COLUMN actual_stake REAL")
+    conn.execute("ALTER TABLE bet_legs ADD COLUMN actual_odds REAL")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
     (3, _apply_v3),
     (4, _apply_v4),
     (5, _apply_v5),
+    (6, _apply_v6),
 )

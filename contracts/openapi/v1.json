@@ -363,8 +363,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "建注(注级建议)",
-        "description": "创建一注(paper/live；未购建议 purchased=false)。",
+        "summary": "建注(注级建议; 服务端校验 had 资格)",
+        "description": "创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。",
         "operationId": "create_bet_api_v1_bets_post",
         "requestBody": {
           "required": true,
@@ -388,7 +388,7 @@
             }
           },
           "400": {
-            "description": "非法串关(同场多腿)"
+            "description": "非法串关(同场多腿)或 had 资格不满足(停售/已开赛/非单固)"
           },
           "422": {
             "description": "Validation Error",
@@ -406,8 +406,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "复盘列表(注级)",
-        "description": "全部投注记录：结算状态、盈亏、未购标记。",
+        "summary": "复盘列表(注级; 含前瞻资格与 closing 完整性)",
+        "description": "全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。",
         "operationId": "list_bets_api_v1_bets_get",
         "parameters": [
           {
@@ -494,8 +494,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "票级回录",
-        "description": "把勾选的建议注合成一张实际投注票并标记已购。",
+        "summary": "票级回录(提交时重新校验停售/过期; live 可附实际条款)",
+        "description": "把勾选的建议注合成一张票并标记已购; 服务器按共享证据再校验。",
         "operationId": "create_slip_api_v1_bet_slips_post",
         "requestBody": {
           "content": {
@@ -519,7 +519,7 @@
             }
           },
           "400": {
-            "description": "mode 混用"
+            "description": "mode 混用或 had 资格不满足(停售/已开赛/非单固)"
           },
           "404": {
             "description": "bet 不存在"
@@ -682,6 +682,51 @@
         }
       }
     },
+    "/api/v1/draw-results/preview": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "开奖导入影响预览(只读)",
+        "description": "预览结果变化与受影响注的当前 vs 投影结算; 不落库、不冲正。",
+        "operationId": "preview_draw_results_api_v1_draw_results_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawResultImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DrawResultPreviewResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "比赛不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settlements/run": {
       "post": {
         "tags": [
@@ -722,6 +767,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BankrollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/costs/summary": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "期间成本摘要(金额/credits 分列)",
+        "description": "已记账成本聚合; 未记录的成本不在内, 不视为总成本已覆盖。",
+        "operationId": "get_cost_summary_api_v1_costs_summary_get",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "期间起点(UTC ISO); 默认全部已记账",
+              "title": "Since"
+            },
+            "description": "期间起点(UTC ISO); 默认全部已记账"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostSummaryView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -899,6 +996,118 @@
   },
   "components": {
     "schemas": {
+      "ActualLegOddsPayload": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "odds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Odds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "odds"
+        ],
+        "title": "ActualLegOddsPayload",
+        "description": "真实回录一腿的实际赔率。"
+      },
+      "ActualTermsPayload": {
+        "properties": {
+          "stake": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Stake"
+          },
+          "leg_odds": {
+            "items": {
+              "$ref": "#/components/schemas/ActualLegOddsPayload"
+            },
+            "type": "array",
+            "title": "Leg Odds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stake"
+        ],
+        "title": "ActualTermsPayload",
+        "description": "一注的实际执行条款（结算按实际，建议快照保留）。"
+      },
+      "AffectedBetPreviewView": {
+        "properties": {
+          "bet_id": {
+            "type": "integer",
+            "title": "Bet Id"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "purchased": {
+            "type": "boolean",
+            "title": "Purchased"
+          },
+          "status_current": {
+            "type": "string",
+            "title": "Status Current"
+          },
+          "payout_current": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payout Current"
+          },
+          "status_projected": {
+            "type": "string",
+            "title": "Status Projected"
+          },
+          "payout_projected": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payout Projected"
+          },
+          "delta_payout": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Payout"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bet_id",
+          "mode",
+          "purchased",
+          "status_current",
+          "payout_current",
+          "status_projected",
+          "payout_projected",
+          "delta_payout"
+        ],
+        "title": "AffectedBetPreviewView",
+        "description": "预览里一注受影响注的当前 vs 投影结算。"
+      },
       "BacktestRunDetailView": {
         "properties": {
           "id": {
@@ -1139,6 +1348,17 @@
             "type": "array",
             "minItems": 1,
             "title": "Legs"
+          },
+          "strategy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Version"
           }
         },
         "type": "object",
@@ -1167,6 +1387,17 @@
           "locked_odds": {
             "type": "number",
             "title": "Locked Odds"
+          },
+          "actual_odds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Odds"
           },
           "goal_line": {
             "anyOf": [
@@ -1198,6 +1429,42 @@
         ],
         "title": "BetMode",
         "description": "ADR 0002：纸面与真金统一 Bet 实体，以 mode 区分。"
+      },
+      "BetReviewView": {
+        "properties": {
+          "locked_pre_kickoff": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked Pre Kickoff"
+          },
+          "closing_present": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing Present"
+          },
+          "forward": {
+            "type": "string",
+            "title": "Forward"
+          }
+        },
+        "type": "object",
+        "required": [
+          "forward"
+        ],
+        "title": "BetReviewView",
+        "description": "复盘资格摘要（票 36）：前瞻纳入/排除原因与 closing 完整性。"
       },
       "BetView": {
         "properties": {
@@ -1232,6 +1499,28 @@
             "type": "number",
             "title": "Stake"
           },
+          "actual_stake": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Stake"
+          },
+          "strategy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Version"
+          },
           "placed_at": {
             "anyOf": [
               {
@@ -1242,6 +1531,17 @@
               }
             ],
             "title": "Placed At"
+          },
+          "locked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked At"
           },
           "created_at": {
             "type": "string",
@@ -1290,6 +1590,16 @@
             },
             "type": "array",
             "title": "Legs"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BetReviewView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -1344,6 +1654,110 @@
         ],
         "title": "ConditionProgress",
         "description": "纸面转真金三条件之一的进度（票 10）。"
+      },
+      "CostItemView": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "units": {
+            "type": "number",
+            "title": "Units"
+          },
+          "amount_cny": {
+            "type": "number",
+            "title": "Amount Cny"
+          },
+          "entries": {
+            "type": "integer",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "units",
+          "amount_cny",
+          "entries"
+        ],
+        "title": "CostItemView",
+        "description": "一类已记账成本。"
+      },
+      "CostSummaryView": {
+        "properties": {
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "total_cny": {
+            "type": "number",
+            "title": "Total Cny"
+          },
+          "credits_used": {
+            "type": "number",
+            "title": "Credits Used"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CostItemView"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_cny",
+          "credits_used",
+          "items"
+        ],
+        "title": "CostSummaryView",
+        "description": "期间成本摘要(金额与 credits 分列；仅统计已记账成本)。"
+      },
+      "DrawResultChangeView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "is_correction": {
+            "type": "boolean",
+            "title": "Is Correction"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "replacement": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Replacement"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "is_correction",
+          "replacement"
+        ],
+        "title": "DrawResultChangeView",
+        "description": "预览里一条结果变化。"
       },
       "DrawResultImport": {
         "properties": {
@@ -1456,6 +1870,31 @@
         "title": "DrawResultPayload",
         "description": "一条开奖结果输入。"
       },
+      "DrawResultPreviewResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DrawResultChangeView"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "affected_bets": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedBetPreviewView"
+            },
+            "type": "array",
+            "title": "Affected Bets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "affected_bets"
+        ],
+        "title": "DrawResultPreviewResponse",
+        "description": "开奖导入影响预览(只读；导入才执行重算与冲正)。"
+      },
       "DrawResultView": {
         "properties": {
           "fixture_id": {
@@ -1560,6 +1999,70 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HadQuoteStatus": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "sale_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale State"
+          },
+          "single_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Eligible"
+          },
+          "jc_source_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Source Updated At"
+          },
+          "eu_books": {
+            "type": "integer",
+            "title": "Eu Books",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "status"
+        ],
+        "title": "HadQuoteStatus",
+        "description": "今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。"
       },
       "HadQuoteVerdictView": {
         "properties": {
@@ -2044,6 +2547,13 @@
               }
             ],
             "title": "Placed At"
+          },
+          "actuals": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ActualTermsPayload"
+            },
+            "type": "object",
+            "title": "Actuals"
           }
         },
         "type": "object",
@@ -2051,7 +2561,7 @@
           "bet_ids"
         ],
         "title": "SlipCreate",
-        "description": "票级回录输入：勾选实际购买的建议注子集。"
+        "description": "票级回录输入：勾选实际购买的建议注子集；live 可附实际条款。"
       },
       "SlipView": {
         "properties": {
@@ -2222,6 +2732,16 @@
             },
             "type": "array",
             "title": "Flags"
+          },
+          "had_quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HadQuoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2238,7 +2758,7 @@
           "jc_odds"
         ],
         "title": "TodayFixtureView",
-        "description": "今日页一行：竞彩 vs 欧洲共识对照（票 22）。"
+        "description": "今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。"
       },
       "ValidationError": {
         "properties": {

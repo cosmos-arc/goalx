@@ -306,3 +306,20 @@ WHERE category =
     if row is None:
         raise RuntimeError("credit_usage 查询失败")
     return float(row["used"])
+
+
+def cost_summary(
+    conn: sqlite3.Connection, since_utc: str | None = None
+) -> list[sqlite3.Row]:
+    """已记账成本按类别聚合（金额与 units 分列；票 36 期间成本摘要）。"""
+    sql = """
+            SELECT category, SUM(units) AS units, SUM(amount_cny) AS amount_cny,
+                   COUNT(*) AS entries
+            FROM cost_ledger
+        """
+    params: tuple[str, ...] = ()
+    if since_utc is not None:
+        sql += " WHERE occurred_at >= ?"
+        params = (since_utc,)
+    sql += " GROUP BY category ORDER BY category"
+    return conn.execute(sql, params).fetchall()

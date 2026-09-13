@@ -458,3 +458,17 @@ ORDER BY f.kickoff_utc
 def get_fixture(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None:
     """Fetch one fixture row."""
     return conn.execute("SELECT * FROM fixtures WHERE id = ?", (fixture_id,)).fetchone()
+
+
+def kickoffs_for_fixtures(
+    conn: sqlite3.Connection, fixture_ids: list[int]
+) -> dict[int, str]:
+    """Bulk fetch kickoff_utc keyed by fixture id（复盘前瞻资格用，票 36）。"""
+    if not fixture_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in fixture_ids)
+    rows = conn.execute(
+        f"SELECT id, kickoff_utc FROM fixtures WHERE id IN ({placeholders})",  # noqa: S608
+        fixture_ids,
+    ).fetchall()
+    return {int(row["id"]): str(row["kickoff_utc"]) for row in rows}

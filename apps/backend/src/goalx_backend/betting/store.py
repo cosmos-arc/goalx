@@ -73,9 +73,10 @@ def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
     rows = conn.execute(
         """
         SELECT b.id AS bet_id, b.mode, b.status, b.market_kind, b.placed_at,
-               b.settled_at, b.created_at, b.stake, b.profit,
+               b.settled_at, b.created_at,
+               COALESCE(b.actual_stake, b.stake) AS stake, b.profit,
                l.fixture_id, l.market_code AS leg_market, l.selection_code,
-               l.locked_odds
+               COALESCE(l.actual_odds, l.locked_odds) AS locked_odds
         FROM bets b
         JOIN bet_legs l ON l.bet_id = b.id
         WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
@@ -161,7 +162,7 @@ def _insert_id(cur: sqlite3.Cursor) -> int:
     return int(cur.lastrowid)
 
 
-def create_bet(
+def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     conn: sqlite3.Connection,
     mode: BetMode,
     market_kind: MarketKind,
@@ -170,14 +171,15 @@ def create_bet(
     purchased: bool = False,
     placed_at: str | None = None,
     slip_id: int | None = None,
+    strategy_version: str | None = None,
 ) -> int:
     """Create a bet record (建议未购或已回录)；返回 id。"""
     cur = conn.execute(
         """
             INSERT INTO bets
 (slip_id, mode, market_kind, purchased, stake, placed_at,
-            created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+            created_at, strategy_version)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -187,6 +189,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
             stake,
             placed_at,
             utc_now_iso(),
+            strategy_version,
         ),
     )
     return _insert_id(cur)
@@ -220,21 +223,23 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 def list_bets(
     conn: sqlite3.Connection, *, mode: BetMode | None = None, only_open: bool = False
 ) -> list[sqlite3.Row]:
-    """List bets with their legs aggregated as JSON (复盘列表)。"""
+    """List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。"""
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
+            b.actual_stake, b.strategy_version,
             b.placed_at, b.created_at, b.status, b.payout, b.profit, b.settled_at,
+            s.created_at AS locked_at,
             (SELECT COUNT(*) FROM bet_legs l WHERE l.bet_id = b.id) AS leg_count,
 (SELECT
             json_group_array(json_object(
 'fixture_id', l.fixture_id, 'market_code',
             l.market_code,
 'selection_code', l.selection_code, 'locked_odds',
-            l.locked_odds,
+            l.locked_odds, 'actual_odds', l.actual_odds,
 'goal_line', json_extract(l.meta, '$.goal_line')))
 FROM
             bet_legs l WHERE l.bet_id = b.id) AS legs
-FROM bets b WHERE 1=1
+FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id WHERE 1=1
         """
     params: list[Any] = []
     if mode is not None:
@@ -247,19 +252,19 @@ FROM bets b WHERE 1=1
 
 
 def get_bet(conn: sqlite3.Connection, bet_id: int) -> sqlite3.Row | None:
-    """Fetch one bet with aggregated legs."""
+    """Fetch one bet with aggregated legs (含实际条款与服务器锁定时点)。"""
     return conn.execute(
         """
-            SELECT b.*,
+            SELECT b.*, s.created_at AS locked_at,
 (SELECT json_group_array(json_object(
 'fixture_id', l.fixture_id,
             'market_code', l.market_code,
 'selection_code', l.selection_code,
-            'locked_odds', l.locked_odds,
+            'locked_odds', l.locked_odds, 'actual_odds', l.actual_odds,
 'goal_line', json_extract(l.meta,
             '$.goal_line')))
 FROM bet_legs l WHERE l.bet_id = b.id) AS legs
-FROM bets b
+FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id
             WHERE b.id = ?
         """,
         (bet_id,),
@@ -305,6 +310,21 @@ def attach_bets_to_slip(
             (slip_id, placed_at, bet_id),
         )
     return len(bet_ids)
+
+
+def set_actual_terms(
+    conn: sqlite3.Connection,
+    bet_id: int,
+    stake: float,
+    odds_by_fixture: dict[int, float],
+) -> None:
+    """记录实际执行条款（真实回录）；不覆盖建议快照，结算读实际值。"""
+    conn.execute("UPDATE bets SET actual_stake = ? WHERE id = ?", (stake, bet_id))
+    for fixture_id, odds in odds_by_fixture.items():
+        conn.execute(
+            "UPDATE bet_legs SET actual_odds = ? WHERE bet_id = ? AND fixture_id = ?",
+            (odds, bet_id, fixture_id),
+        )
 
 
 def add_pool_pick(
