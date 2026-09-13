@@ -191,7 +191,13 @@ def polite_client() -> httpx.Client:
 
 
 def discover_sport_keys(settings: Settings, client: httpx.Client) -> list[str]:
-    """动态发现足球 sport key（过滤前缀与 _winner 盘）。"""
+    """冻结范围优先（票 37 协议）；未冻结时动态发现足球 sport key。"""
+    if settings.odds_api_sport_scope:
+        return [
+            key.strip()
+            for key in settings.odds_api_sport_scope.split(",")
+            if key.strip()
+        ]
     response = client.get(
         f"{settings.odds_api_base_url}/sports",
         params={"apiKey": settings.odds_api_key},
@@ -465,6 +471,13 @@ def fetch_closing_window(
     moment = now or datetime.now(UTC)
     check_credit_budget(conn, settings)
     window_end = moment + timedelta(minutes=window_minutes)
+    # 前置检查：无窗口内已 join 场次时不发请求（票 37：不空耗 credit）
+    if not fx_store.joined_fixtures_in_window(
+        conn,
+        moment.isoformat(timespec="seconds"),
+        window_end.isoformat(timespec="seconds"),
+    ):
+        return OddsIngestStats(events=0, credits_used=0)
     sport_keys = discover_sport_keys(settings, client)
     all_events: list[ParsedEvent] = []
     for sport_key in sport_keys:

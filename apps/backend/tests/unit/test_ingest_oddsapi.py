@@ -406,3 +406,71 @@ def test_join_duplicate_external_event_not_reused(db) -> None:
     assert rows[second] is None
     reasons = {u["reason"] for u in report.unmatched}
     assert reasons == {"no_free_event_in_window"}
+
+
+# --- 票 37：冻结采集范围 / closing 窗口前置检查 ---
+
+
+def test_frozen_sport_scope_skips_discovery_and_paid_calls(db) -> None:
+    """冻结范围：不动态发现、只拉声明的 sport key，credit 按范围计。"""
+    seed_jingcai(db)
+    fetched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sports"):
+            raise AssertionError("冻结范围不应调用 /sports 发现")
+        if "odds" in request.url.path:
+            fetched.append(str(request.url))
+            return httpx.Response(
+                200, json=EVENTS if "soccer_epl" in str(request.url) else []
+            )
+        raise AssertionError(f"意外请求: {request.url}")
+
+    settings = Settings(
+        odds_api_key="k",
+        odds_api_sport_scope="soccer_epl, soccer_italy_serie_a",
+    )
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    stats = oddsapi.fetch_and_store_odds(db, settings, client)
+    assert len(fetched) == 2
+    assert stats.credits_used == 2
+    assert rs_store.credit_usage(db, "2000-01-01T00:00:00+00:00") == 2.0
+
+
+def test_closing_window_skips_when_no_joined_fixture_in_window(db) -> None:
+    """无窗口内已 join 场次：零请求零 credit（票 37 不空耗预算）。"""
+    from datetime import UTC, datetime
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("不应发出任何请求")
+
+    settings = Settings(odds_api_key="k")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    stats = oddsapi.fetch_closing_window(
+        db, settings, client, now=datetime(2026, 9, 12, 10, 0, tzinfo=UTC)
+    )
+    assert stats.credits_used == 0
+    assert stats.events == 0
+
+
+def test_closing_window_runs_when_joined_fixture_upcoming(db) -> None:
+    seed_jingcai(db)
+    from datetime import UTC, datetime
+
+    db.execute("UPDATE fixtures SET odds_api_event_id='abc123', join_method='manual'")
+    db.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sports"):
+            return httpx.Response(200, json=SPORTS[:1])
+        if "odds" in request.url.path:
+            return httpx.Response(200, json=EVENTS)
+        raise AssertionError(f"意外请求: {request.url}")
+
+    settings = Settings(odds_api_key="k")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    # 02:00 北京 = 前日 18:00 UTC；17:40 UTC 距开赛 20 分钟，在 35 分钟窗口内
+    stats = oddsapi.fetch_closing_window(
+        db, settings, client, now=datetime(2026, 9, 12, 17, 40, tzinfo=UTC)
+    )
+    assert stats.credits_used == 1

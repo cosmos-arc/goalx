@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     # --- The Odds API credit 预算护栏（票 20：免费档 500/月） ---
     odds_api_daily_credit_budget: float = 40.0
     odds_api_monthly_credit_budget: float = 480.0
+    # 冻结采集范围（票 37 运行协议）：逗号分隔 sport key；空=动态发现全部足球
+    odds_api_sport_scope: str | None = None
 
     @property
     def is_production(self) -> bool:
