@@ -20,8 +20,8 @@ from typing import Any
 
 from goalx_backend import odds_math as om
 from goalx_backend.db import utc_now_iso
+from goalx_backend.markets import SELECTIONS
 
-SELECTIONS = ("h", "d", "a")
 MINUTES_BUCKETS = ((0, 10), (10, 30), (30, 10**9))
 CLOSE_LOOKBACK_MINUTES = 90  # closing 快照须落在开球前后该窗口内
 CLOSE_EARLIEST_BEFORE = -30.0  # 开球后 30 分钟内的快照仍算收盘窗口

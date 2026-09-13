@@ -231,6 +231,29 @@ def _cmd_clv_reconcile() -> None:
         conn.close()
 
 
+def _cmd_set_alias(args: argparse.Namespace) -> None:
+    """人工覆盖：给 canonical 球队追加 manual 别名（即时生效，票 25）。"""
+    conn = connect()
+    try:
+        migrate(conn)
+        row = conn.execute(
+            "SELECT id FROM teams WHERE canonical_name = ?", (args.team,)
+        ).fetchone()
+        if row is None:
+            raise SystemExit(f"球队不存在: {args.team}")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+            VALUES (?, 'manual', ?)
+            """,
+            (int(row["id"]), args.alias),
+        )
+        conn.commit()
+        logger.info("alias set: {} -> {}", args.alias, args.team)
+    finally:
+        conn.close()
+
+
 def _cmd_align_report() -> None:
     """五大 hist 队名对当前别名的覆盖率报告。"""
     conn = connect()
@@ -273,6 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
     forecast = sub.add_parser("forecast", help="生成一个业务日的 ML Forecast(票 27)")
     forecast.add_argument("--date", help="业务日 YYYY-MM-DD(默认今天,北京时间)")
     sub.add_parser("align-report", help="hist 队名对齐覆盖率报告(票 25)")
+    alias = sub.add_parser("set-alias", help="人工覆盖球队别名(票 25)")
+    alias.add_argument("team", help="canonical 球队名(中文)")
+    alias.add_argument("alias", help="外部别名(如 fd 英文名)")
     backtest = sub.add_parser("backtest", help="跑一次 walk-forward 回测(票 28/29)")
     backtest.add_argument("--label", default="manual", help="run 标签")
     backtest.add_argument(
@@ -317,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         "train-models": lambda: _cmd_train_models(args),
         "forecast": lambda: _cmd_forecast(args),
         "align-report": _cmd_align_report,
+        "set-alias": lambda: _cmd_set_alias(args),
         "backtest": lambda: _cmd_backtest(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "closing-snapshot": _cmd_closing_snapshot,

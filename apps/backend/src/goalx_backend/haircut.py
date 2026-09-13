@@ -21,8 +21,8 @@ from typing import Any
 
 from goalx_backend import odds_math as om
 from goalx_backend.db import utc_now_iso
+from goalx_backend.markets import SELECTIONS
 
-SELECTIONS = ("h", "d", "a")
 DEFAULT_HAIRCUT = 0.10
 MIN_SAMPLES = 30  # 样本不足回落默认（票 30 验收）
 
@@ -62,12 +62,14 @@ def build_haircut_samples(
     ).fetchall()
     jc_latest: dict[tuple[int, str], tuple[str, float]] = {}
     books: dict[int, dict[str, dict[str, tuple[str, float]]]] = {}
+    competitions: dict[int, str] = {}
     for row in rows:
         fixture_id = int(row["fixture_id"])
         selection = str(row["selection_code"])
         source = str(row["source"])
         odds = float(row["odds"])
         captured = str(row["captured_at"])
+        competitions.setdefault(fixture_id, str(row["competition"]))
         if source == "sporttery":
             jc_latest[(fixture_id, selection)] = (captured, odds)
         else:
@@ -82,26 +84,17 @@ def build_haircut_samples(
         per_sel = [fixture_books.get(sel) for sel in SELECTIONS]
         if not all(per_sel):
             continue  # 三向不完整 → 无共识
-        consensus: list[float] = []
-        for sel_prices in per_sel:
-            if sel_prices is None:
-                return []
-            consensus.append(
-                sum(price for _, price in sel_prices.values()) / len(sel_prices)
-            )
-        probs = om.shin_implied(tuple(consensus))
+        consensus = tuple(
+            sum(price for _, price in sel_prices.values()) / len(sel_prices)
+            for sel_prices in per_sel
+            if sel_prices is not None
+        )
+        probs = om.shin_implied(consensus)
         fair_odds = 1.0 / probs[SELECTIONS.index(selection)]
-        comp_row = conn.execute(
-            """
-            SELECT c.name FROM fixtures f
-            JOIN competitions c ON c.id = f.competition_id WHERE f.id = ?
-            """,
-            (fixture_id,),
-        ).fetchone()
         samples.append(
             HaircutSample(
                 fixture_id=fixture_id,
-                competition=str(comp_row["name"]) if comp_row else "",
+                competition=competitions.get(fixture_id, ""),
                 selection=selection,
                 jc_odds=jc_odds,
                 fair_odds=fair_odds,

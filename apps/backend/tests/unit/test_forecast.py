@@ -245,3 +245,64 @@ def test_forecast_matrix_views_from_payload(db, tmp_path) -> None:
     assert sum(matrix.ttg().values()) > 0.99
     assert sum(matrix.crs().values()) > 0.99
     assert sum(matrix.hafu().values()) > 0.99
+
+
+def test_had_ci_coverage_frequency() -> None:
+    """票 27 验收：80% CI 的覆盖频率符合名义水平（固定种子确定性）。"""
+    import numpy as np
+
+    from goalx_backend.score_matrix import ScoreMatrix
+
+    rng = np.random.default_rng(31)
+    teams = [f"T{i}" for i in range(8)]
+    strength = {t: float(rng.normal(0, 0.3)) for t in teams}
+    rows: list[dcm.TrainingRow] = []
+    from datetime import date, timedelta
+
+    match_day = date(2025, 9, 1)
+    for _round_no in range(34):
+        for i in range(4):
+            home, away = teams[i], teams[7 - i]
+            lam_h = float(np.exp(0.3 + strength[home] - strength[away]))
+            lam_a = float(np.exp(strength[away] - strength[home]))
+            rows.append(
+                dcm.TrainingRow(
+                    match_date=match_day.isoformat(),
+                    home_team=home,
+                    away_team=away,
+                    fthg=int(rng.poisson(lam_h)),
+                    ftag=int(rng.poisson(lam_a)),
+                )
+            )
+        match_day += timedelta(days=7)
+    from datetime import date
+
+    boots = dcm.bootstrap_dc_models(
+        rows, competition="E0", n_boot=40, seed=99, as_of=date(2026, 6, 1)
+    )
+    run = dcm.TrainingRun(
+        base=dcm.fit_dc_model(rows, competition="E0"), bootstrap=boots, seed=99
+    )
+    fc.CI_ALPHA = 0.2  # 80% 区间
+    covered = 0
+    checks = 0
+    for home in teams[:6]:
+        for away in teams[6:]:
+            if home == away:
+                continue
+            _bootstrap_lambda, had_samples = fc.bootstrap_distribution(run, home, away)
+            ci = fc.had_ci_from_samples(had_samples)
+            if ci is None:
+                continue
+            # 真值来自数据生成过程（ρ=0）
+            lam_h = float(np.exp(0.3 + strength[home] - strength[away]))
+            lam_a = float(np.exp(strength[away] - strength[home]))
+            truth = ScoreMatrix.from_lambdas(lam_h, lam_a).had()
+            for sel in ("h", "d", "a"):
+                checks += 1
+                if ci[sel][0] <= truth[sel] <= ci[sel][1]:
+                    covered += 1
+    assert checks >= 30
+    coverage = covered / checks
+    # 80% 名义水平，小样本/bootstrap 近似 → 宽容带
+    assert 0.6 <= coverage <= 0.97, f"coverage={coverage:.2f}"

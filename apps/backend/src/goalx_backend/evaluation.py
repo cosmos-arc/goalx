@@ -25,7 +25,8 @@ from typing import Any
 
 from scipy.stats import norm
 
-SELECTIONS = ("h", "d", "a")
+from goalx_backend.markets import SELECTIONS
+
 ECE_BINS = 10
 MIN_DM_SAMPLES = 3  # DM 检验最少样本
 MIN_TSTAT_SAMPLES = 2  # t 统计量最少样本

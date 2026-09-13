@@ -15,3 +15,6 @@ CRS_AWAY_RANGE: tuple[tuple[int, int], ...] = (
 CRS_EXACT_SCORES: tuple[tuple[int, int], ...] = tuple(
     (home, away) for home, max_away in CRS_AWAY_RANGE for away in range(max_away + 1)
 )
+
+# 胜平负三向选项编码（全仓唯一出处；各模块从这里导入）
+SELECTIONS: tuple[str, ...] = ("h", "d", "a")

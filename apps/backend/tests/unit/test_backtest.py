@@ -170,13 +170,13 @@ def test_candidates_had_only_respect_price_bounds() -> None:
 
     matrix = ScoreMatrix.from_lambdas(2.4, 1.0)
     extreme_jc = bt.simulated_jc_odds({"h": 0.91, "d": 0.05, "a": 0.04}, 0.11)
-    candidates = bt._candidates_for_match(matrix, None, extreme_jc, params, 1)
+    candidates = bt._candidates_for_match(matrix, extreme_jc, params, 1)
     # h(0.98)/a(22.2) 在界内，d(17.8) 在界内 → 3 个 had 候选
     assert {cand.selection_code for cand in candidates} == {"h", "d", "a"}
     assert all(cand.odds <= 50.0 for cand in candidates)
     # 尾部隐含 1.4% 的选项被下限排除
     tail_jc = bt.simulated_jc_odds({"h": 0.955, "d": 0.031, "a": 0.014}, 0.11)
-    tail_candidates = bt._candidates_for_match(matrix, None, tail_jc, params, 1)
+    tail_candidates = bt._candidates_for_match(matrix, tail_jc, params, 1)
     assert all(cand.selection_code != "a" for cand in tail_candidates)
 
 

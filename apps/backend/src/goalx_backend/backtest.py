@@ -41,10 +41,10 @@ from goalx_backend.dc_model import (
     TrainingRow,
     fit_dc_model,
 )
+from goalx_backend.markets import SELECTIONS
 from goalx_backend.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
-SELECTIONS = ("h", "d", "a")
 MARKET_MAX_GOAL_ERROR = 0.02  # 市场隐含 λ 反推的 had 拟合误差上限
 _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
 # 模拟竞彩价天花板：真实竞彩不报价超过该量级的选项（ttg 极端档最高几十），
@@ -141,7 +141,12 @@ def simulated_jc_odds(fair_probs: dict[str, float], haircut: float) -> dict[str,
 def market_implied_matrix(
     fair_probs: dict[str, float],
 ) -> ScoreMatrix | None:
-    """从市场 fair 1X2 反推 (λ_home, λ_away) 构造市场隐含比分矩阵。"""
+    """
+    从市场 fair 1X2 反推 (λ_home, λ_away) 构造市场隐含比分矩阵。
+
+    仅作诊断/预留工具：实测其总进球维度系统性欠分散（见模块 docstring），
+    不用于定价；待真实 totals/handicap 报价接入后由报价直接构造市场侧。
+    """
     raw = goal_expectancy(
         fair_probs["h"], fair_probs["d"], fair_probs["a"], max_goals=10
     )
@@ -154,7 +159,7 @@ def market_implied_matrix(
 
 
 def pick_hhad_line(matrix: ScoreMatrix) -> int:
-    """让球线近似：取两侧概率最均衡的整数线（官方调线行为近似）。"""
+    """让球线近似：两侧概率最均衡的整数线（官方调线行为近似；hhad 预留）。"""
     best_line, best_gap = 0, float("inf")
     for line in HHAD_LINE_RANGE:
         probs = matrix.hhad(float(line))
@@ -214,14 +219,12 @@ def _backtest_rows(
 
 def _candidates_for_match(
     matrix: ScoreMatrix,
-    market_matrix: ScoreMatrix,
     jc_had: dict[str, float],
     params: BacktestParams,
     hist_match_id: int,
 ) -> list[_Candidate]:
     """一场比赛的全部候选单关（had + hhad + ttg，用户裁决）。"""
     # v1 had-only（见模块 docstring：hhad/ttg 反推价不可信，待真实市场价接入）
-    del market_matrix  # 保留参数位：真实 totals/handicap 报价接入时使用
     candidates: list[_Candidate] = []
     had = matrix.had()
     for sel in SELECTIONS:
@@ -366,7 +369,6 @@ def _record_week_predictions(
             # 小训练池 ρ 数值越界 → 该场不产生预测/候选
             skip("predict_failed")
             continue
-        market_matrix = market_implied_matrix(fair_probs)
         had = matrix.had()
         conn.execute(
             """
@@ -392,12 +394,9 @@ def _record_week_predictions(
             ),
         )
         result.predictions += 1
-        if market_matrix is None:
-            skip("market_inversion_failed")
-            continue
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         candidates_by_match[hist_id] = _candidates_for_match(
-            matrix, market_matrix, jc_had, params, hist_id
+            matrix, jc_had, params, hist_id
         )
     return candidates_by_match
 

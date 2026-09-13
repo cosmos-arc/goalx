@@ -45,7 +45,7 @@ def insert_forecast(
 def latest_forecasts_for_fixtures(
     conn: sqlite3.Connection, fixture_ids: list[int], *, track: str = "ml"
 ) -> dict[int, sqlite3.Row]:
-    """每场最新一条 Forecast（按 issued_at, id 取最大）。"""
+    """每场最新一条 Forecast（id 单调递增即最新；幂等重跑下同哈希不新增）。"""
     if not fixture_ids:
         return {}
     placeholders = ", ".join("?" for _ in fixture_ids)

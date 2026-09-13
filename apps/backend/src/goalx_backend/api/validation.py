@@ -190,29 +190,20 @@ async def get_validation_progress(db: DbDep) -> ValidationProgressView:
         """
     ).fetchone()
     latest_view: BacktestRunView | None = None
+    skill: float | None = None
     if run_row is not None:
         latest_view = _run_view(run_row, _overall_metrics(db, int(run_row["id"])))
-        overall = latest_view.overall_metrics or {}
-        skill = overall.get("skill_rps")
-        conditions.append(
-            ConditionProgress(
-                key="market_skill",
-                label="对市场 skill ≥ 0 (RPS)",
-                achieved=skill is not None and float(skill) >= 0.0,
-                current=f"skill={float(skill):+.4f}" if skill is not None else "无回测",
-                target="≥ 0",
-            )
+        raw_skill = (latest_view.overall_metrics or {}).get("skill_rps")
+        skill = float(raw_skill) if raw_skill is not None else None
+    conditions.append(
+        ConditionProgress(
+            key="market_skill",
+            label="对市场 skill ≥ 0 (RPS)",
+            achieved=skill is not None and skill >= 0.0,
+            current=f"skill={skill:+.4f}" if skill is not None else "无回测",
+            target="≥ 0",
         )
-    else:
-        conditions.append(
-            ConditionProgress(
-                key="market_skill",
-                label="对市场 skill ≥ 0 (RPS)",
-                achieved=False,
-                current="无回测",
-                target="≥ 0",
-            )
-        )
+    )
     conditions.append(
         ConditionProgress(
             key="review_errors",

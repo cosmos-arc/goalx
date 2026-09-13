@@ -163,16 +163,14 @@ def match_model_team(model_teams: list[str], aliases: list[str]) -> str | None:
 class AlignmentReport:
     """五大 hist 队名 ↔ 当前别名的覆盖率报告（票 25 验收）。"""
 
-    per_competition: dict[str, dict[str, object]] = field(default_factory=dict)
+    per_competition: dict[str, dict[str, int]] = field(default_factory=dict)
     unmatched: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def coverage(self) -> float:
         """全部 hist 队名的总体映射覆盖率（0..1）。"""
-        total = sum(int(str(comp["total"])) for comp in self.per_competition.values())
-        matched = sum(
-            int(str(comp["matched"])) for comp in self.per_competition.values()
-        )
+        total = sum(comp["total"] for comp in self.per_competition.values())
+        matched = sum(comp["matched"] for comp in self.per_competition.values())
         return matched / total if total else 0.0
 
 

@@ -63,22 +63,31 @@ def _team_aliases(conn: sqlite3.Connection, team_id: int) -> list[str]:
     return [str(row["alias"]) for row in rows]
 
 
-def had_ci(
-    run: TrainingRun, home: str, away: str, *, alpha: float = CI_ALPHA
-) -> dict[str, list[float]] | None:
+def bootstrap_distribution(
+    run: TrainingRun, home: str, away: str
+) -> tuple[list[list[float]], list[dict[str, float]]]:
     """
-    Bootstrap had 概率区间（百分位法）。
+    单次遍历 bootstrap 工件：返回 (λ 样本列表, had 概率样本列表)。
 
-    任一 bootstrap 工件缺该队（重采样偶发）时该样本跳过；样本不足 2 个返回
-    None（不落 CI）。
+    重采样工件缺该队或 ρ 数值越界（小样本常见）的样本不计入。
     """
-    samples: list[dict[str, float]] = []
+    bootstrap_lambda: list[list[float]] = []
+    had_samples: list[dict[str, float]] = []
     for boot in run.bootstrap:
         try:
-            samples.append(boot.predict(home, away).had())
+            lambdas = boot.lambdas(home, away)
+            had = boot.predict(home, away).had()
         except (KeyError, ValueError):
-            # 重采样工件缺该队或 ρ 越界（小样本常见）→ 该样本不计入
             continue
+        bootstrap_lambda.append(list(lambdas))
+        had_samples.append(had)
+    return bootstrap_lambda, had_samples
+
+
+def had_ci_from_samples(
+    samples: list[dict[str, float]], *, alpha: float = CI_ALPHA
+) -> dict[str, list[float]] | None:
+    """Bootstrap had 概率区间（百分位法）；样本不足返回 None。"""
     if len(samples) < _MIN_BOOTSTRAP_SAMPLES:
         return None
 
@@ -101,15 +110,9 @@ def build_forecast_payload(
     """从训练工件构造 Forecast payload（矩阵 + λ + bootstrap CI 材料）。"""
     lam_home, lam_away = run.base.lambdas(home_model_team, away_model_team)
     matrix = run.base.predict(home_model_team, away_model_team)
-    bootstrap_lambda: list[list[float]] = []
-    for boot in run.bootstrap:
-        try:
-            bootstrap_lambda.append(
-                list(boot.lambdas(home_model_team, away_model_team))
-            )
-        except (KeyError, ValueError):
-            continue
-    ci = had_ci(run, home_model_team, away_model_team)
+    bootstrap_lambda, had_samples = bootstrap_distribution(
+        run, home_model_team, away_model_team
+    )
     return {
         "fd_competition": fd_competition,
         "model_fingerprint": run.base.data_fingerprint,
@@ -122,7 +125,7 @@ def build_forecast_payload(
         "rho": run.base.rho,
         "matrix": [list(row) for row in matrix.grid],
         "bootstrap_lambda": bootstrap_lambda,
-        "had_ci": ci,
+        "had_ci": had_ci_from_samples(had_samples),
     }
 
 
@@ -141,33 +144,29 @@ def generate_forecasts(
     """
     stats = ForecastStats()
     run_cache: dict[str, TrainingRun | None] = {}
+
+    def skip(fixture: sqlite3.Row, reason: str, detail: str | None = None) -> None:
+        entry: dict[str, str] = {
+            "fixture_id": str(fixture["id"]),
+            "match_code": str(fixture["match_code"]),
+            "fixture": f"{fixture['home_team']} vs {fixture['away_team']}",
+            "reason": reason,
+        }
+        if detail is not None:
+            entry["detail"] = detail
+        stats.skipped.append(entry)
+
     for fixture in fx_store.fixtures_for_business_date(conn, business_date):
         fixture_id = int(fixture["id"])
-        code = str(fixture["match_code"])
-        label = f"{fixture['home_team']} vs {fixture['away_team']}"
         fd_competition = FD_LEAGUE_MAP.get(str(fixture["competition_name"]))
         if fd_competition is None:
-            stats.skipped.append(
-                {
-                    "fixture_id": str(fixture_id),
-                    "match_code": code,
-                    "fixture": label,
-                    "reason": "not_fd_league",
-                }
-            )
+            skip(fixture, "not_fd_league")
             continue
         if fd_competition not in run_cache:
             run_cache[fd_competition] = load_latest_run(models_dir, fd_competition)
         run = run_cache[fd_competition]
         if run is None:
-            stats.skipped.append(
-                {
-                    "fixture_id": str(fixture_id),
-                    "match_code": code,
-                    "fixture": label,
-                    "reason": "no_model",
-                }
-            )
+            skip(fixture, "no_model")
             continue
         model_teams = sorted(run.base.teams)
         home_names = [
@@ -181,14 +180,10 @@ def generate_forecasts(
         home_model = match_model_team(model_teams, home_names)
         away_model = match_model_team(model_teams, away_names)
         if home_model is None or away_model is None:
-            stats.skipped.append(
-                {
-                    "fixture_id": str(fixture_id),
-                    "match_code": code,
-                    "fixture": label,
-                    "reason": "no_mapping",
-                    "detail": f"home={home_model} away={away_model}",
-                }
+            skip(
+                fixture,
+                "no_mapping",
+                detail=f"home={home_model} away={away_model}",
             )
             continue
         payload = build_forecast_payload(
