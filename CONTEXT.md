@@ -68,13 +68,13 @@ ML 轨道与 LLM/市场基准之间的分歧度量，决定人工复核路由。
 _Avoid_: Diff
 
 **EVAssessment**:
-对一注的价值评估：EV、置信区间、成本调整后 EV（分摊系统固定成本）。
+对一注的价值评估：EV、置信区间及明确口径的边际成本；系统固定费用另作期间成本，不默认为每注分摊。
 _Avoid_: Value（泛）
 
 ### 投注
 
 **Bet**:
-一次投注记录（纸面或真金，以 mode 区分），真金才影响 Bankroll。
+一个选项组合及其金额的记录，可以是未锁定建议、正式锁定纸面或实际购买。仅实际购买的真金记录影响 Bankroll；纸面锁定不代表发生了购买。
 _Avoid_: Order, Wager
 
 **BetLeg**:
@@ -82,7 +82,7 @@ _Avoid_: Order, Wager
 _Avoid_: Pick
 
 **BetSlip**:
-一张实际投注票（对任9 复式：含多个 Combination）。
+一张纸面锁定记录或实际投注票，可汇集多个 Bet；票据数量不等于 Bet 数量。对任9复式可包含多个 Combination。
 _Avoid_: Ticket（与 MatchCode 混淆）
 
 **Combination**:
@@ -100,9 +100,9 @@ _Avoid_: Expense
 _Avoid_: Result（泛指）
 
 **Settlement**:
-按官方规则对一张 BetSlip 的兑付计算（无效场次：单关退款、串关腿按 1）。
+按官方规则对固定奖金 Bet 或奖池 BetSlip 的兑付计算；单关或全无效返本金，串关无效腿按1、剩余腿继续计奖。
 _Avoid_: Payout（单独使用）
 
 **Bankroll**:
-专门用于本系统的资金池，仅真金投注影响；变动以 BankrollEvent 记录。
+专门用于本系统的真实资金池，投注支出和兑付仅来自实际购买的真金记录，另可记录真实出入金；变动以 BankrollEvent 记录。
 _Avoid_: Balance, 余额
