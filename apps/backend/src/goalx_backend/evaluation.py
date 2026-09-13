@@ -126,21 +126,31 @@ def diebold_mariano(
 def flat_stake_stats(
     profits: Sequence[float], stakes: Sequence[float]
 ) -> dict[str, float]:
-    """flat-stake ROI 与 t 统计量（单注收益率序列的 t 检验）。"""
-    n = len(profits)
-    if n == 0 or not stakes:
-        return {"n": 0, "roi": 0.0, "t_stat": 0.0}
-    returns = [p / s for p, s in zip(profits, stakes, strict=True) if s > 0]
+    """
+    下注侧收益：等权（每注收益率均值）与投入加权（ROI=profit/staked）分列。
+
+    t 统计量基于每注收益率序列（票 34：两种口径不得混称）。
+    """
+    pairs = [(p, s) for p, s in zip(profits, stakes, strict=True) if s > 0]
+    if not pairs:
+        return {"n": 0, "roi": 0.0, "roi_stake_weighted": 0.0, "t_stat": 0.0}
+    returns = [p / s for p, s in pairs]
     n = len(returns)
-    if n == 0:
-        return {"n": 0, "roi": 0.0, "t_stat": 0.0}
+    staked = sum(s for _, s in pairs)
+    profit = sum(p for p, _ in pairs)
     mean = sum(returns) / n
+    weighted = profit / staked if staked > 0 else 0.0
     if n < MIN_TSTAT_SAMPLES:
-        return {"n": n, "roi": mean, "t_stat": 0.0}
+        return {
+            "n": n,
+            "roi": mean,
+            "roi_stake_weighted": weighted,
+            "t_stat": 0.0,
+        }
     variance = sum((r - mean) ** 2 for r in returns) / (n - 1)
     std = math.sqrt(variance)
     t_stat = mean / (std / math.sqrt(n)) if std > 0 else 0.0
-    return {"n": n, "roi": mean, "t_stat": t_stat}
+    return {"n": n, "roi": mean, "roi_stake_weighted": weighted, "t_stat": t_stat}
 
 
 def _outcome_index(ftr: str) -> int:
@@ -187,6 +197,8 @@ def evaluate_predictions(
         "skill_rps": skill_score(mean(model_losses["rps"]), mean(market_losses["rps"])),
         "dm_stat": dm,
         "dm_p": dm_p,
+        # 票 34：共享比赛的相关性未处理，p 值只作探索性参考
+        "dm_p_exploratory": True,
         "brier_model": mean(model_losses["brier"]),
         "brier_market": mean(market_losses["brier"]),
         "logloss_model": mean(model_losses["logloss"]),
@@ -258,12 +270,14 @@ def compute_run_metrics(conn: sqlite3.Connection, run_id: int) -> dict[str, int]
         )
 
     bet_rows = conn.execute(
-        "SELECT * FROM backtest_bets WHERE run_id = ?", (run_id,)
+        "SELECT * FROM backtest_bets WHERE run_id = ? ORDER BY id", (run_id,)
     ).fetchall()
-    market_bets: dict[str, list[sqlite3.Row]] = {}
+    # 票 34：每注只进各玩法 scope 一次——串关两腿同玩法曾重复累加、
+    # 跨玩法串关曾被复制进多个 scope；去重后 had-only 汇总 == overall。
+    market_bets: dict[str, dict[int, sqlite3.Row]] = {}
     for bet in bet_rows:
         for leg in json.loads(str(bet["legs"])):
-            market_bets.setdefault(str(leg["market_code"]), []).append(bet)
+            market_bets.setdefault(str(leg["market_code"]), {})[int(bet["id"])] = bet
 
     written = 0
     for scope, group in sorted(_prediction_scopes(samples).items()):
@@ -271,26 +285,23 @@ def compute_run_metrics(conn: sqlite3.Connection, run_id: int) -> dict[str, int]
             continue
         store(scope, evaluate_predictions(group))
         written += 1
-    for market, bets in sorted(market_bets.items()):
-        stats = flat_stake_stats(
-            [float(b["profit"]) for b in bets], [float(b["stake"]) for b in bets]
-        )
-        stats |= {
-            "staked": sum(float(b["stake"]) for b in bets),
-            "profit": sum(float(b["profit"]) for b in bets),
-        }
-        store(f"bets:{market}", stats)
+    for market, bets_by_id in sorted(market_bets.items()):
+        store(f"bets:{market}", _bet_stats(list(bets_by_id.values())))
         written += 1
     if bet_rows:
-        overall = flat_stake_stats(
-            [float(b["profit"]) for b in bet_rows],
-            [float(b["stake"]) for b in bet_rows],
-        )
-        overall |= {
-            "staked": sum(float(b["stake"]) for b in bet_rows),
-            "profit": sum(float(b["profit"]) for b in bet_rows),
-        }
-        store("bets:overall", overall)
+        store("bets:overall", _bet_stats(list(bet_rows)))
         written += 1
     conn.commit()
     return {"written": written}
+
+
+def _bet_stats(bets: list[sqlite3.Row]) -> dict[str, float]:
+    """一组注的收益统计（等权/加权 ROI、t 统计量、投入与盈利）。"""
+    stats = flat_stake_stats(
+        [float(b["profit"]) for b in bets], [float(b["stake"]) for b in bets]
+    )
+    stats |= {
+        "staked": sum(float(b["stake"]) for b in bets),
+        "profit": sum(float(b["profit"]) for b in bets),
+    }
+    return stats

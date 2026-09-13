@@ -113,9 +113,11 @@ def build_forecast_payload(
     bootstrap_lambda, had_samples = bootstrap_distribution(
         run, home_model_team, away_model_team
     )
+    had_ci = had_ci_from_samples(had_samples)
     return {
         "fd_competition": fd_competition,
         "model_fingerprint": run.base.data_fingerprint,
+        "artifact_id": run.artifact_id(),
         "model_as_of": run.base.as_of,
         "half_life_days": run.base.half_life_days,
         "home_team": home_model_team,
@@ -125,7 +127,10 @@ def build_forecast_payload(
         "rho": run.base.rho,
         "matrix": [list(row) for row in matrix.grid],
         "bootstrap_lambda": bootstrap_lambda,
-        "had_ci": had_ci_from_samples(had_samples),
+        # 名义水平 + 有效样本数（票 34：覆盖未验收，不得称校准成功）
+        "had_ci": had_ci,
+        "ci_nominal_level": 1.0 - CI_ALPHA if had_ci is not None else None,
+        "ci_effective_samples": len(had_samples),
     }
 
 
@@ -196,7 +201,9 @@ def generate_forecasts(
             conn,
             fixture_id=fixture_id,
             track="ml",
-            model_version=f"dc-{run.base.data_fingerprint[:12]}",
+            # 工件身份（数据+配置+seed+版本）而非裸数据指纹：不同配置的
+            # 预测分组可见，旧 Forecast 不被覆盖（票 34 验收 6）
+            model_version=f"dc-{run.artifact_id()[:12]}",
             content_hash=content_hash(payload),
             payload=payload,
         )

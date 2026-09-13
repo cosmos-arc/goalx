@@ -324,8 +324,13 @@ def test_live_purchase_correction_and_counterfactual_exclusion(
     assert api_client.post("/api/v1/settlements/run").status_code == 200
     assert api_client.get("/api/v1/bankroll").json()["balance"] == 10
     progress = api_client.get("/api/v1/validation/progress").json()
-    assert progress["settled_bets"] == 1
-    assert len(progress["yield_curve"]) == 1
+    assert progress["live"]["unique_bets"] == 1  # 真实购买单独分组(票 34)
+    assert progress["paper"]["unique_bets"] == 0
+    assert progress["yield_curve"] == []  # 默认曲线只含纸面,不混 live(票 34)
+    live_curve = api_client.get(
+        "/api/v1/validation/progress", params={"yield_mode": "live"}
+    ).json()
+    assert len(live_curve["yield_curve"]) == 1
     correction = {**result, "home_goals": 0, "away_goals": 2}
     assert (
         api_client.post(

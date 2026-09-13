@@ -40,6 +40,7 @@ from goalx_backend.dc_model import (
     DCArtifact,
     TrainingRow,
     fit_dc_model,
+    implementation_versions,
 )
 from goalx_backend.markets import SELECTIONS
 from goalx_backend.score_matrix import ScoreMatrix
@@ -72,6 +73,9 @@ class BacktestParams:
     min_train_matches: int = 100
     parlay2: bool = True
     max_sim_odds: float = DEFAULT_MAX_SIM_ODDS
+    # 公允基准来源：auto=PSC 优先、缺失用 AvgC 兜底；psc/avgc = 只用该源
+    # （票 34 分期/来源对照 run 用，缺失行跳过并计入 no_fair_baseline）
+    fair_source: str = "auto"
 
 
 @dataclass
@@ -122,11 +126,21 @@ def assert_no_lookahead(train_rows: list[TrainingRow], week_dates: list[str]) ->
         )
 
 
-def fair_probs_from_close(row: sqlite3.Row) -> tuple[dict[str, float], str] | None:
-    """收盘公允概率：PSC 优先 Shin，缺失用 AvgC 兜底（ADR 0007）。"""
+def fair_probs_from_close(
+    row: sqlite3.Row, *, fair_source: str = "auto"
+) -> tuple[dict[str, float], str] | None:
+    """收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。"""
     psc = (row["psc_home"], row["psc_draw"], row["psc_away"])
     avgc = (row["avgc_home"], row["avgc_draw"], row["avgc_away"])
-    for odds, source in ((psc, "psc"), (avgc, "avgc")):
+    if fair_source == "psc":
+        candidates: tuple[tuple[tuple[float | int | None, ...], str], ...] = (
+            (psc, "psc"),
+        )
+    elif fair_source == "avgc":
+        candidates = ((avgc, "avgc"),)
+    else:
+        candidates = ((psc, "psc"), (avgc, "avgc"))
+    for odds, source in candidates:
         if all(isinstance(o, (int, float)) and o > 1.0 for o in odds):
             probs = om.shin_implied(tuple(float(o) for o in odds))
             return dict(zip(SELECTIONS, probs, strict=True)), source
@@ -358,7 +372,7 @@ def _record_week_predictions(
         if home not in artifact.teams or away not in artifact.teams:
             skip("untrained_teams")
             continue
-        fair = fair_probs_from_close(row)
+        fair = fair_probs_from_close(row, fair_source=params.fair_source)
         if fair is None:
             skip("no_fair_baseline")
             continue
@@ -454,12 +468,17 @@ def run_backtest(
     结算实时完成（历史赛果已知）；逐注记录 EV/Kelly/盈亏，走与纸面/实盘
     相同的 ``settle_fixed_bet`` 代码路径。
     """
+    run_params = asdict(params) | {
+        # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
+        "price_model": "simulated_jc",
+        "versions": implementation_versions(),
+    }
     cur = conn.execute(
         """
         INSERT INTO backtest_runs (label, params, status, created_at)
         VALUES (?, ?, 'running', ?)
         """,
-        (label, json.dumps(asdict(params), ensure_ascii=False), utc_now_iso()),
+        (label, json.dumps(run_params, ensure_ascii=False), utc_now_iso()),
     )
     run_id = int(cur.lastrowid or 0)
     result = BacktestResult(run_id=run_id)

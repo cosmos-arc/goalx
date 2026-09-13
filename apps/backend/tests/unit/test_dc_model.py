@@ -183,3 +183,50 @@ def test_train_competition_end_to_end(db, tmp_path) -> None:
     latest = dcm.load_latest_run(tmp_path, "E0")
     assert latest is not None
     assert latest.base.predict("T00", "T01").had()["h"] > 0
+
+
+# --- 票 34 验收 6：工件身份含数据+训练配置+seed+实现/依赖版本 ---
+
+
+def test_artifact_id_distinguishes_config_and_versions(monkeypatch) -> None:
+    rows = synthetic_rows(n=120, seed=5)
+    base = dcm.fit_dc_model(rows, competition="E0", half_life_days=365.0)
+    run_a = dcm.TrainingRun(base=base, seed=42)
+    same = dcm.TrainingRun(
+        base=dcm.fit_dc_model(rows, competition="E0", half_life_days=365.0), seed=42
+    )
+    assert run_a.artifact_id() == same.artifact_id()  # 同配置同身份
+    diff_half_life = dcm.TrainingRun(
+        base=dcm.fit_dc_model(rows, competition="E0", half_life_days=180.0), seed=42
+    )
+    assert run_a.artifact_id() != diff_half_life.artifact_id()
+    diff_seed = dcm.TrainingRun(base=base, seed=7)
+    assert run_a.artifact_id() != diff_seed.artifact_id()
+    monkeypatch.setattr(
+        dcm,
+        "implementation_versions",
+        lambda: {
+            "goalx-backend": "9.9.9",
+            "penaltyblog": "1.6.2",
+            "artifact_schema": "1",
+        },
+    )
+    assert run_a.artifact_id() != diff_seed.artifact_id()  # 版本参与身份
+    monkeypatch.undo()
+
+
+def test_run_filename_uses_artifact_id_no_overwrite(tmp_path) -> None:
+    rows = synthetic_rows(n=120, seed=5)
+    v1 = dcm.TrainingRun(
+        base=dcm.fit_dc_model(rows, competition="E0", half_life_days=365.0), seed=1
+    )
+    v2 = dcm.TrainingRun(
+        base=dcm.fit_dc_model(rows, competition="E0", half_life_days=180.0), seed=1
+    )
+    dcm.save_run(v1, tmp_path)
+    dcm.save_run(v2, tmp_path)  # 同数据不同配置:不覆盖,两个文件
+    runs = dcm.list_runs(tmp_path, "E0")
+    assert len(runs) == 2
+    payload = json.loads(runs[0][1].read_text())
+    assert payload["artifact_id"]  # 落盘身份可追溯
+    assert payload["versions"]["artifact_schema"]
