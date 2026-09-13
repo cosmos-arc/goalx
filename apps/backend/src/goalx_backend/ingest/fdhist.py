@@ -22,7 +22,9 @@ from goalx_backend.store import results as rs_store
 
 # 五大联赛 fd 代码（票 12 范围）
 FD_COMPETITIONS: tuple[str, ...] = ("E0", "D1", "SP1", "I1", "F1")
-SEASONS: tuple[str, ...] = ("2324", "2425", "2526")
+# 回测范围三季（ADR 0007）+ 两个暖机赛季（票 28 walk-forward 训练窗需要
+# 更早历史；回测引擎只在 backtest seasons 内模拟下注，训练可用全部行）
+SEASONS: tuple[str, ...] = ("2122", "2223", "2324", "2425", "2526")
 
 
 @dataclass

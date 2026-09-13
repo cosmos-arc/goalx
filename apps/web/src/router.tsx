@@ -4,6 +4,7 @@ import { BankrollPage } from "./pages/bankroll-page";
 import { BetsPage } from "./pages/bets-page";
 import { PlaceholderPage } from "./pages/placeholder-page";
 import { TodayPage } from "./pages/today-page";
+import { ValidationPage } from "./pages/validation-page";
 
 function RootLayout() {
 	return (
@@ -41,7 +42,7 @@ const bankrollRoute = createRoute({
 const validationRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/validation",
-	component: () => <PlaceholderPage title="验证" milestone="M2（回测引擎 + 验证看板）" />,
+	component: ValidationPage,
 });
 const settingsRoute = createRoute({
 	getParentRoute: () => rootRoute,

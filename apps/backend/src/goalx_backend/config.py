@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # --- 存储（ADR 0003：SQLite WAL 单机） ---
     db_path: Path = Path("data/goalx.db")
 
+    # --- ML 线（票 26/27：DC 工件与训练参数） ---
+    models_dir: Path = Path("data/models")
+    dc_half_life_days: float = 365.0  # 时间衰减半衰期（约 1 年起步）
+    bootstrap_samples: int = 50  # bootstrap CI 重采样数（0 关闭）
+    bootstrap_seed: int = 20260913
+
     # --- 数据源（票 02/07 选型；key 与 .env 模板的无前缀名兼容） ---
     sporttery_calculator_url: str = (
         "https://webapi.sporttery.cn/gateway/jc/football/getMatchCalculatorV1.qry"

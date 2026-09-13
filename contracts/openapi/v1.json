@@ -626,10 +626,240 @@
           }
         }
       }
+    },
+    "/api/v1/backtest/runs": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "回测 run 列表",
+        "description": "全部回测 run（新→旧），附 overall 指标摘要。",
+        "operationId": "list_backtest_runs_api_v1_backtest_runs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BacktestRunView"
+                  },
+                  "type": "array",
+                  "title": "Response List Backtest Runs Api V1 Backtest Runs Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backtest/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "回测 run 详情(分层指标)",
+        "description": "一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧）。",
+        "operationId": "get_backtest_run_api_v1_backtest_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRunDetailView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "run 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/validation/progress": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "纸面三条件进度与滚动收益",
+        "description": "验证页主数据：CLV beat / 市场 skill / 复核零错误三条件 + 滚动 yield。\n\n- CLV：来自已对账 clv_records（票 32）；\n- skill：最新回测 run 的 overall RPS skill（票 29）；\n- 复核系统性错误：M3 复核队列落地前恒为「无记录」空态。",
+        "operationId": "get_validation_progress_api_v1_validation_progress_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProgressView"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "BacktestRunDetailView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "overall_metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Metrics"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Metrics"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status",
+          "created_at"
+        ],
+        "title": "BacktestRunDetailView",
+        "description": "run 详情：分层指标（overall/联赛/赛季/玩法）。"
+      },
+      "BacktestRunView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "overall_metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Metrics"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status",
+          "created_at"
+        ],
+        "title": "BacktestRunView",
+        "description": "一行回测 run。"
+      },
       "BankrollEventView": {
         "properties": {
           "id": {
@@ -905,6 +1135,40 @@
         ],
         "title": "BetView",
         "description": "一注的复盘视图。"
+      },
+      "ConditionProgress": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "achieved": {
+            "type": "boolean",
+            "title": "Achieved"
+          },
+          "current": {
+            "type": "string",
+            "title": "Current"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "achieved",
+          "current",
+          "target"
+        ],
+        "title": "ConditionProgress",
+        "description": "纸面转真金三条件之一的进度（票 10）。"
       },
       "DrawResultImport": {
         "properties": {
@@ -1638,6 +1902,82 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ValidationProgressView": {
+        "properties": {
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionProgress"
+            },
+            "type": "array",
+            "title": "Conditions"
+          },
+          "settled_bets": {
+            "type": "integer",
+            "title": "Settled Bets"
+          },
+          "yield_curve": {
+            "items": {
+              "$ref": "#/components/schemas/YieldPoint"
+            },
+            "type": "array",
+            "title": "Yield Curve"
+          },
+          "clv": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Clv"
+          },
+          "latest_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestRunView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "conditions",
+          "settled_bets",
+          "yield_curve",
+          "clv"
+        ],
+        "title": "ValidationProgressView",
+        "description": "验证页数据：三条件进度 + 滚动收益 + CLV 摘要。"
+      },
+      "YieldPoint": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "cumulative_yield": {
+            "type": "number",
+            "title": "Cumulative Yield"
+          },
+          "rolling_yield": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Yield"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "cumulative_yield"
+        ],
+        "title": "YieldPoint",
+        "description": "累计/滚动收益曲线上的一个点。"
       }
     }
   },
@@ -1657,6 +1997,10 @@
     {
       "name": "results",
       "description": "开奖导入、结算批跑与资金池。"
+    },
+    {
+      "name": "validation",
+      "description": "回测 run/指标与纸面三条件进度(验证页)。"
     }
   ]
 }

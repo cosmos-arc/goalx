@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from goalx_backend.api import bets as bets_api
 from goalx_backend.api import fixtures as fixtures_api
 from goalx_backend.api import results as results_api
+from goalx_backend.api import validation as validation_api
 from goalx_backend.config import Environment, Settings, get_settings
 
 OPENAPI_DESCRIPTION = (
@@ -59,6 +60,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "fixtures", "description": "竞彩场次对照与赔率时序(今日页)。"},
             {"name": "bets", "description": "注级建议、票级回录与复盘列表。"},
             {"name": "results", "description": "开奖导入、结算批跑与资金池。"},
+            {
+                "name": "validation",
+                "description": "回测 run/指标与纸面三条件进度(验证页)。",
+            },
         ],
     )
     app.state.settings = resolved
@@ -90,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(fixtures_api.router)
     app.include_router(bets_api.router)
     app.include_router(results_api.router)
+    app.include_router(validation_api.router)
     return app
 
 

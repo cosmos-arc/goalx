@@ -420,4 +420,105 @@ def _apply_v2(conn: sqlite3.Connection) -> None:
             conn.execute(sql)
 
 
-MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = ((1, _apply_v1), (2, _apply_v2))
+_V3_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS backtest_runs (
+        id INTEGER PRIMARY KEY,
+        label TEXT NOT NULL,
+        params TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'done', 'failed')),
+        created_at TEXT NOT NULL,
+        finished_at TEXT,
+        summary TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS backtest_predictions (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+        hist_match_id INTEGER NOT NULL REFERENCES hist_matches(id),
+        competition TEXT NOT NULL,
+        season TEXT NOT NULL,
+        match_date TEXT NOT NULL,
+        home_team TEXT NOT NULL,
+        away_team TEXT NOT NULL,
+        had_probs TEXT NOT NULL,
+        fair_probs TEXT NOT NULL,
+        fair_source TEXT NOT NULL CHECK (fair_source IN ('psc', 'avgc')),
+        model_fingerprint TEXT NOT NULL,
+        train_window_end TEXT NOT NULL,
+        UNIQUE (run_id, hist_match_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS backtest_bets (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+        kind TEXT NOT NULL CHECK (kind IN ('single', 'parlay2')),
+        competition TEXT NOT NULL,
+        placed_week TEXT NOT NULL,
+        stake REAL NOT NULL,
+        legs TEXT NOT NULL,
+        ev REAL NOT NULL,
+        kelly REAL,
+        status TEXT NOT NULL CHECK (status IN ('won', 'lost', 'void')),
+        payout REAL NOT NULL,
+        profit REAL NOT NULL,
+        detail TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_backtest_bets_run ON backtest_bets(run_id)",
+    """
+    CREATE TABLE IF NOT EXISTS backtest_metrics (
+        id INTEGER PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+        scope TEXT NOT NULL,
+        metrics TEXT NOT NULL,
+        UNIQUE (run_id, scope)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS haircut_calibrations (
+        id INTEGER PRIMARY KEY,
+        scope TEXT NOT NULL,
+        market_code TEXT NOT NULL,
+        haircut REAL NOT NULL,
+        n_samples INTEGER NOT NULL,
+        quartiles TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('calibrated', 'default')),
+        computed_at TEXT NOT NULL,
+        UNIQUE (scope, market_code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS clv_records (
+        id INTEGER PRIMARY KEY,
+        bet_id INTEGER NOT NULL REFERENCES bets(id),
+        fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+        market_code TEXT NOT NULL,
+        selection_code TEXT NOT NULL,
+        taken_odds REAL NOT NULL,
+        close_prob REAL NOT NULL,
+        clv_prob REAL NOT NULL,
+        close_source TEXT NOT NULL
+            CHECK (close_source IN ('odds_api_closing', 'fd_psc')),
+        minutes_to_kickoff REAL,
+        computed_at TEXT NOT NULL,
+        UNIQUE (bet_id, fixture_id)
+    )
+    """,
+)
+
+
+def _apply_v3(conn: sqlite3.Connection) -> None:
+    """v3：M2 回测/指标/haircut 校准/CLV 表（票 28-32）。"""
+    for statement in _V3_STATEMENTS:
+        conn.execute(statement)
+
+
+MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
+    (1, _apply_v1),
+    (2, _apply_v2),
+    (3, _apply_v3),
+)

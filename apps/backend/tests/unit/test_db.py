@@ -13,13 +13,21 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    assert db.migrate(conn) == 2
-    assert db.migrate(conn) == 2  # 重跑幂等
+    assert db.migrate(conn) == 3
+    assert db.migrate(conn) == 3  # 重跑幂等
 
     tables = {
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
+    assert {
+        "backtest_runs",
+        "backtest_predictions",
+        "backtest_bets",
+        "backtest_metrics",
+        "haircut_calibrations",
+        "clv_records",
+    } <= tables
     # 六域核心表（票 18 验收：全部实体建表）
     expected = {
         "competitions",

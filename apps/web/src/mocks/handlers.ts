@@ -200,9 +200,65 @@ export const drawResultsFixture = [
 	},
 ] as const;
 
+export const backtestRunsFixture = [
+	{
+		id: 7,
+		label: "m2-smoke",
+		status: "done",
+		created_at: "2026-09-13T10:00:00+00:00",
+		finished_at: "2026-09-13T10:05:00+00:00",
+		summary: { predictions: 4200, bets: 96, staked: 4500, profit: -120, roi: -0.027, skipped: {} },
+		overall_metrics: {
+			n: 4200,
+			rps_model: 0.2031,
+			rps_market: 0.2029,
+			skill_rps: 0.001,
+			dm_p: 0.42,
+			brier_model: 0.58,
+			brier_market: 0.578,
+		},
+	},
+] as const;
+
+export const validationProgressFixture = {
+	conditions: [
+		{
+			key: "clv_beat",
+			label: "CLV beat rate ≥60% 且 ≥200 注",
+			achieved: false,
+			current: "beat=58.0% @ 12 注",
+			target: "≥60% @ ≥200 注",
+		},
+		{ key: "market_skill", label: "对市场 skill ≥ 0 (RPS)", achieved: true, current: "skill=+0.0010", target: "≥ 0" },
+		{
+			key: "review_errors",
+			label: "复核无系统性错误",
+			achieved: true,
+			current: "无记录(M3 前空态)",
+			target: "无系统性错误",
+		},
+	],
+	settled_bets: 12,
+	yield_curve: Array.from({ length: 12 }, (_, i) => ({
+		index: i + 1,
+		cumulative_yield: -0.02 + 0.004 * i,
+		rolling_yield: -0.03 + 0.005 * i,
+	})),
+	clv: {
+		n_records: 12,
+		beat_rate_overall: 0.58,
+		by_minutes_bucket: {},
+		by_market_league: {},
+		regression: { n: 12, slope: 3.2, r_squared: 0.4 },
+	},
+	latest_run: backtestRunsFixture[0],
+} as const;
+
 handlers.push(
 	http.get("*/api/v1/fixtures/1/odds", () => HttpResponse.json(oddsFixture)),
 	http.get("*/api/v1/bet-slips", () => HttpResponse.json(slipsFixture)),
 	http.get("*/api/v1/draw-results", () => HttpResponse.json(drawResultsFixture)),
 	http.post("*/api/v1/bets", () => HttpResponse.json(betsFixture[1], { status: 201 })),
+	http.get("*/api/v1/backtest/runs", () => HttpResponse.json(backtestRunsFixture)),
+	http.get("*/api/v1/validation/progress", () => HttpResponse.json(validationProgressFixture)),
 );
