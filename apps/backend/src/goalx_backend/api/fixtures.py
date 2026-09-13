@@ -10,6 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from goalx_backend.api.deps import get_db
+from goalx_backend.quote_evidence import (
+    DEFAULT_FRESHNESS_SECONDS,
+    DEFAULT_PAIR_GAP_SECONDS,
+    adjudicate_had_quote,
+)
 from goalx_backend.services import TodayFixtureView, build_today_view
 from goalx_backend.store import fixtures as fx_store
 
@@ -101,3 +106,73 @@ async def set_manual_join(
     )
     db.commit()
     return {"status": "joined", "method": "manual"}
+
+
+class HadQuoteVerdictView(BaseModel):
+    """某 as-of 时点的 had 报价判定（票 35 交接契约）。"""
+
+    fixture_id: int
+    as_of: str
+    kickoff_utc: str
+    status: str
+    reasons: list[str]
+    sale_state: str | None = None
+    single_eligible: bool | None = None
+    jc_odds: dict[str, float]
+    jc_source_updated_at: str | None = None
+    jc_age_seconds: float | None = None
+    eu_books: int = 0
+    eu_probabilities: dict[str, float] | None = None
+    eu_fair_odds: dict[str, float] | None = None
+    eu_source_updated_at: str | None = None
+    pair_gap_seconds: float | None = None
+    sources: list[str]
+
+
+@router.get(
+    "/{fixture_id}/had-quote",
+    summary="as-of had 报价证据判定",
+    response_model=HadQuoteVerdictView,
+    responses={404: {"description": "fixture 不存在"}},
+)
+async def get_had_quote_verdict(
+    fixture_id: int,
+    db: DbDep,
+    as_of: Annotated[
+        str | None, Query(description="决策时点(UTC ISO);默认现在")
+    ] = None,
+    freshness_seconds: Annotated[
+        float, Query(ge=0, description="源新鲜度上限(秒),工程初值300")
+    ] = DEFAULT_FRESHNESS_SECONDS,
+    max_pair_gap_seconds: Annotated[
+        float, Query(ge=0, description="两源时差上限(秒),工程初值300")
+    ] = DEFAULT_PAIR_GAP_SECONDS,
+) -> HadQuoteVerdictView:
+    """按 as-of 取 had 报价证据，返回 有效/未知/拒绝、原因、age 与两源时差。"""
+    if fx_store.get_fixture(db, fixture_id) is None:
+        raise HTTPException(status_code=404, detail="fixture not found")
+    verdict = adjudicate_had_quote(
+        db,
+        fixture_id,
+        as_of or datetime.now(UTC).isoformat(timespec="seconds"),
+        freshness_seconds=freshness_seconds,
+        max_pair_gap_seconds=max_pair_gap_seconds,
+    )
+    return HadQuoteVerdictView(
+        fixture_id=verdict.fixture_id,
+        as_of=verdict.as_of,
+        kickoff_utc=verdict.kickoff_utc,
+        status=verdict.status,
+        reasons=verdict.reasons,
+        sale_state=verdict.sale_state,
+        single_eligible=verdict.single_eligible,
+        jc_odds=verdict.jc_odds,
+        jc_source_updated_at=verdict.jc_source_updated_at,
+        jc_age_seconds=verdict.jc_age_seconds,
+        eu_books=verdict.eu_books,
+        eu_probabilities=verdict.eu_probabilities,
+        eu_fair_odds=verdict.eu_fair_odds,
+        eu_source_updated_at=verdict.eu_source_updated_at,
+        pair_gap_seconds=verdict.pair_gap_seconds,
+        sources=verdict.sources,
+    )

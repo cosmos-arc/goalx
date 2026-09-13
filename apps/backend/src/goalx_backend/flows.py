@@ -31,14 +31,15 @@ from goalx_backend.services import run_settlement
 
 @flow(name="jingcai-snapshot", log_prints=True)
 def jingcai_snapshot_flow() -> dict[str, int]:
-    """拉取竞彩官方全玩法报价并 append-only 入库。"""
+    """拉取竞彩官方全玩法报价：原始证据落盘 + append-only 入库（票 35）。"""
     settings = get_settings()
     conn = connect(settings.db_path)
     try:
         migrate(conn)
         with polite_client() as client:
-            payload = sporttery.fetch_calculator_payload(settings, client)
-        stats = sporttery.store_matches(conn, sporttery.parse_matches(payload))
+            stats = sporttery.capture_jingcai(
+                conn, settings, client, raw_root=settings.observations_dir
+            )
         logger.info(
             "jingcai snapshot: {} matches, {} snapshots ({} dup)",
             stats.matches,
@@ -52,19 +53,51 @@ def jingcai_snapshot_flow() -> dict[str, int]:
 
 @flow(name="eu-odds-snapshot", log_prints=True)
 def eu_odds_snapshot_flow() -> dict[str, int]:
-    """欧赔采集 + 竞彩 join + credit 记账（超预算抛 CreditBudgetExceeded）。"""
+    """欧赔采集 + 竞彩 join + 逐请求 credit 记账（超预算抛 CreditBudgetExceeded）。"""
     settings = get_settings()
     conn = connect(settings.db_path)
     try:
         migrate(conn)
         with polite_client() as client:
-            stats = oddsapi.fetch_and_store_odds(conn, settings, client)
+            stats = oddsapi.fetch_and_store_odds(
+                conn, settings, client, raw_root=settings.observations_dir
+            )
         logger.info(
             "eu odds: {} events, {} snapshots, credits={}, unmatched={}",
             stats.events,
             stats.snapshots,
             stats.credits_used,
             stats.unmatched,
+        )
+        return {
+            "events": stats.events,
+            "snapshots": stats.snapshots,
+            "credits_used": stats.credits_used,
+        }
+    finally:
+        conn.close()
+
+
+@flow(name="eu-odds-closing", log_prints=True)
+def eu_odds_closing_flow(window_minutes: int = 35) -> dict[str, int]:
+    """收盘窗口快照（票 32/35）：与常规采集共享月预算（同一记账路径）。"""
+    settings = get_settings()
+    conn = connect(settings.db_path)
+    try:
+        migrate(conn)
+        with polite_client() as client:
+            stats = oddsapi.fetch_closing_window(
+                conn,
+                settings,
+                client,
+                window_minutes=window_minutes,
+                raw_root=settings.observations_dir,
+            )
+        logger.info(
+            "eu closing: {} events, {} snapshots, credits={}",
+            stats.events,
+            stats.snapshots,
+            stats.credits_used,
         )
         return {
             "events": stats.events,

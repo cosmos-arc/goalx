@@ -19,6 +19,28 @@ def normalized_implied(odds: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(p / total for p in raw)
 
 
+def power_implied(odds: tuple[float, ...]) -> tuple[float, ...]:
+    """Power de-vig: find z with ``sum((1/o)**z) = 1``（票 35 敏感性对照）。"""
+    raw = [1.0 / o for o in odds]
+    if sum(raw) <= 1.0 + 1e-12:
+        return normalized_implied(odds)
+
+    def total(z: float) -> float:
+        return sum(p**z for p in raw)
+
+    low, high = 0.5, 2.0
+    for _ in range(80):
+        mid = (low + high) / 2.0
+        if total(mid) > 1.0:
+            low = mid
+        else:
+            high = mid
+    z = (low + high) / 2.0
+    probs = tuple(p**z for p in raw)
+    scale = sum(probs)
+    return tuple(p / scale for p in probs)
+
+
 def _shin_probabilities(z: float, raw: list[float]) -> list[float]:
     """Shin inverse for one bookmaker-probability vector at insider rate z."""
     total = sum(raw)

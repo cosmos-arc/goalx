@@ -69,7 +69,24 @@ def test_parse_events_maps_home_away_draw() -> None:
     assert len(events) == 1
     event = events[0]
     assert event.books["pinnacle"] == {"h": 1.85, "d": 3.6, "a": 4.2}
-    assert event.books["bet365"] == {"h": 1.9, "a": 4.0}  # 无 Draw 容忍
+    # 票 35：同公司完整三向才可比较——缺 Draw 的 book 整体丢弃
+    assert "bet365" not in event.books
+
+
+def test_parse_events_keeps_source_update_time() -> None:
+    from datetime import UTC, datetime
+
+    ts = 1789000000
+    expected = datetime.fromtimestamp(ts, tz=UTC).isoformat(timespec="seconds")
+    event_with_ts = [dict(EVENTS[0], last_update=ts)]
+    (event,) = oddsapi.parse_events("soccer_epl", event_with_ts)
+    assert event.last_update_utc == expected
+    # 缺失/非法源时间 → None（不伪造）
+    assert oddsapi.parse_events("soccer_epl", EVENTS)[0].last_update_utc is None
+    (bad,) = oddsapi.parse_events(
+        "soccer_epl", [dict(EVENTS[0], last_update="not-a-ts")]
+    )
+    assert bad.last_update_utc is None
 
 
 def seed_jingcai(db) -> int:
@@ -120,7 +137,7 @@ def test_join_fixtures_time_window(db) -> None:
     assert row["join_method"] == "time_window"
     # join 后 store_events 落快照
     stats = oddsapi.store_events(db, events)
-    assert stats.snapshots == 5  # 2 books × (h,d,a 缺 d 的只 2)
+    assert stats.snapshots == 3  # 1 book × (h,d,a)；缺三向的 bet365 被丢弃
     assert stats.duplicate_snapshots == 0
 
 
@@ -175,7 +192,7 @@ def test_fetch_and_store_end_to_end(db) -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     stats = oddsapi.fetch_and_store_odds(db, settings, client)
     assert stats.credits_used == 1
-    assert stats.snapshots == 5
+    assert stats.snapshots == 3
     assert rs_store.credit_usage(db, "2000-01-01T00:00:00+00:00") == 1.0
 
 
@@ -190,3 +207,202 @@ def test_join_ambiguous_not_persisted(db) -> None:
     assert report.unmatched == [{"fixture_id": "1", "reason": "ambiguous_time_window"}]
     row = db.execute("SELECT odds_api_event_id FROM fixtures").fetchone()
     assert row["odds_api_event_id"] is None
+
+
+# --- 票 35：逐请求预算记账 / join 身份交叉核对 ---
+
+
+def test_totals_market_rejected_without_paid_request(db) -> None:
+    with pytest.raises(ValueError, match="h2h"):
+        oddsapi.fetch_and_store_odds(
+            db, Settings(odds_api_key="k"), _no_call_client(), markets=("h2h", "totals")
+        )
+
+
+def _no_call_client() -> httpx.Client:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("不应发出任何付费请求")
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_reserve_blocks_near_monthly_limit_conservatively(db) -> None:
+    settings = Settings(
+        odds_api_daily_credit_budget=100, odds_api_monthly_credit_budget=5
+    )
+    oddsapi.record_credits(db, 4, "test")
+    # 临近月限额：再预留 2 会超 → 拒绝且不记账
+    with pytest.raises(oddsapi.CreditBudgetExceeded, match="monthly"):
+        oddsapi.reserve_credits(db, settings, 2, "near-limit")
+    assert rs_store.credit_usage(db, "2000-01-01") == 4.0
+    # 预留 1 不超 → 入账
+    oddsapi.reserve_credits(db, settings, 1, "ok")
+    assert rs_store.credit_usage(db, "2000-01-01") == 5.0
+
+
+def test_refund_credits_nets_out_failed_request(db) -> None:
+    oddsapi.reserve_credits(db, Settings(), 1, "sport=x")
+    oddsapi.refund_credits(db, 1, "sport=x request failed")
+    assert rs_store.credit_usage(db, "2000-01-01") == 0.0
+    rows = db.execute(
+        "SELECT units FROM cost_ledger WHERE category='odds_api_credit'"
+    ).fetchall()
+    assert [r["units"] for r in rows] == [1.0, -1.0]  # 账目留痕可审计
+
+
+def test_partial_failure_keeps_completed_request_credits(db) -> None:
+    """第二个 sport 请求失败：第一个的消耗已入账，失败的已退回（票 35 验收 6）。"""
+    seed_jingcai(db)
+    settings = Settings(odds_api_key="k")
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sports"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"key": "soccer_epl", "group": "Soccer", "title": "EPL"},
+                    {"key": "soccer_spain_la_liga", "group": "Soccer", "title": "LL"},
+                ],
+            )
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json=EVENTS)
+        return httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        oddsapi.fetch_and_store_odds(db, settings, client)
+    # sport1 成功消耗 1（保留），sport2 失败退回：净 1，不漏记不重复
+    assert rs_store.credit_usage(db, "2000-01-01") == 1.0
+
+
+def _seed_with_alias(db, source_match_id: int, kickoff: str) -> int:
+    """入库一场竞彩并把主客队的 odds_api 英文名映射好。"""
+    payload = {
+        "errorCode": "0",
+        "value": {
+            "matchInfoList": [
+                {
+                    "businessDate": "2026-09-12",
+                    "subMatchList": [
+                        {
+                            "matchId": source_match_id,
+                            "matchNumStr": f"周六{source_match_id:03d}",
+                            "leagueAbbName": "英超",
+                            "homeTeamAllName": f"主队{source_match_id}",
+                            "awayTeamAllName": f"客队{source_match_id}",
+                            "matchDate": "2026-09-13",
+                            "matchTime": "02:00:00",
+                            "bettingSingle": 1,
+                            "had": {
+                                "a": "1.30",
+                                "d": "5.0",
+                                "h": "6.5",
+                                "updateDate": "2026-09-12",
+                                "updateTime": "20:00:00",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    sporttery.store_matches(db, sporttery.parse_matches(payload))
+    row = db.execute(
+        "SELECT f.* FROM fixtures f JOIN match_codes mc ON mc.fixture_id=f.id"
+        " WHERE mc.source_match_id = ?",
+        (str(source_match_id),),
+    ).fetchone()
+    for team_id, alias in (
+        (row["home_team_id"], "Arsenal"),
+        (row["away_team_id"], "Chelsea"),
+    ):
+        db.execute(
+            "INSERT OR IGNORE INTO team_aliases (team_id, source, alias)"
+            " VALUES (?, 'odds_api', ?)",
+            (team_id, alias),
+        )
+    db.execute("UPDATE fixtures SET kickoff_utc = ? WHERE id = ?", (kickoff, row["id"]))
+    db.commit()
+    return int(row["id"])
+
+
+def test_join_rejects_home_away_swap(db) -> None:
+    """已知队名时，主客互换的事件不能仅凭时间窗 join（票 35 验收 3）。"""
+    _seed_with_alias(db, 7, "2026-09-12T18:00:00+00:00")
+    swapped = dict(
+        EVENTS[0],
+        home_team="Chelsea",
+        away_team="Arsenal",
+        bookmakers=[EVENTS[0]["bookmakers"][0]],
+    )
+    report = oddsapi.join_fixtures(db, oddsapi.parse_events("soccer_epl", [swapped]))
+    assert report.joined == 0
+    assert report.unmatched[0]["reason"] == "team_swap_mismatch"
+    assert db.execute("SELECT odds_api_event_id FROM fixtures").fetchone()[0] is None
+
+
+def test_join_rejects_team_name_conflict(db) -> None:
+    _seed_with_alias(db, 8, "2026-09-12T18:00:00+00:00")
+    other = {
+        "id": "sp1",
+        "sport_key": "soccer_epl",
+        "commence_time": "2026-09-12T18:00:00Z",
+        "home_team": "Tottenham",
+        "away_team": "West Ham",
+        "bookmakers": [
+            {
+                "key": "pinnacle",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": "Tottenham", "price": 1.9},
+                            {"name": "Draw", "price": 3.5},
+                            {"name": "West Ham", "price": 4.0},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    report = oddsapi.join_fixtures(db, oddsapi.parse_events("soccer_epl", [other]))
+    assert report.unmatched[0]["reason"] == "team_name_conflict"
+
+
+def test_join_alias_match_wins_over_time_only(db) -> None:
+    """时间更近但队名对不上的事件让位于队名一致的事件。"""
+    _seed_with_alias(db, 9, "2026-09-12T18:00:00+00:00")
+    nearer = dict(
+        EVENTS[0],
+        id="near1",
+        commence_time="2026-09-12T18:05:00Z",
+        home_team="Tottenham",
+        away_team="West Ham",
+        bookmakers=[EVENTS[0]["bookmakers"][0]],
+    )
+    matching = dict(EVENTS[0], id="far1", commence_time="2026-09-12T18:15:00Z")
+    report = oddsapi.join_fixtures(
+        db, oddsapi.parse_events("soccer_epl", [nearer, matching])
+    )
+    assert report.joined == 1
+    row = db.execute("SELECT odds_api_event_id FROM fixtures").fetchone()
+    assert row["odds_api_event_id"] == "far1"
+
+
+def test_join_duplicate_external_event_not_reused(db) -> None:
+    """同一外部事件不能被两个 fixture 占用（重复外部事件，票 35 验收 3）。"""
+    first = _seed_with_alias(db, 10, "2026-09-12T18:00:00+00:00")
+    second = _seed_with_alias(db, 11, "2026-09-12T18:00:00+00:00")
+    events = oddsapi.parse_events("soccer_epl", EVENTS)
+    report = oddsapi.join_fixtures(db, events)
+    assert report.joined == 1
+    rows = {
+        int(r["id"]): r["odds_api_event_id"]
+        for r in db.execute("SELECT id, odds_api_event_id FROM fixtures").fetchall()
+    }
+    assert rows[first] == "abc123"
+    assert rows[second] is None
+    reasons = {u["reason"] for u in report.unmatched}
+    assert reasons == {"no_free_event_in_window"}

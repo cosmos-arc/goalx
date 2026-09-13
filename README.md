@@ -64,25 +64,38 @@ M1 = 记录复盘工具：竞彩采集 → 欧赔对照 → 投注建议/回录 
 ### 一次性初始化
 
 ```bash
-task db-migrate        # 建/升级 schema（当前 v4 含更正审计表）
+task db-migrate        # 建/升级 schema（当前 v5 含报价证据层）
 task ingest-hist       # 五大 2023-26 三季回测底座（~5,257 行，幂等可重跑）
 ```
 
 ### 每日采集
 
 ```bash
-task ingest-jingcai    # 竞彩官方全玩法快照（append-only，保留调盘时点）
-task ingest-odds       # The Odds API 欧赔 + join（credit 护栏：日 40/月 480）
+task ingest-jingcai    # 竞彩官方全玩法快照（append-only + 原始响应证据）
+task ingest-odds       # The Odds API 欧赔 + join（逐请求 credit 预留/退回）
 ```
 
-销售期高频轮询走 Prefect（ADR 0005）：
+采集证据（票 35）：每次 HTTP 观测的脱敏原始响应 gzip 存档于
+`data/observations/`（哈希入 `quote_observations`）；时间语义按源解释——
+sporttery 的调盘时间=源更新时间，The Odds API 的 `last_update`=源时间、
+本机收到响应时间为 `observed_at`；未知时间可空、不倒填。
+
+`GET /api/v1/fixtures/{id}/had-quote?as_of=…` 返回该时点 had 报价的
+有效/未知/拒绝判定、原因、age、两源时差与单固资格（新鲜度/配对时差
+默认各 300s，可查询参数调整）——锁定与验证共用这一判定。
+
+销售期高频轮询走 Prefect（ADR 0005），部署定义见 `prefect.yaml`：
 
 ```bash
-uv run prefect server start          # 本地 server（另一个终端）
-uv run prefect deploy goalx_backend.flows:jingcai-snapshot   # 后续按需设 cron
+uv run prefect server start                             # 本地 server
+uv run prefect work-pool create goalx-local --type process
+uv run prefect deploy --all                             # 按 prefect.yaml 注册
+uv run prefect worker start --pool goalx-local
 ```
 
-flows：`jingcai-snapshot` / `eu-odds-snapshot` / `fd-history-import` / `settlement-sweep`。
+flows：`jingcai-snapshot` / `eu-odds-snapshot` / `eu-odds-closing` /
+`fd-history-import` / `weekly-train` / `forecast-daily` / `settlement-sweep`。
+欧赔类部署每次运行 ≈8 credits，默认 cron 合计 ≤3 次/日（日预算 40）。
 
 ### 纸面流程（目标与当前缺口）
 

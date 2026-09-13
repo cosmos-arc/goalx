@@ -1,8 +1,21 @@
 """
-sporttery 竞彩采集（票 19）：getMatchCalculatorV1.qry 产品化。
+sporttery 竞彩采集（票 19；票 35 补观测证据）：getMatchCalculatorV1.qry 产品化。
 
 网络层只做一件薄事（带 Referer 的 GET）；解析与入库是纯函数/纯存储，
-便于离线测试。调盘时点（updateDate/updateTime）随快照落库（ADR 0001）。
+便于离线测试。
+
+时间语义（票 35，随快照落库）：
+- captured_at = source_updated_at = 各市场块自报的 updateDate/updateTime
+  （源调盘时间，CST→UTC）；
+- observed_at = 本机收到 HTTP 响应的时间（由调用方传入，测试用固定时钟）；
+- 旧数据只有 captured_at，按本源解释为源调盘时间；当时是否已知
+  observed_at 不可证明，不倒填。
+
+销售状态（票 35）：
+- 计算器端点只返回在售场次，payload 缺 sellStatus 字段时按 on_sale 记录
+  （端点语义，非伪造）；出现但值未知 → unknown，保守不进正式候选；
+- 单固资格：had 块的 single 字段优先（"1"/"0"），缺失时若比赛级
+  bettingSingle=0 则该场无任何单关（False），否则未知（None）。
 """
 
 from __future__ import annotations
@@ -10,16 +23,31 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+from goalx_backend import observations
 from goalx_backend.config import Settings
-from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
+from goalx_backend.db import utc_now_iso
+from goalx_backend.models import (
+    MatchCodeInput,
+    ObservationInput,
+    ObservationPurpose,
+    SaleStatusInput,
+    SnapshotInput,
+    Tier,
+)
 from goalx_backend.store import fixtures as fx_store
 
 CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
 POOL_CODES = ("had", "hhad", "crs", "ttg", "hafu")
+PARSE_VERSION = "sporttery_calculator_v2"
+
+# sellStatus 原始值 → 内部状态；未列出值视为未知（保守拒绝，票 35）。
+SELL_STATUS_MAP: dict[str, str] = {"0": "on_sale", "1": "stopped"}
+
 
 # 竞彩联赛缩写 → (Odds API sport key, tier)（票 17：Tier 1=五大+欧冠+欧联）
 LEAGUE_MAP: dict[str, tuple[str, Tier]] = {
@@ -47,6 +75,7 @@ class MarketQuote:
     market_code: str
     captured_at: str
     goal_line: str | None = None
+    single: bool | None = None
     prices: dict[str, float] = field(default_factory=dict)
 
 
@@ -64,6 +93,29 @@ class ParsedMatch:
     kickoff_utc: str
     is_single: bool
     markets: list[MarketQuote]
+    sell_status_raw: str | None = None
+
+    @property
+    def sale_state(self) -> str:
+        """销售状态（端点只列在售场次，缺字段=on_sale，未知值保守 unknown）。"""
+        if self.sell_status_raw is None:
+            return "on_sale"
+        return SELL_STATUS_MAP.get(self.sell_status_raw, "unknown")
+
+    def had_single_eligible(self) -> bool | None:
+        """Had 单固资格：市场级 single 优先；比赛级否决；否则未知。"""
+        for quote in self.markets:
+            if quote.market_code == "had" and quote.single is not None:
+                return quote.single
+        return None if self.is_single else False
+
+
+@dataclass
+class FetchedCalculator:
+    """一次计算器响应：解析后的 payload 与原始字节（证据用）。"""
+
+    payload: dict[str, Any]
+    raw: bytes
 
 
 @dataclass
@@ -73,11 +125,10 @@ class IngestStats:
     matches: int = 0
     snapshots: int = 0
     duplicate_snapshots: int = 0
+    observation_id: int | None = None
 
 
-def fetch_calculator_payload(
-    settings: Settings, client: httpx.Client
-) -> dict[str, Any]:
+def fetch_calculator(settings: Settings, client: httpx.Client) -> FetchedCalculator:
     """拉取全部 5 玩法的竞彩计算器数据（须 Referer 头，票 01 实测）。"""
     response = client.get(
         settings.sporttery_calculator_url,
@@ -96,7 +147,14 @@ def fetch_calculator_payload(
     payload: dict[str, Any] = response.json()
     if payload.get("errorCode") not in (0, "0"):
         raise ValueError(f"sporttery errorCode: {payload.get('errorCode')}")
-    return payload
+    return FetchedCalculator(payload=payload, raw=response.content)
+
+
+def fetch_calculator_payload(
+    settings: Settings, client: httpx.Client
+) -> dict[str, Any]:
+    """兼容入口：只要 payload（测试/诊断用）。"""
+    return fetch_calculator(settings, client).payload
 
 
 _CRS_OTHER_KEYS = {"s1sh": "h_other", "s1sd": "d_other", "s1sa": "a_other"}
@@ -157,6 +215,12 @@ def _parse_market(market_code: str, raw: dict[str, Any]) -> MarketQuote | None:
         _fill_grid_prices(quote, market_code, raw)
     if market_code == "hhad":
         quote.goal_line = raw.get("goalLine") or None
+    single_raw = str(raw.get("single"))
+    if single_raw == "1":
+        quote.single = True
+    elif single_raw == "0":
+        quote.single = False
+    # 缺失/未知值 → None：单固资格未知，不伪造（票 35）
     return quote if quote.prices else None
 
 
@@ -198,14 +262,45 @@ def parse_matches(payload: dict[str, Any]) -> list[ParsedMatch]:
                     kickoff_utc=_cst_to_utc(m["matchDate"], m["matchTime"]),
                     is_single=bool(m.get("bettingSingle")),
                     markets=markets,
+                    sell_status_raw=(
+                        str(m["sellStatus"])
+                        if m.get("sellStatus") is not None
+                        else None
+                    ),
                 )
             )
     return parsed
 
 
-def store_matches(conn: sqlite3.Connection, matches: list[ParsedMatch]) -> IngestStats:
-    """把解析结果幂等入库（fixtures/match_codes/odds_snapshots）。"""
-    stats = IngestStats()
+def _resolve_fixture(
+    conn: sqlite3.Connection,
+    match: ParsedMatch,
+    competition_id: int,
+    home: int,
+    away: int,
+) -> int:
+    """定位 fixture：source_match_id 命中优先（改期沿用原场次），否则 upsert。"""
+    existing = fx_store.find_fixture_by_source_match(
+        conn, "jingcai", match.source_match_id
+    )
+    if existing is not None:
+        fixture_id = int(existing["id"])
+        if str(existing["kickoff_utc"]) != match.kickoff_utc:
+            fx_store.update_fixture_kickoff(conn, fixture_id, match.kickoff_utc)
+        return fixture_id
+    return fx_store.upsert_fixture(conn, competition_id, match.kickoff_utc, home, away)
+
+
+def store_matches(
+    conn: sqlite3.Connection,
+    matches: list[ParsedMatch],
+    *,
+    observed_at: str | None = None,
+    observation_id: int | None = None,
+) -> IngestStats:
+    """把解析结果幂等入库（fixtures/match_codes/odds_snapshots/sale_statuses）。"""
+    stats = IngestStats(observation_id=observation_id)
+    observed = observed_at or utc_now_iso()
     for match in matches:
         sport_key, tier = LEAGUE_MAP.get(match.league, (None, Tier.TIER2))
         competition = fx_store.upsert_competition(
@@ -213,9 +308,7 @@ def store_matches(conn: sqlite3.Connection, matches: list[ParsedMatch]) -> Inges
         )
         home = fx_store.upsert_team(conn, match.home_team)
         away = fx_store.upsert_team(conn, match.away_team)
-        fixture = fx_store.upsert_fixture(
-            conn, competition, match.kickoff_utc, home, away
-        )
+        fixture = _resolve_fixture(conn, match, competition, home, away)
         fx_store.upsert_match_code(
             conn,
             MatchCodeInput(
@@ -227,6 +320,29 @@ def store_matches(conn: sqlite3.Connection, matches: list[ParsedMatch]) -> Inges
                 is_single=match.is_single,
             ),
         )
+        fx_store.append_sale_status(
+            conn,
+            SaleStatusInput(
+                fixture_id=fixture,
+                market_code=None,
+                sale_state=match.sale_state,
+                observed_at=observed,
+                observation_id=observation_id,
+            ),
+        )
+        for quote in match.markets:
+            if quote.market_code == "had":
+                fx_store.append_sale_status(
+                    conn,
+                    SaleStatusInput(
+                        fixture_id=fixture,
+                        market_code="had",
+                        sale_state=match.sale_state,
+                        single_eligible=match.had_single_eligible(),
+                        observed_at=observed,
+                        observation_id=observation_id,
+                    ),
+                )
         stats.matches += 1
         for quote in match.markets:
             for selection, odds in quote.prices.items():
@@ -240,6 +356,9 @@ def store_matches(conn: sqlite3.Connection, matches: list[ParsedMatch]) -> Inges
                         source="sporttery",
                         odds=odds,
                         captured_at=quote.captured_at,
+                        observed_at=observed,
+                        source_updated_at=quote.captured_at,
+                        observation_id=observation_id,
                         meta=meta,
                     ),
                 )
@@ -249,3 +368,43 @@ def store_matches(conn: sqlite3.Connection, matches: list[ParsedMatch]) -> Inges
                     stats.snapshots += 1
     conn.commit()
     return stats
+
+
+def capture_jingcai(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    raw_root: Path | None = None,
+    now: datetime | None = None,
+) -> IngestStats:
+    """
+    采集入口（票 35 证据链）：fetch → 原始证据 → 观测行 → 解析入库。
+
+    observed_at 用本机收到响应的时间（测试传固定时钟）；原始响应 gzip
+    落盘（raw_root 可空=只记哈希）。
+    """
+    observed = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+    fetched = fetch_calculator(settings, client)
+    matches = parse_matches(fetched.payload)
+    sha, raw_ref = (
+        observations.save_raw(raw_root, "sporttery", fetched.raw)
+        if raw_root
+        else (observations.sha256_hex(fetched.raw), None)
+    )
+    observation_id = fx_store.record_quote_observation(
+        conn,
+        ObservationInput(
+            source="sporttery",
+            purpose=ObservationPurpose.LIVE,
+            observed_at=observed,
+            endpoint="getMatchCalculatorV1.qry",
+            parse_version=PARSE_VERSION,
+            raw_sha256=sha,
+            raw_ref=raw_ref,
+            summary=f"matches={len(matches)}",
+        ),
+    )
+    return store_matches(
+        conn, matches, observed_at=observed, observation_id=observation_id
+    )

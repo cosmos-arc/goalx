@@ -7,7 +7,13 @@ import sqlite3
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
-from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
+from goalx_backend.models import (
+    MatchCodeInput,
+    ObservationInput,
+    SaleStatusInput,
+    SnapshotInput,
+    Tier,
+)
 
 
 def _lookup_id(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> int:
@@ -118,6 +124,15 @@ AND
     )
 
 
+def update_fixture_kickoff(
+    conn: sqlite3.Connection, fixture_id: int, kickoff_utc: str
+) -> None:
+    """Reschedule: move an existing fixture's kickoff（票 35：改期不新造比赛）。"""
+    conn.execute(
+        "UPDATE fixtures SET kickoff_utc = ? WHERE id = ?", (kickoff_utc, fixture_id)
+    )
+
+
 def find_fixture_by_source_match(
     conn: sqlite3.Connection, kind: str, source_match_id: str
 ) -> sqlite3.Row | None:
@@ -162,19 +177,100 @@ is_single=excluded.is_single
     )
 
 
+def record_quote_observation(conn: sqlite3.Connection, obs: ObservationInput) -> int:
+    """Append one raw-observation evidence row; return its id."""
+    cur = conn.execute(
+        """
+            INSERT INTO quote_observations
+(source, purpose, observed_at, source_updated_at, snapshot_at,
+            endpoint, parse_version, raw_sha256, raw_ref, summary, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            obs.source,
+            obs.purpose.value,
+            obs.observed_at,
+            obs.source_updated_at,
+            obs.snapshot_at,
+            obs.endpoint,
+            obs.parse_version,
+            obs.raw_sha256,
+            obs.raw_ref,
+            obs.summary,
+            utc_now_iso(),
+        ),
+    )
+    row_id = int(cur.lastrowid or 0)
+    if row_id <= 0:
+        raise RuntimeError("quote_observation insert failed")
+    return row_id
+
+
+def append_sale_status(conn: sqlite3.Connection, status: SaleStatusInput) -> int:
+    """Append a sale-status observation (append-only 时序, 票 35)."""
+    cur = conn.execute(
+        """
+            INSERT INTO sale_statuses
+(fixture_id, market_code, sale_state, single_eligible, observed_at,
+            source_updated_at, observation_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            status.fixture_id,
+            status.market_code,
+            status.sale_state,
+            None if status.single_eligible is None else int(status.single_eligible),
+            status.observed_at,
+            status.source_updated_at,
+            status.observation_id,
+            utc_now_iso(),
+        ),
+    )
+    row_id = int(cur.lastrowid or 0)
+    if row_id <= 0:
+        raise RuntimeError("sale_status insert failed")
+    return row_id
+
+
+def latest_sale_status_asof(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str,
+    as_of: str,
+) -> sqlite3.Row | None:
+    """
+    Latest known sale status for a fixture/market at a decision time.
+
+    市场级行（market_code 精确匹配）优先于比赛级行（market_code IS NULL）；
+    只取 observed_at 不晚于 as_of 的观测——之后的观测不能证明当时状态。
+    """
+    return conn.execute(
+        """
+            SELECT * FROM sale_statuses
+            WHERE fixture_id = ? AND observed_at <= ?
+              AND (market_code = ? OR market_code IS NULL)
+            ORDER BY (market_code = ?) DESC, observed_at DESC, id DESC
+            LIMIT 1
+        """,
+        (fixture_id, as_of, market_code, market_code),
+    ).fetchone()
+
+
 def insert_odds_snapshot(conn: sqlite3.Connection, snap: SnapshotInput) -> int | None:
     """
     Append an odds snapshot; returns new id, None when an identical row exists.
 
     Append-only（ADR 0001）：同自然键的重复采集以 ``INSERT OR IGNORE`` 吸收，
-    永不修改既有行。
+    永不修改既有行。observed_at/source_updated_at/observation_id 是票 35
+    证据列；旧行为 NULL（时间语义按源解释，未知不倒填）。
     """
     cur = conn.execute(
         """
             INSERT OR IGNORE INTO odds_snapshots
             (fixture_id, market_code, selection_code, source, purpose, odds,
-             captured_at, meta, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             captured_at, observed_at, source_updated_at, observation_id,
+             meta, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             snap.fixture_id,
@@ -184,6 +280,9 @@ def insert_odds_snapshot(conn: sqlite3.Connection, snap: SnapshotInput) -> int |
             snap.purpose.value,
             snap.odds,
             snap.captured_at,
+            snap.observed_at,
+            snap.source_updated_at,
+            snap.observation_id,
             json.dumps(snap.meta, ensure_ascii=False) if snap.meta else None,
             utc_now_iso(),
         ),
