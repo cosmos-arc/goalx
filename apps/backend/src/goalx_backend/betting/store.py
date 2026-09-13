@@ -408,3 +408,42 @@ def list_bankroll_events(
     return conn.execute(
         "SELECT * FROM bankroll_events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
+
+
+def bankroll_events_for_bet(conn: sqlite3.Connection, bet_id: int) -> list[sqlite3.Row]:
+    """一注的全部资金流水（结算冲正的一致性核查用）。"""
+    return conn.execute(
+        "SELECT kind, amount_cny, slip_id FROM bankroll_events WHERE bet_id = ?",
+        (bet_id,),
+    ).fetchall()
+
+
+def has_settlement_or_bankroll_event(conn: sqlite3.Connection, bet_id: int) -> bool:
+    """回录守卫：已有结算或资金记录的注不可再次回录。"""
+    return (
+        conn.execute(
+            """SELECT 1 FROM bankroll_events WHERE bet_id=? UNION ALL
+               SELECT 1 FROM settlements WHERE bet_id=?""",
+            (bet_id, bet_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def settlement_exists(conn: sqlite3.Connection, bet_id: int) -> bool:
+    """该注是否已有结算行（更正重算的跳过条件之一）。"""
+    return (
+        conn.execute("SELECT 1 FROM settlements WHERE bet_id = ?", (bet_id,)).fetchone()
+        is not None
+    )
+
+
+def count_pending_pool_slips(conn: sqlite3.Connection) -> int:
+    """无结算行的奖池票数（奖池兑付未支持前保持待结，不清零）。"""
+    return int(
+        conn.execute(
+            """SELECT COUNT(*) FROM bet_slips s
+           WHERE EXISTS (SELECT 1 FROM pool_picks p WHERE p.slip_id = s.id)
+           AND NOT EXISTS (SELECT 1 FROM settlements st WHERE st.slip_id = s.id)"""
+        ).fetchone()[0]
+    )

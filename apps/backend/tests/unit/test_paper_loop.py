@@ -7,16 +7,12 @@ import sqlite3
 import pytest
 
 from goalx_backend.betting import store as bt_store
+from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.settle import run_settlement
 from goalx_backend.data.ingest import oddsapi, sporttery
+from goalx_backend.data.today import build_today_view
 from goalx_backend.db import utc_now_iso
 from goalx_backend.models import DrawResultInput, LegInput
-from goalx_backend.services import (
-    BetDraft,
-    build_today_view,
-    create_bet_with_legs,
-    record_purchase,
-    run_settlement,
-)
 
 JINGCAI_PAYLOAD = {
     "errorCode": "0",

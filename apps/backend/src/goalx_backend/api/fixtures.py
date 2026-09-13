@@ -16,7 +16,7 @@ from goalx_backend.data.quote_evidence import (
     DEFAULT_PAIR_GAP_SECONDS,
     adjudicate_had_quote,
 )
-from goalx_backend.services import TodayFixtureView, build_today_view
+from goalx_backend.data.today import TodayFixtureView, build_today_view
 
 router = APIRouter(prefix="/api/v1/fixtures", tags=["fixtures"])
 

@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from loguru import logger
 
 from goalx_backend.betting.ledger_audit import audit_ledger
+from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data.ingest import fdhist, oddsapi, sporttery
 from goalx_backend.data.ingest.oddsapi import polite_client
@@ -36,7 +37,6 @@ from goalx_backend.evaluation import metrics as ev
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
-from goalx_backend.services import run_settlement
 
 
 def _cmd_migrate() -> None:

@@ -7,15 +7,11 @@ import sqlite3
 import pytest
 
 from goalx_backend.betting import store as bt
+from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.settle import run_settlement
 from goalx_backend.data import fixtures as fx
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import BetMode, DrawResultInput, LegInput
-from goalx_backend.services import (
-    BetDraft,
-    create_bet_with_legs,
-    record_purchase,
-    run_settlement,
-)
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
 

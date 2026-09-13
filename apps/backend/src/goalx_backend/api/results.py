@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
+from goalx_backend.betting.settle import run_settlement
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import DrawResultInput
-from goalx_backend.services import run_settlement
 
 router = APIRouter(tags=["results"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
