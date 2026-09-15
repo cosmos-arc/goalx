@@ -44,6 +44,9 @@ below assumes `task`:
   per-file-ignores. Line length 88, double quotes.
 - TypeScript/Biome: tabs, width 120, double quotes, semicolons; `noExplicitAny`
   is an error; generated files (`src/api/generated/**`) are lint-exempt.
+- shadcn/ui（Base UI 基座，票 11 起）：组件是 copy-in 源码（`src/components/ui/**`，
+  出 coverage 分母、不豁免 Biome）；CLI 生成代码与 Biome 格式不一致，每次
+  `shadcn add` 后立即 `bun run lint:fix` 并肉眼 diff。
 - Commits: Conventional Commits, enforced by the commit-msg hook; `main` is
   protected by `no-commit-to-branch`.
 - API changes flow contract-first: edit the FastAPI app → `task contract-export`
