@@ -195,11 +195,24 @@ tasks:
     dir: apps/web
 
   serve-schedules:
-    desc: Prefect 连续运行调度(票37 协议 v1;单进程 serve, tmux/launchd 常驻)
+    desc: Prefect 连续运行调度(票37 协议 v1;server+serve 两进程, nohup/tmux 常驻)
     preconditions:
       - sh: 'test -f "{{.VENV_PYTHON}}"'
         msg: Python environment is missing; run task python-install explicitly.
+    env:
+      PREFECT_API_URL: http://127.0.0.1:4200/api
     cmds:
+      # Prefect ≥3.7 临时 server 不跑 scheduler,serve 的 schedule 永不触发;
+      # 必须连专用 server(task 内自动拉起,server 独立存活于本 serve 进程)
+      - |
+        if ! curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1; then
+          nohup uv run --no-sync prefect server start --host 127.0.0.1 --port 4200 \
+            >> .scratch/prefect-server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+        fi
       - uv run --no-sync python -m goalx_backend.schedules {{.CLI_ARGS}}
 
   server:

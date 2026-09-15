@@ -1,16 +1,22 @@
 """
 Prefect 连续运行调度入口（票 37 协议 v1，用户已授权调度）。
 
-单进程 ``serve``，无需 Prefect server/worker：
+专用 server + serve 两进程（``task serve-schedules`` 一条命令拉起）：
 
-    uv run --no-sync python -m goalx_backend.schedules   # 或 task serve-schedules
+    nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &
+
+Prefect ≥3.7 的临时 server 不运行 scheduler（上游设计，``flow.serve`` 会警告
+"Cannot schedule flows on an ephemeral server"），单进程 serve 的 schedule 永不
+触发——票 37 day0 起连续 2 天 0 触发的根因。serve-schedules 会自动启动专用
+server（PREFECT_API_URL=http://127.0.0.1:4200/api，scheduler 在其中运行），
+server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 
 节奏（Asia/Shanghai，协议 run-protocol-v1.md §3，启动后不改口径）：
 - daily-capture 10:00/19:00：竞彩→预测→范围内欧赔（2 credits/次）
 - eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
 
-ponytail: 本机 serve 进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，
+ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，
 有分母）；要无人值守升级为 launchd/远端时换 deployment 即可，flow 不动。
 """
 
