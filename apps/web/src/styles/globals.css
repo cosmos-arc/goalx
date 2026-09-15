@@ -7,7 +7,16 @@
 
 @theme inline {
 	--font-heading: var(--font-sans);
-	--font-sans: "Geist Variable", sans-serif;
+	--font-sans: "Geist Variable", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
+	/* 钱层语义色（票 02：红涨绿跌，仅盈亏数字/曲线，永远配正负号）。
+	 * 无 -foreground 对：票 02 未裁决实底前景色，组件用 `bg-profit/10 text-profit` 透明度模式
+	 * （与 button destructive 变体同构），实底需求回 02 会话裁决。 */
+	--color-profit: var(--profit);
+	--color-loss: var(--loss);
+	/* 界面层功能色（票 02：warning=amber 偏差/异常/倒计时；info=blue 可投徽章；success=操作反馈） */
+	--color-warning: var(--warning);
+	--color-info: var(--info);
+	--color-success: var(--success);
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -49,6 +58,7 @@
 }
 
 :root {
+	color-scheme: light;
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.145 0 0);
 	--card: oklch(1 0 0);
@@ -64,15 +74,23 @@
 	--accent: oklch(0.97 0 0);
 	--accent-foreground: oklch(0.205 0 0);
 	--destructive: oklch(0.577 0.245 27.325);
+	/* 钱层（票 02）：profit=red-600，loss=green-600（红涨绿跌，配正负号+等宽数字） */
+	--profit: oklch(0.577 0.245 27.325);
+	--loss: oklch(0.627 0.194 149.214);
+	/* 界面层（票 02）：warning=amber-600，info=blue-600（可投徽章），success=green-600（操作反馈） */
+	--warning: oklch(0.666 0.179 58.318);
+	--info: oklch(0.546 0.245 262.881);
+	--success: oklch(0.627 0.194 149.214);
 	--border: oklch(0.922 0 0);
 	--input: oklch(0.922 0 0);
 	--ring: oklch(0.708 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--radius: 0.625rem;
+	/* 图表五色（票 02）：blue/orange/teal/indigo/slate 600 档，避开钱层红绿 */
+	--chart-1: oklch(0.546 0.245 262.881);
+	--chart-2: oklch(0.646 0.222 41.116);
+	--chart-3: oklch(0.6 0.118 184.704);
+	--chart-4: oklch(0.511 0.262 276.966);
+	--chart-5: oklch(0.446 0.043 257.281);
+	--radius: 0.5rem;
 	--sidebar: oklch(0.985 0 0);
 	--sidebar-foreground: oklch(0.145 0 0);
 	--sidebar-primary: oklch(0.205 0 0);
@@ -84,6 +102,7 @@
 }
 
 .dark {
+	color-scheme: dark;
 	--background: oklch(0.145 0 0);
 	--foreground: oklch(0.985 0 0);
 	--card: oklch(0.205 0 0);
@@ -99,14 +118,22 @@
 	--accent: oklch(0.269 0 0);
 	--accent-foreground: oklch(0.985 0 0);
 	--destructive: oklch(0.704 0.191 22.216);
+	/* 钱层（票 02）：暗色用 400 档保对比度；profit=red-400，loss=green-400 */
+	--profit: oklch(0.704 0.191 22.216);
+	--loss: oklch(0.792 0.155 152.935);
+	/* 界面层（票 02）：warning=amber-400，info=blue-400，success=green-400 */
+	--warning: oklch(0.828 0.189 84.429);
+	--info: oklch(0.707 0.165 254.624);
+	--success: oklch(0.792 0.155 152.935);
 	--border: oklch(1 0 0 / 10%);
 	--input: oklch(1 0 0 / 15%);
 	--ring: oklch(0.556 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
+	/* 图表五色（票 02）：暗色用 400 档，浅暗各自可读 */
+	--chart-1: oklch(0.707 0.165 254.624);
+	--chart-2: oklch(0.75 0.183 55.934);
+	--chart-3: oklch(0.777 0.152 181.912);
+	--chart-4: oklch(0.673 0.182 276.935);
+	--chart-5: oklch(0.704 0.04 256.788);
 	--sidebar: oklch(0.205 0 0);
 	--sidebar-foreground: oklch(0.985 0 0);
 	--sidebar-primary: oklch(0.488 0.243 264.376);

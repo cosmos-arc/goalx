@@ -1,5 +1,11 @@
 /** 页面共享的展示工具（票 36）。 */
 
+/**
+ * 数字场景工具类（票 12，票 02 裁决）：等宽数字。盈亏/赔率列的颜色只是辅助，
+ * 等宽数字 + 正负号才是可读性主承载（红绿色弱可读）。
+ */
+export const TABULAR_NUMS = "tabular-nums";
+
 export const SELECTION_LABELS: Record<string, string> = {
 	h: "主胜",
 	d: "平",

@@ -1,5 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { ThemeToggle } from "./theme-toggle";
 
 const NAV_ITEMS = [
 	{ to: "/", label: "今日" },
@@ -13,28 +14,32 @@ const NAV_ITEMS = [
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
 	const location = useLocation();
 	return (
-		<main className="mx-auto min-h-screen max-w-6xl bg-white p-6 text-neutral-900">
-			<header className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
+		// 票 12：AppShell 改吃语义 token（bg-background 等），浅/暗双主题全应用生效
+		<main className="mx-auto min-h-screen max-w-6xl bg-background p-6 text-foreground">
+			<header className="mb-6 flex flex-wrap items-center justify-between gap-4">
 				<h1 className="text-2xl font-semibold">GoalX · {title}</h1>
-				<nav aria-label="主导航" className="flex flex-wrap gap-3 text-sm">
-					{NAV_ITEMS.map((item) => {
-						const active = location.pathname === item.to;
-						return (
-							<Link
-								key={item.to}
-								to={item.to}
-								aria-current={active ? "page" : undefined}
-								className={
-									active
-										? "rounded-md bg-neutral-900 px-3 py-1.5 text-white"
-										: "rounded-md px-3 py-1.5 text-neutral-600 hover:bg-neutral-100"
-								}
-							>
-								{item.label}
-							</Link>
-						);
-					})}
-				</nav>
+				<div className="flex items-center gap-3">
+					<nav aria-label="主导航" className="flex flex-wrap gap-3 text-sm">
+						{NAV_ITEMS.map((item) => {
+							const active = location.pathname === item.to;
+							return (
+								<Link
+									key={item.to}
+									to={item.to}
+									aria-current={active ? "page" : undefined}
+									className={
+										active
+											? "rounded-md bg-primary px-3 py-1.5 text-primary-foreground"
+											: "rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+									}
+								>
+									{item.label}
+								</Link>
+							);
+						})}
+					</nav>
+					<ThemeToggle />
+				</div>
 			</header>
 			{children}
 		</main>

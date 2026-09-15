@@ -32,3 +32,18 @@ test("validation page degrades gracefully without backend", async ({ page }) => 
 	// 后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
 	await expect(page.getByTestId("validation-error")).toBeVisible({ timeout: 20_000 });
 });
+
+test("theme toggle switches to dark and persists across reload", async ({ page }) => {
+	await page.goto("/");
+	// Playwright 默认 colorScheme=light 且无持久化 → 初始浅色
+	await expect(page.locator("html")).not.toHaveClass(/dark/);
+
+	await page.getByRole("button", { name: "切换到暗色主题" }).click();
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await expect(page.getByRole("button", { name: "切换到浅色主题" })).toBeVisible();
+
+	// 重载保留暗色（localStorage 持久化 + main.tsx 首帧前应用）
+	await page.reload();
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await expect(page.getByRole("heading", { name: "GoalX · 今日" })).toBeVisible();
+});
