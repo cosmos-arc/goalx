@@ -293,7 +293,7 @@ test("no deposits yet: the live zone shows the deposit onboarding empty state", 
 	const state = within(liveZone).getByTestId("empty-state");
 	expect(state).toHaveAttribute("data-variant", "not-available");
 	expect(state).toHaveTextContent("尚未入金");
-	expect(state).toHaveTextContent("票 20");
+	expect(state).toHaveTextContent("到资金页记录第一笔入金");
 	expect(within(state).getByRole("link", { name: "去资金页" })).toHaveAttribute("href", "/bankroll");
 	expect(within(liveZone).queryByTestId("card-balance")).not.toBeInTheDocument();
 });
