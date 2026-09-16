@@ -11,6 +11,7 @@ import {
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
+import { GlossaryTerm } from "../components/glossary-term";
 import { Badge } from "../components/ui/badge";
 import { TABULAR_NUMS } from "../lib/ui";
 
@@ -356,7 +357,10 @@ export function OverviewPage() {
 												</p>
 											</div>
 											<div data-testid="card-roi">
-												<p className="text-xs text-muted-foreground">真金累计 ROI</p>
+												<p className="text-xs text-muted-foreground">
+													{/* 票 18：ROI 指标名接词典 tooltip（盈亏与 ROI 口径） */}
+													真金累计 <GlossaryTerm id="pnl-roi">ROI</GlossaryTerm>
+												</p>
 												<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(liveRoi)}`}>
 													{liveRoi === null ? "—" : signedPct(liveRoi)}
 												</p>

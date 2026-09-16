@@ -31,11 +31,6 @@ test("settings placeholder names its scope and milestone", async () => {
 	expect(state).toHaveTextContent("M4");
 });
 
-test("glossary placeholder renders the not-available skeleton", async () => {
-	await renderAt("/glossary");
-	expect(await screen.findByRole("heading", { name: "GoalX · 词典" })).toBeInTheDocument();
-	expect(screen.getByTestId("empty-state")).toHaveTextContent("随票 18");
-});
-
 // 票 15：`/` 已换为真实总览页，占位断言随之下线——见 overview-page.test.tsx。
 // 票 17：`/history` 已换为真实历史页，占位断言随之下线——见 history-page.test.tsx。
+// 票 18：`/glossary` 已换为真实词典页，占位断言随之下线——见 glossary-page.test.tsx。

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createBet, fetchTodayFixtures, type TodayFixture } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
+import { GlossaryTerm } from "../components/glossary-term";
 import { Badge } from "../components/ui/badge";
 import {
 	Drawer,
@@ -24,6 +25,7 @@ import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * 独立琥珀徽章、资格徽章蓝=可投/红=拒绝+原因/灰框=证据未知、新鲜度>30 分钟琥珀、
  * T1 中性灰；选注篮 = 底部常驻条 + 右侧 Drawer；竞彩规则在选择时前置传达，
  * 服务器校验仍为唯一权威（前端提示不替代后端判定）。
+ * 票 18 增量：表头资格/欧共识/EV/books 与单固徽章接词典 tooltip（GlossaryTerm，克制只接指标名）。
  */
 
 type Selection = "h" | "d" | "a";
@@ -148,7 +150,10 @@ function EligibilityBadge({ fixture }: { fixture: TodayFixture }) {
 			<span className="flex flex-wrap items-center gap-1" data-testid="had-quote-valid">
 				<Badge className="bg-info/10 text-info">可投</Badge>
 				{quote.single_eligible === true ? (
-					<span className="rounded border border-border px-1 text-xs text-muted-foreground">单固</span>
+					// 票 18：单固徽章接词典 tooltip（克制——只接指标名，虚线下划线在框内）
+					<span className="rounded border border-border px-1 text-xs text-muted-foreground">
+						<GlossaryTerm id="single" />
+					</span>
 				) : null}
 			</span>
 		);
@@ -503,11 +508,20 @@ export function TodayPage() {
 											<TableHead>时间</TableHead>
 											<TableHead>编号</TableHead>
 											<TableHead>对阵</TableHead>
-											<TableHead>资格</TableHead>
+											{/* 票 18：表头指标名接词典 tooltip（悬停/聚焦看定义+判读方向） */}
+											<TableHead>
+												<GlossaryTerm id="eligibility">资格</GlossaryTerm>
+											</TableHead>
 											<TableHead>竞彩 H/D/A</TableHead>
-											<TableHead>欧共识</TableHead>
-											<TableHead>EV H/D/A</TableHead>
-											<TableHead className="text-center">books</TableHead>
+											<TableHead>
+												<GlossaryTerm id="eu-consensus">欧共识</GlossaryTerm>
+											</TableHead>
+											<TableHead>
+												<GlossaryTerm id="ev">EV H/D/A</GlossaryTerm>
+											</TableHead>
+											<TableHead className="text-center">
+												<GlossaryTerm id="books">books</GlossaryTerm>
+											</TableHead>
 										</TableRow>
 									</TableHeader>
 									<TableBody>

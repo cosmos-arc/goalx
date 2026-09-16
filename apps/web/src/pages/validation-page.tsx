@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchBacktestRuns, fetchValidationProgress } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
+import { GlossaryTerm } from "../components/glossary-term";
+import type { GlossaryId } from "../lib/glossary";
 
 function asNumber(value: unknown): number | null {
 	return typeof value === "number" ? value : null;
@@ -26,10 +28,13 @@ function formatSigned(value: number | null | undefined, digits = 4): string {
 	return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
 }
 
-function MetricCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function MetricCard({ label, value, hint, term }: { label: string; value: string; hint?: string; term?: GlossaryId }) {
 	return (
 		<div className="rounded-lg border border-neutral-200 bg-white p-4">
-			<p className="text-xs text-neutral-500">{label}</p>
+			<p className="text-xs text-neutral-500">
+				{/* 票 18：skill/CLV 指标名接词典 tooltip（term 决定词条，testid 仍按 label） */}
+				{term ? <GlossaryTerm id={term}>{label}</GlossaryTerm> : label}
+			</p>
 			<p data-testid={`metric-${label}`} className="mt-1 text-xl font-semibold tabular-nums">
 				{value}
 			</p>
@@ -163,12 +168,14 @@ export function ValidationPage() {
 					/>
 					<MetricCard
 						label="回测 skill"
+						term="skill"
 						value={formatSigned(asNumber(metrics["skill_rps"]))}
 						hint={`DM p=${asNumber(metrics["dm_p"])?.toFixed(3) ?? "—"}(探索性)`}
 					/>
 					<MetricCard label="前瞻样本" value={`${forwardScored} 场`} hint="赛前冻结 Forecast × 同期市场基准(票 34)" />
 					<MetricCard
 						label="CLV beat(纸面)"
+						term="clv"
 						value={formatPct(clvPaperSingles)}
 						hint={`单关 ${formatPct(clvPaperSingles)} · 2串1 ${formatPct(clvPaperParlay)} · 唯一 ${clvUniqueBets} 注`}
 					/>

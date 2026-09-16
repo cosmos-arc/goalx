@@ -6,6 +6,7 @@ import { AppShell } from "../components/app-shell";
 import type { EChartsOption } from "../components/charts/echarts";
 import { useECharts } from "../components/charts/use-echarts";
 import { EmptyState } from "../components/empty-state";
+import { GlossaryTerm } from "../components/glossary-term";
 import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
@@ -18,8 +19,8 @@ import { SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  *
  * 口径红线：
  * - 页头固定一行按 07 Answer 逐字："统计已锁定且已结算的注；前瞻验证口径（含排除
- *   规则）见验证页。"两页数字不同时各自以口径标注为准；"前瞻纳入"术语先以链接指向
- *   /glossary（tooltip 随票 18 词典上线）。
+ *   规则）见验证页。"两页数字不同时各自以口径标注为准；术语"前瞻纳入"由 17 号的
+ *   链接占位升级为 18 号的 GlossaryTerm Popover（悬停/聚焦就地看口径）。
  * - 平均 EV / 平均 CLV：BetView 无注级 EV/CLV 字段（v1 API），按缺失显示"—"并注明
  *   口径与判读方向（CLV 正 = 买在好价）；不造假数据，聚合口径见验证页。
  * - Competition 归因取自今日列表的 competition 字段（v1 无历史 fixture 详情端点），
@@ -262,9 +263,8 @@ export function HistoryPage() {
 							验证页
 						</Link>
 						。术语
-						<Link to="/glossary" className="text-primary underline-offset-2 hover:underline">
-							"前瞻纳入"
-						</Link>
+						{/* 票 18：链接占位升级为词典 tooltip（悬停/聚焦看"前瞻纳入"口径） */}
+						<GlossaryTerm id="forward-inclusion">"前瞻纳入"</GlossaryTerm>
 						见词典。
 					</p>
 				</header>

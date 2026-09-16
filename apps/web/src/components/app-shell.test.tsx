@@ -15,7 +15,8 @@ async function renderAt(path: string) {
 }
 
 test("renders the two-level flat IA: six primary items, three secondary, no group titles", async () => {
-	await renderAt("/glossary");
+	// 票 18：/glossary 已换真实词典页（自带词条卡 h3），导航断言改走仍是占位的 /review
+	await renderAt("/review");
 
 	const primary = within(screen.getByRole("navigation", { name: "主导航" }));
 	expect(primary.getAllByRole("link").map((link) => link.textContent)).toEqual([
@@ -30,7 +31,7 @@ test("renders the two-level flat IA: six primary items, three secondary, no grou
 	expect(secondary.getAllByRole("link").map((link) => link.textContent)).toEqual(["词典", "复核", "设置"]);
 
 	// 不设组标题：除页面标题外不渲染任何 heading
-	expect(screen.getByRole("heading", { name: "GoalX · 词典" })).toBeInTheDocument();
+	expect(screen.getByRole("heading", { name: "GoalX · 复核" })).toBeInTheDocument();
 	expect(screen.getAllByRole("heading")).toHaveLength(1);
 });
 

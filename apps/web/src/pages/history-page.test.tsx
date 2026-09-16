@@ -114,13 +114,16 @@ function mockAll({ bets, fixtures }: { bets: Bet[]; fixtures?: TodayFixture[] })
 	);
 }
 
-test("口径行按 07 定稿逐字常显，术语与验证页链接就位，模式默认纸面", async () => {
+test("口径行按 07 定稿逐字常显，术语 tooltip 就位，模式默认纸面", async () => {
 	await renderAt("/history");
 
 	const caliber = await screen.findByTestId("history-caliber");
 	expect(caliber).toHaveTextContent("统计已锁定且已结算的注；前瞻验证口径（含排除规则）见验证页。");
 	expect(within(caliber).getByRole("link", { name: "验证页" })).toHaveAttribute("href", "/validation");
-	expect(within(caliber).getByRole("link", { name: /前瞻纳入/ })).toHaveAttribute("href", "/glossary");
+	// 票 18："前瞻纳入"由链接占位升级为词典 tooltip 触发器（键盘可聚焦，悬停/聚焦出 Popover）
+	const term = within(caliber).getByTestId("glossary-term-forward-inclusion");
+	expect(term).toHaveTextContent("前瞻纳入");
+	expect(term).toHaveClass("decoration-dashed");
 	// 默认 handlers（betsFixture）加载完成后筛选区才渲染
 	expect(await screen.findByTestId("history-metrics")).toBeInTheDocument();
 	// 模式大标签常显：默认纸面按下，真金未按下

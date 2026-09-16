@@ -54,12 +54,32 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 });
 
 test("stub pages say what they are and when they arrive", async ({ page }) => {
-	await page.goto("/glossary");
-	await expect(page.getByTestId("empty-state")).toContainText("随票 18");
+	// 票 18：/glossary 已换为真实词典页——见下方词典 smoke 与 axe 循环
 	await page.goto("/review");
 	await expect(page.getByTestId("empty-state")).toContainText("M3");
 	await page.goto("/settings");
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
+});
+
+// 票 18：词典页真实落地——首批词条常显、检索过滤、无结果 no-data 空状态
+test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
+	await page.goto("/glossary");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
+	const list = page.getByTestId("glossary-list");
+	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
+	expect(await list.locator("article").count()).toBe(10);
+
+	const search = page.getByTestId("glossary-search");
+	await search.fill("clv_prob");
+	await expect(list.getByTestId("glossary-card-clv")).toBeVisible();
+	await expect(list.locator("article")).toHaveCount(1);
+
+	await search.fill("量子纠缠");
+	const empty = page.getByTestId("empty-state");
+	await expect(empty).toBeVisible();
+	await empty.getByRole("button", { name: "清空检索" }).click();
+	await expect(list.locator("article")).toHaveCount(10);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
@@ -86,11 +106,14 @@ test("today page renders data or degrades honestly", async ({ page }) => {
 	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible();
 });
 
-test("validation page degrades gracefully without backend", async ({ page }) => {
+test("validation page renders data or degrades gracefully without backend", async ({ page }) => {
 	await page.goto("/validation");
 	await expect(page.getByRole("heading", { name: "GoalX · 验证" })).toBeVisible();
-	// 后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
-	await expect(page.getByTestId("validation-error")).toBeVisible({ timeout: 20_000 });
+	// 双路径（票 13 基调）：常驻后端时数据照常渲染；后端不可达时 react-query 默认
+	// 重试 3 次(指数退避)后才进入 error 态（放宽超时等重试走完）
+	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible({
+		timeout: 20_000,
+	});
 });
 
 test("theme toggle switches to dark and persists across reload", async ({ page }) => {
