@@ -19,8 +19,8 @@ import {
 test("fetchers round-trip against msw handlers", async () => {
 	const today = await fetchTodayFixtures("2026-09-12");
 	expect(today).toHaveLength(3);
-	expect(today[0]?.jc_odds.h).toBe(6.5);
-	expect(today[2]?.had_quote?.status).toBe("unknown");
+	expect(today[0]?.jc_odds.h).toBe(1.92);
+	expect(today[2]?.had_quote?.status).toBe("rejected");
 
 	const odds = await fetchFixtureOdds(1);
 	expect(odds[0]?.source).toBe("sporttery");

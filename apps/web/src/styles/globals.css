@@ -74,12 +74,17 @@
 	--accent: oklch(0.97 0 0);
 	--accent-foreground: oklch(0.205 0 0);
 	--destructive: oklch(0.577 0.245 27.325);
-	/* 钱层（票 02）：profit=red-600，loss=green-600（红涨绿跌，配正负号+等宽数字） */
+	/* 钱层（票 02）：红涨绿跌，配正负号+等宽数字。浅色 loss 取 green-700（600 步白底
+	 * 仅 ~3.3:1，低于 AA 4.5:1，过不了票 13 axe 零 serious 基调；票 14 落地时按票 02
+	 * 预裁决"浅/暗主题分别调对比度"校准）；profit=red-600 白底 4.8:1 达标不动。
+	 * 暗色两值均为 400 步，深底对比充裕，不动。 */
 	--profit: oklch(0.577 0.245 27.325);
-	--loss: oklch(0.627 0.194 149.214);
-	/* 界面层（票 02）：warning=amber-600，info=blue-600（可投徽章），success=green-600（操作反馈） */
-	--warning: oklch(0.666 0.179 58.318);
-	--info: oklch(0.546 0.245 262.881);
+	--loss: oklch(0.527 0.154 150.069);
+	/* 界面层（票 02）：warning=amber 偏差/异常/倒计时；info=blue 可投徽章；success=操作反馈。
+	 * 浅色 warning/info 同票 14 校准取 700 步（600 步在白底/浅底低于 4.5:1）；success 尚无
+	 * 文本用例维持 600，待首个使用票校准；暗色 400 步不动。 */
+	--warning: oklch(0.555 0.163 48.998);
+	--info: oklch(0.488 0.217 264.376);
 	--success: oklch(0.627 0.194 149.214);
 	--border: oklch(0.922 0 0);
 	--input: oklch(0.922 0 0);
