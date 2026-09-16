@@ -106,14 +106,16 @@ test("today page renders data or degrades honestly", async ({ page }) => {
 	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible();
 });
 
-test("validation page renders data or degrades gracefully without backend", async ({ page }) => {
+test("validation page renders verdict or degrades gracefully without backend", async ({ page }) => {
 	await page.goto("/validation");
 	await expect(page.getByRole("heading", { name: "GoalX · 验证" })).toBeVisible();
-	// 双路径（票 13 基调）：常驻后端时数据照常渲染；后端不可达时 react-query 默认
-	// 重试 3 次(指数退避)后才进入 error 态（放宽超时等重试走完）
-	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible({
+	// 票 19：首屏换为状态结论行（三条件 x/3）——双路径（票 13 基调）：常驻后端时结论
+	// 照常渲染；后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
+	// （放宽超时等重试走完）。18 号的 metric-回测 skill 契约保留（对比次级区，数据路径可见）。
+	await expect(page.getByTestId("validation-verdict").or(page.getByTestId("validation-error")).first()).toBeVisible({
 		timeout: 20_000,
 	});
+	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible();
 });
 
 test("theme toggle switches to dark and persists across reload", async ({ page }) => {
