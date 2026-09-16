@@ -14,6 +14,10 @@ function minutesAgoIso(minutes: number): string {
 	return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
+function daysAgoIso(days: number): string {
+	return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
 /**
  * 票 14 今日页 mock：时间相对 now 动态生成（原型 today-proto-data.ts 的场景思路），
  * 三场覆盖 可投+单固+偏差/样本少、可投+仅串关+过期报价、停售拒绝。
@@ -187,12 +191,16 @@ export const betsFixture = [
 	},
 ] as const;
 
+/**
+ * 票 20：事件时间相对 now 动态生成（今日页同思路）——余额迷你曲线的"近 30 天"
+ * 窗口过滤不因测试日期推移而漂移；金额与余额断言不受影响。
+ */
 export const bankrollFixture = {
 	balance: 5004.2,
 	events: [
 		{
 			id: 2,
-			occurred_at: "2026-09-13T12:00:00+00:00",
+			occurred_at: daysAgoIso(2),
 			kind: "bet_payout",
 			amount_cny: 4.2,
 			balance_after: 5004.2,
@@ -201,7 +209,7 @@ export const bankrollFixture = {
 		},
 		{
 			id: 1,
-			occurred_at: "2026-09-01T00:00:00+00:00",
+			occurred_at: daysAgoIso(14),
 			kind: "deposit",
 			amount_cny: 5000,
 			balance_after: 5000,
@@ -235,6 +243,31 @@ export const handlers = [
 	),
 	http.post("*/api/v1/draw-results", () => HttpResponse.json({ imported: 1 }, { status: 201 })),
 	http.get("*/api/v1/bankroll", () => HttpResponse.json(bankrollFixture)),
+	// 票 20：入金端点 mock（无状态：按当前 fixture 余额 + 载荷金额回 201；
+	// 需要"提交后刷新"闭环的测试在用例内用 server.use 覆盖为有状态版本）
+	http.post("*/api/v1/bankroll/deposits", async ({ request }) => {
+		const body = (await request.json()) as { amount_cny?: number; note?: string | null };
+		const amount = typeof body.amount_cny === "number" ? body.amount_cny : 0;
+		if (!(amount > 0)) {
+			return HttpResponse.json({ detail: "入金金额必须大于 0" }, { status: 400 });
+		}
+		const balanceAfter = bankrollFixture.balance + amount;
+		return HttpResponse.json(
+			{
+				event: {
+					id: 99,
+					occurred_at: new Date().toISOString(),
+					kind: "deposit",
+					amount_cny: amount,
+					balance_after: balanceAfter,
+					bet_id: null,
+					note: body.note ?? null,
+				},
+				balance: balanceAfter,
+			},
+			{ status: 201 },
+		);
+	}),
 ];
 
 export const oddsFixture = [

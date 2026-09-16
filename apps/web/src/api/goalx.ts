@@ -14,6 +14,8 @@ export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];
 export type SettlementRun = Schemas["SettlementRunResponse"];
 export type Bankroll = Schemas["BankrollResponse"];
 export type BankrollEvent = Schemas["BankrollEventView"];
+export type DepositInput = Schemas["DepositPayload"];
+export type DepositCreated = Schemas["DepositCreatedView"];
 export type CostSummary = Schemas["CostSummaryView"];
 export type BetCreateInput = Schemas["BetCreate"];
 export type SlipCreateInput = Schemas["SlipCreate"];
@@ -101,6 +103,10 @@ export function runSettlement(): Promise<SettlementRun> {
 
 export function fetchBankroll(): Promise<Bankroll> {
 	return unwrap(client.GET("/api/v1/bankroll"));
+}
+
+export function createDeposit(payload: DepositInput): Promise<DepositCreated> {
+	return unwrap(client.POST("/api/v1/bankroll/deposits", { body: payload }));
 }
 
 export function fetchBacktestRuns(): Promise<BacktestRun[]> {

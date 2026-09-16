@@ -118,6 +118,18 @@ test("validation page renders verdict or degrades gracefully without backend", a
 	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible();
 });
 
+// 票 20：资金页重设计——口径行常显，余额大数字（含未入金引导）/降级双路径都算通过
+test("bankroll page shows the caliber line and renders balance or degrades honestly", async ({ page }) => {
+	await page.goto("/bankroll");
+	await expect(page.getByRole("heading", { name: "GoalX · 资金" })).toBeVisible();
+	await expect(page.getByTestId("bankroll-caliber")).toContainText("只受真金");
+	// 常驻后端：余额大数字（未入金也在）或降级提示；后端不可达：error 态
+	await expect(page.getByTestId("bankroll-balance").or(page.getByTestId("bankroll-error")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	await expectNoSeriousAxeViolations(page);
+});
+
 test("theme toggle switches to dark and persists across reload", async ({ page }) => {
 	await page.goto("/");
 	// Playwright 默认 colorScheme=light 且无持久化 → 初始浅色
