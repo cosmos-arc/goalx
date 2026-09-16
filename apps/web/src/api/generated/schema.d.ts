@@ -299,6 +299,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bankroll/deposits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 记录入金(live 资金)
+         * @description 记录一笔入金(kind=deposit)；返回入金事件与最新余额。无鉴权(单用户产品既定)。
+         */
+        post: operations["create_deposit_api_v1_bankroll_deposits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/costs/summary": {
         parameters: {
             query?: never;
@@ -686,6 +706,33 @@ export interface components {
             credits_used: number;
             /** Items */
             items: components["schemas"]["CostItemView"][];
+        };
+        /**
+         * DepositCreatedView
+         * @description 入金结果：新流水事件与入金后余额。
+         */
+        DepositCreatedView: {
+            event: components["schemas"]["BankrollEventView"];
+            /** Balance */
+            balance: number;
+        };
+        /**
+         * DepositPayload
+         * @description 一笔入金输入。
+         */
+        DepositPayload: {
+            /**
+             * Amount Cny
+             * @description 入金金额(人民币, 必须 > 0)
+             */
+            amount_cny: number;
+            /**
+             * Occurred At
+             * @description 发生时点(UTC ISO); 缺省取服务器当前时间
+             */
+            occurred_at?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /**
          * DrawResultChangeView
@@ -1699,6 +1746,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BankrollResponse"];
+                };
+            };
+        };
+    };
+    create_deposit_api_v1_bankroll_deposits_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepositPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepositCreatedView"];
+                };
+            };
+            /** @description 入金金额非法(≤0) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

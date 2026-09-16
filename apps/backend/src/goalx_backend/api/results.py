@@ -137,6 +137,23 @@ class BankrollResponse(BaseModel):
     events: list[BankrollEventView]
 
 
+class DepositPayload(BaseModel):
+    """一笔入金输入。"""
+
+    amount_cny: float = Field(gt=0, description="入金金额(人民币, 必须 > 0)")
+    occurred_at: str | None = Field(
+        default=None, description="发生时点(UTC ISO); 缺省取服务器当前时间"
+    )
+    note: str | None = None
+
+
+class DepositCreatedView(BaseModel):
+    """入金结果：新流水事件与入金后余额。"""
+
+    event: BankrollEventView
+    balance: float
+
+
 @router.post(
     "/api/v1/draw-results",
     summary="导入官方开奖(唯一事实源)",
@@ -282,6 +299,36 @@ async def get_bankroll(db: DbDep) -> BankrollResponse:
         for row in bt_store.list_bankroll_events(db)
     ]
     return BankrollResponse(balance=bt_store.bankroll_balance(db), events=events)
+
+
+@router.post(
+    "/api/v1/bankroll/deposits",
+    summary="记录入金(live 资金)",
+    status_code=201,
+    response_model=DepositCreatedView,
+    responses={400: {"description": "入金金额非法(≤0)"}},
+)
+async def create_deposit(payload: DepositPayload, db: DbDep) -> DepositCreatedView:
+    """记录一笔入金(kind=deposit)；返回入金事件与最新余额。无鉴权(单用户产品既定)。"""
+    try:
+        row = bt_store.record_deposit(
+            db,
+            payload.amount_cny,
+            note=payload.note,
+            occurred_at=payload.occurred_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    event = BankrollEventView(
+        id=int(row["id"]),
+        occurred_at=str(row["occurred_at"]),
+        kind=str(row["kind"]),
+        amount_cny=float(row["amount_cny"]),
+        balance_after=float(row["balance_after"]),
+        bet_id=row["bet_id"],
+        note=row["note"],
+    )
+    return DepositCreatedView(event=event, balance=float(row["balance_after"]))
 
 
 @router.get(

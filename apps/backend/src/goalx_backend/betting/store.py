@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
-from goalx_backend.db import utc_now_iso
+from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
     BetMode,
     LegInput,
@@ -566,6 +566,33 @@ def list_bankroll_events(
     return conn.execute(
         "SELECT * FROM bankroll_events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
+
+
+def record_deposit(
+    conn: sqlite3.Connection,
+    amount_cny: float,
+    *,
+    note: str | None = None,
+    occurred_at: str | None = None,
+) -> sqlite3.Row:
+    """
+    Record a deposit (kind=deposit, 票 20 入金端点的领域入口)；返回新事件行。
+
+    金额必须 > 0（API 层 pydantic 先拦，这里守域不变量——CLI/脚本直调同样受约束）；
+    occurred_at 缺省取当前 UTC 时间。withdraw 不做（后续按需）。
+    """
+    if not amount_cny > 0:
+        raise ValueError("入金金额必须大于 0")
+    with atomic(conn):
+        event_id = record_bankroll_event(
+            conn, "deposit", amount_cny, note=note, occurred_at=occurred_at
+        )
+        row = conn.execute(
+            "SELECT * FROM bankroll_events WHERE id = ?", (event_id,)
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("deposit 落库后未找到行")
+    return row
 
 
 def bankroll_events_for_bet(conn: sqlite3.Connection, bet_id: int) -> list[sqlite3.Row]:

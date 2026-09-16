@@ -523,6 +523,51 @@ def test_bankroll_endpoint(api_client: TestClient) -> None:
     assert response.json() == {"balance": None, "events": []}
 
 
+def test_create_deposit_endpoint(api_client: TestClient) -> None:
+    """票 20 入金端点：落 deposit 流水、返回事件与新余额、GET bankroll 一致。"""
+    response = api_client.post(
+        "/api/v1/bankroll/deposits",
+        json={"amount_cny": 5000.0, "note": "初始资金"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["event"]["kind"] == "deposit"
+    assert body["event"]["amount_cny"] == 5000.0
+    assert body["event"]["balance_after"] == 5000.0
+    assert body["event"]["bet_id"] is None
+    assert body["event"]["note"] == "初始资金"
+    assert body["event"]["occurred_at"]  # 缺省取服务器当前时间
+    assert body["balance"] == 5000.0
+
+    second = api_client.post(
+        "/api/v1/bankroll/deposits",
+        json={
+            "amount_cny": 250.5,
+            "occurred_at": "2026-09-01T00:00:00+00:00",
+        },
+    )
+    assert second.status_code == 201
+    assert second.json()["balance"] == 5250.5
+    assert second.json()["event"]["occurred_at"] == "2026-09-01T00:00:00+00:00"
+
+    bank = api_client.get("/api/v1/bankroll").json()
+    assert bank["balance"] == 5250.5
+    assert [event["kind"] for event in bank["events"]] == ["deposit", "deposit"]
+
+
+def test_create_deposit_rejects_non_positive_amount(api_client: TestClient) -> None:
+    """金额非法(0/负数)在载荷校验被拒(422)，不落任何流水。"""
+    for bad_amount in (0, -100.0):
+        response = api_client.post(
+            "/api/v1/bankroll/deposits", json={"amount_cny": bad_amount}
+        )
+        assert response.status_code == 422
+    assert api_client.get("/api/v1/bankroll").json() == {
+        "balance": None,
+        "events": [],
+    }
+
+
 def test_pool_slip_creation_and_materialization(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     response = api_client.post(
