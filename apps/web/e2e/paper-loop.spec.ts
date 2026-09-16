@@ -29,8 +29,9 @@ function dbRows(sql: string): Array<Record<string, unknown>> {
 test.describe.configure({ mode: "serial" });
 
 test("空库状态诚实显示，无需手查 Fixture ID", async ({ page }) => {
-	await page.goto("/");
-	await expect(page.getByTestId("today-empty")).toBeVisible();
+	await page.goto("/today");
+	// 票 13：统一空状态组件——空库是无数据态（非后端不可用）
+	await expect(page.getByTestId("empty-state")).toHaveAttribute("data-variant", "no-data");
 
 	await page.goto("/bets");
 	await expect(page.getByText("无未锁定建议。")).toBeVisible();
@@ -53,7 +54,7 @@ test("seed-demo 灌入隔离演示数据（动态时间，不写主库）", asyn
 });
 
 test("今日页展示资格判定与拒绝原因", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await expect(page.getByTestId("today-row")).toHaveCount(3);
 	const validVerdict = page.getByTestId("had-quote-valid").first();
 	await expect(validVerdict).toHaveText(/可投/);
@@ -62,7 +63,7 @@ test("今日页展示资格判定与拒绝原因", async ({ page }) => {
 });
 
 test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("basket-stake").fill("100");
 	await page.getByTestId("basket-strategy").fill("manual-v1");
@@ -90,7 +91,7 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 });
 
 test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮）", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("pick-2-a").click();
 	await page.getByTestId("basket-stake").fill("2");
@@ -103,7 +104,7 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 	await expect(page.getByTestId("bets-message")).toContainText("已锁定纸面票");
 
 	// 停售场次作第二腿：客户端提示拒绝原因
-	await page.goto("/");
+	await page.goto("/today");
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("pick-3-h").click();
 	await expect(page.getByTestId("today-message")).toContainText("不可作第二腿");
@@ -133,7 +134,7 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 });
 
 test("真实回录：实际条款结算、建议快照保留、账务按实际金额", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	// live 单关同样须单固：选 fixture 1 客胜（该场最终 0:1 客胜）
 	await page.getByTestId("pick-1-a").click();
 	await page.getByTestId("basket-mode").selectOption("live");

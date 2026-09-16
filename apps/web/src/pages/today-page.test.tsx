@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
@@ -19,7 +19,7 @@ async function renderAt(path: string) {
 }
 
 test("renders the fixture comparison table with flags and eligibility", async () => {
-	await renderAt("/");
+	await renderAt("/today");
 
 	expect(await screen.findByText("GoalX · 今日")).toBeInTheDocument();
 	const rows = await screen.findAllByTestId("today-row");
@@ -83,7 +83,7 @@ test("picks selections into the basket and creates a suggestion", async () => {
 			);
 		}),
 	);
-	await renderAt("/");
+	await renderAt("/today");
 
 	await user.click(await screen.findByTestId("pick-1-h"));
 	expect(screen.getByTestId("selection-basket")).toHaveTextContent("1/2");
@@ -112,7 +112,7 @@ test("picks selections into the basket and creates a suggestion", async () => {
 
 test("rejects a same-fixture second leg and shows server rejection reasons", async () => {
 	const user = userEvent.setup();
-	await renderAt("/");
+	await renderAt("/today");
 
 	await user.click(await screen.findByTestId("pick-1-h"));
 	await user.click(screen.getByTestId("pick-1-d")); // 同场第二选 → 拒绝
@@ -167,7 +167,7 @@ test("basket rules: non-single warning, rejected second leg, cap at two, deselec
 			]),
 		),
 	);
-	await renderAt("/");
+	await renderAt("/today");
 
 	// 非单固首 pick：提示但仍可选（服务器最终裁决）
 	await user.click(await screen.findByTestId("pick-2-a"));
@@ -213,24 +213,42 @@ test("shows no-verdict placeholder when the backend omits had_quote", async () =
 			]),
 		),
 	);
-	await renderAt("/");
+	await renderAt("/today");
 
 	expect(await screen.findByText("X 队 vs Y 队")).toBeInTheDocument();
 	expect(screen.getByText("无判定")).toBeInTheDocument();
 });
 
-test("shows an empty state when no fixtures are on sale", async () => {
+test("shows the unified no-data state when nothing is on sale, and refresh recovers", async () => {
+	const user = userEvent.setup();
 	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json([])));
 
-	await renderAt("/");
+	await renderAt("/today");
 
-	expect(await screen.findByTestId("today-empty")).toBeInTheDocument();
+	const state = await screen.findByTestId("empty-state");
+	expect(state).toHaveAttribute("data-variant", "no-data");
+	expect(state).toHaveTextContent("当日无在售场次。");
+
+	// 唯一动作：刷新后数据恢复
+	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json(todayFixture)));
+	await user.click(within(state).getByRole("button", { name: "刷新" }));
+	expect(await screen.findAllByTestId("today-row")).toHaveLength(3);
 });
 
-test("shows a degraded hint when the backend is unreachable", async () => {
+test("shows the backend-unavailable state with startup guidance and retry", async () => {
+	const user = userEvent.setup();
 	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json(todayFixture, { status: 503 })));
 
-	await renderAt("/");
+	await renderAt("/today");
 
-	expect(await screen.findByTestId("today-error")).toBeInTheDocument();
+	const state = await screen.findByTestId("empty-state");
+	expect(state).toHaveAttribute("data-variant", "backend-unavailable");
+	// 启动指引保留：task server + ingest（票 03 空状态定稿）
+	expect(state).toHaveTextContent("task server");
+	expect(state).toHaveTextContent("task ingest-jingcai");
+
+	// 唯一动作：重试成功后回到正常表
+	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json(todayFixture)));
+	await user.click(within(state).getByRole("button", { name: "重试" }));
+	expect(await screen.findAllByTestId("today-row")).toHaveLength(3);
 });

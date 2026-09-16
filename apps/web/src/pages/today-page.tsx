@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, fetchTodayFixtures, type HadQuoteStatus, type TodayFixture } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
+import { EmptyState } from "../components/empty-state";
 import { errorText, SELECTION_LABELS } from "../lib/ui";
 
 const FLAG_LABELS: Record<string, string> = {
@@ -175,17 +176,32 @@ export function TodayPage() {
 
 			{today.isPending ? <p data-testid="today-loading">加载今日场次…</p> : null}
 			{today.isError ? (
-				<p data-testid="today-error" className="text-sm text-neutral-500">
-					后端不可用或当日无数据 — 用 <code>task server</code> 启动 API，先跑一次
-					<code>task ingest-jingcai</code>。
-				</p>
+				// 票 13：后端不可用态——保留启动/灌数指引 + 重试（服务器校验仍是唯一权威）
+				<EmptyState
+					variant="backend-unavailable"
+					message="连不上后端，今日场次加载失败。"
+					hint={
+						<>
+							用 <code>task server</code> 启动 API；首次使用先跑 <code>task ingest-jingcai</code> 拉取竞彩数据。
+						</>
+					}
+					action={{ label: "重试", onClick: () => void today.refetch() }}
+				/>
 			) : null}
 
 			{today.data ? (
 				today.data.length === 0 ? (
-					<p data-testid="today-empty" className="text-sm text-neutral-500">
-						当日无在售场次。
-					</p>
+					// 票 13：无数据态——为何空 + 何时有 + 刷新
+					<EmptyState
+						variant="no-data"
+						message="当日无在售场次。"
+						hint={
+							<>
+								场次通常在竞彩当日开售前更新；刚搭好环境先跑 <code>task ingest-jingcai</code>。
+							</>
+						}
+						action={{ label: "刷新", onClick: () => void today.refetch() }}
+					/>
 				) : (
 					<div className="overflow-x-auto">
 						<table className="w-full text-sm">

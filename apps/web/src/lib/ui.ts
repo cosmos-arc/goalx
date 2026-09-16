@@ -12,6 +12,18 @@ export const SELECTION_LABELS: Record<string, string> = {
 	a: "客胜",
 };
 
+/** 票 03 定稿的九条路由（IA 命名词典）：总览/今日/投注/历史/验证/资金/词典/复核/设置。 */
+export type AppRoute =
+	| "/"
+	| "/today"
+	| "/bets"
+	| "/history"
+	| "/validation"
+	| "/bankroll"
+	| "/glossary"
+	| "/review"
+	| "/settings";
+
 /** API 错误 → 可读文本（detail 字符串/对象都处理，不显示 [object Object]）。 */
 export function errorText(error: unknown): string {
 	if (typeof error === "object" && error !== null && "detail" in error) {
