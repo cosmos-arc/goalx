@@ -29,8 +29,9 @@ function dbRows(sql: string): Array<Record<string, unknown>> {
 test.describe.configure({ mode: "serial" });
 
 test("空库状态诚实显示，无需手查 Fixture ID", async ({ page }) => {
-	await page.goto("/");
-	await expect(page.getByTestId("today-empty")).toBeVisible();
+	await page.goto("/today");
+	// 票 13：统一空状态组件——空库是无数据态（非后端不可用）
+	await expect(page.getByTestId("empty-state")).toHaveAttribute("data-variant", "no-data");
 
 	await page.goto("/bets");
 	await expect(page.getByText("无未锁定建议。")).toBeVisible();
@@ -53,20 +54,26 @@ test("seed-demo 灌入隔离演示数据（动态时间，不写主库）", asyn
 });
 
 test("今日页展示资格判定与拒绝原因", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await expect(page.getByTestId("today-row")).toHaveCount(3);
 	const validVerdict = page.getByTestId("had-quote-valid").first();
 	await expect(validVerdict).toHaveText(/可投/);
 	await expect(validVerdict).toHaveText(/单固/);
 	await expect(page.getByTestId("had-quote-rejected")).toHaveText(/已停售/);
+	// 票 14：可投卡片置顶（001 单固在售 + 002 仅串关在售），003 停售弱化
+	await expect(page.getByTestId("today-card-1")).toBeVisible();
+	await expect(page.getByTestId("today-card-2")).toBeVisible();
+	await expect(page.getByTestId("today-not-eligible-count")).toHaveText(/1 场不可投/);
 });
 
 test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await page.getByTestId("pick-1-h").click();
+	// 票 14：金额/模式在选注篮抽屉里（底部常驻条 → 右侧 Drawer）
+	await page.getByTestId("basket-open").click();
 	await page.getByTestId("basket-stake").fill("100");
 	await page.getByTestId("basket-strategy").fill("manual-v1");
-	await page.getByRole("button", { name: "建立建议" }).click();
+	await page.getByTestId("basket-submit").click();
 	await expect(page.getByTestId("today-message")).toContainText("已建建议");
 
 	await page.goto("/bets");
@@ -90,11 +97,12 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 });
 
 test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮）", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("pick-2-a").click();
+	await page.getByTestId("basket-open").click();
 	await page.getByTestId("basket-stake").fill("2");
-	await page.getByRole("button", { name: "建立建议" }).click();
+	await page.getByTestId("basket-submit").click();
 	await expect(page.getByTestId("today-message")).toContainText("已建建议");
 
 	// 锁定 2串1（两腿同一 as_of 判定，共同可购买）
@@ -102,14 +110,12 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 	await page.getByTestId("lock-2").click();
 	await expect(page.getByTestId("bets-message")).toContainText("已锁定纸面票");
 
-	// 停售场次作第二腿：客户端提示拒绝原因
-	await page.goto("/");
-	await page.getByTestId("pick-1-h").click();
-	await page.getByTestId("pick-3-h").click();
-	await expect(page.getByTestId("today-message")).toContainText("不可作第二腿");
-	await expect(page.getByTestId("today-message")).toContainText("已停售");
+	// 停售场次：按钮禁用 + 行弱化（票 14 规则前置——无效组合到不了提交）
+	await page.goto("/today");
+	await expect(page.getByTestId("pick-3-h")).toBeDisabled();
+	await expect(page.getByTestId("today-row").nth(2)).toHaveClass(/bg-muted\/50/);
 
-	// 服务器侧：直接以 API 提交含停售腿的串关 → 400 + 原因
+	// 服务器侧：直接以 API 提交含停售腿的串关 → 400 + 原因（前端禁用不替代服务器判定）
 	const today = await page.request.get("/api/v1/fixtures/today");
 	const rows = (await today.json()) as Array<{
 		fixture_id: number;
@@ -133,12 +139,13 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 });
 
 test("真实回录：实际条款结算、建议快照保留、账务按实际金额", async ({ page }) => {
-	await page.goto("/");
+	await page.goto("/today");
 	// live 单关同样须单固：选 fixture 1 客胜（该场最终 0:1 客胜）
 	await page.getByTestId("pick-1-a").click();
+	await page.getByTestId("basket-open").click();
 	await page.getByTestId("basket-mode").selectOption("live");
 	await page.getByTestId("basket-stake").fill("10");
-	await page.getByRole("button", { name: "建立建议" }).click();
+	await page.getByTestId("basket-submit").click();
 	await expect(page.getByTestId("today-message")).toContainText("已建建议");
 
 	await page.goto("/bets");

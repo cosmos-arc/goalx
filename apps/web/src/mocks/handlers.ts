@@ -6,6 +6,18 @@ export const statusFixture = {
 	environment: "testing",
 } as const;
 
+function hoursFromNow(hours: number): string {
+	return new Date(Date.now() + hours * 3_600_000).toISOString();
+}
+
+function minutesAgoIso(minutes: number): string {
+	return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+/**
+ * 票 14 今日页 mock：时间相对 now 动态生成（原型 today-proto-data.ts 的场景思路），
+ * 三场覆盖 可投+单固+偏差/样本少、可投+仅串关+过期报价、停售拒绝。
+ */
 export const todayFixture = [
 	{
 		fixture_id: 1,
@@ -14,23 +26,49 @@ export const todayFixture = [
 		tier: "tier1",
 		home_team: "阿森纳",
 		away_team: "切尔西",
-		kickoff_utc: "2026-09-13T02:00:00+00:00",
+		kickoff_utc: hoursFromNow(2.5),
 		is_single: true,
 		joined: true,
-		jc_odds: { h: 6.5, d: 5.0, a: 1.3 },
-		jc_updated_at: "2026-09-12T12:00:00+00:00",
+		jc_odds: { h: 1.92, d: 3.55, a: 3.7 },
+		jc_updated_at: minutesAgoIso(8),
 		books: 2,
-		eu_prob: { h: 0.16, d: 0.2, a: 0.64 },
-		ev: { h: 0.04, d: 0.0, a: -0.17 },
-		flags: ["few_books", "custom_flag"],
+		eu_prob: { h: 0.529, d: 0.248, a: 0.223 },
+		ev: { h: 0.053, d: -0.12, a: -0.175 },
+		flags: ["ev_deviation", "few_books", "custom_flag"],
 		had_quote: {
-			as_of: "2026-09-12T12:05:00+00:00",
+			as_of: minutesAgoIso(1),
 			status: "valid",
 			reasons: [],
 			sale_state: "on_sale",
 			single_eligible: true,
-			jc_source_updated_at: "2026-09-12T12:00:00+00:00",
+			jc_source_updated_at: minutesAgoIso(8),
 			eu_books: 2,
+		},
+	},
+	{
+		fixture_id: 2,
+		match_code: "周六002",
+		competition: "英超",
+		tier: "tier1",
+		home_team: "利物浦",
+		away_team: "曼城",
+		kickoff_utc: hoursFromNow(1.5),
+		is_single: false,
+		joined: true,
+		jc_odds: { h: 3.0, d: 3.4, a: 2.2 },
+		jc_updated_at: minutesAgoIso(45),
+		books: 9,
+		eu_prob: { h: 0.32, d: 0.29, a: 0.39 },
+		ev: { h: -0.01, d: -0.135, a: -0.171 },
+		flags: [],
+		had_quote: {
+			as_of: minutesAgoIso(1),
+			status: "valid",
+			reasons: [],
+			sale_state: "on_sale",
+			single_eligible: false,
+			jc_source_updated_at: minutesAgoIso(45),
+			eu_books: 9,
 		},
 	},
 	{
@@ -40,48 +78,22 @@ export const todayFixture = [
 		tier: "tier2",
 		home_team: "A 队",
 		away_team: "B 队",
-		kickoff_utc: "2026-09-13T20:00:00+00:00",
-		is_single: false,
+		kickoff_utc: hoursFromNow(5),
+		is_single: true,
 		joined: true,
-		jc_odds: { h: null, d: null, a: null },
+		jc_odds: { h: 2.1, d: 3.25, a: 3.15 },
 		jc_updated_at: null,
-		books: 4,
+		books: 0,
 		eu_prob: null,
 		ev: null,
 		flags: [],
 		had_quote: {
-			as_of: "2026-09-12T12:05:00+00:00",
+			as_of: minutesAgoIso(1),
 			status: "rejected",
 			reasons: ["sale_stopped"],
 			sale_state: "stopped",
-			single_eligible: null,
+			single_eligible: true,
 			jc_source_updated_at: null,
-			eu_books: 0,
-		},
-	},
-	{
-		fixture_id: 2,
-		match_code: "周六002",
-		competition: "荷甲",
-		tier: "tier2",
-		home_team: "福图纳锡塔德",
-		away_team: "阿贾克斯",
-		kickoff_utc: "2026-09-12T18:00:00+00:00",
-		is_single: false,
-		joined: false,
-		jc_odds: { h: 6.6, d: 5.1, a: 1.28 },
-		jc_updated_at: "2026-09-12T14:29:36+00:00",
-		books: 0,
-		eu_prob: null,
-		ev: null,
-		flags: ["not_joined"],
-		had_quote: {
-			as_of: "2026-09-12T12:05:00+00:00",
-			status: "unknown",
-			reasons: ["eu_no_quote"],
-			sale_state: "on_sale",
-			single_eligible: false,
-			jc_source_updated_at: "2026-09-12T14:29:36+00:00",
 			eu_books: 0,
 		},
 	},
