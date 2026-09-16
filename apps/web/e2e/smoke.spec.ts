@@ -18,12 +18,18 @@ const ALL_ROUTES = [
 	{ path: "/settings", heading: "GoalX · 设置" },
 ] as const;
 
-test("overview placeholder is the new home and guides to today", async ({ page }) => {
+test("overview triage is the new home and links into today", async ({ page }) => {
 	await page.goto("/");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 总览" })).toBeVisible();
 	await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-	await page.getByRole("link", { name: "先去今日看盘" }).click();
+	// 票 15：真实总览（待办清单卡 + 快照四卡）或后端不可用降级态，两者都算通过
+	// （react-query 默认重试后才进 error 态，放宽超时；常驻后端下未入金引导的
+	// EmptyState 也在页内，or() 会双命中 → .first() 放行严格模式）
+	await expect(page.getByTestId("overview-todos").or(page.getByTestId("empty-state")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "今日" }).click();
 	await expect(page.getByRole("heading", { name: "GoalX · 今日" })).toBeVisible();
 });
 

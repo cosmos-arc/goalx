@@ -43,12 +43,4 @@ test("glossary placeholder renders the not-available skeleton", async () => {
 	expect(screen.getByTestId("empty-state")).toHaveTextContent("随票 18");
 });
 
-test("overview placeholder at / guides to today", async () => {
-	await renderAt("/");
-
-	expect(await screen.findByRole("heading", { name: "GoalX · 总览" })).toBeInTheDocument();
-	const state = screen.getByTestId("empty-state");
-	expect(state).toHaveAttribute("data-variant", "not-available");
-	expect(state).toHaveTextContent("随票 15");
-	expect(screen.getByRole("link", { name: "先去今日看盘" })).toHaveAttribute("href", "/today");
-});
+// 票 15：`/` 已换为真实总览页，占位断言随之下线——见 overview-page.test.tsx。
