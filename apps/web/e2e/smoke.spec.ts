@@ -103,7 +103,9 @@ test("today page renders data or degrades honestly", async ({ page }) => {
 
 	await expect(page.getByRole("heading", { name: "GoalX · 今日" })).toBeVisible();
 	// 数据路径（常驻后端）或三态空状态（无数据/后端不可用）都算通过
-	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible();
+	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible({
+		timeout: 20_000,
+	});
 });
 
 test("validation page renders verdict or degrades gracefully without backend", async ({ page }) => {

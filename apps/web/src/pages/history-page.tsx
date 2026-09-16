@@ -269,6 +269,48 @@ export function HistoryPage() {
 					</p>
 				</header>
 
+				{/* 常驻筛选：模式（大标签常显，默认纸面，不混算）+ 时间范围——不依赖查询结果，降级态也可见 */}
+				<div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+					<fieldset className="flex gap-2">
+						<legend className="sr-only">模式</legend>
+						{MODES.map((item) => (
+							<button
+								key={item.key}
+								type="button"
+								data-testid={`mode-${item.key}`}
+								aria-pressed={mode === item.key}
+								className={`rounded-lg border px-4 py-1.5 text-base font-medium transition-colors ${
+									mode === item.key
+										? "border-primary bg-primary text-primary-foreground"
+										: "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+								}`}
+								onClick={() => setMode(item.key)}
+							>
+								{item.label}
+							</button>
+						))}
+					</fieldset>
+					<fieldset className="flex flex-wrap gap-1">
+						<legend className="sr-only">时间范围</legend>
+						{RANGES.map((item) => (
+							<button
+								key={item.key}
+								type="button"
+								data-testid={`range-${item.key}`}
+								aria-pressed={rangeKey === item.key}
+								className={`rounded-md px-2.5 py-1 text-sm transition-colors ${
+									rangeKey === item.key
+										? "bg-primary text-primary-foreground"
+										: "text-muted-foreground hover:bg-muted hover:text-foreground"
+								}`}
+								onClick={() => setRangeKey(item.key)}
+							>
+								{item.label}
+							</button>
+						))}
+					</fieldset>
+				</div>
+
 				{betsQuery.isPending ? (
 					<div className="space-y-4" data-testid="history-loading">
 						<span className="sr-only">加载历史数据…</span>
@@ -292,48 +334,6 @@ export function HistoryPage() {
 
 				{betsQuery.data ? (
 					<>
-						{/* 常驻筛选：模式（大标签常显，默认纸面，不混算）+ 时间范围 */}
-						<div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-							<fieldset className="flex gap-2">
-								<legend className="sr-only">模式</legend>
-								{MODES.map((item) => (
-									<button
-										key={item.key}
-										type="button"
-										data-testid={`mode-${item.key}`}
-										aria-pressed={mode === item.key}
-										className={`rounded-lg border px-4 py-1.5 text-base font-medium transition-colors ${
-											mode === item.key
-												? "border-primary bg-primary text-primary-foreground"
-												: "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-										}`}
-										onClick={() => setMode(item.key)}
-									>
-										{item.label}
-									</button>
-								))}
-							</fieldset>
-							<fieldset className="flex flex-wrap gap-1">
-								<legend className="sr-only">时间范围</legend>
-								{RANGES.map((item) => (
-									<button
-										key={item.key}
-										type="button"
-										data-testid={`range-${item.key}`}
-										aria-pressed={rangeKey === item.key}
-										className={`rounded-md px-2.5 py-1 text-sm transition-colors ${
-											rangeKey === item.key
-												? "bg-primary text-primary-foreground"
-												: "text-muted-foreground hover:bg-muted hover:text-foreground"
-										}`}
-										onClick={() => setRangeKey(item.key)}
-									>
-										{item.label}
-									</button>
-								))}
-							</fieldset>
-						</div>
-
 						{/* 二层折叠筛选：选项随当前模式样本推导，不写死 */}
 						<details data-testid="filters-more" className="mb-6 rounded-lg border border-border px-4 py-2.5">
 							<summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
