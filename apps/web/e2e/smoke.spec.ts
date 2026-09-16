@@ -54,14 +54,28 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 });
 
 test("stub pages say what they are and when they arrive", async ({ page }) => {
-	await page.goto("/history");
-	await expect(page.getByTestId("empty-state")).toContainText("随票 17");
 	await page.goto("/glossary");
 	await expect(page.getByTestId("empty-state")).toContainText("随票 18");
 	await page.goto("/review");
 	await expect(page.getByTestId("empty-state")).toContainText("M3");
 	await page.goto("/settings");
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
+});
+
+// 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
+test("history page shows the caliber line and renders aggregation or degrades honestly", async ({ page }) => {
+	await page.goto("/history");
+	await expect(page.getByRole("heading", { name: "GoalX · 历史" })).toBeVisible();
+	await expect(page.getByTestId("history-caliber")).toContainText("统计已锁定且已结算的注");
+	// 数据路径（常驻后端含已结算注）与无已结算注/后端不可用的三态空状态都算通过
+	// （react-query 默认重试后才进 error 态，放宽超时；常驻后端下空态也在页内，
+	// or() 会双命中 → .first() 放行严格模式）
+	await expect(page.getByTestId("history-metrics").or(page.getByTestId("empty-state")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	// 模式大标签常显，默认纸面
+	await expect(page.getByTestId("mode-paper")).toHaveAttribute("aria-pressed", "true");
+	await expectNoSeriousAxeViolations(page);
 });
 
 test("today page renders data or degrades honestly", async ({ page }) => {
