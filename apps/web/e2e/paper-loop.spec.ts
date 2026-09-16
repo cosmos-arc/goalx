@@ -35,7 +35,7 @@ test("空库状态诚实显示，无需手查 Fixture ID", async ({ page }) => {
 
 	await page.goto("/bets");
 	await expect(page.getByText("无未锁定建议。")).toBeVisible();
-	await expect(page.getByText("无已锁定纸面注。")).toBeVisible();
+	await expect(page.getByText("无已锁定注——建议锁定后在这里等待开奖。")).toBeVisible();
 
 	await page.goto("/bankroll");
 	await expect(page.getByTestId("bankroll-balance")).toHaveText("尚未入金");
@@ -77,7 +77,8 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 	await expect(page.getByTestId("today-message")).toContainText("已建建议");
 
 	await page.goto("/bets");
-	await expect(page.getByTestId("section-suggestions")).toContainText("未锁定建议（1）");
+	// 票 16 三段分组：未锁定建议组头计数（组头 = 标题 + 计数徽章，textContent 空格分隔）
+	await expect(page.getByTestId("section-suggestions")).toContainText("未锁定建议 1");
 	await page.getByTestId("lock-1").click();
 	await expect(page.getByTestId("bets-message")).toContainText("已锁定纸面票");
 
@@ -86,7 +87,7 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 	expect(again.status()).toBe(400);
 	expect(await again.text()).toContain("不能再次回录");
 
-	await expect(page.getByTestId("section-locked-paper")).toContainText("已锁定纸面（1）");
+	await expect(page.getByTestId("section-locked")).toContainText("已锁定 1");
 
 	// 真实资金变化 0：bankroll 无事件（浏览器 + API + DB 三方一致）
 	await page.goto("/bankroll");
@@ -149,13 +150,18 @@ test("真实回录：实际条款结算、建议快照保留、账务按实际�
 	await expect(page.getByTestId("today-message")).toContainText("已建建议");
 
 	await page.goto("/bets");
-	const liveRow = page.locator('[data-testid="section-suggestions"] [data-testid="bet-row"]', {
-		hasText: "真金",
-	});
-	await liveRow.getByRole("button", { name: "回录实际条款" }).click();
-	await liveRow.getByLabel("实际金额").fill("12");
-	await liveRow.getByLabel(/实际赔率/).fill("1.2");
-	await liveRow.getByRole("button", { name: "提交" }).click();
+	// 票 16：回录走右侧 Drawer（不再内联在表格列），含快照对照与按实际条款记账提示
+	await page
+		.locator('[data-testid="section-suggestions"] [data-testid="bet-row"]', {
+			hasText: "真金",
+		})
+		.getByRole("button", { name: "回录实际条款" })
+		.click();
+	const drawer = page.getByTestId("actual-drawer");
+	await drawer.getByLabel("实际金额").fill("12");
+	await drawer.getByLabel(/实际赔率/).fill("1.2");
+	await expect(page.getByTestId("actual-diff-note")).toContainText("按实际条款记账");
+	await drawer.getByRole("button", { name: "提交" }).click();
 	await expect(page.getByTestId("bets-message")).toContainText("已回录真实购买票");
 
 	// live 注金事件按实际金额 -12
@@ -180,15 +186,17 @@ test("开奖→结算→复盘：胜负面目、盈亏与缺 closing 诚实展�
 	await page.getByRole("button", { name: "结算批跑" }).click();
 	await expect(page.getByTestId("bets-message")).toContainText("结算完成");
 
-	// 复盘：纸面单关 ¥100@6.5 命中 +550；串关命中 +26.6；live 客胜腿此时未中 -12
-	await expect(page.getByTestId("section-locked-paper").getByText("+550.00")).toBeVisible();
-	await expect(page.getByTestId("section-locked-paper").getByText("+26.60")).toBeVisible();
-	await expect(page.getByTestId("section-live").getByText("-12.00")).toBeVisible();
-	await expect(page.getByTestId("section-locked-paper").getByText("缺 closing").first()).toBeVisible();
-	await expect(page.getByTestId("section-live").getByText("live 单独分组")).toBeVisible();
+	// 复盘（票 16 分组：结算后的注全在已结算段，纸面/真金以行内徽章区分）：纸面单关
+	// ¥100@6.5 命中 +550；串关命中 +26.6；live 客胜腿此时未中 -12
+	const settledSection = page.getByTestId("section-settled");
+	await expect(settledSection.getByText("+550.00")).toBeVisible();
+	await expect(settledSection.getByText("+26.60")).toBeVisible();
+	await expect(settledSection.locator('[data-testid="bet-row"]', { hasText: "真金" }).first()).toContainText("-12.00");
+	await expect(settledSection.getByText("缺 closing").first()).toBeVisible();
+	await expect(settledSection.getByText("live 单独分组")).toBeVisible();
 	// live 建议快照保留：¥10@1.30 → 实际 ¥12@1.20
-	await expect(page.getByTestId("section-live").getByText("¥10.00→¥12.00")).toBeVisible();
-	await expect(page.getByTestId("section-live").getByText("1.30→1.20")).toBeVisible();
+	await expect(settledSection.getByText("¥10.00→¥12.00")).toBeVisible();
+	await expect(settledSection.getByText("1.30→1.20")).toBeVisible();
 
 	const bank = await (await page.request.get("/api/v1/bankroll")).json();
 	expect(bank["balance"]).toBe(-12); // live 腿未中: 只有实际注金流出
@@ -210,11 +218,12 @@ test("更正路径：预览影响→带原因导入→原子重算，纸面资�
 	await page.getByRole("button", { name: "导入" }).click();
 	await expect(page.getByTestId("bets-message")).toContainText("已导入 1 条开奖结果");
 
-	// 原子重算：纸面单关/串关由胜转负
-	await expect(page.getByTestId("section-locked-paper").getByText("+550.00")).toHaveCount(0);
-	await expect(page.getByTestId("section-locked-paper").getByText("负").first()).toBeVisible();
+	// 原子重算：纸面单关/串关由胜转负（仍在已结算段，票 16 分组）
+	const settledSection = page.getByTestId("section-settled");
+	await expect(settledSection.getByText("+550.00")).toHaveCount(0);
+	await expect(settledSection.getByText("负").first()).toBeVisible();
 	// live 客胜腿经更正反败为胜: 实际条款 12×1.2=14.4, 冲正兑付后余额 +2.4
-	await expect(page.getByTestId("section-live").getByText("+2.40")).toBeVisible();
+	await expect(settledSection.locator('[data-testid="bet-row"]', { hasText: "真金" }).first()).toContainText("+2.40");
 	const bank = await (await page.request.get("/api/v1/bankroll")).json();
 	expect(Number(bank["balance"])).toBeCloseTo(2.4, 2);
 

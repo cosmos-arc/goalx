@@ -10,8 +10,10 @@ import { defineConfig } from "@playwright/test";
  */
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const dbPath = path.join(import.meta.dirname, "test-results", "loop-e2e.db");
-const backendPort = 8931;
-const webPort = 5199;
+// 端口可用环境变量覆盖（默认不变）：多 worktree 并行跑门禁时避免与常驻
+// dev server / 他处 loop e2e 抢 5199/8931。
+const backendPort = Number(process.env["E2E_LOOP_BACKEND_PORT"] ?? 8931);
+const webPort = Number(process.env["E2E_LOOP_WEB_PORT"] ?? 5199);
 
 export default defineConfig({
 	testDir: "./e2e",

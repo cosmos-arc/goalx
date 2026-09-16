@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from goalx_backend.betting import store as bt
 from goalx_backend.data import fixtures as fx
 from goalx_backend.models import (
@@ -156,3 +158,25 @@ def test_bankroll_events(db: sqlite3.Connection) -> None:
     events = bt.list_bankroll_events(db)
     assert events[0]["kind"] == "bet_payout"
     assert events[1]["balance_after"] == 5000.0
+
+
+def test_record_deposit(db: sqlite3.Connection) -> None:
+    """票 20 入金领域函数：kind=deposit 落账、余额累计、occurred_at 缺省取当前。"""
+    first = bt.record_deposit(db, 5000.0, note="初始资金")
+    assert first["kind"] == "deposit"
+    assert first["amount_cny"] == 5000.0
+    assert first["balance_after"] == 5000.0
+    assert first["bet_id"] is None
+    assert first["note"] == "初始资金"
+    assert bt.bankroll_balance(db) == 5000.0
+
+    second = bt.record_deposit(db, 250.5, occurred_at="2026-09-01T00:00:00+00:00")
+    assert second["balance_after"] == 5250.5
+    assert second["occurred_at"] == "2026-09-01T00:00:00+00:00"
+    assert second["note"] is None
+    assert bt.bankroll_balance(db) == 5250.5
+
+    for bad in (0.0, -100.0):
+        with pytest.raises(ValueError, match="入金金额必须大于 0"):
+            bt.record_deposit(db, bad)
+    assert bt.bankroll_balance(db) == 5250.5  # 非法金额不落账

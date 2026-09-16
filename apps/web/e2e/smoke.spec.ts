@@ -18,12 +18,18 @@ const ALL_ROUTES = [
 	{ path: "/settings", heading: "GoalX · 设置" },
 ] as const;
 
-test("overview placeholder is the new home and guides to today", async ({ page }) => {
+test("overview triage is the new home and links into today", async ({ page }) => {
 	await page.goto("/");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 总览" })).toBeVisible();
 	await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-	await page.getByRole("link", { name: "先去今日看盘" }).click();
+	// 票 15：真实总览（待办清单卡 + 快照四卡）或后端不可用降级态，两者都算通过
+	// （react-query 默认重试后才进 error 态，放宽超时；常驻后端下未入金引导的
+	// EmptyState 也在页内，or() 会双命中 → .first() 放行严格模式）
+	await expect(page.getByTestId("overview-todos").or(page.getByTestId("empty-state")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "今日" }).click();
 	await expect(page.getByRole("heading", { name: "GoalX · 今日" })).toBeVisible();
 });
 
@@ -48,14 +54,48 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 });
 
 test("stub pages say what they are and when they arrive", async ({ page }) => {
-	await page.goto("/history");
-	await expect(page.getByTestId("empty-state")).toContainText("随票 17");
-	await page.goto("/glossary");
-	await expect(page.getByTestId("empty-state")).toContainText("随票 18");
+	// 票 18：/glossary 已换为真实词典页——见下方词典 smoke 与 axe 循环
 	await page.goto("/review");
 	await expect(page.getByTestId("empty-state")).toContainText("M3");
 	await page.goto("/settings");
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
+});
+
+// 票 18：词典页真实落地——首批词条常显、检索过滤、无结果 no-data 空状态
+test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
+	await page.goto("/glossary");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
+	const list = page.getByTestId("glossary-list");
+	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
+	expect(await list.locator("article").count()).toBe(10);
+
+	const search = page.getByTestId("glossary-search");
+	await search.fill("clv_prob");
+	await expect(list.getByTestId("glossary-card-clv")).toBeVisible();
+	await expect(list.locator("article")).toHaveCount(1);
+
+	await search.fill("量子纠缠");
+	const empty = page.getByTestId("empty-state");
+	await expect(empty).toBeVisible();
+	await empty.getByRole("button", { name: "清空检索" }).click();
+	await expect(list.locator("article")).toHaveCount(10);
+});
+
+// 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
+test("history page shows the caliber line and renders aggregation or degrades honestly", async ({ page }) => {
+	await page.goto("/history");
+	await expect(page.getByRole("heading", { name: "GoalX · 历史" })).toBeVisible();
+	await expect(page.getByTestId("history-caliber")).toContainText("统计已锁定且已结算的注");
+	// 数据路径（常驻后端含已结算注）与无已结算注/后端不可用的三态空状态都算通过
+	// （react-query 默认重试后才进 error 态，放宽超时；常驻后端下空态也在页内，
+	// or() 会双命中 → .first() 放行严格模式）
+	await expect(page.getByTestId("history-metrics").or(page.getByTestId("empty-state")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	// 模式大标签常显，默认纸面
+	await expect(page.getByTestId("mode-paper")).toHaveAttribute("aria-pressed", "true");
+	await expectNoSeriousAxeViolations(page);
 });
 
 test("today page renders data or degrades honestly", async ({ page }) => {
@@ -63,14 +103,33 @@ test("today page renders data or degrades honestly", async ({ page }) => {
 
 	await expect(page.getByRole("heading", { name: "GoalX · 今日" })).toBeVisible();
 	// 数据路径（常驻后端）或三态空状态（无数据/后端不可用）都算通过
-	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible();
+	await expect(page.getByTestId("today-row").first().or(page.getByTestId("empty-state"))).toBeVisible({
+		timeout: 20_000,
+	});
 });
 
-test("validation page degrades gracefully without backend", async ({ page }) => {
+test("validation page renders verdict or degrades gracefully without backend", async ({ page }) => {
 	await page.goto("/validation");
 	await expect(page.getByRole("heading", { name: "GoalX · 验证" })).toBeVisible();
-	// 后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
-	await expect(page.getByTestId("validation-error")).toBeVisible({ timeout: 20_000 });
+	// 票 19：首屏换为状态结论行（三条件 x/3）——双路径（票 13 基调）：常驻后端时结论
+	// 照常渲染；后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
+	// （放宽超时等重试走完）。18 号的 metric-回测 skill 契约保留（对比次级区，数据路径可见）。
+	await expect(page.getByTestId("validation-verdict").or(page.getByTestId("validation-error")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible();
+});
+
+// 票 20：资金页重设计——口径行常显，余额大数字（含未入金引导）/降级双路径都算通过
+test("bankroll page shows the caliber line and renders balance or degrades honestly", async ({ page }) => {
+	await page.goto("/bankroll");
+	await expect(page.getByRole("heading", { name: "GoalX · 资金" })).toBeVisible();
+	await expect(page.getByTestId("bankroll-caliber")).toContainText("只受真金");
+	// 常驻后端：余额大数字（未入金也在）或降级提示；后端不可达：error 态
+	await expect(page.getByTestId("bankroll-balance").or(page.getByTestId("bankroll-error")).first()).toBeVisible({
+		timeout: 20_000,
+	});
+	await expectNoSeriousAxeViolations(page);
 });
 
 test("theme toggle switches to dark and persists across reload", async ({ page }) => {

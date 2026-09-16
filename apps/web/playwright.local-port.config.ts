@@ -1,8 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// 端口可用 E2E_WEB_PORT 覆盖：默认 5173 与历史行为一致；主工作区 dev server
-// 常驻 5173 时（worktree 跑门禁的场景）换端口跑，避免 reuse 复用别人的代码。
-const webPort = Number(process.env["E2E_WEB_PORT"] ?? 5173);
+/**
+ * 本地多 worktree 并行跑 smoke e2e 的端口覆写（票 15 起使用）：
+ * 主工作区 dev server 占 5173、e2e:loop 占 5199——本配置用 5195 起 vite，
+ * 避免串台。API 代理仍走 VITE_DEV_API_TARGET 默认 127.0.0.1:8000。
+ */
+const webPort = 5195;
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -11,7 +14,7 @@ export default defineConfig({
 	timeout: 30_000,
 	fullyParallel: true,
 	retries: process.env["CI"] ? 1 : 0,
-	reporter: process.env["CI"] ? "github" : "list",
+	reporter: "list",
 	use: {
 		baseURL: `http://127.0.0.1:${webPort}`,
 		trace: "on-first-retry",
@@ -20,7 +23,7 @@ export default defineConfig({
 	webServer: {
 		command: `bun run dev --host 127.0.0.1 --port ${webPort}`,
 		url: `http://127.0.0.1:${webPort}`,
-		reuseExistingServer: !process.env["CI"],
+		reuseExistingServer: false,
 		timeout: 120_000,
 	},
 });

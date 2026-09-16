@@ -774,6 +774,51 @@
         }
       }
     },
+    "/api/v1/bankroll/deposits": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "记录入金(live 资金)",
+        "description": "记录一笔入金(kind=deposit)；返回入金事件与最新余额。无鉴权(单用户产品既定)。",
+        "operationId": "create_deposit_api_v1_bankroll_deposits_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositCreatedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入金金额非法(≤0)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/costs/summary": {
       "get": {
         "tags": [
@@ -1721,6 +1766,63 @@
         ],
         "title": "CostSummaryView",
         "description": "期间成本摘要(金额与 credits 分列；仅统计已记账成本)。"
+      },
+      "DepositCreatedView": {
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/BankrollEventView"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event",
+          "balance"
+        ],
+        "title": "DepositCreatedView",
+        "description": "入金结果：新流水事件与入金后余额。"
+      },
+      "DepositPayload": {
+        "properties": {
+          "amount_cny": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Cny",
+            "description": "入金金额(人民币, 必须 > 0)"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At",
+            "description": "发生时点(UTC ISO); 缺省取服务器当前时间"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount_cny"
+        ],
+        "title": "DepositPayload",
+        "description": "一笔入金输入。"
       },
       "DrawResultChangeView": {
         "properties": {
