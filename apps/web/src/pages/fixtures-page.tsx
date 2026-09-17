@@ -7,9 +7,9 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import {
 	EligibilityBadge,
+	EligibleCard,
 	evClass,
 	evText,
-	FLAG_LABELS,
 	isPickable,
 	kickoffInfo,
 	type Leg,
@@ -32,7 +32,7 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { addDays, beijingBusinessDate, dayLabel, errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-01：今日页升级为"场次"页（票 14 的信息分层与编码硬约束全部继承）。
@@ -42,21 +42,11 @@ import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * 徽章、资格徽章蓝=可投/红=拒绝+原因/灰框=证据未知、新鲜度>30 分钟琥珀、
  * T1 中性灰；选注篮 = 底部常驻条 + 右侧 Drawer（跨日可选，服务器校验唯一权威）。
  * 票 18 增量：表头资格/欧共识/EV/books 与单固徽章接词典 tooltip。
+ * 票 wb-03：可投卡片下沉到 had-quote-ui（玩法页推荐流复用），日期工具下沉 lib/ui。
  */
 
 /** 场次窗口天数（票 wb-01：今天起 3 天，提前研究不赶当天截止）。 */
 const FIXTURES_WINDOW_DAYS = 3;
-
-/** 北京时区业务日（YYYY-MM-DD）——与后端 beijing_business_date 同口径（全后端唯一出处）。 */
-function beijingBusinessDate(now: number): string {
-	return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
-}
-
-function addDays(isoDate: string, days: number): string {
-	const date = new Date(`${isoDate}T00:00:00Z`);
-	date.setUTCDate(date.getUTCDate() + days);
-	return date.toISOString().slice(0, 10);
-}
 
 /**
  * 行的归属业务日。行内 ``business_date`` 缺失（旧后端/旧快照）时按今天兜底——
@@ -76,115 +66,11 @@ function dayTabs(fixtures: TodayFixture[], now: number): string[] {
 	return [...tabs].sort();
 }
 
-function dayLabel(isoDate: string, now: number): string {
-	const today = beijingBusinessDate(now);
-	if (isoDate === today) {
-		return "今天";
-	}
-	if (isoDate === addDays(today, 1)) {
-		return "明天";
-	}
-	if (isoDate === addDays(today, 2)) {
-		return "后天";
-	}
-	return isoDate.slice(5).replace("-", "月");
-}
-
 function EvSpan({ value }: { value: number | null | undefined }) {
 	if (value === null || value === undefined) {
 		return <span className="mr-1.5 text-muted-foreground">—</span>;
 	}
 	return <span className={`mr-1.5 ${evClass(value)}`}>{evText(value)}</span>;
-}
-
-/** 可投卡片（票 04）：联赛/倒计时/EV 三向 + 最强标注/快捷选注/仅串关标记；区块即过滤结果，不重复"可投"徽章。 */
-function EligibleCard({
-	fixture,
-	now,
-	legs,
-	onPick,
-}: {
-	fixture: TodayFixture;
-	now: number;
-	legs: Leg[];
-	onPick: (fixture: PickableFixture, selection: Selection, odds: number) => void;
-}) {
-	const cd = kickoffInfo(fixture.kickoff_utc, now);
-	const evValues = SELECTIONS.map((sel) => fixture.ev?.[sel]).filter((v): v is number => v !== null && v !== undefined);
-	const best = evValues.length > 0 ? SELECTIONS.find((sel) => fixture.ev?.[sel] === Math.max(...evValues)) : undefined;
-	const selected = (sel: Selection) =>
-		legs.some((leg) => leg.fixture_id === fixture.fixture_id && leg.selection === sel);
-	return (
-		<article
-			className="rounded-lg border border-border bg-card p-4"
-			data-testid={`fixtures-card-${fixture.fixture_id}`}
-		>
-			<div className="mb-2 flex items-center justify-between gap-2">
-				<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-					{fixture.competition}
-					{fixture.tier === "tier1" ? (
-						<span className="rounded border border-border px-1 text-muted-foreground">T1</span>
-					) : null}
-					{fixture.had_quote?.single_eligible === true ? null : (
-						<span className="rounded border border-border px-1 text-muted-foreground">仅串关</span>
-					)}
-				</span>
-				<span className={`text-xs ${TABULAR_NUMS} ${cd.urgent ? "font-medium text-warning" : "text-muted-foreground"}`}>
-					{localTime(fixture.kickoff_utc)} · {cd.text}
-				</span>
-			</div>
-			<p className="mb-1 text-sm font-medium">
-				{fixture.home_team} <span className="text-muted-foreground">vs</span> {fixture.away_team}
-				<span className="ml-2 text-xs font-normal text-muted-foreground">{fixture.match_code}</span>
-			</p>
-			<div className="mb-3 flex flex-wrap items-baseline gap-2 text-xs">
-				<span className="text-muted-foreground">EV</span>
-				{SELECTIONS.map((sel) => {
-					const value = fixture.ev?.[sel];
-					return value === null || value === undefined ? (
-						<span key={sel} className={`${TABULAR_NUMS} text-muted-foreground`}>
-							{SELECTION_LABELS[sel]} —
-						</span>
-					) : (
-						<span key={sel} className={`${TABULAR_NUMS} ${evClass(value)}`}>
-							{SELECTION_LABELS[sel]} {evText(value)}
-						</span>
-					);
-				})}
-				{(fixture.flags ?? [])
-					.filter((flag) => flag in FLAG_LABELS)
-					.map((flag) => (
-						<span
-							key={flag}
-							data-testid={`flag-${flag}`}
-							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
-						>
-							{FLAG_LABELS[flag]}
-						</span>
-					))}
-				{best ? (
-					<span className={`${TABULAR_NUMS} ml-auto text-muted-foreground`} title="共识 EV 最高的一向">
-						最强 {SELECTION_LABELS[best]}
-					</span>
-				) : null}
-			</div>
-			<div className="flex items-center gap-2">
-				{SELECTIONS.map((sel) => (
-					<OddsButton
-						key={sel}
-						fixture={fixture}
-						selection={sel}
-						value={fixture.jc_odds[sel]}
-						selected={selected(sel)}
-						disabled={false}
-						onPick={onPick}
-						testid={`pick-card-${fixture.fixture_id}-${sel}`}
-						size="md"
-					/>
-				))}
-			</div>
-		</article>
-	);
 }
 
 export function FixturesPage() {

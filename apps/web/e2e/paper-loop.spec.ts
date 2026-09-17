@@ -66,6 +66,34 @@ test("场次页展示资格判定与拒绝原因", async ({ page }) => {
 	await expect(page.getByTestId("fixtures-not-eligible-count")).toHaveText(/1 场不可投/);
 });
 
+test("玩法页推荐流排序与组合头部（票 wb-03）：无正 EV 诚实空态，不建注", async ({ page }) => {
+	await page.goto("/markets/had");
+	await expect(page.getByRole("heading", { name: "GoalX · 胜平负" })).toBeVisible();
+
+	// demo 种子三场 EV 全为负 → 推荐流照常渲染（沉底按开赛时间：001/002/003）
+	const feed = page.getByTestId(/^market-card-/);
+	await expect(feed).toHaveCount(3);
+	await expect(feed.first()).toContainText("周六001");
+	// 停售场（003）：按钮禁用 + 拒绝徽章
+	await expect(page.getByTestId("market-pick-3-h")).toBeDisabled();
+
+	// 组合头部：EV≤0 不入选 → 诚实占位（EV 是诊断量非机会信号），不出现带入按钮
+	const combo = page.getByTestId("market-combo");
+	await expect(combo).toBeVisible();
+	await expect(combo.getByTestId("market-combo-empty")).toContainText("无正 EV 机会");
+	await expect(combo.getByTestId("market-combo-apply")).toHaveCount(0);
+	// 约束说明常驻（口径可对账）
+	await expect(combo.getByTestId("market-combo-notes")).toContainText("共识口径");
+
+	// 就地选注可用（不提交——保持后续步骤的注数断言不变）：003 停售不可选，002 可选
+	await page.getByTestId("market-pick-2-a").click();
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+	await page.getByTestId("basket-open").click();
+	await expect(page.getByTestId("basket-leg")).toHaveCount(1);
+	await page.getByRole("button", { name: "继续浏览" }).click();
+	await expect(page.getByTestId("basket-stake")).toHaveCount(0);
+});
+
 test("场次行点进研究页：逐书赔率与共识可见，可返回", async ({ page }) => {
 	await page.goto("/fixtures");
 	await page.getByTestId("fixtures-link-1").click();

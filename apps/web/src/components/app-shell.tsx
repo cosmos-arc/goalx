@@ -4,12 +4,16 @@ import type { AppRoute } from "../lib/ui";
 import { ThemeToggle } from "./theme-toggle";
 
 /**
- * 票 03 定稿的两级扁平导航（票 13 落地；票 wb-01 今日→场次）：不设组标题。
- * 一级 = 高频页（总览/场次/投注/历史/验证/资金）；次级 = 低处页脚位（词典/复核/设置）。
+ * 票 03 定稿的两级扁平导航（票 13 落地；票 wb-01 今日→场次；票 wb-03 加"玩法"组）：
+ * 不设组标题。一级 = 高频页（总览/场次/玩法/投注/历史/验证/资金）；
+ * 次级 = 低处页脚位（词典/复核/设置）。
+ * 票 wb-03：玩法组只占一个一级入口（勿过度嵌套）——组内三入口
+ * （胜平负/进球/14场任9）由玩法页顶部 MarketTabs 承载；/markets 前缀归属高亮。
  */
 const PRIMARY_NAV = [
 	{ to: "/", label: "总览" },
 	{ to: "/fixtures", label: "场次" },
+	{ to: "/markets", label: "玩法" },
 	{ to: "/bets", label: "投注" },
 	{ to: "/history", label: "历史" },
 	{ to: "/validation", label: "验证" },

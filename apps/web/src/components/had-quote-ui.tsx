@@ -1,5 +1,5 @@
-import type { HadQuoteStatus } from "../api/goalx";
-import { SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import type { HadQuoteStatus, TodayFixture } from "../api/goalx";
+import { SELECTION_LABELS, SELECTIONS, type Selection, TABULAR_NUMS } from "../lib/ui";
 import { GlossaryTerm } from "./glossary-term";
 import { Badge } from "./ui/badge";
 
@@ -7,11 +7,13 @@ import { Badge } from "./ui/badge";
  * 场次轴共享 UI 原语（票 wb-02 抽出）：资格徽章/选注钮/had 判读助手。
  * 场次列表页与研究页共用，保证两页编码口径逐像素一致
  * （票 04 定稿的编码硬约束：EV 红涨绿跌、资格蓝红灰、琥珀警示）。
+ * 票 wb-03：可投卡片从场次页下沉至此（玩法页推荐流复用同卡同编码），
+ * 并加 feed 态——非可投场按钮禁用 + 资格徽章说明原因。
  */
 
-export type Selection = "h" | "d" | "a";
+export type { Selection };
+export { SELECTIONS };
 
-export const SELECTIONS: Selection[] = ["h", "d", "a"];
 export const MAX_LEGS = 2;
 
 export const FLAG_LABELS: Record<string, string> = {
@@ -209,5 +211,116 @@ export function OddsButton({
 		>
 			{oddsText(value)}
 		</button>
+	);
+}
+
+/**
+ * 可投卡片（票 04 定稿，票 wb-03 从场次页下沉为共享）：联赛/倒计时/EV 三向 +
+ * 最强标注/快捷选注/仅串关标记。场次页区块即过滤结果，不重复"可投"徽章；
+ * 玩法页推荐流（票 wb-03）渲染全部场次——非可投卡按钮禁用并以资格徽章说明原因。
+ */
+export function EligibleCard({
+	fixture,
+	now,
+	legs,
+	onPick,
+	testidBase = "fixtures-card",
+	pickTestidBase = "pick-card",
+	dayNote,
+}: {
+	fixture: TodayFixture;
+	now: number;
+	legs: Leg[];
+	onPick: (fixture: PickableFixture, selection: Selection, odds: number) => void;
+	/** 卡片根 testid 前缀：场次页 fixtures-card-*（e2e 契约），玩法页 market-card-*。 */
+	testidBase?: string;
+	/** 快捷选注钮 testid 前缀：场次页 pick-card-*（e2e 契约），玩法页 market-pick-*。 */
+	pickTestidBase?: string;
+	/** 跨日标签（玩法页推荐流跨 3 日窗口时传入，如"明天"）；场次页按日过滤不传。 */
+	dayNote?: string | undefined;
+}) {
+	const pickable = isPickable(fixture, now);
+	const cd = kickoffInfo(fixture.kickoff_utc, now);
+	const evValues = SELECTIONS.map((sel) => fixture.ev?.[sel]).filter((v): v is number => v !== null && v !== undefined);
+	const best = evValues.length > 0 ? SELECTIONS.find((sel) => fixture.ev?.[sel] === Math.max(...evValues)) : undefined;
+	const selected = (sel: Selection) =>
+		legs.some((leg) => leg.fixture_id === fixture.fixture_id && leg.selection === sel);
+	return (
+		<article
+			className="rounded-lg border border-border bg-card p-4"
+			data-testid={`${testidBase}-${fixture.fixture_id}`}
+		>
+			<div className="mb-2 flex items-center justify-between gap-2">
+				<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+					{dayNote ? <span className="rounded border border-border px-1">{dayNote}</span> : null}
+					{fixture.competition}
+					{fixture.tier === "tier1" ? (
+						<span className="rounded border border-border px-1 text-muted-foreground">T1</span>
+					) : null}
+					{fixture.had_quote?.single_eligible === true ? null : (
+						<span className="rounded border border-border px-1 text-muted-foreground">仅串关</span>
+					)}
+				</span>
+				<span className="flex items-center gap-2">
+					{/* 推荐流含非可投场：徽章说明原因（可投场不重复徽章——区块即过滤结果的约束保留） */}
+					{pickable ? null : <EligibilityBadge quote={fixture.had_quote} />}
+					<span
+						className={`text-xs ${TABULAR_NUMS} ${cd.urgent ? "font-medium text-warning" : "text-muted-foreground"}`}
+					>
+						{localTime(fixture.kickoff_utc)} · {cd.text}
+					</span>
+				</span>
+			</div>
+			<p className="mb-1 text-sm font-medium">
+				{fixture.home_team} <span className="text-muted-foreground">vs</span> {fixture.away_team}
+				<span className="ml-2 text-xs font-normal text-muted-foreground">{fixture.match_code}</span>
+			</p>
+			<div className="mb-3 flex flex-wrap items-baseline gap-2 text-xs">
+				<span className="text-muted-foreground">EV</span>
+				{SELECTIONS.map((sel) => {
+					const value = fixture.ev?.[sel];
+					return value === null || value === undefined ? (
+						<span key={sel} className={`${TABULAR_NUMS} text-muted-foreground`}>
+							{SELECTION_LABELS[sel]} —
+						</span>
+					) : (
+						<span key={sel} className={`${TABULAR_NUMS} ${evClass(value)}`}>
+							{SELECTION_LABELS[sel]} {evText(value)}
+						</span>
+					);
+				})}
+				{(fixture.flags ?? [])
+					.filter((flag) => flag in FLAG_LABELS)
+					.map((flag) => (
+						<span
+							key={flag}
+							data-testid={`flag-${flag}`}
+							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+						>
+							{FLAG_LABELS[flag]}
+						</span>
+					))}
+				{best ? (
+					<span className={`${TABULAR_NUMS} ml-auto text-muted-foreground`} title="共识 EV 最高的一向">
+						最强 {SELECTION_LABELS[best]}
+					</span>
+				) : null}
+			</div>
+			<div className="flex items-center gap-2">
+				{SELECTIONS.map((sel) => (
+					<OddsButton
+						key={sel}
+						fixture={fixture}
+						selection={sel}
+						value={fixture.jc_odds[sel]}
+						selected={selected(sel)}
+						disabled={!pickable}
+						onPick={onPick}
+						testid={`${pickTestidBase}-${fixture.fixture_id}-${sel}`}
+						size="md"
+					/>
+				))}
+			</div>
+		</article>
 	);
 }

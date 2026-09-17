@@ -6,6 +6,8 @@ import { FixtureResearchPage } from "./pages/fixture-research-page";
 import { FixturesPage } from "./pages/fixtures-page";
 import { GlossaryPage } from "./pages/glossary-page";
 import { HistoryPage } from "./pages/history-page";
+import { MarketHadPage } from "./pages/market-had-page";
+import { MarketPlaceholderPage } from "./pages/market-placeholder-page";
 import { OverviewPage } from "./pages/overview-page";
 import { StubPage } from "./pages/stub-page";
 import { ValidationPage } from "./pages/validation-page";
@@ -27,6 +29,7 @@ const rootRoute = createRootRoute({
 // 新增 /history /glossary 占位；/review /settings 维持 M3/M4 引导态，其余路由不动零迁移。
 // 票 wb-01：/today 让位 /fixtures（场次页 3 日窗口），旧路径重定向不破坏书签。
 // 票 wb-02：/fixtures/$id 单场研究页（场次轴第二层）。
+// 票 wb-03：/markets 玩法组上线——胜平负真实页 + 进球/14场任9 占位引导态。
 const indexRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/",
@@ -48,6 +51,41 @@ const todayRoute = createRoute({
 	beforeLoad: () => {
 		throw redirect({ to: "/fixtures" });
 	},
+});
+const marketsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/markets",
+	beforeLoad: () => {
+		// 玩法组默认落胜平负（组内三入口由玩法页顶部 MarketTabs 切换）
+		throw redirect({ to: "/markets/had" });
+	},
+});
+const marketHadRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/markets/had",
+	component: MarketHadPage,
+});
+const marketGoalsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/markets/goals",
+	component: () => (
+		<MarketPlaceholderPage
+			title="进球"
+			message="进球玩法（总进球/比分）推荐流尚未接入。"
+			hint="概率由比分矩阵推导（单关为主）——随票 04 上线。"
+		/>
+	),
+});
+const marketPoolRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/markets/pool",
+	component: () => (
+		<MarketPlaceholderPage
+			title="14场任9"
+			message="14场任9 期次研究页尚未接入。"
+			hint="期次→选项概率→三档额度随票 07 上线（彩池数据源在 goalx-quant 图并行接入）。"
+		/>
+	),
 });
 const historyRoute = createRoute({
 	getParentRoute: () => rootRoute,
@@ -96,6 +134,10 @@ const routeTree = rootRoute.addChildren([
 	fixturesRoute,
 	fixtureResearchRoute,
 	todayRoute,
+	marketsRoute,
+	marketHadRoute,
+	marketGoalsRoute,
+	marketPoolRoute,
 	historyRoute,
 	glossaryRoute,
 	reviewRoute,

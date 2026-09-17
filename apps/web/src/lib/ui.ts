@@ -12,10 +12,47 @@ export const SELECTION_LABELS: Record<string, string> = {
 	a: "客胜",
 };
 
-/** 路由词典型（IA 命名）：总览/场次/投注/历史/验证/资金/词典/复核/设置（票 wb-01 起今日→场次）。 */
+/** had 三向选择（票 wb-03 起从 had-quote-ui 下沉到 lib：组合引擎等纯函数也要用）。 */
+export type Selection = "h" | "d" | "a";
+
+export const SELECTIONS: Selection[] = ["h", "d", "a"];
+
+// ---- 业务日工具（票 wb-01 定稿口径，票 wb-03 起跨页共享：场次页/玩法页） ----
+
+/** 北京时区业务日（YYYY-MM-DD）——与后端 beijing_business_date 同口径（全后端唯一出处）。 */
+export function beijingBusinessDate(now: number): string {
+	return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
+export function addDays(isoDate: string, days: number): string {
+	const date = new Date(`${isoDate}T00:00:00Z`);
+	date.setUTCDate(date.getUTCDate() + days);
+	return date.toISOString().slice(0, 10);
+}
+
+/** 业务日的人话标签：今天/明天/后天，更远落 MM月DD。 */
+export function dayLabel(isoDate: string, now: number): string {
+	const today = beijingBusinessDate(now);
+	if (isoDate === today) {
+		return "今天";
+	}
+	if (isoDate === addDays(today, 1)) {
+		return "明天";
+	}
+	if (isoDate === addDays(today, 2)) {
+		return "后天";
+	}
+	return isoDate.slice(5).replace("-", "月");
+}
+
+/** 路由词典型（IA 命名）：总览/场次/玩法(胜平负·进球·14场任9)/投注/历史/验证/资金/词典/复核/设置。 */
 export type AppRoute =
 	| "/"
 	| "/fixtures"
+	| "/markets"
+	| "/markets/had"
+	| "/markets/goals"
+	| "/markets/pool"
 	| "/bets"
 	| "/history"
 	| "/validation"

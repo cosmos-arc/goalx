@@ -11,6 +11,10 @@ const ALL_ROUTES = [
 	{ path: "/fixtures", heading: "GoalX · 场次" },
 	// 票 wb-02：研究页逐页 axe（无数据/404 时空状态也过基调）
 	{ path: "/fixtures/1", heading: "GoalX · 场次研究" },
+	// 票 wb-03：玩法组三页逐页 axe（胜平负真实页 + 进球/14场任9 占位引导态）
+	{ path: "/markets/had", heading: "GoalX · 胜平负" },
+	{ path: "/markets/goals", heading: "GoalX · 进球" },
+	{ path: "/markets/pool", heading: "GoalX · 14场任9" },
 	{ path: "/bets", heading: "GoalX · 投注" },
 	{ path: "/history", heading: "GoalX · 历史" },
 	{ path: "/validation", heading: "GoalX · 验证" },
@@ -39,7 +43,7 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 	await page.goto("/fixtures");
 
 	const primary = page.getByRole("navigation", { name: "主导航" });
-	for (const label of ["总览", "场次", "投注", "历史", "验证", "资金"]) {
+	for (const label of ["总览", "场次", "玩法", "投注", "历史", "验证", "资金"]) {
 		await expect(primary.getByRole("link", { name: label })).toBeVisible();
 	}
 	const secondary = page.getByRole("navigation", { name: "次级导航" });
@@ -48,11 +52,26 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 	}
 	await expect(primary.getByRole("link", { name: "场次" })).toHaveAttribute("aria-current", "page");
 
+	// 玩法组（票 wb-03）：入口默认落胜平负，三入口 Tab 在页内
+	await primary.getByRole("link", { name: "玩法" }).click();
+	await expect(page).toHaveURL(/\/markets\/had$/);
+	await expect(page.getByRole("heading", { name: "GoalX · 胜平负" })).toBeVisible();
+	await expect(primary.getByRole("link", { name: "玩法" })).toHaveAttribute("aria-current", "page");
+	const tabs = page.getByTestId("market-tabs");
+	await expect(tabs.getByRole("link", { name: "胜平负" })).toHaveAttribute("aria-current", "page");
+
+	// 占位入口：进球（随票 04）/ 14场任9（随票 07）引导态
+	await tabs.getByRole("link", { name: "进球" }).click();
+	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
+	await expect(page.getByTestId("empty-state")).toHaveAttribute("data-variant", "not-available");
+	await expect(page.getByTestId("empty-state")).toContainText("票 04");
+	await expect(primary.getByRole("link", { name: "玩法" })).toHaveAttribute("aria-current", "page");
+
 	// 跨级切换后 active 态随路由移动
 	await primary.getByRole("link", { name: "历史" }).click();
 	await expect(page.getByRole("heading", { name: "GoalX · 历史" })).toBeVisible();
 	await expect(primary.getByRole("link", { name: "历史" })).toHaveAttribute("aria-current", "page");
-	await expect(primary.getByRole("link", { name: "场次" })).not.toHaveAttribute("aria-current");
+	await expect(primary.getByRole("link", { name: "玩法" })).not.toHaveAttribute("aria-current");
 });
 
 // 票 wb-01：/today 让位 /fixtures——旧路径重定向不破坏书签
@@ -129,6 +148,32 @@ test("fixture research page renders books or degrades honestly", async ({ page }
 	});
 });
 
+// 票 wb-03：玩法页数据路径（推荐流/组合卡）或空态（组合无正 EV 机会是诚实结果）
+// 或后端不可用降级——三者都算通过；组合空窗时推荐流照常渲染
+test("had market page renders the feed and combo or degrades honestly", async ({ page }) => {
+	await page.goto("/markets/had");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 胜平负" })).toBeVisible();
+	// 推荐流卡片 / 页面级空态（无数据/后端不可用）先到其一
+	await expect(
+		page
+			.getByTestId(/^market-card-/)
+			.first()
+			.or(page.getByTestId("empty-state")),
+	).toBeVisible({
+		timeout: 20_000,
+	});
+	// 组合区常驻：要么给出推荐腿，要么诚实占位（无正 EV / 计算中）
+	await expect(page.getByTestId("market-combo")).toBeVisible();
+	await expect(
+		page
+			.getByTestId(/^market-combo-pick-/)
+			.first()
+			.or(page.getByTestId("market-combo-empty"))
+			.or(page.getByTestId("market-combo-pending")),
+	).toBeVisible({ timeout: 20_000 });
+});
+
 test("validation page renders verdict or degrades gracefully without backend", async ({ page }) => {
 	await page.goto("/validation");
 	await expect(page.getByRole("heading", { name: "GoalX · 验证" })).toBeVisible();
@@ -168,7 +213,7 @@ test("theme toggle switches to dark and persists across reload", async ({ page }
 	await expect(page.getByRole("heading", { name: "GoalX · 总览" })).toBeVisible();
 });
 
-// 票 13 验收基调：九条路由逐页跑 axe，零严重违例（后续页面票沿用）
+// 票 13 验收基调：逐页跑 axe，零严重违例（票 wb-02 起含研究页，票 wb-03 起含玩法组三页）
 for (const route of ALL_ROUTES) {
 	test(`axe baseline: ${route.path} has no serious violations`, async ({ page }) => {
 		await page.goto(route.path);
