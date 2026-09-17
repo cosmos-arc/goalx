@@ -72,8 +72,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 今日竞彩场次对照表
+         * 竞彩场次对照表(按业务日窗口)
          * @description 竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。
+         *
+         *     ``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内
+         *     ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
          */
         get: operations["get_today_fixtures_api_v1_fixtures_today_get"];
         put?: never;
@@ -1086,13 +1089,15 @@ export interface components {
         };
         /**
          * TodayFixtureView
-         * @description 今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。
+         * @description 场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。
          */
         TodayFixtureView: {
             /** Fixture Id */
             fixture_id: number;
             /** Match Code */
             match_code: string;
+            /** Business Date */
+            business_date: string;
             /** Competition */
             competition: string;
             /** Tier */
@@ -1247,8 +1252,10 @@ export interface operations {
     get_today_fixtures_api_v1_fixtures_today_get: {
         parameters: {
             query?: {
-                /** @description 业务日(北京日期, 默认今天) */
+                /** @description 起始业务日(北京日期, 默认今天) */
                 date?: string | null;
+                /** @description 窗口天数(默认1=单日) */
+                days?: number;
             };
             header?: never;
             path?: never;

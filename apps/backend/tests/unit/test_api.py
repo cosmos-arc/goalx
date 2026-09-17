@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -122,6 +122,65 @@ def test_today_other_business_date_empty(api_client: TestClient) -> None:
     response = api_client.get("/api/v1/fixtures/today", params={"date": "2020-01-01"})
     assert response.status_code == 200
     assert response.json() == []
+
+
+def _payload_for(business_date: str, match_id: int, code: str) -> dict[str, object]:
+    """指定业务日的单场竞彩载荷（票 wb-01 多日窗口测试）。"""
+    payload = _payload()
+    value = payload["value"]
+    assert isinstance(value, dict)
+    info_list = value["matchInfoList"]
+    assert isinstance(info_list, list)
+    info = info_list[0]
+    assert isinstance(info, dict)
+    info["businessDate"] = business_date
+    sub = info["subMatchList"]
+    assert isinstance(sub, list)
+    match = sub[0]
+    assert isinstance(match, dict)
+    match["matchId"] = match_id
+    match["matchNumStr"] = code
+    return payload
+
+
+def test_today_days_window_spans_business_dates(api_client: TestClient) -> None:
+    # 次日再挂一场（开赛推后一天），days=2 应聚合两个业务日并按行标记归属
+    db_path = api_client.app.state.settings.db_path  # type: ignore[attr-defined]
+    conn = connect(db_path)
+    from goalx_backend.data.ingest import sporttery
+
+    next_date = (date.fromisoformat(BUSINESS_DATE) + timedelta(days=1)).isoformat()
+    kickoff_bj = (NOW + timedelta(hours=50)).astimezone(CST)
+    payload = _payload_for(next_date, 2, "周日001")
+    value = payload["value"]
+    assert isinstance(value, dict)
+    info = value["matchInfoList"][0]
+    sub_match = info["subMatchList"][0]
+    assert isinstance(sub_match, dict)
+    sub_match["matchDate"] = kickoff_bj.date().isoformat()
+    sub_match["matchTime"] = kickoff_bj.time().strftime("%H:%M:%S")
+    sporttery.store_matches(conn, sporttery.parse_matches(payload))  # type: ignore[arg-type]
+    conn.close()
+
+    window = api_client.get(
+        "/api/v1/fixtures/today", params={"date": BUSINESS_DATE, "days": 2}
+    )
+    assert window.status_code == 200
+    body = window.json()
+    assert len(body) == 2
+    assert {row["business_date"] for row in body} == {BUSINESS_DATE, next_date}
+    # 单日（默认 days=1）不越界：仍只有当日一场
+    single = api_client.get("/api/v1/fixtures/today", params={"date": BUSINESS_DATE})
+    assert [row["business_date"] for row in single.json()] == [BUSINESS_DATE]
+
+
+def test_today_days_param_validated(api_client: TestClient) -> None:
+    assert (
+        api_client.get("/api/v1/fixtures/today", params={"days": 0}).status_code == 422
+    )
+    assert (
+        api_client.get("/api/v1/fixtures/today", params={"days": 8}).status_code == 422
+    )
 
 
 def test_today_had_quote_summary_from_demo(demo_client: TestClient) -> None:

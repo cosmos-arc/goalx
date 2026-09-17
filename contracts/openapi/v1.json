@@ -95,8 +95,8 @@
         "tags": [
           "fixtures"
         ],
-        "summary": "今日竞彩场次对照表",
-        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。",
+        "summary": "竞彩场次对照表(按业务日窗口)",
+        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。\n\n``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内\n``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。",
         "operationId": "get_today_fixtures_api_v1_fixtures_today_get",
         "parameters": [
           {
@@ -112,10 +112,24 @@
                   "type": "null"
                 }
               ],
-              "description": "业务日(北京日期, 默认今天)",
+              "description": "起始业务日(北京日期, 默认今天)",
               "title": "Date"
             },
-            "description": "业务日(北京日期, 默认今天)"
+            "description": "起始业务日(北京日期, 默认今天)"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 7,
+              "minimum": 1,
+              "description": "窗口天数(默认1=单日)",
+              "default": 1,
+              "title": "Days"
+            },
+            "description": "窗口天数(默认1=单日)"
           }
         ],
         "responses": {
@@ -2761,6 +2775,10 @@
             "type": "string",
             "title": "Match Code"
           },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
           "competition": {
             "type": "string",
             "title": "Competition"
@@ -2850,6 +2868,7 @@
         "required": [
           "fixture_id",
           "match_code",
+          "business_date",
           "competition",
           "tier",
           "home_team",
@@ -2860,7 +2879,7 @@
           "jc_odds"
         ],
         "title": "TodayFixtureView",
-        "description": "今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。"
+        "description": "场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。"
       },
       "ValidationError": {
         "properties": {

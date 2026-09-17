@@ -24,17 +24,30 @@ router = APIRouter(prefix="/api/v1/fixtures", tags=["fixtures"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
 
 
+MAX_WINDOW_DAYS = 7  # 场次列表日期窗口上限（票 wb-01：前端 3 日，留余量）
+
+
 @router.get(
     "/today",
-    summary="今日竞彩场次对照表",
+    summary="竞彩场次对照表(按业务日窗口)",
     response_model=list[TodayFixtureView],
 )
 async def get_today_fixtures(
     db: DbDep,
-    date: Annotated[str | None, Query(description="业务日(北京日期, 默认今天)")] = None,
+    date: Annotated[
+        str | None, Query(description="起始业务日(北京日期, 默认今天)")
+    ] = None,
+    days: Annotated[
+        int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
+    ] = 1,
 ) -> list[TodayFixtureView]:
-    """竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。"""
-    return build_today_view(db, date or beijing_business_date())
+    """
+    竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。
+
+    ``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内
+    ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
+    """
+    return build_today_view(db, date or beijing_business_date(), days=days)
 
 
 class OddsSnapshotView(BaseModel):

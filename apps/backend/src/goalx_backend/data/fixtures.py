@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -371,25 +372,41 @@ def fixtures_for_business_date(
     conn: sqlite3.Connection, business_date: str
 ) -> list[sqlite3.Row]:
     """All jingcai fixtures carrying a sales code on a business date."""
+    return fixtures_for_business_dates(conn, [business_date])
+
+
+def fixtures_for_business_dates(
+    conn: sqlite3.Connection, business_dates: Sequence[str]
+) -> list[sqlite3.Row]:
+    """
+    All jingcai fixtures carrying a sales code on any of the given dates.
+
+    工作台 v2 票 01：场次列表 3 日化的多业务日查询；行内携带 ``mc.business_date``
+    供调用方按日分组（单日查询同样带该列，响应形状一致）。
+    """
+    if not business_dates:
+        return []
+    placeholders = ", ".join("?" for _ in business_dates)
     return conn.execute(
-        """
+        f"""
             SELECT f.*, mc.code AS match_code, mc.is_single, mc.source_match_id,
-c.name
-            AS competition_name, c.tier AS competition_tier,
+mc.business_date AS
+            business_date, c.name
+AS competition_name, c.tier AS competition_tier,
 ht.canonical_name AS
             home_team, at2.canonical_name AS away_team
 FROM match_codes mc
 JOIN fixtures
             f ON f.id = mc.fixture_id
 JOIN competitions c ON c.id = f.competition_id
-            JOIN teams ht ON ht.id = f.home_team_id
+JOIN teams ht ON ht.id = f.home_team_id
 JOIN teams at2 ON at2.id =
             f.away_team_id
-WHERE mc.kind = 'jingcai' AND mc.business_date = ?
+WHERE mc.kind = 'jingcai' AND mc.business_date IN ({placeholders})
 ORDER BY
             f.kickoff_utc, mc.code
-        """,
-        (business_date,),
+        """,  # noqa: S608
+        tuple(business_dates),
     ).fetchall()
 
 
