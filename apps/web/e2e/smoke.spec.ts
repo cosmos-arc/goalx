@@ -9,6 +9,8 @@ import { expectNoSeriousAxeViolations } from "./axe-baseline";
 const ALL_ROUTES = [
 	{ path: "/", heading: "GoalX · 总览" },
 	{ path: "/fixtures", heading: "GoalX · 场次" },
+	// 票 wb-02：研究页逐页 axe（无数据/404 时空状态也过基调）
+	{ path: "/fixtures/1", heading: "GoalX · 场次研究" },
 	{ path: "/bets", heading: "GoalX · 投注" },
 	{ path: "/history", heading: "GoalX · 历史" },
 	{ path: "/validation", heading: "GoalX · 验证" },
@@ -69,14 +71,14 @@ test("stub pages say what they are and when they arrive", async ({ page }) => {
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
 });
 
-// 票 18：词典页真实落地——首批词条常显、检索过滤、无结果 no-data 空状态
+// 票 18：词典页真实落地——词条常显、检索过滤、无结果 no-data 空状态（票 wb-02 起含研究页两词条，共 12）
 test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
 	await page.goto("/glossary");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(10);
+	expect(await list.locator("article").count()).toBe(12);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -87,7 +89,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(10);
+	await expect(list.locator("article")).toHaveCount(12);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
@@ -112,6 +114,17 @@ test("fixtures page renders data or degrades honestly", async ({ page }) => {
 	await expect(page.getByRole("heading", { name: "GoalX · 场次" })).toBeVisible();
 	// 数据路径（常驻后端）或三态空状态（无数据/后端不可用）都算通过
 	await expect(page.getByTestId("fixtures-row").first().or(page.getByTestId("empty-state"))).toBeVisible({
+		timeout: 20_000,
+	});
+});
+
+// 票 wb-02：研究页数据路径（逐书赔率/共识/模型）或 404/降级空状态都算通过
+// （常驻后端为旧版本无研究端点 → 404 no-data 态；新版后端含 fixture 1 时照常渲染）
+test("fixture research page renders books or degrades honestly", async ({ page }) => {
+	await page.goto("/fixtures/1");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 场次研究" })).toBeVisible();
+	await expect(page.getByTestId("research-page").or(page.getByTestId("empty-state")).first()).toBeVisible({
 		timeout: 20_000,
 	});
 });

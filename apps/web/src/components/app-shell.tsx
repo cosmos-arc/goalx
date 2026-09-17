@@ -40,6 +40,14 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 	);
 }
 
+/** 导航高亮：列表页精确匹配；次级页（如 /fixtures/:id 研究页）按前缀归属其一级入口。 */
+function isNavActive(pathname: string, to: AppRoute): boolean {
+	if (to === "/") {
+		return pathname === "/";
+	}
+	return pathname === to || pathname.startsWith(`${to}/`);
+}
+
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
 	const location = useLocation();
 	return (
@@ -51,7 +59,7 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
 					<div className="flex items-center gap-3">
 						<nav aria-label="主导航" className="flex flex-wrap items-center gap-1 text-sm">
 							{PRIMARY_NAV.map((item) => (
-								<NavLink key={item.to} item={item} active={location.pathname === item.to} />
+								<NavLink key={item.to} item={item} active={isNavActive(location.pathname, item.to)} />
 							))}
 						</nav>
 						<ThemeToggle />

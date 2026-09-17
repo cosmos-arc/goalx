@@ -4,6 +4,8 @@ import type { components } from "./generated/schema";
 type Schemas = components["schemas"];
 export type TodayFixture = Schemas["TodayFixtureView"];
 export type HadQuoteStatus = Schemas["HadQuoteStatus"];
+export type FixtureResearch = Schemas["FixtureResearchView"];
+export type BookQuote = Schemas["BookQuoteView"];
 export type OddsSnapshot = Schemas["OddsSnapshotView"];
 export type Bet = Schemas["BetView"];
 export type BetLeg = Schemas["BetLegView"];
@@ -52,6 +54,24 @@ export function fetchFixtureOdds(fixtureId: number, market = "had"): Promise<Odd
 			params: { path: { fixture_id: fixtureId }, query: { market } },
 		}),
 	);
+}
+
+/** 单场研究视图（票 wb-02）：逐书赔率 + 去水共识 + 模型概率/EV + 资格判定。 */
+export async function fetchFixtureResearch(fixtureId: number): Promise<FixtureResearch> {
+	const { data, error, response } = await client.GET("/api/v1/fixtures/{fixture_id}/research", {
+		params: { path: { fixture_id: fixtureId } },
+	});
+	if (error !== undefined || data === undefined) {
+		// 404（不存在/旧后端）与后端不可用在页面分开表述——错误携带 HTTP 状态
+		const failure = new Error(`fixture research request failed (${response.status})`) as Error & {
+			status: number;
+			payload: unknown;
+		};
+		failure.status = response.status;
+		failure.payload = error;
+		throw failure;
+	}
+	return data;
 }
 
 export function fetchBets(params?: { mode?: "paper" | "live"; only_open?: boolean }): Promise<Bet[]> {

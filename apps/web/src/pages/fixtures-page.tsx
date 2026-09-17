@@ -5,7 +5,23 @@ import { createBet, fetchTodayFixtures, type TodayFixture } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
-import { Badge } from "../components/ui/badge";
+import {
+	EligibilityBadge,
+	evClass,
+	evText,
+	FLAG_LABELS,
+	isPickable,
+	kickoffInfo,
+	type Leg,
+	localTime,
+	MAX_LEGS,
+	makeLeg,
+	minutesAgo,
+	OddsButton,
+	type PickableFixture,
+	SELECTIONS,
+	type Selection,
+} from "../components/had-quote-ui";
 import {
 	Drawer,
 	DrawerClose,
@@ -28,44 +44,8 @@ import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * 票 18 增量：表头资格/欧共识/EV/books 与单固徽章接词典 tooltip。
  */
 
-type Selection = "h" | "d" | "a";
-
-const SELECTIONS: Selection[] = ["h", "d", "a"];
-const MAX_LEGS = 2;
 /** 场次窗口天数（票 wb-01：今天起 3 天，提前研究不赶当天截止）。 */
 const FIXTURES_WINDOW_DAYS = 3;
-
-const FLAG_LABELS: Record<string, string> = {
-	ev_deviation: "EV 偏差≥5%",
-	few_books: "样本少",
-	not_joined: "未 join 欧赔",
-};
-
-const REASON_LABELS: Record<string, string> = {
-	sale_stopped: "已停售",
-	kickoff_passed: "已开赛",
-	stale_source: "报价过期",
-	jc_three_way_incomplete: "竞彩三向不全",
-	jc_no_quote: "无竞彩报价",
-	sale_status_unknown: "销售状态未知",
-	sale_status_unknown_value: "销售状态未知",
-	single_eligibility_unknown: "单固资格未知",
-	jc_observed_at_unknown: "观测时点未知",
-	jc_source_time_unknown: "源时间未知",
-	eu_no_quote: "无欧赔",
-	eu_no_valid_books: "无有效欧赔",
-	eu_observed_at_unknown: "欧赔观测未知",
-};
-
-type Leg = {
-	fixture_id: number;
-	match_code: string;
-	home_team: string;
-	away_team: string;
-	selection: Selection;
-	odds: number;
-	single_eligible: boolean | null;
-};
 
 /** 北京时区业务日（YYYY-MM-DD）——与后端 beijing_business_date 同口径（全后端唯一出处）。 */
 function beijingBusinessDate(now: number): string {
@@ -110,163 +90,6 @@ function dayLabel(isoDate: string, now: number): string {
 	return isoDate.slice(5).replace("-", "月");
 }
 
-function oddsText(value: number | null | undefined): string {
-	return value === null || value === undefined ? "—" : value.toFixed(2);
-}
-
-/** EV 数字永远只按正负红绿（票 04 定稿）：红 = 正、绿 = 负，近零中性。 */
-function evClass(value: number): string {
-	if (value > 0.002) return "text-profit";
-	if (value < -0.002) return "text-loss";
-	return "text-muted-foreground";
-}
-
-function evText(value: number): string {
-	return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
-}
-
-function localTime(utc: string): string {
-	const date = new Date(utc);
-	if (Number.isNaN(date.getTime())) {
-		return "—";
-	}
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-/** 开赛倒计时（前端可推导，不加 API 字段）：已开赛/分钟（<2h 琥珀紧迫）/小时。 */
-function kickoffInfo(utc: string, now: number): { passed: boolean; text: string; urgent: boolean } {
-	const kickoff = new Date(utc).getTime();
-	if (Number.isNaN(kickoff)) {
-		return { passed: false, text: "—", urgent: false };
-	}
-	const offsetMin = (kickoff - now) / 60_000;
-	if (offsetMin <= 0) {
-		return { passed: true, text: "已开赛", urgent: false };
-	}
-	if (offsetMin < 120) {
-		return { passed: false, text: `${Math.round(offsetMin)} 分钟后`, urgent: true };
-	}
-	return { passed: false, text: `${Math.floor(offsetMin / 60)} 小时后`, urgent: false };
-}
-
-/** 报价年龄（分钟）；jc_updated_at 缺失时返回 null（时间格省略该段）。 */
-function minutesAgo(iso: string | null | undefined, now: number): number | null {
-	if (!iso) {
-		return null;
-	}
-	const at = new Date(iso).getTime();
-	if (Number.isNaN(at)) {
-		return null;
-	}
-	return Math.max(0, Math.round((now - at) / 60_000));
-}
-
-/** 可投 = 判定 valid + 在售 + 未开赛（证据链完整且新鲜，不等于必成交）。 */
-function isPickable(fixture: TodayFixture, now: number): boolean {
-	const quote = fixture.had_quote;
-	if (quote?.status !== "valid" || quote.sale_state !== "on_sale") {
-		return false;
-	}
-	const kickoff = new Date(fixture.kickoff_utc).getTime();
-	return !Number.isNaN(kickoff) && kickoff > now;
-}
-
-function makeLeg(fixture: TodayFixture, selection: Selection, odds: number): Leg {
-	return {
-		fixture_id: fixture.fixture_id,
-		match_code: fixture.match_code,
-		home_team: fixture.home_team,
-		away_team: fixture.away_team,
-		selection,
-		odds,
-		single_eligible: fixture.had_quote?.single_eligible ?? null,
-	};
-}
-
-/** 资格徽章（票 04 编码）：蓝 = 可投 / 红 = 拒绝 + 原因 / 灰框 = 证据未知；无判定弱化。 */
-function EligibilityBadge({ fixture }: { fixture: TodayFixture }) {
-	const quote = fixture.had_quote;
-	if (!quote) {
-		return <span className="text-xs text-muted-foreground">无判定</span>;
-	}
-	const reasons = (quote.reasons ?? []).map((reason) => REASON_LABELS[reason] ?? reason).join("/");
-	if (quote.status === "valid") {
-		return (
-			<span className="flex flex-wrap items-center gap-1" data-testid="had-quote-valid">
-				<Badge className="bg-info/10 text-info">可投</Badge>
-				{quote.single_eligible === true ? (
-					// 票 18：单固徽章接词典 tooltip（克制——只接指标名，虚线下划线在框内）
-					<span className="rounded border border-border px-1 text-xs text-muted-foreground">
-						<GlossaryTerm id="single" />
-					</span>
-				) : null}
-			</span>
-		);
-	}
-	if (quote.status === "rejected") {
-		return (
-			<span className="flex flex-wrap items-center gap-1" data-testid="had-quote-rejected">
-				<Badge variant="outline" className="border-destructive/40 text-destructive">
-					拒绝
-				</Badge>
-				{reasons ? <span className="text-xs text-muted-foreground">{reasons}</span> : null}
-			</span>
-		);
-	}
-	return (
-		<span className="flex flex-wrap items-center gap-1" data-testid="had-quote-unknown">
-			<Badge variant="outline">证据未知</Badge>
-			{reasons ? <span className="text-xs text-muted-foreground">{reasons}</span> : null}
-		</span>
-	);
-}
-
-function OddsButton({
-	fixture,
-	selection,
-	value,
-	selected,
-	disabled,
-	onPick,
-	testid,
-	size = "sm",
-}: {
-	fixture: TodayFixture;
-	selection: Selection;
-	value: number | null | undefined;
-	selected: boolean;
-	disabled: boolean;
-	onPick: (fixture: TodayFixture, selection: Selection, odds: number) => void;
-	/** 卡片与表格各有一组选注钮：卡片用 pick-card-* 前缀，表格保留 pick-*（e2e 契约）。 */
-	testid: string;
-	size?: "sm" | "md";
-}) {
-	return (
-		<button
-			type="button"
-			disabled={disabled || value === null || value === undefined}
-			data-testid={testid}
-			aria-label={`${fixture.match_code} ${SELECTION_LABELS[selection]} @${oddsText(value)}`}
-			className={`rounded-md border ${TABULAR_NUMS} transition-colors ${
-				size === "md" ? "px-3 py-1.5 text-sm" : "px-2 py-1 text-xs"
-			} ${
-				selected
-					? "border-primary bg-primary text-primary-foreground"
-					: disabled
-						? "border-transparent text-muted-foreground/40"
-						: "border-border hover:bg-muted"
-			}`}
-			onClick={() => {
-				if (value !== null && value !== undefined) {
-					onPick(fixture, selection, value);
-				}
-			}}
-		>
-			{oddsText(value)}
-		</button>
-	);
-}
-
 function EvSpan({ value }: { value: number | null | undefined }) {
 	if (value === null || value === undefined) {
 		return <span className="mr-1.5 text-muted-foreground">—</span>;
@@ -284,7 +107,7 @@ function EligibleCard({
 	fixture: TodayFixture;
 	now: number;
 	legs: Leg[];
-	onPick: (fixture: TodayFixture, selection: Selection, odds: number) => void;
+	onPick: (fixture: PickableFixture, selection: Selection, odds: number) => void;
 }) {
 	const cd = kickoffInfo(fixture.kickoff_utc, now);
 	const evValues = SELECTIONS.map((sel) => fixture.ev?.[sel]).filter((v): v is number => v !== null && v !== undefined);
@@ -395,7 +218,7 @@ export function FixturesPage() {
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
 
 	/** 规则前置（票 04）：同场换选=替换+提示；2串1 上限=行内提示；非单固首腿=提示；停售/已开赛=按钮禁用。 */
-	function pick(fixture: TodayFixture, selection: Selection, odds: number) {
+	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
 		if (!isPickable(fixture, now)) {
 			return;
 		}
@@ -648,10 +471,17 @@ export function FixturesPage() {
 															</TableCell>
 															<TableCell className="whitespace-nowrap">{fixture.match_code}</TableCell>
 															<TableCell className="whitespace-nowrap font-medium">
-																{fixture.home_team} vs {fixture.away_team}
+																<Link
+																	to="/fixtures/$id"
+																	params={{ id: String(fixture.fixture_id) }}
+																	className="text-foreground underline-offset-2 hover:text-primary hover:underline"
+																	data-testid={`fixtures-link-${fixture.fixture_id}`}
+																>
+																	{fixture.home_team} vs {fixture.away_team}
+																</Link>
 															</TableCell>
 															<TableCell>
-																<EligibilityBadge fixture={fixture} />
+																<EligibilityBadge quote={fixture.had_quote} />
 															</TableCell>
 															<TableCell>
 																<span className="flex gap-1">

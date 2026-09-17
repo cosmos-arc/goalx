@@ -126,6 +126,28 @@ export const GLOSSARY: GlossaryEntry[] = [
 		example: "模型 RPS 0.98、市场 RPS 1.00 → skill = 1 − 0.98/1.00 = +0.02。",
 		caution: "三条件只认前瞻 skill（无泄漏、回测可过拟合）；当前回测 skill≈−3.75%，不可作实盘依据。",
 	},
+	{
+		id: "model-prob",
+		term: "模型概率与模型 EV",
+		aliases: ["模型概率", "模型 EV", "DC 模型", "Forecast", "model EV"],
+		definition:
+			"模型概率 = DC（Dixon-Coles）模型对该场主/平/客的预测概率（赛前最新一条 Forecast）；模型 EV = 模型概率 × 竞彩价 − 1：按自家模型评估某一向的期望收益率。",
+		direction: "模型概率与去水共识对照，偏离即研究线索；模型 EV 红 = 正、绿 = 负（红涨绿跌），近零中性。",
+		example: "模型主胜 55% × 竞彩价 2.00 − 1 = +10%；共识主胜只有 50% → 模型比市场更看好主胜 5 个百分点。",
+		caution:
+			"模型 EV 与共识 EV（今日/场次页）不同源：前者信自家模型，后者信市场共识；模型当前前瞻 skill 尚未过线（见 skill 词条），模型 EV 只作研究对照，不作机会信号。仅五大联赛在售场次有模型覆盖。",
+	},
+	{
+		id: "book-deviation",
+		term: "书价偏差",
+		aliases: ["偏差", "逐书偏差", "公司分歧", "book deviation", "高亮"],
+		definition:
+			"单 book 的归一化隐含概率与去水共识概率之差；研究页对 |偏差| ≥5 个百分点的报价琥珀标注并给方向（↑ 偏高 / ↓ 偏低）。",
+		direction: "偏高 = 该 book 比共识更看好该向；偏低 = 更不看好；多家同向偏离 = 公司间真实分歧。",
+		example: "共识主胜 50%，某 book 主胜价 1.80（隐含 55.6%）→ 偏高 +5.6 个百分点，标琥珀 ↑。",
+		caution:
+			"个别 book 定价含限额/风控策略与延迟，偏差≠错价；books<3 时共识本身不可靠（见 books 词条），偏差判读随之失效。",
+	},
 ];
 
 /** 词条 id 联合类型：页内 tooltip 接入处（GlossaryTerm）的合法取值域。 */

@@ -66,6 +66,26 @@ test("场次页展示资格判定与拒绝原因", async ({ page }) => {
 	await expect(page.getByTestId("fixtures-not-eligible-count")).toHaveText(/1 场不可投/);
 });
 
+test("场次行点进研究页：逐书赔率与共识可见，可返回", async ({ page }) => {
+	await page.goto("/fixtures");
+	await page.getByTestId("fixtures-link-1").click();
+
+	await expect(page.getByRole("heading", { name: "GoalX · 场次研究" })).toBeVisible();
+	// demo 种子 fixture 1 带三家欧赔书 → 逐书行 + 去水共识；无 Forecast → 模型区诚实占位
+	await expect(page.getByTestId("research-book-row")).toHaveCount(3);
+	await expect(page.getByTestId("research-consensus")).toContainText("家三向均价");
+	await expect(page.getByTestId("research-model-missing")).toContainText("暂无模型预测");
+	// 资格徽章随研究页头部内嵌；一级导航"场次"保持激活
+	await expect(page.getByTestId("had-quote-valid").first()).toContainText("可投");
+	await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "场次" })).toHaveAttribute(
+		"aria-current",
+		"page",
+	);
+
+	await page.getByRole("navigation", { name: "返回" }).getByRole("link").click();
+	await expect(page.getByRole("heading", { name: "GoalX · 场次" })).toBeVisible();
+});
+
 test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ page }) => {
 	await page.goto("/fixtures");
 	await page.getByTestId("pick-1-h").click();

@@ -352,6 +352,64 @@ export const drawResultsFixture = [
 	},
 ] as const;
 
+/**
+ * 票 wb-02 研究页 mock：fixture 1 的逐书赔率（两家全三向 + 一家缺一向）、
+ * 去水共识、模型概率/EV；pinnacle 主胜 1.60（隐含 62.5%）相对共识 53% 偏高
+ * ≥5pp → 琥珀高亮的可断言场景。时间相对 now。
+ */
+export const researchFixture = {
+	fixture_id: 1,
+	match_code: "周六001",
+	business_date: beijingBusinessDate(Date.now()),
+	competition: "英超",
+	tier: "tier1",
+	home_team: "阿森纳",
+	away_team: "切尔西",
+	kickoff_utc: hoursFromNow(2.5),
+	is_single: true,
+	joined: true,
+	jc_odds: { h: 1.92, d: 3.55, a: 3.7 },
+	jc_updated_at: minutesAgoIso(8),
+	books: [
+		{
+			book: "odds_api:avg",
+			odds: { h: 1.9, d: 3.6, a: 3.8 },
+			captured_at: minutesAgoIso(4),
+		},
+		{
+			book: "odds_api:bet365",
+			odds: { h: 1.88, d: 3.7, a: 3.9 },
+			captured_at: minutesAgoIso(4),
+		},
+		{
+			book: "odds_api:pinnacle",
+			odds: { h: 1.6, d: 3.5, a: 4.2 },
+			captured_at: minutesAgoIso(4),
+		},
+		{
+			book: "odds_api:late_missing",
+			odds: { h: 1.95, d: null, a: 3.75 },
+			captured_at: minutesAgoIso(4),
+		},
+	],
+	consensus: { books: 4, probability: { h: 0.53, d: 0.25, a: 0.22 } },
+	model: {
+		model_version: "dc-demo",
+		issued_at: minutesAgoIso(30),
+		probability: { h: 0.58, d: 0.24, a: 0.18 },
+		ev: { h: 0.1136, d: -0.146, a: -0.334 },
+	},
+	had_quote: {
+		as_of: minutesAgoIso(1),
+		status: "valid",
+		reasons: [],
+		sale_state: "on_sale",
+		single_eligible: true,
+		jc_source_updated_at: minutesAgoIso(8),
+		eu_books: 4,
+	},
+} as const;
+
 export const backtestRunsFixture = [
 	{
 		id: 7,
@@ -446,6 +504,13 @@ export const validationProgressFixture = {
 
 handlers.push(
 	http.get("*/api/v1/fixtures/1/odds", () => HttpResponse.json(oddsFixture)),
+	// 票 wb-02：研究页读模型（fixture 1 有逐书/共识/模型；其他 id 404）
+	http.get("*/api/v1/fixtures/:id/research", ({ params }) => {
+		if (Number(params["id"]) !== 1) {
+			return HttpResponse.json({ detail: "fixture not found" }, { status: 404 });
+		}
+		return HttpResponse.json(researchFixture);
+	}),
 	http.get("*/api/v1/bet-slips", () => HttpResponse.json(slipsFixture)),
 	http.get("*/api/v1/draw-results", () => HttpResponse.json(drawResultsFixture)),
 	http.post("*/api/v1/bets", () => HttpResponse.json(betsFixture[1], { status: 201 })),
