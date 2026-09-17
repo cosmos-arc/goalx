@@ -295,6 +295,31 @@ test("更正路径：预览影响→带原因导入→原子重算，纸面资�
 	expect(dbRows("SELECT COUNT(*) AS n FROM bankroll_events WHERE kind='bet_stake'")[0]?.["n"]).toBe(1);
 });
 
+test("进球玩法页（票 wb-05）：模型 EV 组合 → ttg 独立单关落地（paper 不动真金）", async ({ page }) => {
+	await page.goto("/markets/goals");
+	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
+
+	// demo 002 带模型：ttg s2 @4.50 → 模型 EV≈+10.3% → 组合非空（模型×竞彩价口径）
+	const combo = page.getByTestId("goals-combo");
+	await expect(combo.getByTestId("goals-combo-pick-2")).toContainText("总进球 2");
+	await expect(combo.getByTestId("goals-combo-notes")).toContainText("不组串");
+	// 001 无模型（概率/EV 空缺）、003 停售（禁用）：推荐流诚实呈现
+	await expect(page.getByTestId("goals-model-note-1")).toContainText("无模型覆盖");
+	await expect(page.getByTestId("goals-pick-3-ttg-2")).toBeDisabled();
+
+	// 一键带入 → 每注独立单关提交；bankroll ¥2.40 → flat 档按最低注 ¥2 建议
+	await combo.getByTestId("goals-combo-apply").click();
+	await expect(page.getByTestId("goals-basket-count")).toHaveText("1/3");
+	await expect(page.getByTestId("goals-basket-stake")).toHaveValue("2");
+	await page.getByTestId("goals-basket-submit").click();
+	await expect(page.getByTestId("goals-market-message")).toContainText("已建 1 条单关建议");
+
+	const goalsBets = dbRows(
+		"SELECT COUNT(*) AS n FROM bets b JOIN bet_legs l ON l.bet_id = b.id WHERE l.market_code = 'ttg'",
+	);
+	expect(Number(goalsBets[0]?.["n"])).toBe(1);
+});
+
 test("浏览器、API 与 DB 最终状态一致", async ({ page }) => {
 	const apiBets = (
 		(await (await page.request.get("/api/v1/bets")).json()) as Array<{

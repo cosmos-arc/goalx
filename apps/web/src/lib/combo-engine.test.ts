@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
-import type { TodayFixture } from "../api/goalx";
-import { buildHadCombo, HAD_COMBO_CONFIG } from "./combo-engine";
+import type { GoalsFixture, GoalsSelection, TodayFixture } from "../api/goalx";
+import {
+	buildGoalsCombo,
+	buildHadCombo,
+	GOALS_COMBO_CONFIG,
+	HAD_COMBO_CONFIG,
+	isGoalsPickable,
+	rankGoalsFixturesForFeed,
+} from "./combo-engine";
 
 /**
  * 票 wb-03 组合引擎 v1 纯函数单测：排序/约束（单注 1–5%、同场不重复、
@@ -273,5 +280,153 @@ describe("buildHadCombo 口径输出", () => {
 			bankroll: 1000,
 		});
 		expect(result.feedOrder.map((f) => f.fixture_id)).toEqual([1, 2, 3, 4]);
+	});
+});
+
+// ---- 票 wb-05：进球类组合引擎（模型×竞彩价 EV、单关为主不组串）----
+
+function goalsSel(code: string, odds: number | null, ev: number | null): GoalsSelection {
+	return { code, odds, probability: ev === null ? null : 0.2, ev };
+}
+
+function goalsRow(
+	overrides: Partial<GoalsFixture> & Pick<GoalsFixture, "fixture_id" | "match_code">,
+	ttg: GoalsSelection[] = [
+		goalsSel("0", 11.0, -0.26),
+		goalsSel("1", 4.1, -0.25),
+		goalsSel("2", 4.5, 0.1025),
+		goalsSel("3", 3.4, -0.25),
+	],
+	sale = "on_sale",
+	single = true,
+): GoalsFixture {
+	const block = { selections: ttg, single_eligible: single, sale_state: sale, updated_at: new Date().toISOString() };
+	return {
+		business_date: "2026-09-17",
+		competition: "英超",
+		tier: "tier1",
+		home_team: `主${overrides.fixture_id}`,
+		away_team: `客${overrides.fixture_id}`,
+		kickoff_utc: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+		ttg: block,
+		crs: { ...block, selections: [goalsSel("1:1", 6.0, -0.27), goalsSel("0:0", 11.0, -0.26)] },
+		model_version: "dc-demo",
+		issued_at: new Date().toISOString(),
+		...overrides,
+	} as GoalsFixture;
+}
+
+describe("buildGoalsCombo 排序与约束（单关为主）", () => {
+	test("按模型 EV 降序取 top-N 独立单关；同场只取最优一注", () => {
+		const a = goalsRow({ fixture_id: 1, match_code: "周六001" }); // ttg s2 +10.25%
+		const b = goalsRow({ fixture_id: 2, match_code: "周六002" }, [goalsSel("0", 30.0, 0.3), goalsSel("1", 4.1, -0.25)]); // ttg s0 +30%
+		const c = goalsRow({ fixture_id: 3, match_code: "周六003" }, [goalsSel("0", 20.0, 0.2)]);
+		const d = goalsRow({ fixture_id: 4, match_code: "周六004" }, [goalsSel("0", 15.0, 0.15)]);
+		const result = buildGoalsCombo({ rows: [a, b, c, d], bankroll: 1000, now: Date.now() });
+		expect(result.picks.map((pick) => pick.fixture.fixture_id)).toEqual([2, 3, 4]); // top-3
+		expect(result.picks[0]).toMatchObject({ market: "ttg", selection: "0", score: 0.3 });
+		expect(result.picks.every((pick) => pick.score === pick.ev)).toBe(true); // 无置信加权
+	});
+
+	test("同场 ttg 与 crs 都有正 EV 时只取该场最优一注（同场不重复）", () => {
+		const row = goalsRow({ fixture_id: 1, match_code: "周六001" });
+		const withCrs = {
+			...row,
+			crs: { ...row.crs, selections: [goalsSel("1:1", 6.0, 0.05)] },
+		} as GoalsFixture;
+		const result = buildGoalsCombo({ rows: [withCrs], bankroll: 1000, now: Date.now() });
+		expect(result.picks).toHaveLength(1);
+		expect(result.picks[0]).toMatchObject({ market: "ttg", selection: "2" }); // EV 0.1025 > 0.05
+	});
+
+	test("EV≤0 / 无模型（ev null）不入选，但场次留在推荐流", () => {
+		const allNegative = goalsRow({ fixture_id: 1, match_code: "周六001" }, [
+			goalsSel("0", 11.0, -0.26),
+			goalsSel("2", 4.5, -0.1),
+		]);
+		const noModel = goalsRow({ fixture_id: 2, match_code: "周六002" }, [goalsSel("2", 4.5, null)]);
+		const result = buildGoalsCombo({
+			rows: [allNegative, noModel],
+			bankroll: 1000,
+			now: Date.now(),
+		});
+		expect(result.picks).toHaveLength(0);
+		expect(result.feedOrder).toHaveLength(2);
+	});
+
+	test("停售 / 非单固 / 已开赛的场不入组合（isGoalsPickable 同构 had 口径）", () => {
+		const now = Date.now();
+		const stopped = goalsRow({ fixture_id: 1, match_code: "周六001" }, undefined, "stopped", true);
+		const parlayOnly = goalsRow({ fixture_id: 2, match_code: "周六002" }, undefined, "on_sale", false);
+		const kickedOff = goalsRow({
+			fixture_id: 3,
+			match_code: "周六003",
+			kickoff_utc: new Date(now - 6_000_000).toISOString(),
+		});
+		expect(isGoalsPickable(stopped, "ttg", now)).toBe(false);
+		expect(isGoalsPickable(parlayOnly, "crs", now)).toBe(false);
+		expect(isGoalsPickable(kickedOff, "ttg", now)).toBe(false);
+		const result = buildGoalsCombo({
+			rows: [stopped, parlayOnly, kickedOff],
+			bankroll: 1000,
+			now,
+		});
+		expect(result.picks).toHaveLength(0);
+	});
+
+	test("flat 注额与 had 同档：bankroll 10000 → 单注 200，预期收益 = EV×注额", () => {
+		const row = goalsRow({ fixture_id: 1, match_code: "周六001" });
+		const result = buildGoalsCombo({ rows: [row], bankroll: 10_000, now: Date.now() });
+		expect(result.picks[0]?.stake).toBe(200);
+		expect(result.picks[0]?.expectedProfit).toBeCloseTo(0.1025 * 200, 6);
+		expect(result.totalStake).toBe(200);
+		expect(result.bankrollNote).toBeNull();
+	});
+
+	test("未入金：最低注 ¥2 + 诚实说明（复用 had 档位边界）", () => {
+		const row = goalsRow({ fixture_id: 1, match_code: "周六001" });
+		const result = buildGoalsCombo({ rows: [row], bankroll: 0, now: Date.now() });
+		expect(result.picks[0]?.stake).toBe(GOALS_COMBO_CONFIG.stake.minStakeCny);
+		expect(result.bankrollNote).toContain("未入金");
+	});
+
+	test("约束说明给进球类口径：不组串 / 模型×竞彩价 / 置信缺位不加权", () => {
+		const result = buildGoalsCombo({ rows: [], bankroll: 1000, now: Date.now() });
+		expect(result.picks).toEqual([]);
+		expect(result.notes.some((note) => note.includes("不组串"))).toBe(true);
+		expect(result.notes.some((note) => note.includes("模型×竞彩价"))).toBe(true);
+		expect(result.notes.some((note) => note.includes("不加权"))).toBe(true);
+		expect(result.notes.some((note) => note.includes("flat"))).toBe(true);
+	});
+
+	test("推荐流：有模型场按最优 EV 降序在前，无模型/无正 EV 场按开赛时间沉底", () => {
+		const strong = goalsRow({ fixture_id: 1, match_code: "周六001" });
+		const weak = goalsRow(
+			{ fixture_id: 2, match_code: "周六002", kickoff_utc: new Date(Date.now() + 4 * 3_600_000).toISOString() },
+			[goalsSel("0", 12.0, 0.02)],
+		);
+		const noModelSoon = goalsRow(
+			{
+				fixture_id: 3,
+				match_code: "周六003",
+				kickoff_utc: new Date(Date.now() + 1 * 3_600_000).toISOString(),
+				model_version: null,
+				issued_at: null,
+			},
+			[goalsSel("2", 4.5, null)],
+		);
+		const noModelLater = goalsRow(
+			{
+				fixture_id: 4,
+				match_code: "周六004",
+				kickoff_utc: new Date(Date.now() + 6 * 3_600_000).toISOString(),
+				model_version: null,
+				issued_at: null,
+			},
+			[goalsSel("2", 4.5, null)],
+		);
+		expect(rankGoalsFixturesForFeed([noModelLater, weak, noModelSoon, strong]).map((f) => f.fixture_id)).toEqual([
+			1, 2, 3, 4,
+		]);
 	});
 });

@@ -308,20 +308,6 @@ test("bankroll 读取失败：组合注额建议诚实缺席（不按未入金�
 	expect(within(screen.getByTestId("market-feed")).getAllByTestId(/^market-card-/)).toHaveLength(4);
 });
 
-test("goals market placeholder says what it is and when it arrives (票 04)", async () => {
-	await renderAt("/markets/goals");
-	expect(screen.getByRole("heading", { name: "GoalX · 进球" })).toBeInTheDocument();
-	const goals = screen.getByTestId("empty-state");
-	expect(goals).toHaveAttribute("data-variant", "not-available");
-	expect(goals).toHaveTextContent("票 04");
-
-	// 玩法页顶部三入口 Tab：当前页 aria-current，其余不带
-	const tabs = screen.getByTestId("market-tabs");
-	expect(within(tabs).getByRole("link", { name: "进球" })).toHaveAttribute("aria-current", "page");
-	expect(within(tabs).getByRole("link", { name: "胜平负" })).not.toHaveAttribute("aria-current");
-	expect(within(tabs).getByRole("link", { name: "14场任9" })).not.toHaveAttribute("aria-current");
-});
-
 test("pool market placeholder says what it is and when it arrives (票 07)", async () => {
 	await renderAt("/markets/pool");
 	expect(screen.getByRole("heading", { name: "GoalX · 14场任9" })).toBeInTheDocument();

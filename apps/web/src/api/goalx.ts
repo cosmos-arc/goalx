@@ -7,6 +7,9 @@ export type HadQuoteStatus = Schemas["HadQuoteStatus"];
 export type FixtureResearch = Schemas["FixtureResearchView"];
 export type BookQuote = Schemas["BookQuoteView"];
 export type OddsSnapshot = Schemas["OddsSnapshotView"];
+export type GoalsFixture = Schemas["GoalsFixtureView"];
+export type GoalsMarketBlock = Schemas["GoalsMarketBlock"];
+export type GoalsSelection = Schemas["GoalsSelectionView"];
 export type Bet = Schemas["BetView"];
 export type BetLeg = Schemas["BetLegView"];
 export type BetReview = Schemas["BetReviewView"];
@@ -43,6 +46,18 @@ async function unwrap<T>(call: Promise<FetchResult<T>>): Promise<T> {
 export function fetchTodayFixtures(date?: string, days?: number): Promise<TodayFixture[]> {
 	return unwrap(
 		client.GET("/api/v1/fixtures/today", {
+			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
+		}),
+	);
+}
+
+/**
+ * 进球玩法页读模型（票 wb-04）：ttg/crs 报价 + 矩阵推导概率 + 模型 EV。
+ * EV 口径 = 模型概率 × 竞彩价 − 1（进球类无欧共识，与 had 页共识 EV 不同源）。
+ */
+export function fetchGoalsMarket(date?: string, days?: number): Promise<GoalsFixture[]> {
+	return unwrap(
+		client.GET("/api/v1/markets/goals", {
 			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
 		}),
 	);

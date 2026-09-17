@@ -11,7 +11,7 @@ const ALL_ROUTES = [
 	{ path: "/fixtures", heading: "GoalX · 场次" },
 	// 票 wb-02：研究页逐页 axe（无数据/404 时空状态也过基调）
 	{ path: "/fixtures/1", heading: "GoalX · 场次研究" },
-	// 票 wb-03：玩法组三页逐页 axe（胜平负真实页 + 进球/14场任9 占位引导态）
+	// 票 wb-03：玩法组三页逐页 axe（胜平负/进球真实页 + 14场任9 占位引导态）
 	{ path: "/markets/had", heading: "GoalX · 胜平负" },
 	{ path: "/markets/goals", heading: "GoalX · 进球" },
 	{ path: "/markets/pool", heading: "GoalX · 14场任9" },
@@ -60,11 +60,11 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 	const tabs = page.getByTestId("market-tabs");
 	await expect(tabs.getByRole("link", { name: "胜平负" })).toHaveAttribute("aria-current", "page");
 
-	// 占位入口：进球（随票 04）/ 14场任9（随票 07）引导态
+	// 进球入口（票 wb-05 已上线真实页）：Tab 点亮 + 口径行常显
 	await tabs.getByRole("link", { name: "进球" }).click();
 	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
-	await expect(page.getByTestId("empty-state")).toHaveAttribute("data-variant", "not-available");
-	await expect(page.getByTestId("empty-state")).toContainText("票 04");
+	await expect(tabs.getByRole("link", { name: "进球" })).toHaveAttribute("aria-current", "page");
+	await expect(page.getByTestId("goals-caliber")).toContainText("比分矩阵推导");
 	await expect(primary.getByRole("link", { name: "玩法" })).toHaveAttribute("aria-current", "page");
 
 	// 跨级切换后 active 态随路由移动
@@ -90,14 +90,14 @@ test("stub pages say what they are and when they arrive", async ({ page }) => {
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
 });
 
-// 票 18：词典页真实落地——词条常显、检索过滤、无结果 no-data 空状态（票 wb-02 起含研究页两词条，共 12）
+// 票 18：词典页真实落地——词条常显、检索过滤、无结果 no-data 空状态（票 wb-05 起含进球矩阵词条，共 13）
 test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
 	await page.goto("/glossary");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(12);
+	expect(await list.locator("article").count()).toBe(13);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -108,7 +108,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(12);
+	await expect(list.locator("article")).toHaveCount(13);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
@@ -171,6 +171,35 @@ test("had market page renders the feed and combo or degrades honestly", async ({
 			.first()
 			.or(page.getByTestId("market-combo-empty"))
 			.or(page.getByTestId("market-combo-pending")),
+	).toBeVisible({ timeout: 20_000 });
+});
+
+// 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过
+// （常驻后端为旧版本无 /markets/goals 时按后端不可用降级——契约先行的双路径）
+test("goals market page renders the feed and combo or degrades honestly", async ({ page }) => {
+	await page.goto("/markets/goals");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
+	// 口径行常显（矩阵推导 + 模型×竞彩价 + 单关为主）
+	await expect(page.getByTestId("goals-caliber")).toContainText("比分矩阵推导");
+	// 推荐流卡片 / 页面级空态（无数据/后端不可用/旧后端无该端点）先到其一
+	await expect(
+		page
+			.getByTestId(/^goals-card-\d+$/)
+			.first()
+			.or(page.getByTestId("empty-state")),
+	).toBeVisible({
+		timeout: 20_000,
+	});
+	// 组合区在数据路径常驻：推荐腿 / 诚实占位（无正 EV/无模型/计算中）三选一；
+	// 降级路径（empty-state 已命中）不再要求组合区
+	await expect(
+		page
+			.getByTestId(/^goals-combo-pick-\d+$/)
+			.first()
+			.or(page.getByTestId("goals-combo-empty"))
+			.or(page.getByTestId("goals-combo-pending"))
+			.or(page.getByTestId("empty-state")),
 	).toBeVisible({ timeout: 20_000 });
 });
 

@@ -148,6 +148,18 @@ export const GLOSSARY: GlossaryEntry[] = [
 		caution:
 			"个别 book 定价含限额/风控策略与延迟，偏差≠错价；books<3 时共识本身不可靠（见 books 词条），偏差判读随之失效。",
 	},
+	{
+		id: "score-matrix",
+		term: "比分矩阵推导",
+		aliases: ["矩阵推导", "比分矩阵", "10×10", "ScoreMatrix", "进球类概率", "ttg 概率", "crs 概率"],
+		definition:
+			"进球类玩法（总进球 ttg/比分 crs）的概率不是独立建模，而是从 canonical 10×10 比分概率矩阵（Dixon-Coles）推导的边际视图：ttg = 矩阵反对角求和（8 档，7+ 归并尾部），crs = 28 精确格 + 胜/平/负其他三档。",
+		direction:
+			"同一场比赛的 ttg 与 crs 出自同一矩阵，隐含概率必然一致——这是矩阵被定为 canonical 的理由；单市场独立建模会破坏一致性，不允许。",
+		example: "模型 λ 主 1.4/客 1.3 → 矩阵 → P(总进球 2)≈24.5% = Σ矩阵反对角(h+a=2)；P(比分 1:1)=矩阵(1,1) 格。",
+		caution:
+			"矩阵来自 DC 模型 Forecast（仅五大联赛在售场次覆盖，无 Forecast 概率空缺不伪造）；由矩阵推得的 EV 是模型×竞彩价口径（见 model-prob 词条），模型前瞻 skill 未过线前是研究对照的诊断量，不是机会信号。",
+	},
 ];
 
 /** 词条 id 联合类型：页内 tooltip 接入处（GlossaryTerm）的合法取值域。 */

@@ -4,10 +4,11 @@ import { filterGlossary, GLOSSARY, glossaryEntry } from "./glossary";
 /**
  * 票 18 数据完整性门（"三要素齐全才上线"）：词条齐、id 唯一、
  * definition / direction / example / caution 非空——判读方向为必填要素，
- * 缺失的词条不上线（票 18 不变量）。票 wb-02 增补研究页两词条（12 条）。
+ * 缺失的词条不上线（票 18 不变量）。票 wb-02 增补研究页两词条（12 条），
+ * 票 wb-05 增补进球类矩阵推导词条（13 条）。
  */
 test("all agreed entries are present with unique ids", () => {
-	expect(GLOSSARY).toHaveLength(12);
+	expect(GLOSSARY).toHaveLength(13);
 	expect(GLOSSARY.map((entry) => entry.id)).toEqual([
 		"ev",
 		"eu-consensus",
@@ -21,6 +22,7 @@ test("all agreed entries are present with unique ids", () => {
 		"skill",
 		"model-prob",
 		"book-deviation",
+		"score-matrix",
 	]);
 	expect(new Set(GLOSSARY.map((entry) => entry.id)).size).toBe(GLOSSARY.length);
 });
@@ -54,8 +56,8 @@ test("glossaryEntry resolves by id and misses cleanly", () => {
 
 test("filterGlossary matches term, alias and definition, case-insensitively", () => {
 	// 空查询 = 全部（保持原顺序）
-	expect(filterGlossary("")).toHaveLength(12);
-	expect(filterGlossary("   ")).toHaveLength(12);
+	expect(filterGlossary("")).toHaveLength(13);
+	expect(filterGlossary("   ")).toHaveLength(13);
 	// term 命中
 	expect(filterGlossary("单固").map((entry) => entry.id)).toEqual(["single"]);
 	// 别名命中（大小写不敏感）
@@ -64,6 +66,8 @@ test("filterGlossary matches term, alias and definition, case-insensitively", ()
 	// definition 命中
 	const walkForward = filterGlossary("walk-forward").map((entry) => entry.id);
 	expect(walkForward).toContain("skill");
+	// 进球类口径词条（票 wb-05）可检索
+	expect(filterGlossary("矩阵推导").map((entry) => entry.id)).toContain("score-matrix");
 	// 无命中 = 空
 	expect(filterGlossary("量子纠缠")).toEqual([]);
 });

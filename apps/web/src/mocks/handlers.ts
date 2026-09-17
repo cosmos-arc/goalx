@@ -410,6 +410,141 @@ export const researchFixture = {
 	},
 } as const;
 
+/**
+ * 票 wb-05 进球玩法页 mock：与后端 demo 种子同思路——fixture 2 带模型
+ * （λ 1.4/1.3 矩阵口径，ttg s2 价 4.50 → 模型 EV≈+10.3% 驱动组合非空），
+ * fixture 1 无模型（概率/EV 空缺的诚实多数态），fixture 3 停售（禁用路径）。
+ * ttg/crs 概率由 λ 的独立 Poisson 乘积推导（与矩阵同口径的 mock 近似）。
+ */
+const GOALS_TTG_PROBS = [0.0672, 0.1815, 0.245, 0.2205, 0.1488, 0.0804, 0.0362, 0.0206];
+const GOALS_TTG_ODDS = [11.0, 4.1, 4.5, 3.4, 5.0, 9.0, 20.0, 35.0];
+const CRS_CODES: string[] = [
+	"0:0",
+	"0:1",
+	"0:2",
+	"0:3",
+	"0:4",
+	"0:5",
+	"1:0",
+	"1:1",
+	"1:2",
+	"1:3",
+	"1:4",
+	"1:5",
+	"2:0",
+	"2:1",
+	"2:2",
+	"2:3",
+	"2:4",
+	"2:5",
+	"3:0",
+	"3:1",
+	"3:2",
+	"3:3",
+	"4:0",
+	"4:1",
+	"4:2",
+	"5:0",
+	"5:1",
+	"5:2",
+	"h_other",
+	"d_other",
+	"a_other",
+];
+
+function pois(k: number, lam: number): number {
+	let f = 1;
+	for (let i = 2; i <= k; i += 1) f *= i;
+	return (Math.exp(-lam) * lam ** k) / f;
+}
+
+function crsProb(code: string): number {
+	if (code === "h_other" || code === "d_other" || code === "a_other") return 0.006;
+	const [h, a] = code.split(":").map(Number) as [number, number];
+	return pois(h, 1.4) * pois(a, 1.3);
+}
+
+function round4(value: number): number {
+	return Math.round(value * 10000) / 10000;
+}
+
+function goalsTtgBlock(model: boolean, odds: number[], sale: "on_sale" | "stopped", single: boolean | null) {
+	return {
+		selections: GOALS_TTG_PROBS.map((probability, i) => ({
+			code: String(i),
+			odds: odds[i] ?? null,
+			probability: model ? round4(probability) : null,
+			ev: model && odds[i] ? round4(probability * odds[i] - 1) : null,
+		})),
+		single_eligible: single,
+		sale_state: sale,
+		updated_at: minutesAgoIso(8),
+	};
+}
+
+function goalsCrsBlock(model: boolean, sale: "on_sale" | "stopped", single: boolean | null) {
+	return {
+		selections: CRS_CODES.map((code) => {
+			const odds = code.endsWith("_other") ? 90 : Math.round((0.75 / crsProb(code)) * 100) / 100;
+			const probability = model ? round4(crsProb(code)) : null;
+			return {
+				code,
+				odds,
+				probability,
+				ev: model ? round4(crsProb(code) * odds - 1) : null,
+			};
+		}),
+		single_eligible: single,
+		sale_state: sale,
+		updated_at: minutesAgoIso(8),
+	};
+}
+
+export const goalsMarketFixture = [
+	{
+		fixture_id: 1,
+		match_code: "周六001",
+		business_date: beijingBusinessDate(Date.now()),
+		competition: "英超",
+		tier: "tier1",
+		home_team: "阿森纳",
+		away_team: "切尔西",
+		kickoff_utc: hoursFromNow(2.5),
+		ttg: goalsTtgBlock(false, [10.5, 3.9, 3.05, 3.5, 5.2, 9.8, 17.5, 34.0], "on_sale", true),
+		crs: goalsCrsBlock(false, "on_sale", true),
+		model_version: null,
+		issued_at: null,
+	},
+	{
+		fixture_id: 2,
+		match_code: "周六002",
+		business_date: beijingBusinessDate(Date.now()),
+		competition: "英超",
+		tier: "tier1",
+		home_team: "利物浦",
+		away_team: "曼城",
+		kickoff_utc: hoursFromNow(3),
+		ttg: goalsTtgBlock(true, GOALS_TTG_ODDS, "on_sale", true),
+		crs: goalsCrsBlock(true, "on_sale", true),
+		model_version: "dc-demo",
+		issued_at: minutesAgoIso(30),
+	},
+	{
+		fixture_id: 3,
+		match_code: "周六003",
+		business_date: beijingBusinessDate(Date.now()),
+		competition: "德乙",
+		tier: "tier2",
+		home_team: "A 队",
+		away_team: "B 队",
+		kickoff_utc: hoursFromNow(5),
+		ttg: goalsTtgBlock(false, [10.0, 3.7, 3.0, 3.5, 5.3, 10.0, 18.0, 33.0], "stopped", null),
+		crs: goalsCrsBlock(false, "stopped", null),
+		model_version: null,
+		issued_at: null,
+	},
+] as const;
+
 export const backtestRunsFixture = [
 	{
 		id: 7,
@@ -504,6 +639,8 @@ export const validationProgressFixture = {
 
 handlers.push(
 	http.get("*/api/v1/fixtures/1/odds", () => HttpResponse.json(oddsFixture)),
+	// 票 wb-05：进球玩法读模型（与今日页同口径——单日默认、days>1 放行全窗）
+	http.get("*/api/v1/markets/goals", () => HttpResponse.json(goalsMarketFixture)),
 	// 票 wb-02：研究页读模型（fixture 1 有逐书/共识/模型；其他 id 404）
 	http.get("*/api/v1/fixtures/:id/research", ({ params }) => {
 		if (Number(params["id"]) !== 1) {
