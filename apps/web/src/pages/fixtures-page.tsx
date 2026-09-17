@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { createBet, fetchTodayFixtures, type TodayFixture } from "../api/goalx";
+import { createBet, fetchBankroll, fetchTodayFixtures, type TodayFixture } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
@@ -22,6 +22,7 @@ import {
 	SELECTIONS,
 	type Selection,
 } from "../components/had-quote-ui";
+import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import {
 	Drawer,
 	DrawerClose,
@@ -78,6 +79,8 @@ export function FixturesPage() {
 		queryKey: ["fixtures-window", FIXTURES_WINDOW_DAYS],
 		queryFn: () => fetchTodayFixtures(undefined, FIXTURES_WINDOW_DAYS),
 	});
+	// 票 wb-06：选注篮建议仓位需要 bankroll（读取失败时建议块诚实降级）
+	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: fetchBankroll });
 	const queryClient = useQueryClient();
 	const [selectedDay, setSelectedDay] = useState<string | null>(null);
 	const [legs, setLegs] = useState<Leg[]>([]);
@@ -102,6 +105,21 @@ export function FixturesPage() {
 		.sort((a, b) => a - b)
 		.at(0);
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
+
+	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿=串关联合口径（整注一个 Kelly，不分腿）
+	const legEv = (leg: Leg): number | null => {
+		const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
+		return fixture?.ev?.[leg.selection] ?? null;
+	};
+	const basketAdvice =
+		legs.length === 2
+			? {
+					...parlayAdviceInput(legs.map((leg) => ({ ev: legEv(leg), odds: leg.odds }))),
+					note: "串关注额=单关口径：联合 EV/联合赔率整注计算（腿间独立性假设），不分腿",
+				}
+			: legs.length === 1 && legs[0] !== undefined
+				? { ev: legEv(legs[0]), odds: legs[0].odds, note: "单关口径：共识 EV（欧共识×竞彩价−1）" }
+				: null;
 
 	/** 规则前置（票 04）：同场换选=替换+提示；2串1 上限=行内提示；非单固首腿=提示；停售/已开赛=按钮禁用。 */
 	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
@@ -486,6 +504,18 @@ export function FixturesPage() {
 								))}
 							</ul>
 						)}
+						{basketAdvice ? (
+							<div className="mt-3">
+								<StakeAdviceNote
+									mode={mode}
+									bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+									ev={basketAdvice.ev}
+									odds={basketAdvice.odds}
+									note={basketAdvice.note}
+									testid="basket-stake-advice"
+								/>
+							</div>
+						) : null}
 					</div>
 					<DrawerFooter>
 						<div className="flex flex-wrap items-end gap-3">

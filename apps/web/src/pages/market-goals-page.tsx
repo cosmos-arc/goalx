@@ -9,6 +9,7 @@ import { GlossaryTerm } from "../components/glossary-term";
 import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-ui";
 import { evClass } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
+import { StakeAdviceNote } from "../components/stake-advice";
 import {
 	Drawer,
 	DrawerClose,
@@ -60,6 +61,19 @@ export function MarketGoalsPage() {
 			? buildGoalsCombo({ rows, bankroll: bankrollQuery.data.balance ?? 0, now })
 			: null;
 
+	// 建议仓位输入（票 wb-06）：篮内为独立单关同额提交——按最高 EV 一注的口径
+	const bestLeg = legs.reduce<GoalsLeg | null>((best, leg) => {
+		if (leg.ev === null) return best;
+		if (best === null || best.ev === null || leg.ev > best.ev) return leg;
+		return best;
+	}, null);
+	const basketAdvice = {
+		mode,
+		bankroll: bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0),
+		ev: bestLeg?.ev ?? null,
+		odds: bestLeg?.odds ?? null,
+	} as const;
+
 	/** 跨日标签（推荐流跨 3 日窗口）。 */
 	function dayNoteOf(businessDate: string): string | undefined {
 		const day = businessDate ?? beijingBusinessDate(now);
@@ -94,6 +108,7 @@ export function MarketGoalsPage() {
 				selection: selection.code,
 				label: goalsLabel(pickedMarket, selection.code),
 				odds: selection.odds,
+				ev: selection.ev ?? null,
 			},
 		]);
 		setMessage(null);
@@ -119,6 +134,7 @@ export function MarketGoalsPage() {
 				selection: pickEntry.selection,
 				label: goalsLabel(pickEntry.market, pickEntry.selection),
 				odds: pickEntry.odds,
+				ev: pickEntry.ev,
 			})),
 		);
 		setStake(String(combo.picks[0]?.stake ?? GOALS_COMBO_CONFIG.stake.minStakeCny));
@@ -333,6 +349,16 @@ export function MarketGoalsPage() {
 									>
 										一键带入选注篮
 									</button>
+									<div className="mt-3">
+										<StakeAdviceNote
+											mode="paper"
+											bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+											ev={combo.picks[0]?.ev ?? null}
+											odds={combo.picks[0]?.odds ?? null}
+											note="组合卡按纸面 flat 档口径（每注同额）；真金 ¼Kelly 在选注篮切真金后给出"
+											testid="goals-combo-stake-advice"
+										/>
+									</div>
 								</>
 							)}
 
@@ -474,6 +500,18 @@ export function MarketGoalsPage() {
 								))}
 							</ul>
 						)}
+						{legs.length > 0 ? (
+							<div className="mt-3">
+								<StakeAdviceNote
+									mode={basketAdvice.mode}
+									bankroll={basketAdvice.bankroll}
+									ev={basketAdvice.ev}
+									odds={basketAdvice.odds}
+									note="篮内为独立单关同额提交——建议按最高 EV 一注的口径（模型×竞彩价，各注 EV 见列表）"
+									testid="goals-basket-stake-advice"
+								/>
+							</div>
+						) : null}
 					</div>
 					<DrawerFooter>
 						<div className="flex flex-wrap items-end gap-3">

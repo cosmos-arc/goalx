@@ -40,6 +40,8 @@ export type GoalsLeg = {
 	/** 人话标签（提交仍用 market/selection 原码）。 */
 	label: string;
 	odds: number;
+	/** 模型×竞彩价口径 EV（票 wb-06 选注篮建议仓位用；无模型场为 null）。 */
+	ev: number | null;
 };
 
 /** 选项钮：赔率 + EV 着色；无报价/不可投禁用（诚实显示网格）。 */

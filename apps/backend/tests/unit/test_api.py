@@ -394,6 +394,88 @@ def test_goals_market_fixture_without_goals_quotes(api_client: TestClient) -> No
     assert row["ttg"]["single_eligible"] is None  # 无 poolList/市场块 → 未知
 
 
+# ---- 建议仓位端点（票 wb-06）：纯计算、无库依赖，规则见 betting/staking ----
+
+
+def test_stake_advice_paper_flat(demo_client: TestClient) -> None:
+    """纸面一律 flat（红线）：注额=组合引擎同口径，不输出 Kelly。"""
+    body = demo_client.post(
+        "/api/v1/stake-advice",
+        json={"mode": "paper", "bankroll": 10_000, "ev": 0.10, "odds": 2.0},
+    ).json()
+    assert body["tier"] == "flat"
+    assert body["stake"] == pytest.approx(200.0)
+    assert body["fraction"] == pytest.approx(0.02)
+    assert body["full_kelly_fraction"] is None
+    assert "红线" in body["reason"]
+
+
+def test_stake_advice_live_quarter_kelly_and_cap(demo_client: TestClient) -> None:
+    """真金 ¼Kelly + 单注上限截断；cap 参数分档（票 wb-07 三档复用）。"""
+    body = demo_client.post(
+        "/api/v1/stake-advice",
+        json={"mode": "live", "bankroll": 10_000, "ev": 0.30, "odds": 1.5},
+    ).json()
+    assert body["tier"] == "quarter_kelly"
+    assert body["full_kelly_fraction"] == pytest.approx(0.60)
+    assert body["stake"] == pytest.approx(500.0)  # ¼×60%=15% → 截断 5%
+    assert body["capped"] is True
+
+    tight = demo_client.post(
+        "/api/v1/stake-advice",
+        json={
+            "mode": "live",
+            "bankroll": 10_000,
+            "ev": 0.10,
+            "odds": 2.0,
+            "cap_fraction": 0.02,
+        },
+    ).json()
+    assert tight["stake"] == pytest.approx(200.0)  # ¼×10%=2.5% → 截断 2%
+
+
+def test_stake_advice_ev_non_positive_is_zero(demo_client: TestClient) -> None:
+    """EV≤0 → ¥0 且理由显式（两模式一致）。"""
+    body = demo_client.post(
+        "/api/v1/stake-advice",
+        json={"mode": "live", "bankroll": 10_000, "ev": -0.02, "odds": 2.0},
+    ).json()
+    assert body["stake"] == 0.0
+    assert body["tier"] == "ev_non_positive"
+    assert "¥0" in body["reason"]
+
+
+def test_stake_advice_validates_inputs(demo_client: TestClient) -> None:
+    """odds ≤ 1 / bankroll < 0 / cap 越界 → 422。"""
+    assert (
+        demo_client.post(
+            "/api/v1/stake-advice",
+            json={"mode": "paper", "bankroll": 100, "ev": 0.1, "odds": 1.0},
+        ).status_code
+        == 422
+    )
+    assert (
+        demo_client.post(
+            "/api/v1/stake-advice",
+            json={"mode": "paper", "bankroll": -1, "ev": 0.1, "odds": 2.0},
+        ).status_code
+        == 422
+    )
+    assert (
+        demo_client.post(
+            "/api/v1/stake-advice",
+            json={
+                "mode": "live",
+                "bankroll": 100,
+                "ev": 0.1,
+                "odds": 2.0,
+                "cap_fraction": 0.10,
+            },
+        ).status_code
+        == 422
+    )
+
+
 def test_bet_create_list_and_same_fixture_rejected(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     create = api_client.post(

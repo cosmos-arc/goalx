@@ -21,6 +21,7 @@ from goalx_backend.betting.bets import (
     record_purchase,
     validate_had_selections,
 )
+from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic
 from goalx_backend.evaluation import clv as clv_mod
@@ -143,6 +144,34 @@ class SlipView(BaseModel):
     bet_count: int
     stake_total: float
     profit_total: float
+
+
+class StakeAdviceRequest(BaseModel):
+    """建议仓位输入（票 wb-06）：串关由调用方传联合赔率/联合 EV（整注口径）。"""
+
+    mode: BetMode
+    bankroll: float = Field(ge=0)
+    ev: float
+    odds: float = Field(gt=1)
+    cap_fraction: float = Field(default=0.05, gt=0, le=0.05)
+
+
+@router.post(
+    "/api/v1/stake-advice",
+    summary="建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注 1-5% 截断",
+    response_model=StakeSuggestion,
+)
+async def stake_advice(payload: StakeAdviceRequest) -> StakeSuggestion:
+    """
+    只读注额建议（票 wb-06，不自动改单）。
+
+    EV≤0 → ¥0；paper 一律 flat（红线，与组合引擎 flat 档同口径）；
+    live = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 1%-cap%。
+    串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly，不分腿）。
+    """
+    return suggest_stake(
+        payload.mode, payload.bankroll, payload.ev, payload.odds, payload.cap_fraction
+    )
 
 
 def _parse_ts(value: str) -> datetime:

@@ -197,6 +197,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stake-advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注 1-5% 截断
+         * @description 只读注额建议（票 wb-06，不自动改单）。
+         *
+         *     EV≤0 → ¥0；paper 一律 flat（红线，与组合引擎 flat 档同口径）；
+         *     live = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 1%-cap%。
+         *     串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly，不分腿）。
+         */
+        post: operations["stake_advice_api_v1_stake_advice_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bets": {
         parameters: {
             query?: never;
@@ -1256,6 +1280,50 @@ export interface components {
             profit_total: number;
         };
         /**
+         * StakeAdviceRequest
+         * @description 建议仓位输入（票 wb-06）：串关由调用方传联合赔率/联合 EV（整注口径）。
+         */
+        StakeAdviceRequest: {
+            mode: components["schemas"]["BetMode"];
+            /** Bankroll */
+            bankroll: number;
+            /** Ev */
+            ev: number;
+            /** Odds */
+            odds: number;
+            /**
+             * Cap Fraction
+             * @default 0.05
+             */
+            cap_fraction: number;
+        };
+        /**
+         * StakeSuggestion
+         * @description 建议输出：注额 + 档位 + 理由（只读，不自动改单）。
+         */
+        StakeSuggestion: {
+            /** Stake */
+            stake: number;
+            tier: components["schemas"]["StakeTier"];
+            /** Fraction */
+            fraction?: number | null;
+            /** Full Kelly Fraction */
+            full_kelly_fraction?: number | null;
+            /**
+             * Capped
+             * @default false
+             */
+            capped: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * StakeTier
+         * @description 建议档位（前端按档位渲染理由）。
+         * @enum {string}
+         */
+        StakeTier: "flat" | "quarter_kelly" | "ev_non_positive" | "unfunded";
+        /**
          * StatusResponse
          * @description Machine-readable service identity.
          */
@@ -1654,6 +1722,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalsFixtureView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stake_advice_api_v1_stake_advice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StakeAdviceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StakeSuggestion"];
                 };
             };
             /** @description Validation Error */

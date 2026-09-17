@@ -119,6 +119,11 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 	await page.getByTestId("pick-1-h").click();
 	// 票 14：金额/模式在选注篮抽屉里（底部常驻条 → 右侧 Drawer）
 	await page.getByTestId("basket-open").click();
+	// 票 wb-06：选注篮建议仓位（只读）——demo 种子主胜 EV 为负 → EV≤0 诚实建议 ¥0
+	// （flat ¥2/未入金 的正路径在下方进球步覆盖：ttg s2 为正 EV）
+	const advice = page.getByTestId("basket-stake-advice");
+	await expect(advice).toContainText("¥0.00");
+	await expect(advice).toContainText("建议不投");
 	await page.getByTestId("basket-stake").fill("100");
 	await page.getByTestId("basket-strategy").fill("manual-v1");
 	await page.getByTestId("basket-submit").click();
@@ -311,6 +316,10 @@ test("进球玩法页（票 wb-05）：模型 EV 组合 → ttg 独立单关落�
 	await combo.getByTestId("goals-combo-apply").click();
 	await expect(page.getByTestId("goals-basket-count")).toHaveText("1/3");
 	await expect(page.getByTestId("goals-basket-stake")).toHaveValue("2");
+	// 票 wb-06：进球篮建议仓位——bankroll ¥2.40 过小，flat 档按最低注 ¥2 建议并说明越限
+	const goalsAdvice = page.getByTestId("goals-basket-stake-advice");
+	await expect(goalsAdvice).toContainText("¥2.00");
+	await expect(goalsAdvice).toContainText("超出 5% 上限");
 	await page.getByTestId("goals-basket-submit").click();
 	await expect(page.getByTestId("goals-market-message")).toContainText("已建 1 条单关建议");
 

@@ -160,6 +160,32 @@ export const GLOSSARY: GlossaryEntry[] = [
 		caution:
 			"矩阵来自 DC 模型 Forecast（仅五大联赛在售场次覆盖，无 Forecast 概率空缺不伪造）；由矩阵推得的 EV 是模型×竞彩价口径（见 model-prob 词条），模型前瞻 skill 未过线前是研究对照的诊断量，不是机会信号。",
 	},
+	{
+		id: "kelly",
+		term: "Kelly 与 ¼ fractional Kelly",
+		aliases: ["Kelly", "凯利", "fractional Kelly", "f*", "满 Kelly"],
+		definition:
+			"Kelly（对数效用）把 edge 转化为注额比例的最优解：f* = EV/(odds−1)（按 decimal 赔率与单位 EV）。实务取分数（goalx 定 1/4）以对称化模型概率的估计误差——超注惩罚是二次的、少注损失是线性的。",
+		direction:
+			"满 Kelly 是理论上限而非建议值：概率估计有误差时满注会放大回撤，故按 ¼ 起步；随前瞻证据累积再评估放宽到 1/2。EV≤0 时 Kelly 为负，一律建议 ¥0。",
+		example:
+			"EV +10%、赔率 2.00 → f* = 0.10/1.00 = 10%，取 1/4 = 2.5%：bankroll ¥10,000 建议单注 ¥250（2.5% 在 1–5% 硬区间内，不截断）。",
+		caution:
+			"Kelly 的最优性以真实概率已知为前提，goalx 的概率是模型估计——这是取 ¼ 分数的理由；倍投/斐波那契等 progression 系不改 EV 只重排破产路径，且污染 CLV/skill 统计，已全部否决（research/staking-plans.md）。",
+	},
+	{
+		id: "stake-advice",
+		term: "建议仓位",
+		aliases: ["建议注额", "stake-advice", "仓位建议", "flat", "单注 1–5%"],
+		definition:
+			"系统给出的只读注额建议（不自动改单）：纸面期一律 flat（红线）——bankroll×2% 截断到 1–5% 区间、下限竞彩最低 ¥2；真金期 = ¼ fractional Kelly 再过单注 1–5% 硬上限；EV≤0 一律 ¥0。",
+		direction:
+			"采纳与否由操作者确认：建议注额只回答“这一注投多少”，档位与截断理由随建议展示（flat/¼Kelly/已按上限截断/EV≤0）。",
+		example:
+			"bankroll ¥5,004：纸面 flat → 2% = ¥100.08；真金 EV+30% @1.50 → ¼Kelly=15% 截断到 5% = ¥250.20；EV −2% → ¥0（无价值不投）。",
+		caution:
+			"只读建议，不自动写入注额——用户可偏离建议落注（偏离记录供事后分析）；串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly 不分腿）；纸面期的 flat 红线保证 skill/CLV 验证指标无偏，任何比例策略在前瞻 skill 过线前不启用。",
+	},
 ];
 
 /** 词条 id 联合类型：页内 tooltip 接入处（GlossaryTerm）的合法取值域。 */

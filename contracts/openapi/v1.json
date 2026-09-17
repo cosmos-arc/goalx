@@ -506,6 +506,48 @@
         }
       }
     },
+    "/api/v1/stake-advice": {
+      "post": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注 1-5% 截断",
+        "description": "只读注额建议（票 wb-06，不自动改单）。\n\nEV≤0 → ¥0；paper 一律 flat（红线，与组合引擎 flat 档同口径）；\nlive = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 1%-cap%。\n串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly，不分腿）。",
+        "operationId": "stake_advice_api_v1_stake_advice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StakeAdviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StakeSuggestion"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bets": {
       "post": {
         "tags": [
@@ -3237,6 +3279,104 @@
         ],
         "title": "SlipView",
         "description": "一张票的聚合视图。"
+      },
+      "StakeAdviceRequest": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/BetMode"
+          },
+          "bankroll": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Bankroll"
+          },
+          "ev": {
+            "type": "number",
+            "title": "Ev"
+          },
+          "odds": {
+            "type": "number",
+            "exclusiveMinimum": 1.0,
+            "title": "Odds"
+          },
+          "cap_fraction": {
+            "type": "number",
+            "maximum": 0.05,
+            "exclusiveMinimum": 0.0,
+            "title": "Cap Fraction",
+            "default": 0.05
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "bankroll",
+          "ev",
+          "odds"
+        ],
+        "title": "StakeAdviceRequest",
+        "description": "建议仓位输入（票 wb-06）：串关由调用方传联合赔率/联合 EV（整注口径）。"
+      },
+      "StakeSuggestion": {
+        "properties": {
+          "stake": {
+            "type": "number",
+            "title": "Stake"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/StakeTier"
+          },
+          "fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fraction"
+          },
+          "full_kelly_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Kelly Fraction"
+          },
+          "capped": {
+            "type": "boolean",
+            "title": "Capped",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stake",
+          "tier",
+          "reason"
+        ],
+        "title": "StakeSuggestion",
+        "description": "建议输出：注额 + 档位 + 理由（只读，不自动改单）。"
+      },
+      "StakeTier": {
+        "type": "string",
+        "enum": [
+          "flat",
+          "quarter_kelly",
+          "ev_non_positive",
+          "unfunded"
+        ],
+        "title": "StakeTier",
+        "description": "建议档位（前端按档位渲染理由）。"
       },
       "StatusResponse": {
         "properties": {

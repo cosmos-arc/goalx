@@ -90,6 +90,13 @@ test("renders the combo card from the engine and the feed in engine order", asyn
 	expect(screen.getByTestId("market-bankroll-note")).toHaveTextContent(`flat 档单注 ¥${F1_STAKE.toFixed(2)}`);
 	expect(screen.getByTestId("market-bankroll-note")).toHaveTextContent("5004.20");
 
+	// 票 wb-06 组合卡建议仓位（只读）：后端口径 = 引擎 flat 数字 + 档位理由
+	const comboAdvice = await within(combo).findByTestId("market-combo-stake-advice");
+	expect(comboAdvice).toHaveTextContent(`¥${F1_STAKE.toFixed(2)}`);
+	expect(within(comboAdvice).getByTestId("market-combo-stake-advice-reason")).toHaveTextContent(
+		"纸面期一律 flat（红线）",
+	);
+
 	// 推荐流：唯一正 EV 场置顶；其余按开赛时间（1.5h → 5h → 26h）
 	const feed = screen.getByTestId("market-feed");
 	const cards = within(feed).getAllByTestId(/^market-card-/);
@@ -118,6 +125,12 @@ test("apply combo loads legs into the in-page basket with the flat stake prefill
 	// 就地选注篮：腿已带入、flat 档注额预填、口径提示（EV×注额 共识口径）
 	expect(await screen.findByTestId("basket-stake")).toHaveValue(F1_STAKE);
 	expect(screen.getByTestId("market-message")).toHaveTextContent("已带入 1 条推荐");
+
+	// 票 wb-06 选注篮建议仓位（只读）：注额与档位理由随当前模式/篮内选择
+	const basketAdvice = await screen.findByTestId("basket-stake-advice");
+	expect(basketAdvice).toHaveTextContent(`¥${F1_STAKE.toFixed(2)}`);
+	expect(screen.getByTestId("basket-stake-advice-reason")).toHaveTextContent("纸面期一律 flat（红线）");
+	expect(basketAdvice).toHaveTextContent("单关口径");
 	const drawerLegs = await screen.findAllByTestId("basket-leg");
 	expect(drawerLegs).toHaveLength(1);
 	expect(drawerLegs[0]).toHaveTextContent("周六001");
@@ -210,6 +223,10 @@ test("basket drawer manages legs, non-single hint, and surfaces server rejection
 	await user.type(screen.getByTestId("basket-stake"), "50");
 	await user.type(screen.getByTestId("basket-strategy"), "combo-v1");
 	await user.selectOptions(screen.getByTestId("basket-mode"), "live");
+	// 真金 + 串关：联合口径（整注一个 Kelly）——两腿联合 EV = 1.053×0.924−1 ≈ −2.7% ≤ 0，
+	// 建议诚实 ¥0（EV≤0 不给注额）；单腿 ¼Kelly 的正路径见 stake-advice 组件测试
+	expect(screen.getByTestId("basket-stake-advice")).toHaveTextContent("串关注额=单关口径");
+	await waitFor(() => expect(screen.getByTestId("basket-stake-advice-reason")).toHaveTextContent("建议不投（¥0）"));
 	await user.click(screen.getByTestId("basket-submit"));
 
 	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #89（2串1）");

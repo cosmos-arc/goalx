@@ -17,6 +17,7 @@ import {
 	type Selection,
 } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
+import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import {
 	Drawer,
 	DrawerClose,
@@ -69,6 +70,27 @@ export function MarketHadPage() {
 				})
 			: null;
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
+
+	// 组合卡建议仓位（票 wb-06）：1 注=单关口径；2 注=按"一注 2串1"整注联合口径
+	const comboAdvice =
+		combo && combo.picks.length === 2
+			? parlayAdviceInput(combo.picks.map((pick) => ({ ev: pick.ev, odds: pick.odds })))
+			: { ev: combo?.picks[0]?.ev ?? null, odds: combo?.picks[0]?.odds ?? null };
+
+	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿=串关联合口径（整注一个 Kelly）
+	const legEv = (leg: Leg): number | null => {
+		const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
+		return fixture?.ev?.[leg.selection] ?? null;
+	};
+	const basketAdvice =
+		legs.length === 2
+			? {
+					...parlayAdviceInput(legs.map((leg) => ({ ev: legEv(leg), odds: leg.odds }))),
+					note: "串关注额=单关口径：联合 EV/联合赔率整注计算（腿间独立性假设），不分腿",
+				}
+			: legs.length === 1 && legs[0] !== undefined
+				? { ev: legEv(legs[0]), odds: legs[0].odds, note: "单关口径：共识 EV（欧共识×竞彩价−1）" }
+				: null;
 
 	/** 跨日标签：推荐流跨 3 日窗口，非今天的场次给"明天/后天"提示。 */
 	function dayNoteOf(businessDate: string | null | undefined): string | undefined {
@@ -315,6 +337,16 @@ export function MarketHadPage() {
 									>
 										一键带入选注篮
 									</button>
+									<div className="mt-3">
+										<StakeAdviceNote
+											mode="paper"
+											bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+											ev={comboAdvice.ev}
+											odds={comboAdvice.odds}
+											note="组合卡按纸面 flat 档口径（2 注时带入后按一注 2串1 整注）；真金 ¼Kelly 在选注篮切真金后给出"
+											testid="market-combo-stake-advice"
+										/>
+									</div>
 								</>
 							)}
 
@@ -432,6 +464,18 @@ export function MarketHadPage() {
 								))}
 							</ul>
 						)}
+						{basketAdvice ? (
+							<div className="mt-3">
+								<StakeAdviceNote
+									mode={mode}
+									bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+									ev={basketAdvice.ev}
+									odds={basketAdvice.odds}
+									note={basketAdvice.note}
+									testid="basket-stake-advice"
+								/>
+							</div>
+						) : null}
 					</div>
 					<DrawerFooter>
 						<div className="flex flex-wrap items-end gap-3">

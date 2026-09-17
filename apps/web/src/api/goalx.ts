@@ -24,6 +24,8 @@ export type DepositCreated = Schemas["DepositCreatedView"];
 export type CostSummary = Schemas["CostSummaryView"];
 export type BetCreateInput = Schemas["BetCreate"];
 export type SlipCreateInput = Schemas["SlipCreate"];
+export type StakeAdviceInput = Schemas["StakeAdviceRequest"];
+export type StakeAdvice = Schemas["StakeSuggestion"];
 export type DrawResultImportInput = Schemas["DrawResultImport"];
 export type BacktestRun = Schemas["BacktestRunView"];
 export type BacktestRunDetail = Schemas["BacktestRunDetailView"];
@@ -99,6 +101,14 @@ export function fetchBets(params?: { mode?: "paper" | "live"; only_open?: boolea
 
 export function createBet(payload: BetCreateInput): Promise<Bet> {
 	return unwrap(client.POST("/api/v1/bets", { body: payload }));
+}
+
+/**
+ * 建议仓位（票 wb-06，只读）：EV≤0 → ¥0；paper 一律 flat（红线）；
+ * live = ¼ fractional Kelly 截断单注 1–5%。串关传联合赔率/联合 EV（整注口径）。
+ */
+export function fetchStakeAdvice(payload: StakeAdviceInput): Promise<StakeAdvice> {
+	return unwrap(client.POST("/api/v1/stake-advice", { body: payload }));
 }
 
 export function fetchSlips(): Promise<Slip[]> {

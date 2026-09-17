@@ -265,6 +265,75 @@ export const handlers = [
 		const rows = days > 1 ? todayFixture : todayFixture.filter((row) => row.business_date === today);
 		return HttpResponse.json(rows);
 	}),
+	// 票 wb-06：建议仓位端点 mock——与后端 betting/staking.py 同规则的最小镜像
+	// （EV≤0→¥0；paper flat 2% 截断 1–5% 下限 ¥2；live ¼Kelly 截断 1–cap%；
+	//   特殊场景用 server.use 覆盖）。bankroll 恒用请求值（mock 无账本）。
+	http.post("*/api/v1/stake-advice", async ({ request }) => {
+		const body = (await request.json()) as {
+			mode?: string;
+			bankroll?: number;
+			ev?: number;
+			odds?: number;
+			cap_fraction?: number;
+		};
+		const mode = body.mode === "live" ? "live" : "paper";
+		const bankroll = typeof body.bankroll === "number" ? body.bankroll : 0;
+		const ev = typeof body.ev === "number" ? body.ev : 0;
+		const odds = typeof body.odds === "number" ? body.odds : 2;
+		const cap = typeof body.cap_fraction === "number" ? body.cap_fraction : 0.05;
+		if (ev <= 0) {
+			return HttpResponse.json({
+				stake: 0,
+				tier: "ev_non_positive",
+				fraction: null,
+				full_kelly_fraction: null,
+				capped: false,
+				reason: `EV ${(ev * 100).toFixed(1)}% ≤ 0——建议不投（¥0）。EV 是诊断量非机会信号：无正期望时不给注额，防止“看系统有推荐再自己加码”。`,
+			});
+		}
+		if (mode === "paper") {
+			const stake =
+				bankroll <= 0
+					? 2
+					: Math.round(Math.max(Math.min(Math.max(bankroll * 0.02, bankroll * 0.01), bankroll * 0.05), 2) * 100) / 100;
+			return HttpResponse.json({
+				stake,
+				tier: "flat",
+				fraction: bankroll > 0 ? Math.round((stake / bankroll) * 10000) / 10000 : null,
+				full_kelly_fraction: null,
+				capped: false,
+				reason:
+					bankroll <= 0
+						? "纸面期一律 flat（红线）：资金池未入金——暂按竞彩最低注 ¥2 建议，入金后按 bankroll 1–5% 校准"
+						: `纸面期一律 flat（红线）：bankroll × 2.0% 截断到 1–5% 区间 → ¥${stake.toFixed(2)}——比例策略（Kelly）在前瞻 skill 过线前不启用，保证验证指标无偏`,
+			});
+		}
+		if (bankroll <= 0) {
+			return HttpResponse.json({
+				stake: 0,
+				tier: "unfunded",
+				fraction: null,
+				full_kelly_fraction: null,
+				capped: false,
+				reason:
+					"真金建议 = ¼ fractional Kelly（f* = EV/(odds−1) 取 1/4，单注 1–5% 截断），但资金池未入金——暂无注额建议（入金后按比例校准）",
+			});
+		}
+		const full = ev / (odds - 1);
+		const quarter = full * 0.25;
+		const fraction = Math.min(Math.max(quarter, 0.01), cap);
+		const stake = Math.round(Math.max(bankroll * fraction, 2) * 100) / 100;
+		return HttpResponse.json({
+			stake,
+			tier: "quarter_kelly",
+			fraction: Math.round((stake / bankroll) * 10000) / 10000,
+			full_kelly_fraction: Math.round(full * 10000) / 10000,
+			capped: quarter > cap,
+			reason: `真金 ¼ fractional Kelly：f* = EV/(odds−1) = ${(full * 100).toFixed(1)}%，取 1/4 = ${(quarter * 100).toFixed(1)}%${
+				quarter > cap ? `，已按单注上限 ${(cap * 100).toFixed(0)}% 截断` : ""
+			} → ¥${stake.toFixed(2)}；单注硬区间 1%–${(cap * 100).toFixed(0)}%（竞彩最低 ¥2）`,
+		});
+	}),
 	http.get("*/api/v1/bets", () => HttpResponse.json(betsFixture)),
 	http.post("*/api/v1/bet-slips", () =>
 		HttpResponse.json(
