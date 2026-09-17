@@ -8,7 +8,7 @@ import { GlossaryPage } from "./pages/glossary-page";
 import { HistoryPage } from "./pages/history-page";
 import { MarketGoalsPage } from "./pages/market-goals-page";
 import { MarketHadPage } from "./pages/market-had-page";
-import { MarketPlaceholderPage } from "./pages/market-placeholder-page";
+import { MarketPoolPage } from "./pages/market-pool-page";
 import { OverviewPage } from "./pages/overview-page";
 import { StubPage } from "./pages/stub-page";
 import { ValidationPage } from "./pages/validation-page";
@@ -31,7 +31,8 @@ const rootRoute = createRootRoute({
 // 票 wb-01：/today 让位 /fixtures（场次页 3 日窗口），旧路径重定向不破坏书签。
 // 票 wb-02：/fixtures/$id 单场研究页（场次轴第二层）。
 // 票 wb-03：/markets 玩法组上线——胜平负真实页 + 进球/14场任9 占位引导态。
-// 票 wb-05：/markets/goals 换进球玩法真实页（ttg/crs，14场任9 仍占位随票 07）。
+// 票 wb-05：/markets/goals 换进球玩法真实页（ttg/crs）。
+// 票 wb-07：/markets/pool 换 14场任9 骨架页（结构先行，彩池数据源外部依赖）。
 const indexRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/",
@@ -75,13 +76,7 @@ const marketGoalsRoute = createRoute({
 const marketPoolRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/markets/pool",
-	component: () => (
-		<MarketPlaceholderPage
-			title="14场任9"
-			message="14场任9 期次研究页尚未接入。"
-			hint="期次→选项概率→三档额度随票 07 上线（彩池数据源在 goalx-quant 图并行接入）。"
-		/>
-	),
+	component: MarketPoolPage,
 });
 const historyRoute = createRoute({
 	getParentRoute: () => rootRoute,

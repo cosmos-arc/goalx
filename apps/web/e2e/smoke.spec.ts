@@ -175,6 +175,28 @@ test("had market page renders the feed and combo or degrades honestly", async ({
 	).toBeVisible({ timeout: 20_000 });
 });
 
+// 票 wb-07：14场任9 骨架页——横幅级骨架说明常显（无彩池数据时整页一眼是骨架），
+// 期次选择/14 槽位（数据或虚线待数据）/三档映射/留位/提交占位结构完整可演示
+test("pool market skeleton page is honestly a skeleton with full structure", async ({ page }) => {
+	await page.goto("/markets/pool");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 14场任9" })).toBeVisible();
+	await expect(page.getByTestId("pool-skeleton-banner")).toContainText("骨架页");
+	await expect(page.getByTestId("pool-skeleton-banner")).toContainText("goalx-quant");
+	// 口径行常显：占位概率口径 + 标记非生成器
+	await expect(page.getByTestId("pool-caliber")).toContainText("欧共识");
+	// 期次选择 + 14 个槽位（数据场或虚线待数据——结构骨架与后端可用性无关）
+	await expect(page.getByTestId("pool-period-select")).toBeVisible();
+	const slots = page.getByTestId("pool-slots");
+	await expect(slots.locator('[data-testid^="pool-slot-"]')).toHaveCount(14);
+	// 三档映射标注 + 留位 not-available 三块 + 提交占位 disabled
+	await expect(page.getByTestId("pool-tier-mapping")).toContainText("保守 = flat");
+	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(3);
+	const submit = page.getByTestId("pool-submit");
+	await expect(submit).toBeDisabled();
+	await expect(submit).toContainText("占位");
+});
+
 // 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过
 // （常驻后端为旧版本无 /markets/goals 时按后端不可用降级——契约先行的双路径）
 test("goals market page renders the feed and combo or degrades honestly", async ({ page }) => {

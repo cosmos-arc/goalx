@@ -324,13 +324,3 @@ test("bankroll 读取失败：组合注额建议诚实缺席（不按未入金�
 	// 推荐流不依赖 bankroll：照常渲染
 	expect(within(screen.getByTestId("market-feed")).getAllByTestId(/^market-card-/)).toHaveLength(4);
 });
-
-test("pool market placeholder says what it is and when it arrives (票 07)", async () => {
-	await renderAt("/markets/pool");
-	expect(screen.getByRole("heading", { name: "GoalX · 14场任9" })).toBeInTheDocument();
-	expect(screen.getByTestId("empty-state")).toHaveTextContent("票 07");
-	expect(within(screen.getByTestId("market-tabs")).getByRole("link", { name: "14场任9" })).toHaveAttribute(
-		"aria-current",
-		"page",
-	);
-});

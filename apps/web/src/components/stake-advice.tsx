@@ -42,12 +42,14 @@ export type StakeAdviceNoteProps = {
 	odds: number | null;
 	/** live 单注上限（1%–5%，默认 5%；票 wb-07 三档复用）。 */
 	capFraction?: number;
+	/** 标题覆盖（默认"建议仓位"；票 wb-07 三档传档位名）。 */
+	label?: string | undefined;
 	/** 口径补充（如"串关注额=单关口径""按最优注口径"）。 */
 	note?: string | undefined;
 	testid: string;
 };
 
-export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, note, testid }: StakeAdviceNoteProps) {
+export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, label, note, testid }: StakeAdviceNoteProps) {
 	const enabled = bankroll !== null && ev !== null && odds !== null;
 	const cap = capFraction ?? 0.05;
 	const body: StakeAdviceInput | null =
@@ -76,7 +78,13 @@ export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, note, t
 	return (
 		<div data-testid={testid} className="rounded-md border border-border bg-muted/40 p-3 text-xs">
 			<p className="font-medium text-foreground">
-				<GlossaryTerm id="stake-advice">建议仓位</GlossaryTerm>（只读）：
+				{label === undefined ? (
+					<>
+						<GlossaryTerm id="stake-advice">建议仓位</GlossaryTerm>（只读）：
+					</>
+				) : (
+					<>{label}（只读）：</>
+				)}
 				{adviceQuery.data ? (
 					<span className={`${TABULAR_NUMS} ml-1`}>¥{adviceQuery.data.stake.toFixed(2)}</span>
 				) : (
