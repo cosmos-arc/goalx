@@ -295,6 +295,105 @@ def test_fixture_research_404(api_client: TestClient) -> None:
     assert api_client.get("/api/v1/fixtures/999/research").status_code == 404
 
 
+# --- 票 wb-04：进球玩法页读模型（ttg/crs 报价 + 矩阵推导概率/EV）---
+
+
+def _goals_by_code(demo_client: TestClient) -> dict[str, dict]:
+    body = demo_client.get("/api/v1/markets/goals").json()
+    assert isinstance(body, list)
+    return {row["match_code"]: row for row in body}
+
+
+def test_goals_market_rows_shape_and_odds(demo_client: TestClient) -> None:
+    body = demo_client.get("/api/v1/markets/goals").json()
+    assert len(body) == 3
+    by_code = {row["match_code"]: row for row in body}
+    # 场次身份与销售状态（比赛级 on_sale / stopped）
+    assert by_code["周六001"]["home_team"] == "阿森纳"
+    assert by_code["周六001"]["ttg"]["sale_state"] == "on_sale"
+    assert by_code["周六001"]["ttg"]["single_eligible"] is True
+    assert by_code["周六003"]["ttg"]["sale_state"] == "stopped"
+    # 官方网格完整：ttg 八档、crs 31 档（含其他三档）
+    first = by_code["周六001"]
+    assert [sel["code"] for sel in first["ttg"]["selections"]] == [
+        str(n) for n in range(8)
+    ]
+    assert len(first["crs"]["selections"]) == 31
+    assert first["crs"]["selections"][-1]["code"] == "a_other"
+    # 竞彩价随行：demo 002 ttg s2=4.50 / crs 1:1=6.0
+    second = by_code["周六002"]
+    ttg = {sel["code"]: sel for sel in second["ttg"]["selections"]}
+    crs = {sel["code"]: sel for sel in second["crs"]["selections"]}
+    assert ttg["2"]["odds"] == 4.5
+    assert crs["1:1"]["odds"] == 6.0
+    assert second["ttg"]["updated_at"]  # 调盘时点随行
+
+
+def test_goals_market_model_probabilities_and_ev_caliber(
+    demo_client: TestClient,
+) -> None:
+    """有 Forecast 的场次（demo 002）：矩阵推导概率 + EV=概率×竞彩价−1。"""
+    row = _goals_by_code(demo_client)["周六002"]
+    assert row["model_version"] == "dc-demo"
+    assert row["issued_at"]
+    ttg = {sel["code"]: sel for sel in row["ttg"]["selections"]}
+    # 概率来自比分矩阵（λ 1.4/1.3）：Σ=1 且 s2 ≈ 0.245
+    probs = [sel["probability"] for sel in row["ttg"]["selections"]]
+    assert abs(sum(probs) - 1.0) < 0.01
+    assert ttg["2"]["probability"] == pytest.approx(0.245, abs=1e-3)
+    # EV 口径 = 模型概率 × 竞彩价 − 1（demo s2 价 4.50 → 正 EV）
+    assert ttg["2"]["ev"] == pytest.approx(0.245 * 4.5 - 1, abs=1e-3)
+    assert ttg["2"]["ev"] > 0
+    assert ttg["3"]["ev"] == pytest.approx(0.2205 * 3.4 - 1, abs=1e-3)
+    assert ttg["3"]["ev"] < 0
+    # crs 与 ttg 出自同一矩阵：精确格 1:1 的 EV 同口径
+    crs = {sel["code"]: sel for sel in row["crs"]["selections"]}
+    assert crs["1:1"]["ev"] == pytest.approx(
+        crs["1:1"]["probability"] * 6.0 - 1, abs=1e-4
+    )
+
+
+def test_goals_market_without_forecast_is_honest(demo_client: TestClient) -> None:
+    """无 Forecast 的场次（demo 001/003）：概率/EV 与模型出处整体置空。"""
+    row = _goals_by_code(demo_client)["周六001"]
+    assert row["model_version"] is None
+    assert row["issued_at"] is None
+    ttg = row["ttg"]["selections"]
+    assert all(sel["probability"] is None for sel in ttg)
+    assert all(sel["ev"] is None for sel in ttg)
+    assert all(sel["odds"] is not None for sel in ttg)  # 报价照常
+
+
+def test_goals_market_days_param_validated(demo_client: TestClient) -> None:
+    assert (
+        demo_client.get("/api/v1/markets/goals", params={"days": 0}).status_code == 422
+    )
+    assert (
+        demo_client.get("/api/v1/markets/goals", params={"days": 8}).status_code == 422
+    )
+
+
+def test_goals_market_other_business_date_empty(demo_client: TestClient) -> None:
+    assert (
+        demo_client.get("/api/v1/markets/goals", params={"date": "2020-01-01"}).json()
+        == []
+    )
+
+
+def test_goals_market_fixture_without_goals_quotes(api_client: TestClient) -> None:
+    """只采到 had 的场次也返回行：网格在、报价空、资格按比赛级回退诚实未知。"""
+    body = api_client.get(
+        "/api/v1/markets/goals", params={"date": BUSINESS_DATE}
+    ).json()
+    assert len(body) == 1
+    row = body[0]
+    assert len(row["ttg"]["selections"]) == 8
+    assert all(sel["odds"] is None for sel in row["ttg"]["selections"])
+    assert row["ttg"]["updated_at"] is None
+    assert row["ttg"]["sale_state"] == "on_sale"  # 比赛级行回退
+    assert row["ttg"]["single_eligible"] is None  # 无 poolList/市场块 → 未知
+
+
 def test_bet_create_list_and_same_fixture_rejected(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     create = api_client.post(

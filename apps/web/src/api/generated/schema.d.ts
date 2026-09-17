@@ -172,6 +172,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/markets/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 进球玩法页读模型(ttg/crs 报价+矩阵推导概率/EV)
+         * @description 进球类玩法（总进球 ttg / 比分 crs）的场次行（票 wb-04/05）。
+         *
+         *     每行带 ttg/crs 两块：官方选项网格 ×（竞彩在售价、比分矩阵推导概率、
+         *     模型 EV=概率×竞彩价−1）+ 单固资格与销售状态。``days>1`` 返回业务日
+         *     窗口（与场次列表同口径）。EV 口径为"模型×竞彩价"（进球类无欧共识），
+         *     与 had 玩法页的共识 EV 不同源，页面须标注。
+         */
+        get: operations["get_goals_market_api_v1_markets_goals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bets": {
         parameters: {
             query?: never;
@@ -917,6 +942,66 @@ export interface components {
             model?: components["schemas"]["ModelForecastView"] | null;
             had_quote?: components["schemas"]["HadQuoteStatus"] | null;
         };
+        /**
+         * GoalsFixtureView
+         * @description 进球玩法页一行（票 wb-04）：场次信息 + ttg/crs 两块 + 模型出处。
+         */
+        GoalsFixtureView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Match Code */
+            match_code: string;
+            /** Business Date */
+            business_date: string;
+            /** Competition */
+            competition: string;
+            /** Tier */
+            tier: string;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            ttg?: components["schemas"]["GoalsMarketBlock"];
+            crs?: components["schemas"]["GoalsMarketBlock"];
+            /** Model Version */
+            model_version?: string | null;
+            /** Issued At */
+            issued_at?: string | null;
+        };
+        /**
+         * GoalsMarketBlock
+         * @description 一场比赛一个进球玩法（ttg/crs）的选项网格与销售/单固资格。
+         */
+        GoalsMarketBlock: {
+            /** Selections */
+            selections?: components["schemas"]["GoalsSelectionView"][];
+            /** Single Eligible */
+            single_eligible?: boolean | null;
+            /** Sale State */
+            sale_state?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * GoalsSelectionView
+         * @description 进球类玩法一个选项：竞彩价、矩阵推导概率与模型 EV。
+         *
+         *     EV 口径 = 模型概率 × 竞彩价 − 1（进球类无欧赔共识，区别于 had 的
+         *     共识 EV——had 信市场，进球类只有自家模型可依，见词典 model-prob）。
+         *     无 Forecast 的场次 probability/ev 诚实为 null。
+         */
+        GoalsSelectionView: {
+            /** Code */
+            code: string;
+            /** Odds */
+            odds?: number | null;
+            /** Probability */
+            probability?: number | null;
+            /** Ev */
+            ev?: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1536,6 +1621,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goals_market_api_v1_markets_goals_get: {
+        parameters: {
+            query?: {
+                /** @description 起始业务日(北京日期, 默认今天) */
+                date?: string | null;
+                /** @description 窗口天数(默认1=单日) */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalsFixtureView"][];
+                };
             };
             /** @description Validation Error */
             422: {

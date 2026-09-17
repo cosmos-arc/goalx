@@ -16,6 +16,10 @@ sporttery 竞彩采集（票 19；票 35 补观测证据）：getMatchCalculator
   （端点语义，非伪造）；出现但值未知 → unknown，保守不进正式候选；
 - 单固资格：had 块的 single 字段优先（"1"/"0"），缺失时若比赛级
   bettingSingle=0 则该场无任何单关（False），否则未知（None）。
+
+进球类单固（票 wb-04）：ttg/crs 市场块实测恒缺 single 字段，单固资格取
+matchInfo 的 poolList 各池 single（1/0，实测为唯一可靠来源）；poolList 也
+缺失时同 had 的比赛级否决规则。had 口径不动（票 35 语义）。
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import observations
 from goalx_backend.db import utc_now_iso
+from goalx_backend.markets import GOALS_MARKETS
 from goalx_backend.models import (
     MatchCodeInput,
     ObservationInput,
@@ -94,6 +99,7 @@ class ParsedMatch:
     is_single: bool
     markets: list[MarketQuote]
     sell_status_raw: str | None = None
+    pool_single: dict[str, bool | None] = field(default_factory=dict)
 
     @property
     def sale_state(self) -> str:
@@ -107,6 +113,22 @@ class ParsedMatch:
         for quote in self.markets:
             if quote.market_code == "had" and quote.single is not None:
                 return quote.single
+        return None if self.is_single else False
+
+    def goals_single_eligible(self, market_code: str) -> bool | None:
+        """
+        进球类（ttg/crs）单固资格（票 wb-04）。
+
+        市场块 single 优先（实测恒缺，防御性保留）→ poolList 各池 single
+        （实测唯一可靠来源）→ 比赛级否决（bettingSingle=0 → False）→ None。
+        """
+        if market_code not in GOALS_MARKETS:
+            raise ValueError(f"非进球类玩法: {market_code}")
+        for quote in self.markets:
+            if quote.market_code == market_code and quote.single is not None:
+                return quote.single
+        if market_code in self.pool_single:
+            return self.pool_single[market_code]
         return None if self.is_single else False
 
 
@@ -236,6 +258,30 @@ def _add_price(prices: dict[str, float], selection: str, value: object) -> None:
         prices[selection] = odds
 
 
+def _parse_pool_single(sub_match: dict[str, Any]) -> dict[str, bool | None]:
+    """
+    各池（poolList）单固资格 → ``{pool_code: True/False/None}``（票 wb-04）。
+
+    实测 payload 的市场块（had/ttg/crs/...）恒缺 ``single`` 字段，
+    poolList 的 ``single``（int 1/0）是单固资格唯一可靠来源；未列出的
+    池不进字典（调用方继续走比赛级否决规则）。
+    """
+    out: dict[str, bool | None] = {}
+    pools: list[dict[str, Any]] = sub_match.get("poolList") or []
+    for pool in pools:
+        code = str(pool.get("poolCode", "")).lower()
+        if code not in (*GOALS_MARKETS, "had", "hhad", "hafu"):
+            continue
+        raw: object = pool.get("single")
+        if raw in (1, "1"):
+            out[code] = True
+        elif raw in (0, "0"):
+            out[code] = False
+        else:
+            out[code] = None
+    return out
+
+
 def parse_matches(payload: dict[str, Any]) -> list[ParsedMatch]:
     """解析计算器 payload → ParsedMatch 列表（纯函数）。"""
     parsed: list[ParsedMatch] = []
@@ -267,6 +313,7 @@ def parse_matches(payload: dict[str, Any]) -> list[ParsedMatch]:
                         if m.get("sellStatus") is not None
                         else None
                     ),
+                    pool_single=_parse_pool_single(m),
                 )
             )
     return parsed
@@ -339,6 +386,19 @@ def store_matches(
                         market_code="had",
                         sale_state=match.sale_state,
                         single_eligible=match.had_single_eligible(),
+                        observed_at=observed,
+                        observation_id=observation_id,
+                    ),
+                )
+            elif quote.market_code in GOALS_MARKETS:
+                # 进球类单固（票 wb-04）：poolList 池级 single（had 口径不动）
+                fx_store.append_sale_status(
+                    conn,
+                    SaleStatusInput(
+                        fixture_id=fixture,
+                        market_code=quote.market_code,
+                        sale_state=match.sale_state,
+                        single_eligible=match.goals_single_eligible(quote.market_code),
                         observed_at=observed,
                         observation_id=observation_id,
                     ),

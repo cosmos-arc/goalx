@@ -436,6 +436,76 @@
         }
       }
     },
+    "/api/v1/markets/goals": {
+      "get": {
+        "tags": [
+          "markets"
+        ],
+        "summary": "进球玩法页读模型(ttg/crs 报价+矩阵推导概率/EV)",
+        "description": "进球类玩法（总进球 ttg / 比分 crs）的场次行（票 wb-04/05）。\n\n每行带 ttg/crs 两块：官方选项网格 ×（竞彩在售价、比分矩阵推导概率、\n模型 EV=概率×竞彩价−1）+ 单固资格与销售状态。``days>1`` 返回业务日\n窗口（与场次列表同口径）。EV 口径为\"模型×竞彩价\"（进球类无欧共识），\n与 had 玩法页的共识 EV 不同源，页面须标注。",
+        "operationId": "get_goals_market_api_v1_markets_goals_get",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始业务日(北京日期, 默认今天)",
+              "title": "Date"
+            },
+            "description": "起始业务日(北京日期, 默认今天)"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 7,
+              "minimum": 1,
+              "description": "窗口天数(默认1=单日)",
+              "default": 1,
+              "title": "Days"
+            },
+            "description": "窗口天数(默认1=单日)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoalsFixtureView"
+                  },
+                  "title": "Response Get Goals Market Api V1 Markets Goals Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bets": {
       "post": {
         "tags": [
@@ -2325,6 +2395,177 @@
         "title": "FixtureResearchView",
         "description": "单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。"
       },
+      "GoalsFixtureView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "ttg": {
+            "$ref": "#/components/schemas/GoalsMarketBlock"
+          },
+          "crs": {
+            "$ref": "#/components/schemas/GoalsMarketBlock"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "business_date",
+          "competition",
+          "tier",
+          "home_team",
+          "away_team",
+          "kickoff_utc"
+        ],
+        "title": "GoalsFixtureView",
+        "description": "进球玩法页一行（票 wb-04）：场次信息 + ttg/crs 两块 + 模型出处。"
+      },
+      "GoalsMarketBlock": {
+        "properties": {
+          "selections": {
+            "items": {
+              "$ref": "#/components/schemas/GoalsSelectionView"
+            },
+            "type": "array",
+            "title": "Selections"
+          },
+          "single_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Eligible"
+          },
+          "sale_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale State"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "GoalsMarketBlock",
+        "description": "一场比赛一个进球玩法（ttg/crs）的选项网格与销售/单固资格。"
+      },
+      "GoalsSelectionView": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "odds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Odds"
+          },
+          "probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probability"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "GoalsSelectionView",
+        "description": "进球类玩法一个选项：竞彩价、矩阵推导概率与模型 EV。\n\nEV 口径 = 模型概率 × 竞彩价 − 1（进球类无欧赔共识，区别于 had 的\n共识 EV——had 信市场，进球类只有自家模型可依，见词典 model-prob）。\n无 Forecast 的场次 probability/ev 诚实为 null。"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3281,6 +3522,10 @@
     {
       "name": "fixtures",
       "description": "竞彩场次对照与赔率时序(今日页)。"
+    },
+    {
+      "name": "markets",
+      "description": "玩法轴读模型(进球类 ttg/crs 报价与矩阵推导概率/EV)。"
     },
     {
       "name": "bets",

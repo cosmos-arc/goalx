@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from goalx_backend.api import bets as bets_api
 from goalx_backend.api import fixtures as fixtures_api
+from goalx_backend.api import markets as markets_api
 from goalx_backend.api import results as results_api
 from goalx_backend.api import validation as validation_api
 from goalx_backend.config import Environment, Settings, get_settings
@@ -58,6 +59,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "description": "Health, readiness and service identity.",
             },
             {"name": "fixtures", "description": "竞彩场次对照与赔率时序(今日页)。"},
+            {
+                "name": "markets",
+                "description": "玩法轴读模型(进球类 ttg/crs 报价与矩阵推导概率/EV)。",
+            },
             {"name": "bets", "description": "注级建议、票级回录与复盘列表。"},
             {"name": "results", "description": "开奖导入、结算批跑与资金池。"},
             {
@@ -93,6 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(fixtures_api.router)
+    app.include_router(markets_api.router)
     app.include_router(bets_api.router)
     app.include_router(results_api.router)
     app.include_router(validation_api.router)

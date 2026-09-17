@@ -18,3 +18,15 @@ CRS_EXACT_SCORES: tuple[tuple[int, int], ...] = tuple(
 
 # 胜平负三向选项编码（全仓唯一出处；各模块从这里导入）
 SELECTIONS: tuple[str, ...] = ("h", "d", "a")
+
+# 进球类玩法选项网格（票 wb-04，与 sporttery 解析/矩阵视图同键）：
+# ttg 八档 0..7+（"7" 归并尾部）；crs 28 精确比分 + 胜/平/负"其他"三档。
+# 顺序即官方展示顺序（视图与页面渲染共用；矩阵 crs() 的键序与此一致）。
+TTG_SELECTIONS: tuple[str, ...] = tuple(str(n) for n in range(8))
+CRS_OTHER_SELECTIONS: tuple[str, ...] = ("h_other", "d_other", "a_other")
+CRS_SELECTIONS: tuple[str, ...] = (
+    tuple(f"{home}:{away}" for home, away in CRS_EXACT_SCORES) + CRS_OTHER_SELECTIONS
+)
+
+# 进球类玩法（MarketGroup 进球类；半全场暂不呈现，spec 工作台 v2）
+GOALS_MARKETS: tuple[str, ...] = ("ttg", "crs")
