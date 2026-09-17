@@ -334,7 +334,7 @@ export function OverviewPage() {
 										<EmptyState
 											variant="not-available"
 											message="尚未入金——真金余额与真金盈亏将在这里出现。"
-											hint="页内入金记账随资金页（票 20）上线。"
+											hint="到资金页记录第一笔入金即可开始真金口径。"
 											action={{ label: "去资金页", to: "/bankroll" }}
 										/>
 									) : (
