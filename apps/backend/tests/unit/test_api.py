@@ -13,6 +13,8 @@ from goalx_backend.config import Settings
 from goalx_backend.data.fixtures import CST, beijing_business_date
 from goalx_backend.db import connect, migrate
 from goalx_backend.main import create_app
+from goalx_backend.modelling.forecast import content_hash, insert_forecast
+from goalx_backend.modelling.score_matrix import matrix_from_lambdas
 
 NOW = datetime.now(UTC)
 KICKOFF = NOW + timedelta(hours=26)
@@ -202,6 +204,95 @@ def test_fixture_odds_history_and_404(api_client: TestClient) -> None:
     assert len(body) == 3  # had: h/d/a
     assert {row["selection_code"] for row in body} == {"h", "d", "a"}
     assert api_client.get("/api/v1/fixtures/999/odds").status_code == 404
+
+
+def _research_fixture_id(demo_client: TestClient) -> int:
+    body = demo_client.get("/api/v1/fixtures/today").json()
+    by_code = {row["match_code"]: row for row in body}
+    return int(by_code["周六001"]["fixture_id"])
+
+
+def test_fixture_research_books_consensus_and_eligibility(
+    demo_client: TestClient,
+) -> None:
+    """研究页读模型（票 wb-02）：逐书 H/D/A + 捕获时间 + 去水共识 + 资格判定。"""
+    fixture_id = _research_fixture_id(demo_client)
+    response = demo_client.get(f"/api/v1/fixtures/{fixture_id}/research")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fixture_id"] == fixture_id
+    assert body["match_code"] == "周六001"
+    assert body["home_team"] == "阿森纳"
+    assert body["kickoff_utc"]
+    assert body["business_date"] == beijing_business_date()
+    # demo 种子：pin/avg/bet365 三本书（source 排序稳定）
+    assert [book["book"] for book in body["books"]] == [
+        "odds_api:avg",
+        "odds_api:bet365",
+        "odds_api:pin",
+    ]
+    pin = next(book for book in body["books"] if book["book"] == "odds_api:pin")
+    assert pin["odds"] == {"h": 6.0, "d": 5.0, "a": 1.30}
+    assert pin["captured_at"]  # 捕获时点随行
+    # 共识 = 与列表页同口径（books=3，概率和≈1）
+    assert body["consensus"]["books"] == 3
+    probs = body["consensus"]["probability"]
+    assert abs(sum(probs.values()) - 1.0) < 0.01
+    # 无 Forecast 种子 → 模型区诚实为空（前端显示"暂无模型预测"）
+    assert body["model"] is None
+    # 资格判定内嵌（研究页不二次请求）
+    assert body["had_quote"]["status"] == "valid"
+    assert body["had_quote"]["single_eligible"] is True
+
+
+def test_fixture_research_without_eu_books_is_honest(demo_client: TestClient) -> None:
+    body = demo_client.get("/api/v1/fixtures/today").json()
+    by_code = {row["match_code"]: row for row in body}
+    fixture_id = int(by_code["周六003"]["fixture_id"])
+    response = demo_client.get(f"/api/v1/fixtures/{fixture_id}/research")
+    assert response.status_code == 200
+    assert response.json()["books"] == []
+    assert response.json()["consensus"] is None
+
+
+def test_fixture_research_model_probability_and_ev(api_client: TestClient) -> None:
+    """有 Forecast 时研究页带模型概率与模型 EV（模型概率 × 竞彩价 − 1）。"""
+    fixture_id = _fixture_id(api_client)
+    matrix = matrix_from_lambdas(1.8, 0.9)
+    payload = {
+        "matrix": [list(row) for row in matrix],
+        "lambda_home": 1.8,
+        "lambda_away": 0.9,
+    }
+    db_path = api_client.app.state.settings.db_path  # type: ignore[attr-defined]
+    conn = connect(db_path)
+    insert_forecast(
+        conn,
+        fixture_id=fixture_id,
+        track="ml",
+        model_version="dc-test",
+        content_hash=content_hash(payload),
+        payload=payload,
+    )
+    conn.commit()
+    conn.close()
+
+    body = api_client.get(f"/api/v1/fixtures/{fixture_id}/research").json()
+    model = body["model"]
+    assert model is not None
+    assert model["model_version"] == "dc-test"
+    assert model["issued_at"]
+    had = model["probability"]
+    assert abs(sum(had.values()) - 1.0) < 0.001  # 视图四舍五入后的概率和
+    assert had["h"] > had["a"]  # λ_home=1.8 > λ_away=0.9 → 主胜概率更高
+    # 模型 EV = 模型概率 × 竞彩价 − 1（种子竞彩 h=6.5 → 强正）
+    assert model["ev"]["h"] == pytest.approx(had["h"] * 6.5 - 1, abs=1e-3)
+    assert model["ev"]["d"] == pytest.approx(had["d"] * 5.0 - 1, abs=1e-3)
+    assert model["ev"]["a"] == pytest.approx(had["a"] * 1.3 - 1, abs=1e-3)
+
+
+def test_fixture_research_404(api_client: TestClient) -> None:
+    assert api_client.get("/api/v1/fixtures/999/research").status_code == 404
 
 
 def test_bet_create_list_and_same_fixture_rejected(api_client: TestClient) -> None:

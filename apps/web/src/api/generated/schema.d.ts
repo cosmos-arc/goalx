@@ -147,6 +147,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/{fixture_id}/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 单场研究页读模型
+         * @description 一场比赛的研究视图。
+         *
+         *     各欧赔 book 最新 H/D/A 与捕获时间、去水共识概率、模型（DC Forecast）
+         *     概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。
+         *
+         *     共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。
+         */
+        get: operations["get_fixture_research_api_v1_fixtures__fixture_id__research_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bets": {
         parameters: {
             query?: never;
@@ -667,6 +692,20 @@ export interface components {
             review?: components["schemas"]["BetReviewView"] | null;
         };
         /**
+         * BookQuoteView
+         * @description 研究页一行：某欧赔 book 的最新三向报价。
+         *
+         *     ``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；
+         *     ``captured_at`` 取该 book 三向中最新的捕获时点。
+         */
+        BookQuoteView: {
+            /** Book */
+            book: string;
+            odds: components["schemas"]["SelectionTriple"];
+            /** Captured At */
+            captured_at?: string | null;
+        };
+        /**
          * ConditionProgress
          * @description 纸面转真金三条件之一的进度（票 10）。
          */
@@ -681,6 +720,15 @@ export interface components {
             current: string;
             /** Target */
             target: string;
+        };
+        /**
+         * ConsensusView
+         * @description 去水共识（Shin）与参与 book 数（口径与场次列表页一致）。
+         */
+        ConsensusView: {
+            /** Books */
+            books: number;
+            probability: components["schemas"]["SelectionTriple"];
         };
         /**
          * CostItemView
@@ -835,6 +883,40 @@ export interface components {
          * @enum {string}
          */
         Environment: "development" | "testing" | "production";
+        /**
+         * FixtureResearchView
+         * @description 单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。
+         */
+        FixtureResearchView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Match Code */
+            match_code: string;
+            /** Business Date */
+            business_date: string;
+            /** Competition */
+            competition: string;
+            /** Tier */
+            tier: string;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Is Single */
+            is_single: boolean;
+            /** Joined */
+            joined: boolean;
+            jc_odds: components["schemas"]["SelectionTriple"];
+            /** Jc Updated At */
+            jc_updated_at?: string | null;
+            /** Books */
+            books?: components["schemas"]["BookQuoteView"][];
+            consensus?: components["schemas"]["ConsensusView"] | null;
+            model?: components["schemas"]["ModelForecastView"] | null;
+            had_quote?: components["schemas"]["HadQuoteStatus"] | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -961,6 +1043,18 @@ export interface components {
             staked: number;
             /** Profit */
             profit: number;
+        };
+        /**
+         * ModelForecastView
+         * @description 该场最新 ML Forecast 的三向概率与模型 EV（模型概率 × 竞彩价 − 1）。
+         */
+        ModelForecastView: {
+            /** Model Version */
+            model_version: string;
+            /** Issued At */
+            issued_at: string;
+            probability: components["schemas"]["SelectionTriple"];
+            ev?: components["schemas"]["SelectionTriple"] | null;
         };
         /**
          * OddsSnapshotView
@@ -1396,6 +1490,47 @@ export interface operations {
                 };
             };
             /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fixture_research_api_v1_fixtures__fixture_id__research_get: {
+        parameters: {
+            query?: {
+                /** @description 判定时点(UTC ISO);默认现在 */
+                as_of?: string | null;
+            };
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixtureResearchView"];
+                };
+            };
+            /** @description fixture 不存在或无竞彩销售编号 */
             404: {
                 headers: {
                     [name: string]: unknown;

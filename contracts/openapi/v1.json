@@ -372,6 +372,70 @@
         }
       }
     },
+    "/api/v1/fixtures/{fixture_id}/research": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "单场研究页读模型",
+        "description": "一场比赛的研究视图。\n\n各欧赔 book 最新 H/D/A 与捕获时间、去水共识概率、模型（DC Forecast）\n概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。\n\n共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。",
+        "operationId": "get_fixture_research_api_v1_fixtures__fixture_id__research_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "判定时点(UTC ISO);默认现在",
+              "title": "As Of"
+            },
+            "description": "判定时点(UTC ISO);默认现在"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixtureResearchView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在或无竞彩销售编号"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bets": {
       "post": {
         "tags": [
@@ -1680,6 +1744,35 @@
         "title": "BetView",
         "description": "一注的复盘视图。"
       },
+      "BookQuoteView": {
+        "properties": {
+          "book": {
+            "type": "string",
+            "title": "Book"
+          },
+          "odds": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book",
+          "odds"
+        ],
+        "title": "BookQuoteView",
+        "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
+      },
       "ConditionProgress": {
         "properties": {
           "key": {
@@ -1713,6 +1806,24 @@
         ],
         "title": "ConditionProgress",
         "description": "纸面转真金三条件之一的进度（票 10）。"
+      },
+      "ConsensusView": {
+        "properties": {
+          "books": {
+            "type": "integer",
+            "title": "Books"
+          },
+          "probability": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          }
+        },
+        "type": "object",
+        "required": [
+          "books",
+          "probability"
+        ],
+        "title": "ConsensusView",
+        "description": "去水共识（Shin）与参与 book 数（口径与场次列表页一致）。"
       },
       "CostItemView": {
         "properties": {
@@ -2103,6 +2214,117 @@
         "title": "Environment",
         "description": "Deployment environments the backend understands."
       },
+      "FixtureResearchView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "is_single": {
+            "type": "boolean",
+            "title": "Is Single"
+          },
+          "joined": {
+            "type": "boolean",
+            "title": "Joined"
+          },
+          "jc_odds": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "jc_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Updated At"
+          },
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/BookQuoteView"
+            },
+            "type": "array",
+            "title": "Books"
+          },
+          "consensus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConsensusView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelForecastView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "had_quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HadQuoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "business_date",
+          "competition",
+          "tier",
+          "home_team",
+          "away_team",
+          "kickoff_utc",
+          "is_single",
+          "joined",
+          "jc_odds"
+        ],
+        "title": "FixtureResearchView",
+        "description": "单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2444,6 +2666,39 @@
         ],
         "title": "ModeCounts",
         "description": "一个 mode 的注/腿/场次计数（唯一 Bet 为验证分母，票 34）。"
+      },
+      "ModelForecastView": {
+        "properties": {
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "issued_at": {
+            "type": "string",
+            "title": "Issued At"
+          },
+          "probability": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionTriple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "issued_at",
+          "probability"
+        ],
+        "title": "ModelForecastView",
+        "description": "该场最新 ML Forecast 的三向概率与模型 EV（模型概率 × 竞彩价 − 1）。"
       },
       "OddsSnapshotView": {
         "properties": {

@@ -375,6 +375,65 @@ def fixtures_for_business_date(
     return fixtures_for_business_dates(conn, [business_date])
 
 
+def fixture_detail(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None:
+    """
+    One fixture joined with sales code/competition/team names (研究页输入, 票 wb-02).
+
+    与场次列表同构的对照行；无竞彩销售编号（非在售场次）返回 None。
+    """
+    return conn.execute(
+        """
+        SELECT f.*, mc.code AS match_code, mc.is_single, mc.business_date,
+c.name AS
+        competition_name, c.tier AS competition_tier,
+ht.canonical_name AS home_team,
+        at2.canonical_name AS away_team
+FROM match_codes mc
+JOIN fixtures f ON f.id
+        = mc.fixture_id
+JOIN competitions c ON c.id = f.competition_id
+JOIN teams ht ON
+        ht.id = f.home_team_id
+JOIN teams at2 ON at2.id = f.away_team_id
+WHERE
+        mc.kind = 'jingcai' AND f.id = ?
+ORDER BY mc.business_date DESC, mc.code
+LIMIT 1
+        """,
+        (fixture_id,),
+    ).fetchone()
+
+
+def eu_book_quotes(
+    conn: sqlite3.Connection, fixture_id: int, market_code: str = "had"
+) -> dict[str, dict[str, tuple[float, str]]]:
+    """
+    Latest per-book quotes with capture time.
+
+    ``book -> {selection: (odds, captured_at)}``。工作台 v2 票 02（研究页
+    逐书赔率明细）；口径与 :func:`eu_book_odds` 一致，仅 ``odds_api:*`` 源
+    参与， ``(fixture, market, book, selection)`` 取最新一条。
+    """
+    rows = conn.execute(
+        """
+            SELECT selection_code, source, odds, captured_at FROM odds_snapshots
+WHERE
+            fixture_id = ? AND market_code = ? AND source LIKE 'odds_api:%'
+ORDER BY
+            captured_at, odds
+        """,
+        (fixture_id, market_code),
+    ).fetchall()
+    latest: dict[str, dict[str, tuple[float, str]]] = {}
+    for row in rows:
+        book = str(row["source"])
+        latest.setdefault(book, {})[str(row["selection_code"])] = (
+            float(row["odds"]),
+            str(row["captured_at"]),
+        )
+    return latest
+
+
 def fixtures_for_business_dates(
     conn: sqlite3.Connection, business_dates: Sequence[str]
 ) -> list[sqlite3.Row]:
