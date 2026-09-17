@@ -35,6 +35,7 @@ function minutesAgoIso(minutes: number): string {
 function makeFixture(overrides: Partial<TodayFixture> & { fixture_id: number }): TodayFixture {
 	return {
 		match_code: "周日001",
+		business_date: new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10),
 		competition: "英超",
 		tier: "tier2",
 		home_team: "主队",
@@ -125,9 +126,9 @@ test("default snapshot: todo rules ①③ fire, four cards render, validation li
 	const todos = await screen.findByTestId("overview-todos");
 	const unlocked = within(todos).getByTestId("todo-unlocked");
 	expect(unlocked).toHaveTextContent("未锁定建议 2 条");
-	// 最早开赛 = fixture 2（+1.5h <2h）→ 琥珀紧迫倒计时；动作去今日
+	// 最早开赛 = fixture 2（+1.5h <2h）→ 琥珀紧迫倒计时；动作去场次
 	expect(within(unlocked).getByText(/最早开赛 \d+ 分钟后/)).toHaveClass("text-warning");
-	expect(within(unlocked).getByRole("link", { name: /去今日/ })).toHaveAttribute("href", "/today");
+	expect(within(unlocked).getByRole("link", { name: /去场次/ })).toHaveAttribute("href", "/fixtures");
 
 	// 规则③：建议 #1（未结）的腿 fixture 1 已有开奖 → 可结算 1 注；#3 腿 fixture 2 无开奖不算
 	const settleable = within(todos).getByTestId("todo-settleable");
@@ -282,7 +283,7 @@ test("no todos and no paper records: the card says 今日无事 and guides the f
 	const paperZone = screen.getByTestId("overview-paper-zone");
 	const guide = within(paperZone).getByTestId("paper-guide");
 	expect(guide).toHaveTextContent("还没有纸面记录");
-	expect(within(guide).getByRole("link", { name: "从今日页建第一笔建议" })).toHaveAttribute("href", "/today");
+	expect(within(guide).getByRole("link", { name: "从场次页建第一笔建议" })).toHaveAttribute("href", "/fixtures");
 });
 
 test("no deposits yet: the live zone shows the deposit onboarding empty state", async () => {

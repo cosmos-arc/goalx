@@ -1,12 +1,12 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
 import { ErrorBoundary } from "react-error-boundary";
 import { BankrollPage } from "./pages/bankroll-page";
 import { BetsPage } from "./pages/bets-page";
+import { FixturesPage } from "./pages/fixtures-page";
 import { GlossaryPage } from "./pages/glossary-page";
 import { HistoryPage } from "./pages/history-page";
 import { OverviewPage } from "./pages/overview-page";
 import { StubPage } from "./pages/stub-page";
-import { TodayPage } from "./pages/today-page";
 import { ValidationPage } from "./pages/validation-page";
 
 function RootLayout() {
@@ -24,15 +24,23 @@ const rootRoute = createRootRoute({
 
 // 票 03 定稿的路由结构（票 13 落地）：`/` 换总览占位、`/today` 承接今日、
 // 新增 /history /glossary 占位；/review /settings 维持 M3/M4 引导态，其余路由不动零迁移。
+// 票 wb-01：/today 让位 /fixtures（场次页 3 日窗口），旧路径重定向不破坏书签。
 const indexRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/",
 	component: OverviewPage,
 });
+const fixturesRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/fixtures",
+	component: FixturesPage,
+});
 const todayRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/today",
-	component: TodayPage,
+	beforeLoad: () => {
+		throw redirect({ to: "/fixtures" });
+	},
 });
 const historyRoute = createRoute({
 	getParentRoute: () => rootRoute,
@@ -78,6 +86,7 @@ const settingsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
 	indexRoute,
+	fixturesRoute,
 	todayRoute,
 	historyRoute,
 	glossaryRoute,

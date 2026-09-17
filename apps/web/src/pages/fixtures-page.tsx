@@ -19,19 +19,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
- * 票 14：今日页重设计落地（票 04 定稿 = 唯一事实源，原型 proto/ui-04-today）。
- * 信息分层：可投卡片置顶 + 全量 compact 对照表（无视图切换）；编码硬约束：
- * EV 数字永远只按正负红绿（text-profit/text-loss，诊断量非机会信号）、|EV|≥5%
- * 独立琥珀徽章、资格徽章蓝=可投/红=拒绝+原因/灰框=证据未知、新鲜度>30 分钟琥珀、
- * T1 中性灰；选注篮 = 底部常驻条 + 右侧 Drawer；竞彩规则在选择时前置传达，
- * 服务器校验仍为唯一权威（前端提示不替代后端判定）。
- * 票 18 增量：表头资格/欧共识/EV/books 与单固徽章接词典 tooltip（GlossaryTerm，克制只接指标名）。
+ * 票 wb-01：今日页升级为"场次"页（票 14 的信息分层与编码硬约束全部继承）。
+ * 展示今天起 3 天的在售场次：日期 Tab（默认今天）按行内 business_date 分组，
+ * 空窗日诚实显示"该日暂无"。信息分层：可投卡片置顶 + 全量 compact 对照表；
+ * 编码硬约束：EV 数字永远只按正负红绿（诊断量非机会信号）、|EV|≥5% 独立琥珀
+ * 徽章、资格徽章蓝=可投/红=拒绝+原因/灰框=证据未知、新鲜度>30 分钟琥珀、
+ * T1 中性灰；选注篮 = 底部常驻条 + 右侧 Drawer（跨日可选，服务器校验唯一权威）。
+ * 票 18 增量：表头资格/欧共识/EV/books 与单固徽章接词典 tooltip。
  */
 
 type Selection = "h" | "d" | "a";
 
 const SELECTIONS: Selection[] = ["h", "d", "a"];
 const MAX_LEGS = 2;
+/** 场次窗口天数（票 wb-01：今天起 3 天，提前研究不赶当天截止）。 */
+const FIXTURES_WINDOW_DAYS = 3;
 
 const FLAG_LABELS: Record<string, string> = {
 	ev_deviation: "EV 偏差≥5%",
@@ -64,6 +66,49 @@ type Leg = {
 	odds: number;
 	single_eligible: boolean | null;
 };
+
+/** 北京时区业务日（YYYY-MM-DD）——与后端 beijing_business_date 同口径（全后端唯一出处）。 */
+function beijingBusinessDate(now: number): string {
+	return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
+function addDays(isoDate: string, days: number): string {
+	const date = new Date(`${isoDate}T00:00:00Z`);
+	date.setUTCDate(date.getUTCDate() + days);
+	return date.toISOString().slice(0, 10);
+}
+
+/**
+ * 行的归属业务日。行内 ``business_date`` 缺失（旧后端/旧快照）时按今天兜底——
+ * 双路径 e2e 兼容常驻旧后端，数据不因字段缺失而消失或炸页。
+ */
+function fixtureDay(fixture: TodayFixture, now: number): string {
+	return fixture.business_date ?? beijingBusinessDate(now);
+}
+
+/** Tab 的日期清单：今天起 3 天 ∪ 数据实际出现的业务日（时钟偏差时不丢单）。 */
+function dayTabs(fixtures: TodayFixture[], now: number): string[] {
+	const today = beijingBusinessDate(now);
+	const tabs = new Set([today, addDays(today, 1), addDays(today, 2)]);
+	for (const fixture of fixtures) {
+		tabs.add(fixtureDay(fixture, now));
+	}
+	return [...tabs].sort();
+}
+
+function dayLabel(isoDate: string, now: number): string {
+	const today = beijingBusinessDate(now);
+	if (isoDate === today) {
+		return "今天";
+	}
+	if (isoDate === addDays(today, 1)) {
+		return "明天";
+	}
+	if (isoDate === addDays(today, 2)) {
+		return "后天";
+	}
+	return isoDate.slice(5).replace("-", "月");
+}
 
 function oddsText(value: number | null | undefined): string {
 	return value === null || value === undefined ? "—" : value.toFixed(2);
@@ -247,7 +292,10 @@ function EligibleCard({
 	const selected = (sel: Selection) =>
 		legs.some((leg) => leg.fixture_id === fixture.fixture_id && leg.selection === sel);
 	return (
-		<article className="rounded-lg border border-border bg-card p-4" data-testid={`today-card-${fixture.fixture_id}`}>
+		<article
+			className="rounded-lg border border-border bg-card p-4"
+			data-testid={`fixtures-card-${fixture.fixture_id}`}
+		>
 			<div className="mb-2 flex items-center justify-between gap-2">
 				<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
 					{fixture.competition}
@@ -316,9 +364,13 @@ function EligibleCard({
 	);
 }
 
-export function TodayPage() {
-	const today = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
+export function FixturesPage() {
+	const fixturesQuery = useQuery({
+		queryKey: ["fixtures-window", FIXTURES_WINDOW_DAYS],
+		queryFn: () => fetchTodayFixtures(undefined, FIXTURES_WINDOW_DAYS),
+	});
 	const queryClient = useQueryClient();
+	const [selectedDay, setSelectedDay] = useState<string | null>(null);
 	const [legs, setLegs] = useState<Leg[]>([]);
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [stake, setStake] = useState("100");
@@ -327,10 +379,15 @@ export function TodayPage() {
 	const [message, setMessage] = useState<string | null>(null);
 	const now = Date.now();
 
-	const fixtures = today.data ?? [];
-	const eligible = fixtures.filter((fixture) => isPickable(fixture, now));
-	const joinedCount = fixtures.filter((fixture) => fixture.joined).length;
-	const jcAge = fixtures
+	const fixtures = fixturesQuery.data ?? [];
+	const tabs = dayTabs(fixtures, now);
+	// 默认今天；数据到达前 selectedDay 为空 → 落到第一个 Tab（即今天）
+	const activeDay =
+		selectedDay !== null && tabs.includes(selectedDay) ? selectedDay : (tabs[0] ?? beijingBusinessDate(now));
+	const dayFixtures = fixtures.filter((fixture) => fixtureDay(fixture, now) === activeDay);
+	const eligible = dayFixtures.filter((fixture) => isPickable(fixture, now));
+	const joinedCount = dayFixtures.filter((fixture) => fixture.joined).length;
+	const jcAge = dayFixtures
 		.map((fixture) => minutesAgo(fixture.jc_updated_at, now))
 		.filter((age): age is number => age !== null)
 		.sort((a, b) => a - b)
@@ -393,22 +450,23 @@ export function TodayPage() {
 	});
 
 	return (
-		<AppShell title="今日">
+		<AppShell title="场次">
 			<div className="pb-24">
 				<header className="mb-5">
 					<div className="flex flex-wrap items-baseline justify-between gap-3">
 						<p className="text-sm text-muted-foreground">
-							竞彩价对照欧洲共识（Shin 去水）。EV 是市场共识的诊断量，不是机会信号；红涨绿跌，|EV|≥5% 标偏差。
+							今天起 3 天的在售场次。竞彩价对照欧洲共识（Shin 去水）。EV
+							是市场共识的诊断量，不是机会信号；红涨绿跌，|EV|≥5% 标偏差。
 						</p>
-						{/* 页头全局数据健康（票 04）：竞彩报价年龄（可推导）+ 欧赔接入覆盖 */}
-						<div className="flex items-center gap-3 text-xs" data-testid="today-data-health">
+						{/* 页头全局数据健康（票 04）：竞彩报价年龄（可推导）+ 欧赔接入覆盖（按所选日） */}
+						<div className="flex items-center gap-3 text-xs" data-testid="fixtures-data-health">
 							{jcAge === undefined ? (
 								<span className="text-muted-foreground">竞彩报价 —</span>
 							) : (
 								<span className={jcAge > 30 ? "text-warning" : "text-muted-foreground"}>竞彩报价 {jcAge}分钟前</span>
 							)}
 							<span className="text-muted-foreground">
-								欧赔 已接入 {joinedCount}/{fixtures.length} 场
+								欧赔 已接入 {joinedCount}/{dayFixtures.length} 场
 							</span>
 						</div>
 					</div>
@@ -421,17 +479,17 @@ export function TodayPage() {
 				{message ? (
 					<div
 						role="status"
-						data-testid="today-message"
+						data-testid="fixtures-message"
 						className="fixed inset-x-0 bottom-16 z-50 mx-auto w-fit max-w-[min(92vw,42rem)] rounded-md bg-muted px-3 py-1.5 text-sm text-foreground shadow-sm"
 					>
 						{message}
 					</div>
 				) : null}
 
-				{today.isPending ? (
+				{fixturesQuery.isPending ? (
 					// 加载骨架（票 14 验收）：形状与信息分层同构，sr-only 文本给读屏
-					<div data-testid="today-loading" className="space-y-4">
-						<span className="sr-only">加载今日场次…</span>
+					<div data-testid="fixtures-loading" className="space-y-4">
+						<span className="sr-only">加载场次…</span>
 						<div className="h-5 w-64 animate-pulse rounded bg-muted" />
 						<div className="grid gap-3 sm:grid-cols-2">
 							<div className="h-36 animate-pulse rounded-lg bg-muted" />
@@ -441,157 +499,198 @@ export function TodayPage() {
 					</div>
 				) : null}
 
-				{today.isError ? (
+				{fixturesQuery.isError ? (
 					// 票 13：后端不可用态——保留启动/灌数指引 + 重试（服务器校验仍是唯一权威）
 					<EmptyState
 						variant="backend-unavailable"
-						message="连不上后端，今日场次加载失败。"
+						message="连不上后端，场次加载失败。"
 						hint={
 							<>
 								用 <code>task server</code> 启动 API；首次使用先跑 <code>task ingest-jingcai</code> 拉取竞彩数据。
 							</>
 						}
-						action={{ label: "重试", onClick: () => void today.refetch() }}
+						action={{ label: "重试", onClick: () => void fixturesQuery.refetch() }}
 					/>
 				) : null}
 
-				{today.data && today.data.length === 0 ? (
+				{fixturesQuery.data && fixturesQuery.data.length === 0 ? (
 					// 票 13：无数据态——为何空 + 何时有 + 刷新
 					<EmptyState
 						variant="no-data"
-						message="当日无在售场次。"
+						message="3 天内无在售场次。"
 						hint={
 							<>
 								场次通常在竞彩当日开售前更新；刚搭好环境先跑 <code>task ingest-jingcai</code>。
 							</>
 						}
-						action={{ label: "刷新", onClick: () => void today.refetch() }}
+						action={{ label: "刷新", onClick: () => void fixturesQuery.refetch() }}
 					/>
 				) : null}
 
-				{today.data && today.data.length > 0 ? (
+				{fixturesQuery.data && fixturesQuery.data.length > 0 ? (
 					<>
-						<section aria-labelledby="today-eligible-heading" className="mb-8" data-testid="today-eligible">
-							<div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-								<h2 id="today-eligible-heading" className="text-sm font-medium">
-									可投场次 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{eligible.length}</span>
-									<span className="ml-2 text-xs font-normal text-muted-foreground">
-										可投 = 证据链完整且新鲜；不等于必成交
-									</span>
-								</h2>
-								<span className="text-xs text-muted-foreground" data-testid="today-not-eligible-count">
-									{fixtures.length - eligible.length} 场不可投（停售/已开赛/证据未知）
-								</span>
-							</div>
-							{eligible.length === 0 ? (
-								<p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-									当前无可投场次——可投要求在售、未开赛且证据新鲜；竞彩通常 10 点后上架。
-								</p>
-							) : (
-								<div className="grid gap-3 sm:grid-cols-2">
-									{eligible.map((fixture) => (
-										<EligibleCard key={fixture.fixture_id} fixture={fixture} now={now} legs={legs} onPick={pick} />
-									))}
-								</div>
-							)}
-						</section>
+						{/* 日期 Tab（票 wb-01）：默认今天；空窗日保留 Tab（计数 0）诚实可见 */}
+						<fieldset className="mb-5 flex flex-wrap gap-1.5" data-testid="fixtures-day-tabs">
+							<legend className="sr-only">业务日</legend>
+							{tabs.map((day) => {
+								const count = fixtures.filter((fixture) => fixtureDay(fixture, now) === day).length;
+								return (
+									<button
+										key={day}
+										type="button"
+										data-testid={`fixtures-day-tab-${day}`}
+										aria-pressed={day === activeDay}
+										className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+											day === activeDay
+												? "border-primary bg-primary font-medium text-primary-foreground"
+												: "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+										}`}
+										onClick={() => setSelectedDay(day)}
+									>
+										{dayLabel(day, now)}
+										<span className={`${TABULAR_NUMS} ml-1.5 text-xs`}>{count}</span>
+									</button>
+								);
+							})}
+						</fieldset>
 
-						<section aria-labelledby="today-all-heading">
-							<h2 id="today-all-heading" className="mb-3 text-sm font-medium">
-								全部场次 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{fixtures.length}</span>
-							</h2>
-							<div className="overflow-x-auto rounded-lg border border-border">
-								{/* 票 04 表格结构：资格列第 4 位（筛行信号前置）；compact 密度，1440 无横滚 */}
-								<Table data-density="compact">
-									<TableHeader>
-										<TableRow>
-											<TableHead>时间</TableHead>
-											<TableHead>编号</TableHead>
-											<TableHead>对阵</TableHead>
-											{/* 票 18：表头指标名接词典 tooltip（悬停/聚焦看定义+判读方向） */}
-											<TableHead>
-												<GlossaryTerm id="eligibility">资格</GlossaryTerm>
-											</TableHead>
-											<TableHead>竞彩 H/D/A</TableHead>
-											<TableHead>
-												<GlossaryTerm id="eu-consensus">欧共识</GlossaryTerm>
-											</TableHead>
-											<TableHead>
-												<GlossaryTerm id="ev">EV H/D/A</GlossaryTerm>
-											</TableHead>
-											<TableHead className="text-center">
-												<GlossaryTerm id="books">books</GlossaryTerm>
-											</TableHead>
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{fixtures.map((fixture) => {
-											const canPick = isPickable(fixture, now);
-											const cd = kickoffInfo(fixture.kickoff_utc, now);
-											const jcAgeRow = minutesAgo(fixture.jc_updated_at, now);
-											return (
-												// 停售/已开赛/证据未知 → 禁用 + 行弱化（票 04 规则前置；弱化用背景 wash——
-												// opacity 会把整行文字对比压到 AA 以下，过不了 axe 零 serious 基调）
-												<TableRow
-													key={fixture.fixture_id}
-													data-testid="today-row"
-													className={canPick ? "" : "bg-muted/50"}
-												>
-													<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
-														{localTime(fixture.kickoff_utc)}
-														{cd.passed ? <span className="ml-1 text-warning">已开赛</span> : null}
-														<br />
-														<span className="text-xs">
-															{fixture.competition}
-															{fixture.tier === "tier1" ? (
-																<span className="ml-1 rounded border border-border px-1 text-muted-foreground">T1</span>
-															) : null}
-															{jcAgeRow === null ? null : (
-																<span className={jcAgeRow > 30 ? "text-warning" : ""}> · 彩 {jcAgeRow}分钟前</span>
-															)}
-														</span>
-													</TableCell>
-													<TableCell className="whitespace-nowrap">{fixture.match_code}</TableCell>
-													<TableCell className="whitespace-nowrap font-medium">
-														{fixture.home_team} vs {fixture.away_team}
-													</TableCell>
-													<TableCell>
-														<EligibilityBadge fixture={fixture} />
-													</TableCell>
-													<TableCell>
-														<span className="flex gap-1">
-															{SELECTIONS.map((sel) => (
-																<OddsButton
-																	key={sel}
-																	fixture={fixture}
-																	selection={sel}
-																	value={fixture.jc_odds[sel]}
-																	selected={legs.some(
-																		(leg) => leg.fixture_id === fixture.fixture_id && leg.selection === sel,
-																	)}
-																	disabled={!canPick}
-																	onPick={pick}
-																	testid={`pick-${fixture.fixture_id}-${sel}`}
-																/>
-															))}
-														</span>
-													</TableCell>
-													<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
-														{fixture.eu_prob
-															? `${((fixture.eu_prob.h ?? 0) * 100).toFixed(0)}/${((fixture.eu_prob.d ?? 0) * 100).toFixed(0)}/${((fixture.eu_prob.a ?? 0) * 100).toFixed(0)}`
-															: "—"}
-													</TableCell>
-													<TableCell className={`${TABULAR_NUMS} whitespace-nowrap`} data-testid="ev-cell">
-														{fixture.ev ? SELECTIONS.map((sel) => <EvSpan key={sel} value={fixture.ev?.[sel]} />) : "—"}
-													</TableCell>
-													<TableCell className={`${TABULAR_NUMS} text-center`}>{fixture.books || "—"}</TableCell>
+						{dayFixtures.length === 0 ? (
+							// 空窗日（票 wb-01）：后两日开售前常无数据——诚实占位，不静默隐藏 Tab
+							<p
+								data-testid="fixtures-day-empty"
+								className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground"
+							>
+								{dayLabel(activeDay, now)}暂无在售场次——竞彩按日开售，后两日场次随开售逐步入库。
+							</p>
+						) : (
+							<>
+								<section aria-labelledby="fixtures-eligible-heading" className="mb-8" data-testid="fixtures-eligible">
+									<div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+										<h2 id="fixtures-eligible-heading" className="text-sm font-medium">
+											可投场次 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{eligible.length}</span>
+											<span className="ml-2 text-xs font-normal text-muted-foreground">
+												可投 = 证据链完整且新鲜；不等于必成交
+											</span>
+										</h2>
+										<span className="text-xs text-muted-foreground" data-testid="fixtures-not-eligible-count">
+											{dayFixtures.length - eligible.length} 场不可投（停售/已开赛/证据未知）
+										</span>
+									</div>
+									{eligible.length === 0 ? (
+										<p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+											当前无可投场次——可投要求在售、未开赛且证据新鲜；竞彩通常 10 点后上架。
+										</p>
+									) : (
+										<div className="grid gap-3 sm:grid-cols-2">
+											{eligible.map((fixture) => (
+												<EligibleCard key={fixture.fixture_id} fixture={fixture} now={now} legs={legs} onPick={pick} />
+											))}
+										</div>
+									)}
+								</section>
+
+								<section aria-labelledby="fixtures-all-heading">
+									<h2 id="fixtures-all-heading" className="mb-3 text-sm font-medium">
+										全部场次 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{dayFixtures.length}</span>
+									</h2>
+									<div className="overflow-x-auto rounded-lg border border-border">
+										{/* 票 04 表格结构：资格列第 4 位（筛行信号前置）；compact 密度，1440 无横滚 */}
+										<Table data-density="compact">
+											<TableHeader>
+												<TableRow>
+													<TableHead>时间</TableHead>
+													<TableHead>编号</TableHead>
+													<TableHead>对阵</TableHead>
+													{/* 票 18：表头指标名接词典 tooltip（悬停/聚焦看定义+判读方向） */}
+													<TableHead>
+														<GlossaryTerm id="eligibility">资格</GlossaryTerm>
+													</TableHead>
+													<TableHead>竞彩 H/D/A</TableHead>
+													<TableHead>
+														<GlossaryTerm id="eu-consensus">欧共识</GlossaryTerm>
+													</TableHead>
+													<TableHead>
+														<GlossaryTerm id="ev">EV H/D/A</GlossaryTerm>
+													</TableHead>
+													<TableHead className="text-center">
+														<GlossaryTerm id="books">books</GlossaryTerm>
+													</TableHead>
 												</TableRow>
-											);
-										})}
-									</TableBody>
-								</Table>
-							</div>
-						</section>
+											</TableHeader>
+											<TableBody>
+												{dayFixtures.map((fixture) => {
+													const canPick = isPickable(fixture, now);
+													const cd = kickoffInfo(fixture.kickoff_utc, now);
+													const jcAgeRow = minutesAgo(fixture.jc_updated_at, now);
+													return (
+														// 停售/已开赛/证据未知 → 禁用 + 行弱化（票 04 规则前置；弱化用背景 wash——
+														// opacity 会把整行文字对比压到 AA 以下，过不了 axe 零 serious 基调）
+														<TableRow
+															key={fixture.fixture_id}
+															data-testid="fixtures-row"
+															className={canPick ? "" : "bg-muted/50"}
+														>
+															<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
+																{localTime(fixture.kickoff_utc)}
+																{cd.passed ? <span className="ml-1 text-warning">已开赛</span> : null}
+																<br />
+																<span className="text-xs">
+																	{fixture.competition}
+																	{fixture.tier === "tier1" ? (
+																		<span className="ml-1 rounded border border-border px-1 text-muted-foreground">
+																			T1
+																		</span>
+																	) : null}
+																	{jcAgeRow === null ? null : (
+																		<span className={jcAgeRow > 30 ? "text-warning" : ""}> · 彩 {jcAgeRow}分钟前</span>
+																	)}
+																</span>
+															</TableCell>
+															<TableCell className="whitespace-nowrap">{fixture.match_code}</TableCell>
+															<TableCell className="whitespace-nowrap font-medium">
+																{fixture.home_team} vs {fixture.away_team}
+															</TableCell>
+															<TableCell>
+																<EligibilityBadge fixture={fixture} />
+															</TableCell>
+															<TableCell>
+																<span className="flex gap-1">
+																	{SELECTIONS.map((sel) => (
+																		<OddsButton
+																			key={sel}
+																			fixture={fixture}
+																			selection={sel}
+																			value={fixture.jc_odds[sel]}
+																			selected={legs.some(
+																				(leg) => leg.fixture_id === fixture.fixture_id && leg.selection === sel,
+																			)}
+																			disabled={!canPick}
+																			onPick={pick}
+																			testid={`pick-${fixture.fixture_id}-${sel}`}
+																		/>
+																	))}
+																</span>
+															</TableCell>
+															<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
+																{fixture.eu_prob
+																	? `${((fixture.eu_prob.h ?? 0) * 100).toFixed(0)}/${((fixture.eu_prob.d ?? 0) * 100).toFixed(0)}/${((fixture.eu_prob.a ?? 0) * 100).toFixed(0)}`
+																	: "—"}
+															</TableCell>
+															<TableCell className={`${TABULAR_NUMS} whitespace-nowrap`} data-testid="ev-cell">
+																{fixture.ev
+																	? SELECTIONS.map((sel) => <EvSpan key={sel} value={fixture.ev?.[sel]} />)
+																	: "—"}
+															</TableCell>
+															<TableCell className={`${TABULAR_NUMS} text-center`}>{fixture.books || "—"}</TableCell>
+														</TableRow>
+													);
+												})}
+											</TableBody>
+										</Table>
+									</div>
+								</section>
+							</>
+						)}
 					</>
 				) : null}
 			</div>

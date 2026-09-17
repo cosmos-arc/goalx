@@ -4,13 +4,12 @@ import type { AppRoute } from "../lib/ui";
 import { ThemeToggle } from "./theme-toggle";
 
 /**
- * 票 03 定稿的两级扁平导航（票 13 落地）：不设组标题。
- * 一级 = 高频页（总览/今日/投注/历史/验证/资金）；次级 = 低处页脚位（词典/复核/设置）。
- * 命名即 03 的用户裁决清单，实现票不得改名。
+ * 票 03 定稿的两级扁平导航（票 13 落地；票 wb-01 今日→场次）：不设组标题。
+ * 一级 = 高频页（总览/场次/投注/历史/验证/资金）；次级 = 低处页脚位（词典/复核/设置）。
  */
 const PRIMARY_NAV = [
 	{ to: "/", label: "总览" },
-	{ to: "/today", label: "今日" },
+	{ to: "/fixtures", label: "场次" },
 	{ to: "/bets", label: "投注" },
 	{ to: "/history", label: "历史" },
 	{ to: "/validation", label: "验证" },

@@ -39,7 +39,7 @@ type TodoItem = {
 	urgent?: { text: string; tone: boolean } | undefined;
 	/** 就地指引（可含命令），不做跳转。 */
 	hint?: ReactNode | undefined;
-	to?: "/today" | "/bets";
+	to?: "/fixtures" | "/bets";
 	actionLabel?: string;
 };
 
@@ -127,7 +127,7 @@ export function OverviewPage() {
 	const resultIds = new Set(results.map((row) => row.fixture_id));
 	const todos: TodoItem[] = [];
 
-	// ① 未锁定建议：最早开赛 <2h 琥珀紧迫倒计时 → /today
+	// ① 未锁定建议：最早开赛 <2h 琥珀紧迫倒计时 → /fixtures（票 wb-01 起路径）
 	const suggestions = bets.filter((bet) => !bet.purchased);
 	const kickoffById = new Map(fixtures.map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));
 	let earliest: number | null = null;
@@ -157,8 +157,8 @@ export function OverviewPage() {
 						: minutes < 120
 							? { text: `最早开赛 ${minutes} 分钟后`, tone: true }
 							: { text: `最早开赛 ${Math.floor(minutes / 60)} 小时后`, tone: false },
-			to: "/today",
-			actionLabel: "去今日",
+			to: "/fixtures",
+			actionLabel: "去场次",
 		});
 	}
 
@@ -374,7 +374,7 @@ export function OverviewPage() {
 								</div>
 
 								<Link
-									to="/today"
+									to="/fixtures"
 									className="rounded-lg border border-border p-4 transition-colors hover:bg-muted"
 									data-testid="card-pickable"
 								>
@@ -385,7 +385,7 @@ export function OverviewPage() {
 									<p className="mt-1 text-xs text-muted-foreground">
 										可投 = 在售且证据完整新鲜；多 = 选择余地，不等于该投。
 									</p>
-									<p className="mt-2 text-xs text-primary">去今日看盘 →</p>
+									<p className="mt-2 text-xs text-primary">去场次看盘 →</p>
 								</Link>
 
 								{/* 纸面区（票 05 红线：带"纸面"徽章，与真金不同区不并排） */}
@@ -398,8 +398,8 @@ export function OverviewPage() {
 									) : paperBets.length === 0 ? (
 										<p className="text-sm text-muted-foreground" data-testid="paper-guide">
 											还没有纸面记录——
-											<Link to="/today" className="text-primary underline-offset-2 hover:underline">
-												从今日页建第一笔建议
+											<Link to="/fixtures" className="text-primary underline-offset-2 hover:underline">
+												从场次页建第一笔建议
 											</Link>
 											，模拟收益会在这里累积。
 										</p>

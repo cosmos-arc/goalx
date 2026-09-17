@@ -12,10 +12,10 @@ export const SELECTION_LABELS: Record<string, string> = {
 	a: "客胜",
 };
 
-/** 票 03 定稿的九条路由（IA 命名词典）：总览/今日/投注/历史/验证/资金/词典/复核/设置。 */
+/** 路由词典型（IA 命名）：总览/场次/投注/历史/验证/资金/词典/复核/设置（票 wb-01 起今日→场次）。 */
 export type AppRoute =
 	| "/"
-	| "/today"
+	| "/fixtures"
 	| "/bets"
 	| "/history"
 	| "/validation"

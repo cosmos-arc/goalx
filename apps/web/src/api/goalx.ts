@@ -37,10 +37,11 @@ async function unwrap<T>(call: Promise<FetchResult<T>>): Promise<T> {
 	return data;
 }
 
-export function fetchTodayFixtures(date?: string): Promise<TodayFixture[]> {
+/** 场次列表（票 wb-01）：days>1 时返回 [date, date+days-1] 业务日窗口，行内带 business_date。 */
+export function fetchTodayFixtures(date?: string, days?: number): Promise<TodayFixture[]> {
 	return unwrap(
 		client.GET("/api/v1/fixtures/today", {
-			params: { query: { date: date ?? null } },
+			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
 		}),
 	);
 }

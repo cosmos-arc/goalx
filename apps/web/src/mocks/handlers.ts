@@ -18,9 +18,15 @@ function daysAgoIso(days: number): string {
 	return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
+/** 北京时区业务日（与后端 beijing_business_date 同口径）。 */
+function beijingBusinessDate(now: number): string {
+	return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
 /**
  * 票 14 今日页 mock：时间相对 now 动态生成（原型 today-proto-data.ts 的场景思路），
  * 三场覆盖 可投+单固+偏差/样本少、可投+仅串关+过期报价、停售拒绝。
+ * 票 wb-01：行内带 business_date；加一场"明天"场次（fixture 4，可投）驱动日期 Tab。
  */
 export const todayFixture = [
 	{
@@ -30,6 +36,7 @@ export const todayFixture = [
 		tier: "tier1",
 		home_team: "阿森纳",
 		away_team: "切尔西",
+		business_date: beijingBusinessDate(Date.now()),
 		kickoff_utc: hoursFromNow(2.5),
 		is_single: true,
 		joined: true,
@@ -56,6 +63,7 @@ export const todayFixture = [
 		tier: "tier1",
 		home_team: "利物浦",
 		away_team: "曼城",
+		business_date: beijingBusinessDate(Date.now()),
 		kickoff_utc: hoursFromNow(1.5),
 		is_single: false,
 		joined: true,
@@ -82,6 +90,7 @@ export const todayFixture = [
 		tier: "tier2",
 		home_team: "A 队",
 		away_team: "B 队",
+		business_date: beijingBusinessDate(Date.now()),
 		kickoff_utc: hoursFromNow(5),
 		is_single: true,
 		joined: true,
@@ -99,6 +108,33 @@ export const todayFixture = [
 			single_eligible: true,
 			jc_source_updated_at: null,
 			eu_books: 0,
+		},
+	},
+	{
+		fixture_id: 4,
+		match_code: "周日004",
+		competition: "西甲",
+		tier: "tier2",
+		home_team: "C 队",
+		away_team: "D 队",
+		business_date: beijingBusinessDate(Date.now() + 86_400_000),
+		kickoff_utc: hoursFromNow(26),
+		is_single: true,
+		joined: true,
+		jc_odds: { h: 2.4, d: 3.3, a: 2.8 },
+		jc_updated_at: minutesAgoIso(20),
+		books: 5,
+		eu_prob: { h: 0.4, d: 0.27, a: 0.33 },
+		ev: { h: -0.04, d: -0.109, a: -0.076 },
+		flags: [],
+		had_quote: {
+			as_of: minutesAgoIso(1),
+			status: "valid",
+			reasons: [],
+			sale_state: "on_sale",
+			single_eligible: true,
+			jc_source_updated_at: minutesAgoIso(20),
+			eu_books: 5,
 		},
 	},
 ] as const;
@@ -221,7 +257,14 @@ export const bankrollFixture = {
 
 export const handlers = [
 	http.get("*/api/v1/status", () => HttpResponse.json(statusFixture)),
-	http.get("*/api/v1/fixtures/today", () => HttpResponse.json(todayFixture)),
+	// 票 wb-01：days>1 返回多日窗口（含"明天"的 fixture 4）；无 days = 单日（3 场），
+	// 与真实 API 同口径——单日消费方（总览/投注/历史）不看到跨日数据
+	http.get("*/api/v1/fixtures/today", ({ request }) => {
+		const days = Number(new URL(request.url).searchParams.get("days") ?? 1);
+		const today = beijingBusinessDate(Date.now());
+		const rows = days > 1 ? todayFixture : todayFixture.filter((row) => row.business_date === today);
+		return HttpResponse.json(rows);
+	}),
 	http.get("*/api/v1/bets", () => HttpResponse.json(betsFixture)),
 	http.post("*/api/v1/bet-slips", () =>
 		HttpResponse.json(

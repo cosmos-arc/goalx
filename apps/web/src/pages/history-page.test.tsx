@@ -52,6 +52,7 @@ function daysAgoIso(days: number): string {
 function makeTodayFixture(overrides: Partial<TodayFixture> & { fixture_id: number }): TodayFixture {
 	return {
 		match_code: "周日001",
+		business_date: new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10),
 		competition: "英超",
 		tier: "tier2",
 		home_team: "主队",
