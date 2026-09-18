@@ -2,8 +2,8 @@
 源D 结果页采集测试（票 42）：固定 fixture HTML 解析 + 注入 client 的同步链路。
 
 fixture 为 2026-09-18 实测页面裁剪（scripts/styles 剥离，比赛行保留原样）：
-- caiguo_2026-09-16.html：16 完场（含让球/无让球/大比分）+ 1 推迟（status=0）；
-- caiguo_2026-09-17.html：11 完场。
+- caiguo_2026-09-16.html.txt：16 完场（含让球/无让球/大比分）+ 1 推迟（status=0）；
+- caiguo_2026-09-17.html.txt：11 完场。
 测试不打真实外网——HTTP 层用 httpx.MockTransport 仿 301 → /?e= 与 GB18030 响应。
 """
 
@@ -28,8 +28,8 @@ from goalx_backend.data.ingest import caiguo
 from goalx_backend.models import DrawResultInput, MatchCodeInput
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-PAGE_0916 = (FIXTURES / "caiguo_2026-09-16.html").read_text(encoding="utf-8")
-PAGE_0917 = (FIXTURES / "caiguo_2026-09-17.html").read_text(encoding="utf-8")
+PAGE_0916 = (FIXTURES / "caiguo_2026-09-16.html.txt").read_text(encoding="utf-8")
+PAGE_0917 = (FIXTURES / "caiguo_2026-09-17.html.txt").read_text(encoding="utf-8")
 NOW = datetime(2026, 9, 18, 5, 30, tzinfo=UTC)  # 实测采集当日清晨
 
 
