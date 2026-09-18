@@ -1,0 +1,5 @@
+# CodeQL 扫描配置：排除静态测试数据。
+# apps/backend/tests/fixtures/** 是外部页面快照（测试输入，非仓库源码），
+# 其内联脚本会触发 XSS/URL 宿主校验误报（PR #26 实例：10 条全在 fixture）。
+paths_exclude:
+  - apps/backend/tests/fixtures/**
