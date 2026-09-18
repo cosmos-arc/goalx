@@ -458,6 +458,25 @@ export const drawResultsFixture = [
 	},
 ] as const;
 
+/** 票 42：赛果同步状态 mock——上次同步带待人工清单（not_finished/stored_differs）。 */
+export const drawSyncFixture = {
+	last_run: {
+		source: "500.com",
+		observed_at: "2026-09-18T05:30:00+00:00",
+		business_dates: ["2026-09-16"],
+		pages: 1,
+		fetched: 16,
+		imported: 12,
+		unchanged: 3,
+		unmatched: 0,
+		pending_manual: [
+			{ business_date: "2026-09-16", code: "周三014", reason: "not_finished" },
+			{ business_date: "2026-09-16", code: "周三009", reason: "stored_differs" },
+		],
+	},
+	pending_results: 2,
+} as const;
+
 /**
  * 票 wb-02 研究页 mock：fixture 1 的逐书赔率（两家全三向 + 一家缺一向）、
  * 去水共识、模型概率/EV；pinnacle 主胜 1.60（隐含 62.5%）相对共识 53% 偏高
@@ -781,6 +800,8 @@ handlers.push(
 	}),
 	http.get("*/api/v1/bet-slips", () => HttpResponse.json(slipsFixture)),
 	http.get("*/api/v1/draw-results", () => HttpResponse.json(drawResultsFixture)),
+	http.get("*/api/v1/draw-sync/status", () => HttpResponse.json(drawSyncFixture)),
+	http.post("*/api/v1/draw-sync/run", () => HttpResponse.json(drawSyncFixture)),
 	http.post("*/api/v1/bets", () => HttpResponse.json(betsFixture[1], { status: 201 })),
 	http.get("*/api/v1/backtest/runs", () => HttpResponse.json(backtestRunsFixture)),
 	http.get("*/api/v1/validation/progress", () => HttpResponse.json(validationProgressFixture)),

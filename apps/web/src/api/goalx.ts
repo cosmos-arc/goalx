@@ -17,6 +17,9 @@ export type BetEvSnapshot = Schemas["BetEvSnapshotView"];
 export type Slip = Schemas["SlipView"];
 export type DrawResultView = Schemas["DrawResultView"];
 export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];
+export type DrawSyncStatus = Schemas["DrawSyncStatusView"];
+export type DrawSyncRun = Schemas["DrawSyncRunView"];
+export type DrawSyncPendingItem = Schemas["DrawSyncPendingItem"];
 export type SettlementRun = Schemas["SettlementRunResponse"];
 export type Bankroll = Schemas["BankrollResponse"];
 export type BankrollEvent = Schemas["BankrollEventView"];
@@ -142,6 +145,16 @@ export function fetchDrawResults(fixtureId?: number): Promise<DrawResultView[]> 
 			params: { query: fixtureId === undefined ? {} : { fixture_id: fixtureId } },
 		}),
 	);
+}
+
+/** 赛果同步状态（票 42）：上次同步元信息 + 当前待出赛果数。 */
+export function fetchDrawSyncStatus(): Promise<DrawSyncStatus> {
+	return unwrap(client.GET("/api/v1/draw-sync/status"));
+}
+
+/** 主动触发一次赛果自动同步（返回触发后的最新状态）。 */
+export function runDrawSync(): Promise<DrawSyncStatus> {
+	return unwrap(client.POST("/api/v1/draw-sync/run"));
 }
 
 export function runSettlement(): Promise<SettlementRun> {

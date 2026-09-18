@@ -4,15 +4,16 @@ import {
 	type Bet,
 	fetchBets,
 	fetchDrawResults,
+	fetchDrawSyncStatus,
 	fetchSlips,
 	fetchTodayFixtures,
 	importDrawResults,
 	previewDrawResults,
 	recordPurchase,
+	runDrawSync,
 	runSettlement,
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
-import { EmptyState } from "../components/empty-state";
 import { Badge } from "../components/ui/badge";
 import {
 	Drawer,
@@ -32,8 +33,8 @@ import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * 组头计数+待办提示、行内状态徽章（胜=profit 红、负=loss 绿，与红涨绿跌一致；
  * 底纹徽章文字用前景色——票 15 对比度结论）、时间倒序。
  * 真实回录 = 右侧 Drawer（实际金额/逐腿赔率/时点 + 提交前"建议快照 vs 实际条款"对照，
- * 金额≠建议时提示按实际条款记账）。赛果区按 06 预裁决 = 同步优先：同步面板本票为
- * 降级态（自动同步端点随票 10 排期，后端源属 goalx-quant 地图），人工录入降级为
+ * 金额≠建议时提示按实际条款记账）。赛果区按 06 预裁决 = 同步优先：票 42 点亮自动
+ * 同步（源D 结果页，状态 + 主动触发；异常场次进待人工清单），人工录入保留为
  * 兜底/更正通道（更正必填原因 + 影响预览，ADR-0001 冲正/重算语义不变）。
  * 规则前置补充：锁定时对应场次开赛 <5 分钟先警示，不阻止——警示后再次点击继续。
  * 零 contract 变更；服务器校验仍为唯一权威。
@@ -228,6 +229,7 @@ export function BetsPage() {
 
 	const bets = useQuery({ queryKey: ["bets"], queryFn: () => fetchBets() });
 	const drawResults = useQuery({ queryKey: ["draw-results"], queryFn: () => fetchDrawResults() });
+	const drawSync = useQuery({ queryKey: ["draw-sync"], queryFn: () => fetchDrawSyncStatus() });
 	const today = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
 	const slips = useQuery({ queryKey: ["slips"], queryFn: () => fetchSlips() });
 	const now = Date.now();
@@ -238,6 +240,7 @@ export function BetsPage() {
 	function refresh() {
 		void queryClient.invalidateQueries({ queryKey: ["bets"] });
 		void queryClient.invalidateQueries({ queryKey: ["draw-results"] });
+		void queryClient.invalidateQueries({ queryKey: ["draw-sync"] });
 		void queryClient.invalidateQueries({ queryKey: ["bankroll"] });
 		void queryClient.invalidateQueries({ queryKey: ["validation-progress"] });
 		void queryClient.invalidateQueries({ queryKey: ["slips"] });
@@ -368,6 +371,20 @@ export function BetsPage() {
 			refresh();
 		},
 		onError: (error) => setMessage(`结算失败：${errorText(error)}`),
+	});
+
+	const syncNow = useMutation({
+		mutationFn: () => runDrawSync(),
+		onSuccess: (status) => {
+			const run = status.last_run;
+			setMessage(
+				run
+					? `同步完成：新落库 ${run.imported} 场、一致 ${run.unchanged} 场、待人工 ${run.pending_manual.length} 场（来源 ${run.source}）`
+					: "同步完成（无记录）",
+			);
+			refresh();
+		},
+		onError: (error) => setMessage(`同步失败：${errorText(error)}`),
 	});
 
 	function drawPayload() {
@@ -582,18 +599,56 @@ export function BetsPage() {
 						开奖为唯一事实源（ADR-0001）；更正保留来源、旧新值与原因，已结记录经重算与差额冲正更新。
 					</p>
 
-					{/* 同步状态区：本票后端源未接入 → 降级态（同步端点随票 10 排期，后端源属 goalx-quant 地图） */}
-					<div data-testid="sync-status" className="mb-4">
-						<EmptyState
-							variant="not-available"
-							message="自动同步待后端源接入——当前人工兜底。"
-							hint={
-								<>
-									接入后这里显示上次同步时间/来源与主动触发按钮（同步端点随票 10 排期）；已录赛果{" "}
-									<span className={TABULAR_NUMS}>{drawResults.data?.length ?? 0}</span> 场。
-								</>
-							}
-						/>
+					{/* 同步状态区（票 42 点亮）：上次同步元信息 + 待人工清单 + 主动触发 */}
+					<div data-testid="sync-status" className="mb-4 rounded-md border border-border bg-card px-3 py-2.5 text-sm">
+						{drawSync.isError ? (
+							<p className="text-xs text-muted-foreground">同步状态加载失败——同步触发仍可用。</p>
+						) : drawSync.data ? (
+							<>
+								<div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+									{drawSync.data.last_run ? (
+										<>
+											<span>
+												上次同步 <span className={TABULAR_NUMS}>{shortTime(drawSync.data.last_run.observed_at)}</span>{" "}
+												（来源 {drawSync.data.last_run.source}）
+											</span>
+											<span className={TABULAR_NUMS}>
+												新 {drawSync.data.last_run.imported} / 一致 {drawSync.data.last_run.unchanged}
+											</span>
+										</>
+									) : (
+										<span className="text-muted-foreground">从未同步</span>
+									)}
+									<span className={TABULAR_NUMS}>待出 {drawSync.data.pending_results} 场</span>
+									<button
+										type="button"
+										data-testid="sync-trigger"
+										className="ml-auto rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:opacity-50"
+										disabled={syncNow.isPending}
+										onClick={() => syncNow.mutate()}
+									>
+										{syncNow.isPending ? "同步中…" : "立即同步"}
+									</button>
+								</div>
+								{drawSync.data.last_run && drawSync.data.last_run.pending_manual.length > 0 ? (
+									<div className="mt-2 border-t border-border pt-2" data-testid="sync-pending-manual">
+										<p className="mb-1 text-xs text-muted-foreground">
+											待人工 {drawSync.data.last_run.pending_manual.length}{" "}
+											场（无效场次/对不上/与已存不一致——不同步，人工兜底）
+										</p>
+										<ul className="space-y-0.5 text-xs text-muted-foreground">
+											{drawSync.data.last_run.pending_manual.map((item) => (
+												<li key={`${item.business_date}-${item.code}`} className={TABULAR_NUMS}>
+													{item.business_date} {item.code}：{item.reason}
+												</li>
+											))}
+										</ul>
+									</div>
+								) : null}
+							</>
+						) : (
+							<p className="text-xs text-muted-foreground">同步状态加载中…</p>
+						)}
 					</div>
 
 					<div className="mb-4" data-testid="draw-pending">
