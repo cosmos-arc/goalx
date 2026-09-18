@@ -1925,6 +1925,10 @@
             "type": "integer",
             "title": "Books"
           },
+          "low_confidence": {
+            "type": "boolean",
+            "title": "Low Confidence"
+          },
           "probability": {
             "$ref": "#/components/schemas/SelectionTriple"
           }
@@ -1932,10 +1936,11 @@
         "type": "object",
         "required": [
           "books",
+          "low_confidence",
           "probability"
         ],
         "title": "ConsensusView",
-        "description": "去水共识（Shin）与参与 book 数（口径与场次列表页一致）。"
+        "description": "去水共识（Shin）与参与 book 数（口径与场次列表页一致）。\n\n``low_confidence``（票 39）：books < 阈值（默认 4，odds_math 常量）时共识\n可信度不足——展示层据此打琥珀低置信标注，不改概率本身。"
       },
       "CostItemView": {
         "properties": {

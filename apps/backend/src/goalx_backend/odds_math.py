@@ -6,6 +6,11 @@ from collections.abc import Iterable
 
 _MIN_OUTCOMES = 2
 
+# 共识分母护栏（票 39）：完整三向 book 数低于该值时共识打低置信标记。
+# 建议值 4（调研 odds-consensus-methodology.md §3.3/§5.1：亚洲联赛 book 覆盖
+# 缩水，分母 <4 时共识可信度不足），待人追认——调整只改这一个常量。
+LOW_CONFIDENCE_BOOK_THRESHOLD = 4
+
 
 def raw_implied(odds: float) -> float:
     """Overround-inclusive implied probability ``1/odds``."""
@@ -83,6 +88,13 @@ def consensus_odds(book_odds: Iterable[dict[str, float]]) -> tuple[float, ...] |
     if not per_selection or any(not prices for prices in per_selection):
         return None
     return tuple(sum(prices) / len(prices) for prices in per_selection)
+
+
+def consensus_low_confidence(
+    books: int, *, threshold: int = LOW_CONFIDENCE_BOOK_THRESHOLD
+) -> bool:
+    """共识分母护栏（票 39）：books < 阈值（默认 4）时共识打低置信标记。"""
+    return books < threshold
 
 
 def expected_value(probability: float, odds: float) -> float:
