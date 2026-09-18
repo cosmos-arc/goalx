@@ -1,8 +1,13 @@
 """
-CLV 跟踪与收盘对账（票 32；票 34 重订纳入边界与口径）。
+CLV 跟踪与收盘对账（票 32；票 34 重订纳入边界与口径；票 40 基准分层）。
 
 - CLV_proxy（概率域）= close_prob − 1/竞彩买入价；close 侧取 purpose=closing
-  的 odds_api 快照（多 book 完整三向共识 Shin）；
+  的 odds_api 快照（票 40 起三级取锚，基准来源随结果标注 close_basis）：
+  1. 主锚 Pinnacle（sharp 定价者，closing 行业无偏，单独 Shin）；
+  2. 辅锚 Betfair 交易所（back 价按佣金调整后归一化，佣金率参数化默认 2%）；
+  3. fallback 多 book 完整三向共识 Shin（分层前唯一口径）。
+  高 margin 书（如 1xBet/onexbet）只进共识、永不作锚（调研
+  odds-consensus-methodology.md §5.2 建议 1）；
 - 纳入边界（票 34/handoff）：closing 必须实际在该腿开赛前观测——
   有效观测时间（observed_at，旧行按源解释）> kickoff 的迟到快照一律排除；
 - 口径（票 34）：
@@ -11,6 +16,9 @@ CLV 跟踪与收盘对账（票 32；票 34 重订纳入边界与口径）。
     腿级 CLV 仅诊断；回归只用单关，不复制票级 profit 做独立样本；
   - 分母按冻结的决策身份去重（同 mode+同选项组合+同锁定赔率+同 placed_at
     的重试/拆分金额只计一次），原始 Bet 数另报；不用腿数凑 200 注分母。
+- 口径切换（票 40）：分层只对新对账行生效，历史行 close_basis=NULL 不重算，
+  报表以 by_close_basis 分列（legacy = 分层前共识口径），新旧并行呈现
+  一个窗口期（建议至下一整轮销售周结束，待人追认）。
 """
 
 from __future__ import annotations
@@ -33,6 +41,26 @@ MINUTES_BUCKETS = ((0, 10), (10, 30), (30, 10**9))
 CLOSE_LOOKBACK_MINUTES = 90  # closing 快照须落在开球前该窗口内
 MIN_REGRESSION_SAMPLES = 3  # 回归最少样本
 
+# --- 基准分层（票 40，调研 odds-consensus-methodology.md §5.2 建议 1） ---
+
+PINNACLE_SOURCE = "odds_api:pinnacle"  # 主锚：sharp 书，closing 行业无偏
+BETFAIR_EXCHANGE_SOURCES = (  # 辅锚：交易所（区域变体都认，实采 EU 区）
+    "odds_api:betfair_ex_eu",
+    "odds_api:betfair_ex_uk",
+)
+BETFAIR_COMMISSION = 0.02  # back 价佣金率（调研 2–5%，默认取下沿）
+
+BASIS_PINNACLE = "pinnacle"
+BASIS_BETFAIR = "betfair_ex"
+BASIS_CONSENSUS = "consensus"
+BASIS_LEGACY = "legacy"  # close_basis IS NULL 的分层前历史行（不重算）
+BASIS_MIXED = "mixed"  # 串关两腿基准不同（腿级见 clv_records.close_basis）
+
+CLOSE_BASIS_NOTE = (
+    "pinnacle 主锚 → betfair_ex 辅(back 价扣佣金, 默认 2%) → consensus fallback；"
+    "legacy = 分层前共识口径行(历史不重算)；mixed = 串关跨基准"
+)
+
 
 @dataclass
 class ReconcileStats:
@@ -42,11 +70,34 @@ class ReconcileStats:
     skipped: list[str] = field(default_factory=list)
 
 
-def _closing_prob(
-    conn: sqlite3.Connection, fixture_id: int, selection: str
-) -> tuple[float, str] | None:
+def _exchange_back_probs(
+    odds: tuple[float, ...], commission: float
+) -> tuple[float, ...]:
     """
-    该场 had 选择的收盘公允概率（closing 快照多 book 完整三向共识 Shin）。
+    Betfair back 价 → 公允概率（票 40 辅锚）。
+
+    交易所 back 价无 baked-in margin，摩擦是赢利侧佣金：按佣金调整
+    有效赔率（赢时净收益 × (1−commission)），再归一化到和为 1。
+    佣金率参数化（默认 2%，调研区间 2–5%）。
+    """
+    effective = tuple(1.0 + (odds_i - 1.0) * (1.0 - commission) for odds_i in odds)
+    return om.normalized_implied(effective)
+
+
+def _closing_prob(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    selection: str,
+    *,
+    betfair_commission: float = BETFAIR_COMMISSION,
+) -> tuple[float, str, str] | None:
+    """
+    该场 had 选择的收盘公允概率 + 基准来源标注（票 40 三级取锚）。
+
+    返回 ``(prob, close_source, close_basis)``；三级为 Pinnacle 主锚（单独
+    Shin）→ Betfair 交易所辅锚（back 价扣佣金归一化，佣金率参数化默认 2%，
+    调研区间 2–5%）→ 多 book 完整三向共识 Shin fallback（分层前唯一口径）。
+    高 margin 书只进共识不做基准。
 
     有效快照 = 观测时间（observed_at，旧行按源解释为 captured_at）严格
     早于 kickoff 且在开球前 CLOSE_LOOKBACK_MINUTES 内——开赛后才查到的
@@ -66,11 +117,28 @@ def _closing_prob(
     )
     if not books:
         return None
+    idx = SELECTIONS.index(selection)
+    if PINNACLE_SOURCE in books:
+        # 主锚：~2% margin 的 sharp closing，Shin 与归一化差异极小（调研），
+        # 沿用共识同法 Shin 保持单一去水口径。
+        probs = om.shin_implied(
+            tuple(books[PINNACLE_SOURCE][sel] for sel in SELECTIONS)
+        )
+        return probs[idx], "odds_api_closing", BASIS_PINNACLE
+    exchange = next(
+        (src for src in BETFAIR_EXCHANGE_SOURCES if src in books),
+        None,
+    )
+    if exchange is not None:
+        probs = _exchange_back_probs(
+            tuple(books[exchange][sel] for sel in SELECTIONS), betfair_commission
+        )
+        return probs[idx], "odds_api_closing", BASIS_BETFAIR
     consensus = tuple(
         sum(books[book][sel] for book in books) / len(books) for sel in SELECTIONS
     )
     probs = om.shin_implied(consensus)
-    return probs[SELECTIONS.index(selection)], "odds_api_closing"
+    return probs[idx], "odds_api_closing", BASIS_CONSENSUS
 
 
 def _minutes_to_kickoff(placed_at: str | None, kickoff_utc: str) -> float | None:
@@ -108,7 +176,7 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
             if close is None:
                 stats.skipped.append(f"no_pre_kickoff_close:bet={bet.bet_id}")
                 continue
-            close_prob, close_source = close
+            close_prob, close_source, close_basis = close
             taken_odds = leg.locked_odds
             clv = close_prob - 1.0 / taken_odds
             minutes = _minutes_to_kickoff(bet.placed_at, kickoff)
@@ -116,8 +184,9 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
                 """
                 INSERT OR IGNORE INTO clv_records
                 (bet_id, fixture_id, market_code, selection_code, taken_odds,
-                 close_prob, clv_prob, close_source, minutes_to_kickoff, computed_at)
-                VALUES (?, ?, 'had', ?, ?, ?, ?, ?, ?, ?)
+                 close_prob, clv_prob, close_source, close_basis,
+                 minutes_to_kickoff, computed_at)
+                VALUES (?, ?, 'had', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     bet.bet_id,
@@ -127,6 +196,7 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
                     close_prob,
                     clv,
                     close_source,
+                    close_basis,
                     minutes,
                     utc_now_iso(),
                 ),
@@ -155,8 +225,8 @@ class _BetView:
     mode: str
     placed_at: str | None
     legs: tuple[
-        tuple[int, str, float, float, float], ...
-    ]  # (fixture, sel, taken, close_p, clv)
+        tuple[int, str, float, float, float, str], ...
+    ]  # (fixture, sel, taken, close_p, clv, basis)
     profit: float | None
     minutes_to_kickoff: float | None
     decision: DecisionKey  # betting 共享公式冻结的决策身份（票 34）
@@ -166,11 +236,17 @@ class _BetView:
         return "single" if len(self.legs) == 1 else "parlay2"
 
     @property
+    def basis(self) -> str:
+        """票级基准来源：全腿同基准即该级，否则 mixed（票 40）。"""
+        bases = {leg[5] for leg in self.legs}
+        return next(iter(bases)) if len(bases) == 1 else BASIS_MIXED
+
+    @property
     def clv_ticket(self) -> float:
         """票级 CLV：单关即腿值；串关为联合概率 − 联合隐含。"""
         joint_close = 1.0
         joint_implied = 1.0
-        for _, _, taken, close_p, _ in self.legs:
+        for _, _, taken, close_p, _, _ in self.legs:
             joint_close *= close_p
             joint_implied *= 1.0 / taken
         return joint_close - joint_implied
@@ -180,7 +256,8 @@ def _close_records(conn: sqlite3.Connection) -> dict[tuple[int, int], sqlite3.Ro
     """clv_records 全量，按 (bet_id, fixture_id) 索引（本表归本模块）。"""
     rows = conn.execute(
         """
-        SELECT bet_id, fixture_id, close_prob, clv_prob, minutes_to_kickoff
+        SELECT bet_id, fixture_id, close_prob, clv_prob, close_basis,
+               minutes_to_kickoff
         FROM clv_records
         """
     ).fetchall()
@@ -195,6 +272,12 @@ def closing_leg_counts(conn: sqlite3.Connection) -> dict[int, int]:
     """
     rows = conn.execute("SELECT bet_id, COUNT(*) AS n FROM clv_records GROUP BY bet_id")
     return {int(r["bet_id"]): int(r["n"]) for r in rows}
+
+
+def _record_basis(record: sqlite3.Row) -> str:
+    """行的基准来源：NULL = 分层前历史行 → legacy（不重算，票 40）。"""
+    basis = record["close_basis"]
+    return str(basis) if basis is not None else BASIS_LEGACY
 
 
 def _collect_bets(conn: sqlite3.Connection) -> tuple[list[_BetView], dict[str, int]]:
@@ -216,7 +299,7 @@ def _collect_bets(conn: sqlite3.Connection) -> tuple[list[_BetView], dict[str, i
         stats["settled_bets"] += 1
         stats["legs"] += len(bet.legs)
         supported = all(leg.market_code == "had" for leg in bet.legs)
-        legs: list[tuple[int, str, float, float, float]] = []
+        legs: list[tuple[int, str, float, float, float, str]] = []
         has_close = True
         for leg in bet.legs:
             record = records.get((bet.bet_id, leg.fixture_id))
@@ -230,6 +313,7 @@ def _collect_bets(conn: sqlite3.Connection) -> tuple[list[_BetView], dict[str, i
                     leg.locked_odds,
                     float(record["close_prob"]),
                     float(record["clv_prob"]),
+                    _record_basis(record),
                 )
             )
         if not (supported and len(bet.legs) in (1, 2)):
@@ -276,9 +360,53 @@ def _group_stats(group: list[_BetView]) -> dict[str, Any]:
     beats = sum(1 for c in clvs if c > 0)
     return {
         "n_bets": len(group),
-        "beat_rate": beats / len(group),
+        "beat_rate": beats / len(clvs),
         "avg_clv": sum(clvs) / len(clvs),
     }
+
+
+def _basis_breakdown(
+    unique: list[_BetView], records: dict[tuple[int, int], sqlite3.Row]
+) -> dict[str, Any]:
+    """
+    基准来源分层报表（票 40 窗口期新旧口径并行呈现）。
+
+    每级给腿数（clv_records 计数）、全腿同级的唯一注数与该级内的
+    单关/2串1 × paper/live 分组（与主口径同构，空组省略）；串关跨基准
+    计 mixed 只计注数。legacy = 分层前共识口径行，历史不重算。
+    """
+    leg_counts: dict[str, int] = {}
+    for record in records.values():
+        basis = _record_basis(record)
+        leg_counts[basis] = leg_counts.get(basis, 0) + 1
+    out: dict[str, Any] = {}
+    for basis in (BASIS_PINNACLE, BASIS_BETFAIR, BASIS_CONSENSUS, BASIS_LEGACY):
+        bets = [v for v in unique if v.basis == basis]
+        if not bets and leg_counts.get(basis, 0) == 0:
+            continue
+        sections: dict[str, dict[str, Any]] = {}
+        for kind in ("single", "parlay2"):
+            per_kind: dict[str, Any] = {}
+            for mode in ("paper", "live"):
+                stats = _group_stats(
+                    [v for v in bets if v.kind == kind and v.mode == mode]
+                )
+                if stats["n_bets"]:
+                    per_kind[mode] = stats
+            if per_kind:
+                sections[kind] = per_kind
+        out[basis] = {
+            "legs": leg_counts.get(basis, 0),
+            "bets": len(bets),
+            "groups": sections,
+        }
+    mixed = [v for v in unique if v.basis == BASIS_MIXED]
+    if mixed:
+        out[BASIS_MIXED] = {
+            "bets": len(mixed),
+            "note": "串关两腿基准不同，腿级见 clv_records.close_basis",
+        }
+    return out
 
 
 def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -286,6 +414,8 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
     票级 CLV 报表：单关/2串1 × paper/live 分组 + 去重分母 + 单关回归。
 
     beat 定义：票级 clv > 0（串关按联合概率，独立性假设已声明）。
+    主口径分组不分基准（legacy 与分层后行并列计入）；票 40 起另以
+    by_close_basis 分列新旧口径供窗口期并行判读。
     """
     views, denom = _collect_bets(conn)
     unique, duplicates = _dedup_by_decision(views)
@@ -321,6 +451,9 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
         "parlay2": groups["parlay2"],
         # 串关票级联合概率按两腿独立连乘（票 34：声明假设，不作回归样本）
         "independence_assumed": True,
+        # 基准分层标注（票 40）：窗口期新旧口径并行判读用
+        "close_basis_note": CLOSE_BASIS_NOTE,
+        "by_close_basis": _basis_breakdown(unique, _close_records(conn)),
         "denominator": denom,
         "by_minutes_bucket_single": {
             key: {"n": int(v["n"]), "beat_rate": v["beats"] / v["n"]}

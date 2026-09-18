@@ -124,11 +124,24 @@ export const GLOSSARY: GlossaryEntry[] = [
 		term: "CLV",
 		aliases: ["clv_prob", "beat", "beat_rate", "收盘", "买在好价", "closing line"],
 		definition:
-			"clv_prob = 收盘概率 − 1/锁定赔率：收盘市场共识相对锁定价的剩余价值，>0 即 beat；beat_rate = 票级 CLV>0 的占比。",
+			"clv_prob = 收盘基准概率 − 1/锁定赔率：收盘基准相对锁定价的剩余价值，>0 即 beat；beat_rate = 票级 CLV>0 的占比。收盘基准自票 40 起三级分层取锚（见 CLV 基准分层词条）。",
 		direction: "正 = 买在好价（收盘优于锁定）、负 = 买贵了；beat_rate 门槛 ≥60%。",
 		example: "锁定赔率 2.00（隐含 50%），收盘概率 51% → CLV = +1%，beat；持续 +0.5%~3% 已是强表现（Pinnacle 经验）。",
 		caution:
 			"票级联合口径用于串关，两腿独立已声明；200 注门槛的唯一分母是 unique_bets（按模式+选项+锁定价+时点去重），腿数不凑。",
+	},
+	{
+		id: "clv-basis",
+		term: "CLV 基准分层",
+		aliases: ["基准分层", "close_basis", "主锚", "辅锚", "Pinnacle 主锚", "Betfair 辅锚", "legacy", "mixed"],
+		definition:
+			"收盘基准三级取锚（票 40）：Pinnacle 主锚（sharp 书，closing 行业无偏，单独 Shin）→ Betfair 交易所辅锚（back 价按佣金调整有效赔率后归一化，佣金率默认 2%、区间 2–5% 参数化）→ 多 book 共识 Shin fallback（分层前唯一口径）；基准来源随 CLV 记录标注（close_basis）。",
+		direction:
+			"锚级越靠前基准越可信：主锚 > 辅锚 > 共识；高 margin 书（1xBet 类）只进共识、永不作基准。不同基准的 CLV 分布不混为一谈。",
+		example:
+			"某场收盘有 Pinnacle 2.10/3.40/3.60 → close_basis=pinnacle（单书 Shin）；无 Pinnacle 有 Betfair → betfair_ex（back 价扣佣金）；两者皆无 → consensus（多书均价 Shin）。",
+		caution:
+			"分层只对新对账行生效：历史行标 legacy（分层前共识口径）不重算，新旧口径在报表分列、并行呈现一个窗口期（建议至下一整轮销售周结束，待人追认）；串关两腿基准不同计 mixed，腿级见逐腿标注。",
 	},
 	{
 		id: "skill",

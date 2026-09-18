@@ -165,6 +165,9 @@ test("五指标聚合随默认筛选联动：live 不入纸面口径，EV/CLV �
 	expect(screen.getByTestId("metric-ev")).toHaveTextContent("暂无带 EV 快照的已结算注");
 	expect(screen.getByTestId("metric-clv")).toHaveTextContent("—");
 	expect(screen.getByTestId("metric-clv")).toHaveTextContent("正 = 买在好价");
+	// 票 40：收盘基准分层标注接词条（聚合口径在验证页）
+	expect(screen.getByTestId("metric-clv")).toHaveTextContent("收盘基准已三级分层");
+	expect(screen.getByTestId("metric-clv").querySelector('[data-testid="glossary-term-clv-basis"]')).not.toBeNull();
 	// 真金盈亏不出现在任何卡片
 	expect(screen.queryByText("-¥12.00")).not.toBeInTheDocument();
 });

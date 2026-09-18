@@ -13,7 +13,7 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    # v7 预留给待合 PR #24（票 40 close_basis）；最新为 v8（票 41 注级 EV 快照）
+    # v7=票 40 close_basis，v8=票 41 注级 EV 快照
     assert db.migrate(conn) == 8
     assert db.migrate(conn) == 8  # 重跑幂等
 
@@ -35,6 +35,9 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
         row["name"] for row in conn.execute("PRAGMA table_info(odds_snapshots)")
     }
     assert {"observed_at", "source_updated_at", "observation_id"} <= snapshot_cols
+    # v7（票 40）：CLV 基准分层标注列
+    clv_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clv_records)")}
+    assert "close_basis" in clv_cols
     # 六域核心表（票 18 验收：全部实体建表）
     expected = {
         "competitions",
