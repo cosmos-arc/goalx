@@ -7,7 +7,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import type { Bet, TodayFixture } from "../api/goalx";
 import { server } from "../mocks/server";
 import { router } from "../router";
-import { buildCumulativePoints } from "./history-page";
+import { averageEv, buildCumulativePoints } from "./history-page";
 
 /**
  * 票 17 历史页测试：口径行（07 定稿文案逐字）/两层筛选联动（模式不混算 + 时间范围
@@ -99,6 +99,7 @@ function makeBet(overrides: Partial<Bet> & { id: number }): Bet {
 			{ fixture_id: 1, market_code: "had", selection_code: "h", locked_odds: 2.0, actual_odds: null, goal_line: null },
 		],
 		review: null,
+		ev_snapshot: null,
 		...overrides,
 	};
 }
@@ -159,9 +160,9 @@ test("五指标聚合随默认筛选联动：live 不入纸面口径，EV/CLV �
 	expect(screen.getByTestId("metric-count")).toHaveTextContent("3");
 	expect(screen.getByTestId("metric-hitrate")).toHaveTextContent("50.0%");
 	expect(screen.getByTestId("metric-hitrate")).toHaveTextContent("退款不计");
-	// EV/CLV：BetView 无注级字段 → "—" + 口径注明（不造假数据）
+	// EV/CLV：本组样本无快照 → "—" + 口径注明（不造假数据）；CLV 注级字段仍未随 API 提供
 	expect(screen.getByTestId("metric-ev")).toHaveTextContent("—");
-	expect(screen.getByTestId("metric-ev")).toHaveTextContent("注级 EV 未随 v1 API 提供");
+	expect(screen.getByTestId("metric-ev")).toHaveTextContent("暂无带 EV 快照的已结算注");
 	expect(screen.getByTestId("metric-clv")).toHaveTextContent("—");
 	expect(screen.getByTestId("metric-clv")).toHaveTextContent("正 = 买在好价");
 	// 票 40：收盘基准分层标注接词条（聚合口径在验证页）
@@ -431,6 +432,92 @@ test("查看明细同页展开：五列与投注页已结算行同构，收起�
 	await user.click(screen.getByTestId("detail-toggle"));
 	expect(screen.queryByTestId("history-detail")).not.toBeInTheDocument();
 	expect(screen.getByTestId("detail-toggle")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("平均 EV 点亮（票 41）：共识口径优先、两口径不混算、样本数注明、无快照注不计", async () => {
+	mockAll({
+		bets: [
+			// 共识口径两注（+0.04 / +0.06 → 均值 +5.0%）+ 仅模型口径一注 + 无快照存量注
+			settledPaper({
+				id: 1,
+				settled_at: daysAgoIso(1),
+				ev_snapshot: { prob_consensus: 0.45, prob_model: 0.5, ev_consensus: 0.04, ev_model: 0.1 },
+			}),
+			settledPaper({
+				id: 2,
+				settled_at: daysAgoIso(2),
+				ev_snapshot: { prob_consensus: 0.4, prob_model: null, ev_consensus: 0.06, ev_model: null },
+			}),
+			settledPaper({
+				id: 3,
+				settled_at: daysAgoIso(3),
+				ev_snapshot: { prob_consensus: null, prob_model: 0.42, ev_consensus: null, ev_model: -0.3 },
+			}),
+			settledPaper({ id: 4, settled_at: daysAgoIso(4), ev_snapshot: null }),
+		],
+	});
+	await renderAt("/history");
+
+	const ev = await screen.findByTestId("metric-ev");
+	// 共识口径优先：只算注 1/2 的共识 EV，注 3 的模型 EV 不混入，注 4 无快照不入分母
+	expect(ev).toHaveTextContent("+5.0%");
+	expect(within(ev).getByText("+5.0%")).toHaveClass("text-profit");
+	expect(ev).toHaveTextContent("共识口径");
+	expect(ev).toHaveTextContent("2/4 注（无快照注不计）");
+	// 口径标注接词典 tooltip（票 41 新词条）
+	expect(within(ev).getByTestId("glossary-term-bet-ev-snapshot")).toHaveTextContent("共识口径");
+});
+
+test("平均 EV 模型口径回退：无共识快照时用模型口径并如实标注", async () => {
+	mockAll({
+		bets: [
+			settledPaper({
+				id: 1,
+				settled_at: daysAgoIso(1),
+				ev_snapshot: { prob_consensus: null, prob_model: 0.55, ev_consensus: null, ev_model: 0.1 },
+			}),
+			settledPaper({
+				id: 2,
+				settled_at: daysAgoIso(2),
+				ev_snapshot: { prob_consensus: null, prob_model: 0.5, ev_consensus: null, ev_model: -0.02 },
+			}),
+		],
+	});
+	await renderAt("/history");
+
+	const ev = await screen.findByTestId("metric-ev");
+	// 全缺共识 → 模型口径回退：(0.10 − 0.02)/2 = +4.0%；负值绿跌同样覆盖于下例
+	expect(ev).toHaveTextContent("+4.0%");
+	expect(ev).toHaveTextContent("模型口径");
+	expect(ev).toHaveTextContent("2/2 注（无快照注不计）");
+});
+
+test("平均 EV 纯函数：口径选择与均值算术（averageEv 导出口径）", () => {
+	type Snapshot = NonNullable<Bet["ev_snapshot"]>;
+	const snapshot = (overrides: Partial<Snapshot>): Snapshot => ({
+		prob_consensus: null,
+		prob_model: null,
+		ev_consensus: null,
+		ev_model: null,
+		...overrides,
+	});
+	const consensusFirst = averageEv([
+		makeBet({ id: 1, ev_snapshot: snapshot({ ev_consensus: 0.02, ev_model: 0.9 }) }),
+		makeBet({ id: 2, ev_snapshot: snapshot({ ev_model: 0.5 }) }),
+	]);
+	// 共识样本存在 → 只算共识（模型值再大也不混入）
+	expect(consensusFirst?.caliber).toBe("consensus");
+	expect(consensusFirst?.count).toBe(1);
+	expect(consensusFirst?.value).toBeCloseTo(0.02);
+	const modelFallback = averageEv([
+		makeBet({ id: 1, ev_snapshot: snapshot({ ev_model: 0.1 }) }),
+		makeBet({ id: 2, ev_snapshot: snapshot({ ev_model: -0.3 }) }),
+	]);
+	expect(modelFallback?.caliber).toBe("model");
+	expect(modelFallback?.count).toBe(2);
+	expect(modelFallback?.value).toBeCloseTo(-0.1);
+	expect(averageEv([makeBet({ id: 1, ev_snapshot: null })])).toBeNull();
+	expect(averageEv([])).toBeNull();
 });
 
 test("后端不可用降级为三态空状态，重试后恢复", async () => {

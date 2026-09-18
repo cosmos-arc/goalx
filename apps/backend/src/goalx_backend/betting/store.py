@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any
 
+from goalx_backend.betting.snapshot import EMPTY_SNAPSHOT, BetEvSnapshot
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
     BetMode,
@@ -172,14 +173,17 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     placed_at: str | None = None,
     slip_id: int | None = None,
     strategy_version: str | None = None,
+    ev_snapshot: BetEvSnapshot | None = None,
 ) -> int:
-    """Create a bet record (建议未购或已回录)；返回 id。"""
+    """Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。"""
+    snap = ev_snapshot or EMPTY_SNAPSHOT
     cur = conn.execute(
         """
             INSERT INTO bets
 (slip_id, mode, market_kind, purchased, stake, placed_at,
-            created_at, strategy_version)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            created_at, strategy_version,
+snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -190,6 +194,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             placed_at,
             utc_now_iso(),
             strategy_version,
+            snap.prob_consensus,
+            snap.prob_model,
+            snap.ev_consensus,
+            snap.ev_model,
         ),
     )
     return _insert_id(cur)
@@ -228,6 +236,8 @@ def list_bets(
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
             b.actual_stake, b.strategy_version,
             b.placed_at, b.created_at, b.status, b.payout, b.profit, b.settled_at,
+            b.snap_prob_consensus, b.snap_prob_model,
+            b.snap_ev_consensus, b.snap_ev_model,
             s.created_at AS locked_at,
             (SELECT COUNT(*) FROM bet_legs l WHERE l.bet_id = b.id) AS leg_count,
 (SELECT

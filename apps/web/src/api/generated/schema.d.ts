@@ -666,6 +666,20 @@ export interface components {
             strategy_version?: string | null;
         };
         /**
+         * BetEvSnapshotView
+         * @description 注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。
+         */
+        BetEvSnapshotView: {
+            /** Prob Consensus */
+            prob_consensus?: number | null;
+            /** Prob Model */
+            prob_model?: number | null;
+            /** Ev Consensus */
+            ev_consensus?: number | null;
+            /** Ev Model */
+            ev_model?: number | null;
+        };
+        /**
          * BetLegView
          * @description 一腿视图。
          */
@@ -739,6 +753,7 @@ export interface components {
             /** Legs */
             legs: components["schemas"]["BetLegView"][];
             review?: components["schemas"]["BetReviewView"] | null;
+            ev_snapshot?: components["schemas"]["BetEvSnapshotView"] | null;
         };
         /**
          * BookQuoteView

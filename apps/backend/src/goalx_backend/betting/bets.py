@@ -8,6 +8,7 @@ import sqlite3
 from pydantic import BaseModel, Field
 
 from goalx_backend.betting import store as bt_store
+from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data.quote_evidence import adjudicate_had_quote
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import BetMode, LegInput, MarketKind
@@ -45,19 +46,26 @@ class ActualTerms(BaseModel):
 
 
 def create_bet_with_legs(conn: sqlite3.Connection, draft: BetDraft) -> int:
-    """建注（含校验：竞彩禁止同场串关）；返回 bet id。"""
+    """
+    建注（含校验：竞彩禁止同场串关）；返回 bet id。
+
+    建注即落注级 EV 快照（票 41）：锁定时刻的欧共识/模型双口径概率与
+    EV——口径不可得存 None，事后不倒填。
+    """
     seen: set[int] = set()
     for leg in draft.legs:
         if leg.fixture_id in seen:
             raise SameFixtureParlayError(f"fixture {leg.fixture_id} 重复出现在串关中")
         seen.add(leg.fixture_id)
     with atomic(conn):
+        snapshot = build_ev_snapshot(conn, draft.legs)
         bet = bt_store.create_bet(
             conn,
             draft.mode,
             MarketKind.FIXED,
             draft.stake,
             strategy_version=draft.strategy_version,
+            ev_snapshot=snapshot,
         )
         for leg in draft.legs:
             bt_store.add_leg(conn, bet, leg)

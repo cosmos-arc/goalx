@@ -111,6 +111,15 @@ class BetReviewView(BaseModel):
     forward: str
 
 
+class BetEvSnapshotView(BaseModel):
+    """注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。"""
+
+    prob_consensus: float | None = None
+    prob_model: float | None = None
+    ev_consensus: float | None = None
+    ev_model: float | None = None
+
+
 class BetView(BaseModel):
     """一注的复盘视图。"""
 
@@ -131,6 +140,7 @@ class BetView(BaseModel):
     settled_at: str | None
     legs: list[BetLegView]
     review: BetReviewView | None = None
+    ev_snapshot: BetEvSnapshotView | None = None
 
 
 class SlipView(BaseModel):
@@ -223,6 +233,23 @@ def _review_view(
     return views
 
 
+def _ev_snapshot_view(row: sqlite3.Row) -> BetEvSnapshotView | None:
+    """行 → 注级 EV 快照视图；四列全空（存量注/口径外注）返回 None。"""
+    snapshot = BetEvSnapshotView(
+        prob_consensus=row["snap_prob_consensus"],
+        prob_model=row["snap_prob_model"],
+        ev_consensus=row["snap_ev_consensus"],
+        ev_model=row["snap_ev_model"],
+    )
+    fields = (
+        snapshot.prob_consensus,
+        snapshot.prob_model,
+        snapshot.ev_consensus,
+        snapshot.ev_model,
+    )
+    return snapshot if any(value is not None for value in fields) else None
+
+
 def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
     """行 → API 视图。"""
     return BetView(
@@ -245,6 +272,7 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
         settled_at=row["settled_at"],
         legs=[BetLegView(**leg) for leg in json.loads(row["legs"])],
         review=review,
+        ev_snapshot=_ev_snapshot_view(row),
     )
 
 

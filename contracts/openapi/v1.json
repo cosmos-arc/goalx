@@ -1605,6 +1605,57 @@
         "title": "BetCreate",
         "description": "建注(建议或直接回录)输入。"
       },
+      "BetEvSnapshotView": {
+        "properties": {
+          "prob_consensus": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prob Consensus"
+          },
+          "prob_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prob Model"
+          },
+          "ev_consensus": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev Consensus"
+          },
+          "ev_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev Model"
+          }
+        },
+        "type": "object",
+        "title": "BetEvSnapshotView",
+        "description": "注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。"
+      },
       "BetLegView": {
         "properties": {
           "fixture_id": {
@@ -1830,6 +1881,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/BetReviewView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ev_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BetEvSnapshotView"
               },
               {
                 "type": "null"

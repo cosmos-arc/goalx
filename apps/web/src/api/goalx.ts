@@ -13,6 +13,7 @@ export type GoalsSelection = Schemas["GoalsSelectionView"];
 export type Bet = Schemas["BetView"];
 export type BetLeg = Schemas["BetLegView"];
 export type BetReview = Schemas["BetReviewView"];
+export type BetEvSnapshot = Schemas["BetEvSnapshotView"];
 export type Slip = Schemas["SlipView"];
 export type DrawResultView = Schemas["DrawResultView"];
 export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];

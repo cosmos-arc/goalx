@@ -142,12 +142,14 @@ def insert_forecast(
     model_version: str,
     content_hash: str,
     payload: dict[str, object],
+    issued_at: str | None = None,
 ) -> int | None:
     """
     Append 一条 Forecast（forecasts 表归本模块）。
 
     同 (fixture_id, content_hash) 重复插入被吸收；返回新行 id，已存在返回
-    None（幂等重跑）。
+    None（幂等重跑）。issued_at 缺省取当前 UTC——测试/回放可显式冻结发出
+    时点（票 41 as-of 快照的用例需要）。
     """
     cur = conn.execute(
         """
@@ -159,7 +161,7 @@ def insert_forecast(
             fixture_id,
             track,
             model_version,
-            utc_now_iso(),
+            issued_at or utc_now_iso(),
             content_hash,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         ),
@@ -201,6 +203,26 @@ def latest_forecast(
         LIMIT 1
         """,
         (fixture_id, track),
+    ).fetchone()
+
+
+def latest_forecast_asof(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str, track: str = "ml"
+) -> sqlite3.Row | None:
+    """
+    as_of 时点已发出的最新一条 Forecast（票 41 注级快照读取）。
+
+    与 latest_forecast 同排序口径，加 issued_at <= as_of 过滤——决策时点
+    之后才生成的预测不进该时点的快照（防时间泄漏，与前瞻冻结同语义）。
+    """
+    return conn.execute(
+        """
+        SELECT fixture_id, id, model_version, issued_at, payload
+        FROM forecasts WHERE fixture_id = ? AND track = ? AND issued_at <= ?
+        ORDER BY issued_at DESC, id DESC
+        LIMIT 1
+        """,
+        (fixture_id, track, as_of),
     ).fetchone()
 
 
