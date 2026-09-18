@@ -9,9 +9,10 @@
 1. 本 README——定位、Stack、运行手册（下文）；
 2. [CONTEXT.md](CONTEXT.md)——领域术语表，先统一语言；
 3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)——架构总览：数据流、领域包、运行形态、决策索引；
-4. [docs/plans/goalx-quant/spec.md](docs/plans/goalx-quant/spec.md)——当前生效计划（可信纸面闭环）与五张实施票；
-5. [docs/adr/](docs/adr/)——8 条不可逆技术决策及其理由；
-6. [AGENTS.md](AGENTS.md)——仓库工作约定（面向 AI agent，人读同样适用）。
+4. [docs/RUNBOOK.md](docs/RUNBOOK.md)——运维手册：常驻进程、定时调度、全部手工命令、数据源、故障排查与 AI 代采兜底；
+5. [docs/plans/goalx-quant/spec.md](docs/plans/goalx-quant/spec.md)——当前生效计划（可信纸面闭环）与五张实施票；
+6. [docs/adr/](docs/adr/)——8 条不可逆技术决策及其理由；
+7. [AGENTS.md](AGENTS.md)——仓库工作约定（面向 AI agent，人读同样适用）。
 
 历史与证据：wayfinder 设计地图、运行协议与票 37 验收报告、spec v1.0 与 9 篇调研见
 [docs/plans/goalx-quant/](docs/plans/goalx-quant/)；2026-09 目标/设计审视见
