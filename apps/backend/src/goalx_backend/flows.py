@@ -111,7 +111,7 @@ def settlement_flow() -> dict[str, int]:
 
 @flow(name="draw-results-sync", log_prints=True)
 def draw_results_sync_flow() -> dict[str, object]:
-    \"\"\"赛果自动同步（票 42）：源D 结果页；无待出赛果零成本跳过。\"\"\"
+    """赛果自动同步（票 42）：源D 结果页；无待出赛果零成本跳过。"""
     stats = tasks.draw_results_sync()
     logger.info("draw sync: {}", stats)
     return stats
@@ -119,7 +119,7 @@ def draw_results_sync_flow() -> dict[str, object]:
 
 @flow(name="pool-snapshot", log_prints=True)
 def pool_snapshot_flow() -> dict[str, object]:
-    \"\"\"彩池同步（票 43）：源B 期次/对阵/人气分布（幂等；份额追加快照）。\"\"\"
+    """彩池同步（票 43）：源B 期次/对阵/人气分布（幂等；份额追加快照）。"""
     stats = tasks.pool_snapshot()
     logger.info("pool snapshot: {}", stats_dict(stats))
     return stats_dict(stats)

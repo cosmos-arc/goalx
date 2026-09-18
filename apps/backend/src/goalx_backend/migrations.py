@@ -689,6 +689,31 @@ def _apply_v9(conn: sqlite3.Connection) -> None:
             unchanged INTEGER NOT NULL,
             unmatched INTEGER NOT NULL,
             pending_manual TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_draw_sync_runs_time
+            ON draw_sync_runs(observed_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER draw_sync_runs_no_update
+            BEFORE UPDATE ON draw_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER draw_sync_runs_no_delete
+            BEFORE DELETE ON draw_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
+        """
+    )
 
 
 def _apply_v10(conn: sqlite3.Connection) -> None:
@@ -744,26 +769,6 @@ def _apply_v10(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
-        CREATE INDEX IF NOT EXISTS idx_draw_sync_runs_time
-            ON draw_sync_runs(observed_at)
-        """
-    )
-    conn.execute(
-        """
-        CREATE TRIGGER draw_sync_runs_no_update
-            BEFORE UPDATE ON draw_sync_runs
-            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
-        """
-    )
-    conn.execute(
-        """
-        CREATE TRIGGER draw_sync_runs_no_delete
-            BEFORE DELETE ON draw_sync_runs
-            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
-        """
-    )
-
-
         CREATE INDEX IF NOT EXISTS idx_pool_sync_runs_time
             ON pool_sync_runs(observed_at)
         """
@@ -786,7 +791,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (7, _apply_v7),
     (8, _apply_v8),
     (9, _apply_v9),
-
-
     (10, _apply_v10),
 )
