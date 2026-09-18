@@ -107,6 +107,23 @@ test("clvMetricRows：已知 key 映射为带标签行，未知 key 进折叠区
 	expect(byId.get("minutes-buckets")).toBeUndefined(); // 空桶不出行
 	expect(byId.get("regression")?.value).toContain("斜率 3.20");
 
+	// 基准来源分层（票 40）：各级计数成一行，接词条，note 落 hint
+	const basis = byId.get("close-basis");
+	expect(basis?.term).toBe("clv-basis");
+	expect(basis?.value).toContain("Pinnacle 主锚 5 注 · 6 腿 · 纸面单关 beat 75.0%(n=4)");
+	expect(basis?.value).toContain("分层前共识(legacy) 5 注 · 6 腿");
+	expect(basis?.value).toContain("串关跨基准(mixed) 1 注");
+	expect(basis?.hint).toContain("pinnacle 主锚");
+
+	// 分层字段缺失（旧后端/空报表）→ 不出行不进折叠区
+	const legacyOnly = clvMetricRows({
+		singles: {
+			paper: { n_bets: 0, beat_rate: null, avg_clv: null },
+			live: { n_bets: 0, beat_rate: null, avg_clv: null },
+		},
+	});
+	expect(legacyOnly.rows.map((row) => row.id)).not.toContain("close-basis");
+
 	// 默认 fixture 无未知 key；混入未知 key 后进 unknownEntries，已知 key 不进
 	const mixed = clvMetricRows({ ...validationProgressFixture.clv, mystery_field: { a: 1 } });
 	expect(mixed.unknownEntries).toEqual([["mystery_field", { a: 1 }]]);

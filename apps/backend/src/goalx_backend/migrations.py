@@ -641,6 +641,17 @@ def _apply_v6(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE bet_legs ADD COLUMN actual_odds REAL")
 
 
+def _apply_v7(conn: sqlite3.Connection) -> None:
+    """
+    v7（票 40）：CLV 基准分层——clv_records 增 close_basis 标注。
+
+    新行写 'pinnacle' | 'betfair_ex' | 'consensus'（分层取锚级别，见
+    evaluation/clv.py）；存量行保持 NULL，报表层解释为 'legacy'（分层前
+    共识口径，历史行不重算——新旧口径窗口期并行呈现）。
+    """
+    conn.execute("ALTER TABLE clv_records ADD COLUMN close_basis TEXT")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -648,4 +659,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (4, _apply_v4),
     (5, _apply_v5),
     (6, _apply_v6),
+    (7, _apply_v7),
 )
