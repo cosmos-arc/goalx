@@ -772,6 +772,202 @@
         }
       }
     },
+    "/api/v1/pool/periods": {
+      "get": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "彩池期次列表(传统足彩)",
+        "description": "已采集期次（期次/对阵/分布来自源B 同步；销量列无官方直接源）。",
+        "operationId": "list_pool_periods_api_v1_pool_periods_get",
+        "parameters": [
+          {
+            "name": "market_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ttt14",
+              "title": "Market Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PoolPeriodView"
+                  },
+                  "title": "Response List Pool Periods Api V1 Pool Periods Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool/periods/{period_no}": {
+      "get": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "彩池期次详情(对阵/分布/EV)",
+        "description": "一场一选三向：概率(模型/欧指去水)、份额、估计派彩赔率、EV。",
+        "operationId": "get_pool_period_api_v1_pool_periods__period_no__get",
+        "parameters": [
+          {
+            "name": "period_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Period No"
+            }
+          },
+          {
+            "name": "market_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ttt14",
+              "title": "Market Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolPeriodDetailView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "期次不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool-sync/run": {
+      "post": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "触发一次彩池同步(源B 期次/对阵/人气)",
+        "description": "拉取最新期次页与人气分布（幂等）；期次/对阵刷新、份额追加。",
+        "operationId": "run_pool_sync_api_v1_pool_sync_run_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolSyncStatusView"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "同步源不可达或返回异常"
+          }
+        }
+      }
+    },
+    "/api/v1/pool-sync/status": {
+      "get": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "彩池同步状态",
+        "description": "上次同步元信息与已采集期次数；从未同步时 last_run 为空。",
+        "operationId": "get_pool_sync_status_api_v1_pool_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolSyncStatusView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool-states": {
+      "post": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "AI 代采导入: 官方彩池销量/滚存",
+        "description": "彩池资金状态代采入口（票 43 兜底层；官方销量四源直接 GET 不可得）。\n\n代理用浏览器读官方公布页 → 结构化 → 本端点；source 记 agent；\n幂等：同值重放不改库，新值覆盖（状态表语义=最新公布为准）。\n触发方式=用户命令，不做自动定时。",
+        "operationId": "import_pool_state_api_v1_pool_states_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolStateImportPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolStateImportView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "期次不存在(先运行同步建期次)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/draw-results": {
       "post": {
         "tags": [
@@ -3250,6 +3446,207 @@
         "title": "OddsSnapshotView",
         "description": "一条赔率快照。"
       },
+      "PoolMatchView": {
+        "properties": {
+          "match_seq": {
+            "type": "integer",
+            "title": "Match Seq"
+          },
+          "source_match_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Match Id"
+          },
+          "league": {
+            "type": "string",
+            "title": "League"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "fixture_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixture Id"
+          },
+          "selections": {
+            "items": {
+              "$ref": "#/components/schemas/PoolSelectionView"
+            },
+            "type": "array",
+            "title": "Selections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_seq",
+          "league",
+          "kickoff_utc",
+          "home_team",
+          "away_team",
+          "selections"
+        ],
+        "title": "PoolMatchView",
+        "description": "一期一场对阵。"
+      },
+      "PoolPeriodDetailView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "sales_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Deadline"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/PoolMatchView"
+            },
+            "type": "array",
+            "title": "Matches"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PoolStateView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shares_captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shares Captured At"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "matches",
+          "caliber"
+        ],
+        "title": "PoolPeriodDetailView",
+        "description": "期次详情：对阵三向（概率/份额/估计赔率/EV）+ 资金状态 + 口径说明。"
+      },
+      "PoolPeriodView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "sales_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Deadline"
+          },
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count"
+          },
+          "first_kickoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Kickoff"
+          },
+          "last_kickoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Kickoff"
+          },
+          "shares_captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shares Captured At"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PoolStateView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "match_count",
+          "status"
+        ],
+        "title": "PoolPeriodView",
+        "description": "期次列表一行。"
+      },
       "PoolPickPayload": {
         "properties": {
           "match_seq": {
@@ -3279,6 +3676,74 @@
         ],
         "title": "PoolPickPayload",
         "description": "复式票一格的一选。"
+      },
+      "PoolSelectionView": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "prob": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prob"
+          },
+          "prob_source": {
+            "type": "string",
+            "title": "Prob Source"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          },
+          "implied_odds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Implied Odds"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "label",
+          "prob_source"
+        ],
+        "title": "PoolSelectionView",
+        "description": "一场一选的彩池口径三向数据。"
       },
       "PoolSlipCreate": {
         "properties": {
@@ -3329,6 +3794,209 @@
         ],
         "title": "PoolSlipCreate",
         "description": "创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。"
+      },
+      "PoolStateImportPayload": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Period No"
+          },
+          "sales_amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Amount"
+          },
+          "rollover_in": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollover In"
+          },
+          "prize_tiers": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prize Tiers"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no"
+        ],
+        "title": "PoolStateImportPayload",
+        "description": "AI 代采入口（票 43 兜底层）：代理读官方公布销量/滚存 → 结构化提交。\n\n字段自描述、幂等（同值重放无效果）、无鉴权（单用户既定）；\n与自动采集的第三方源以 source 区分（本端点固定 agent）。"
+      },
+      "PoolStateImportView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "imported": {
+            "type": "boolean",
+            "title": "Imported"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "imported"
+        ],
+        "title": "PoolStateImportView",
+        "description": "代采导入结果。"
+      },
+      "PoolStateView": {
+        "properties": {
+          "sales_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Amount"
+          },
+          "rollover_in": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollover In"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "title": "PoolStateView",
+        "description": "一期资金状态（官方销量仅 AI 代采可得，无则整体 None）。"
+      },
+      "PoolSyncRunView": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "observed_at": {
+            "type": "string",
+            "title": "Observed At"
+          },
+          "period_nos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Period Nos"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "matches": {
+            "type": "integer",
+            "title": "Matches"
+          },
+          "share_rows": {
+            "type": "integer",
+            "title": "Share Rows"
+          },
+          "missing_shares": {
+            "type": "integer",
+            "title": "Missing Shares"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "observed_at",
+          "period_nos",
+          "pages",
+          "matches",
+          "share_rows",
+          "missing_shares"
+        ],
+        "title": "PoolSyncRunView",
+        "description": "一次彩池同步的元信息。"
+      },
+      "PoolSyncStatusView": {
+        "properties": {
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PoolSyncRunView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "period_count": {
+            "type": "integer",
+            "title": "Period Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_count"
+        ],
+        "title": "PoolSyncStatusView",
+        "description": "彩池同步状态（触发后/查询）。"
       },
       "SelectionTriple": {
         "properties": {
@@ -3893,6 +4561,10 @@
     {
       "name": "bets",
       "description": "注级建议、票级回录与复盘列表。"
+    },
+    {
+      "name": "pool",
+      "description": "传统足彩彩池期次/对阵/分布与代采入口(14场任9)。"
     },
     {
       "name": "results",

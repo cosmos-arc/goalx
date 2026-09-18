@@ -292,6 +292,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pool/periods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 彩池期次列表(传统足彩)
+         * @description 已采集期次（期次/对阵/分布来自源B 同步；销量列无官方直接源）。
+         */
+        get: operations["list_pool_periods_api_v1_pool_periods_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool/periods/{period_no}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 彩池期次详情(对阵/分布/EV)
+         * @description 一场一选三向：概率(模型/欧指去水)、份额、估计派彩赔率、EV。
+         */
+        get: operations["get_pool_period_api_v1_pool_periods__period_no__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool-sync/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 触发一次彩池同步(源B 期次/对阵/人气)
+         * @description 拉取最新期次页与人气分布（幂等）；期次/对阵刷新、份额追加。
+         */
+        post: operations["run_pool_sync_api_v1_pool_sync_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool-sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 彩池同步状态
+         * @description 上次同步元信息与已采集期次数；从未同步时 last_run 为空。
+         */
+        get: operations["get_pool_sync_status_api_v1_pool_sync_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool-states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * AI 代采导入: 官方彩池销量/滚存
+         * @description 彩池资金状态代采入口（票 43 兜底层；官方销量四源直接 GET 不可得）。
+         *
+         *     代理用浏览器读官方公布页 → 结构化 → 本端点；source 记 agent；
+         *     幂等：同值重放不改库，新值覆盖（状态表语义=最新公布为准）。
+         *     触发方式=用户命令，不做自动定时。
+         */
+        post: operations["import_pool_state_api_v1_pool_states_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/draw-results": {
         parameters: {
             query?: never;
@@ -1297,6 +1401,66 @@ export interface components {
             captured_at: string;
         };
         /**
+         * PoolMatchView
+         * @description 一期一场对阵。
+         */
+        PoolMatchView: {
+            /** Match Seq */
+            match_seq: number;
+            /** Source Match Id */
+            source_match_id?: string | null;
+            /** League */
+            league: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Fixture Id */
+            fixture_id?: number | null;
+            /** Selections */
+            selections: components["schemas"]["PoolSelectionView"][];
+        };
+        /**
+         * PoolPeriodDetailView
+         * @description 期次详情：对阵三向（概率/份额/估计赔率/EV）+ 资金状态 + 口径说明。
+         */
+        PoolPeriodDetailView: {
+            /** Period No */
+            period_no: string;
+            /** Sales Deadline */
+            sales_deadline?: string | null;
+            /** Matches */
+            matches: components["schemas"]["PoolMatchView"][];
+            state?: components["schemas"]["PoolStateView"] | null;
+            /** Shares Captured At */
+            shares_captured_at?: string | null;
+            /** Caliber */
+            caliber: string;
+        };
+        /**
+         * PoolPeriodView
+         * @description 期次列表一行。
+         */
+        PoolPeriodView: {
+            /** Period No */
+            period_no: string;
+            /** Sales Deadline */
+            sales_deadline?: string | null;
+            /** Match Count */
+            match_count: number;
+            /** First Kickoff */
+            first_kickoff?: string | null;
+            /** Last Kickoff */
+            last_kickoff?: string | null;
+            /** Shares Captured At */
+            shares_captured_at?: string | null;
+            state?: components["schemas"]["PoolStateView"] | null;
+            /** Status */
+            status: string;
+        };
+        /**
          * PoolPickPayload
          * @description 复式票一格的一选。
          */
@@ -1307,6 +1471,26 @@ export interface components {
             selection_code: string;
             /** Fixture Id */
             fixture_id?: number | null;
+        };
+        /**
+         * PoolSelectionView
+         * @description 一场一选的彩池口径三向数据。
+         */
+        PoolSelectionView: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+            /** Prob */
+            prob?: number | null;
+            /** Prob Source */
+            prob_source: string;
+            /** Share */
+            share?: number | null;
+            /** Implied Odds */
+            implied_odds?: number | null;
+            /** Ev */
+            ev?: number | null;
         };
         /**
          * PoolSlipCreate
@@ -1325,6 +1509,80 @@ export interface components {
             stake_per_combination: number;
             /** Picks */
             picks: components["schemas"]["PoolPickPayload"][];
+        };
+        /**
+         * PoolStateImportPayload
+         * @description AI 代采入口（票 43 兜底层）：代理读官方公布销量/滚存 → 结构化提交。
+         *
+         *     字段自描述、幂等（同值重放无效果）、无鉴权（单用户既定）；
+         *     与自动采集的第三方源以 source 区分（本端点固定 agent）。
+         */
+        PoolStateImportPayload: {
+            /** Period No */
+            period_no: string;
+            /** Sales Amount */
+            sales_amount?: number | null;
+            /** Rollover In */
+            rollover_in?: number | null;
+            /** Prize Tiers */
+            prize_tiers?: {
+                [key: string]: unknown;
+            } | null;
+            /** Published At */
+            published_at?: string | null;
+        };
+        /**
+         * PoolStateImportView
+         * @description 代采导入结果。
+         */
+        PoolStateImportView: {
+            /** Period No */
+            period_no: string;
+            /** Imported */
+            imported: boolean;
+        };
+        /**
+         * PoolStateView
+         * @description 一期资金状态（官方销量仅 AI 代采可得，无则整体 None）。
+         */
+        PoolStateView: {
+            /** Sales Amount */
+            sales_amount?: number | null;
+            /** Rollover In */
+            rollover_in?: number | null;
+            /** Published At */
+            published_at?: string | null;
+            /** Source */
+            source?: string | null;
+        };
+        /**
+         * PoolSyncRunView
+         * @description 一次彩池同步的元信息。
+         */
+        PoolSyncRunView: {
+            /** Source */
+            source: string;
+            /** Observed At */
+            observed_at: string;
+            /** Period Nos */
+            period_nos: string[];
+            /** Pages */
+            pages: number;
+            /** Matches */
+            matches: number;
+            /** Share Rows */
+            share_rows: number;
+            /** Missing Shares */
+            missing_shares: number;
+        };
+        /**
+         * PoolSyncStatusView
+         * @description 彩池同步状态（触发后/查询）。
+         */
+        PoolSyncStatusView: {
+            last_run?: components["schemas"]["PoolSyncRunView"] | null;
+            /** Period Count */
+            period_count: number;
         };
         /**
          * SelectionTriple
@@ -2042,6 +2300,164 @@ export interface operations {
             };
             /** @description 暂不支持 live 奖池票 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pool_periods_api_v1_pool_periods_get: {
+        parameters: {
+            query?: {
+                market_code?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolPeriodView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pool_period_api_v1_pool_periods__period_no__get: {
+        parameters: {
+            query?: {
+                market_code?: string;
+            };
+            header?: never;
+            path: {
+                period_no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolPeriodDetailView"];
+                };
+            };
+            /** @description 期次不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_pool_sync_api_v1_pool_sync_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolSyncStatusView"];
+                };
+            };
+            /** @description 同步源不可达或返回异常 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_pool_sync_status_api_v1_pool_sync_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolSyncStatusView"];
+                };
+            };
+        };
+    };
+    import_pool_state_api_v1_pool_states_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolStateImportPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolStateImportView"];
+                };
+            };
+            /** @description 期次不存在(先运行同步建期次) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
