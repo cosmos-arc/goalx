@@ -4,13 +4,16 @@ import type { AppRoute } from "../lib/ui";
 import { ThemeToggle } from "./theme-toggle";
 
 /**
- * 票 03 定稿的两级扁平导航（票 13 落地）：不设组标题。
- * 一级 = 高频页（总览/今日/投注/历史/验证/资金）；次级 = 低处页脚位（词典/复核/设置）。
- * 命名即 03 的用户裁决清单，实现票不得改名。
+ * 票 03 定稿的两级扁平导航（票 13 落地；票 wb-01 今日→场次；票 wb-03 加"玩法"组）：
+ * 不设组标题。一级 = 高频页（总览/场次/玩法/投注/历史/验证/资金）；
+ * 次级 = 低处页脚位（词典/复核/设置）。
+ * 票 wb-03：玩法组只占一个一级入口（勿过度嵌套）——组内三入口
+ * （胜平负/进球/14场任9）由玩法页顶部 MarketTabs 承载；/markets 前缀归属高亮。
  */
 const PRIMARY_NAV = [
 	{ to: "/", label: "总览" },
-	{ to: "/today", label: "今日" },
+	{ to: "/fixtures", label: "场次" },
+	{ to: "/markets", label: "玩法" },
 	{ to: "/bets", label: "投注" },
 	{ to: "/history", label: "历史" },
 	{ to: "/validation", label: "验证" },
@@ -41,6 +44,14 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 	);
 }
 
+/** 导航高亮：列表页精确匹配；次级页（如 /fixtures/:id 研究页）按前缀归属其一级入口。 */
+function isNavActive(pathname: string, to: AppRoute): boolean {
+	if (to === "/") {
+		return pathname === "/";
+	}
+	return pathname === to || pathname.startsWith(`${to}/`);
+}
+
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
 	const location = useLocation();
 	return (
@@ -52,7 +63,7 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
 					<div className="flex items-center gap-3">
 						<nav aria-label="主导航" className="flex flex-wrap items-center gap-1 text-sm">
 							{PRIMARY_NAV.map((item) => (
-								<NavLink key={item.to} item={item} active={location.pathname === item.to} />
+								<NavLink key={item.to} item={item} active={isNavActive(location.pathname, item.to)} />
 							))}
 						</nav>
 						<ThemeToggle />

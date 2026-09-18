@@ -8,6 +8,7 @@ import {
 	fetchCostSummary,
 	fetchDrawResults,
 	fetchFixtureOdds,
+	fetchGoalsMarket,
 	fetchSlips,
 	fetchTodayFixtures,
 	importDrawResults,
@@ -21,6 +22,18 @@ test("fetchers round-trip against msw handlers", async () => {
 	expect(today).toHaveLength(3);
 	expect(today[0]?.jc_odds.h).toBe(1.92);
 	expect(today[2]?.had_quote?.status).toBe("rejected");
+
+	// 票 wb-05：进球玩法读模型（ttg/crs 网格 + 模型概率/EV）
+	const goals = await fetchGoalsMarket();
+	expect(goals).toHaveLength(3);
+	expect(goals[1]?.model_version).toBe("dc-demo");
+	expect(goals[1]?.ttg?.selections).toHaveLength(8);
+	expect(goals[1]?.crs?.selections).toHaveLength(31);
+	const s2 = goals[1]?.ttg?.selections?.find((sel) => sel.code === "2");
+	expect(s2).toMatchObject({ odds: 4.5, probability: 0.245, ev: 0.1025 });
+	expect(goals[0]?.model_version).toBeNull(); // 无模型场概率/EV 置空
+	expect(goals[0]?.ttg?.selections?.[0]?.probability).toBeNull();
+	expect(goals[2]?.ttg?.sale_state).toBe("stopped");
 
 	const odds = await fetchFixtureOdds(1);
 	expect(odds[0]?.source).toBe("sporttery");

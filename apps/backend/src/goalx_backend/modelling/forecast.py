@@ -185,6 +185,25 @@ def forecasts_for_track(conn: sqlite3.Connection, track: str) -> list[sqlite3.Ro
     ).fetchall()
 
 
+def latest_forecast(
+    conn: sqlite3.Connection, fixture_id: int, track: str = "ml"
+) -> sqlite3.Row | None:
+    """
+    某场次的最新一条 Forecast（票 wb-02 研究页模型概率）。
+
+    与前瞻冻结规则同口径：按 (issued_at, id) 取最新——之后的覆盖之前的。
+    """
+    return conn.execute(
+        """
+        SELECT fixture_id, id, model_version, issued_at, payload
+        FROM forecasts WHERE fixture_id = ? AND track = ?
+        ORDER BY issued_at DESC, id DESC
+        LIMIT 1
+        """,
+        (fixture_id, track),
+    ).fetchone()
+
+
 def generate_forecasts(
     conn: sqlite3.Connection,
     *,

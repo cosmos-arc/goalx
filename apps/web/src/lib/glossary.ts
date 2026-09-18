@@ -126,6 +126,66 @@ export const GLOSSARY: GlossaryEntry[] = [
 		example: "模型 RPS 0.98、市场 RPS 1.00 → skill = 1 − 0.98/1.00 = +0.02。",
 		caution: "三条件只认前瞻 skill（无泄漏、回测可过拟合）；当前回测 skill≈−3.75%，不可作实盘依据。",
 	},
+	{
+		id: "model-prob",
+		term: "模型概率与模型 EV",
+		aliases: ["模型概率", "模型 EV", "DC 模型", "Forecast", "model EV"],
+		definition:
+			"模型概率 = DC（Dixon-Coles）模型对该场主/平/客的预测概率（赛前最新一条 Forecast）；模型 EV = 模型概率 × 竞彩价 − 1：按自家模型评估某一向的期望收益率。",
+		direction: "模型概率与去水共识对照，偏离即研究线索；模型 EV 红 = 正、绿 = 负（红涨绿跌），近零中性。",
+		example: "模型主胜 55% × 竞彩价 2.00 − 1 = +10%；共识主胜只有 50% → 模型比市场更看好主胜 5 个百分点。",
+		caution:
+			"模型 EV 与共识 EV（今日/场次页）不同源：前者信自家模型，后者信市场共识；模型当前前瞻 skill 尚未过线（见 skill 词条），模型 EV 只作研究对照，不作机会信号。仅五大联赛在售场次有模型覆盖。",
+	},
+	{
+		id: "book-deviation",
+		term: "书价偏差",
+		aliases: ["偏差", "逐书偏差", "公司分歧", "book deviation", "高亮"],
+		definition:
+			"单 book 的归一化隐含概率与去水共识概率之差；研究页对 |偏差| ≥5 个百分点的报价琥珀标注并给方向（↑ 偏高 / ↓ 偏低）。",
+		direction: "偏高 = 该 book 比共识更看好该向；偏低 = 更不看好；多家同向偏离 = 公司间真实分歧。",
+		example: "共识主胜 50%，某 book 主胜价 1.80（隐含 55.6%）→ 偏高 +5.6 个百分点，标琥珀 ↑。",
+		caution:
+			"个别 book 定价含限额/风控策略与延迟，偏差≠错价；books<3 时共识本身不可靠（见 books 词条），偏差判读随之失效。",
+	},
+	{
+		id: "score-matrix",
+		term: "比分矩阵推导",
+		aliases: ["矩阵推导", "比分矩阵", "10×10", "ScoreMatrix", "进球类概率", "ttg 概率", "crs 概率"],
+		definition:
+			"进球类玩法（总进球 ttg/比分 crs）的概率不是独立建模，而是从 canonical 10×10 比分概率矩阵（Dixon-Coles）推导的边际视图：ttg = 矩阵反对角求和（8 档，7+ 归并尾部），crs = 28 精确格 + 胜/平/负其他三档。",
+		direction:
+			"同一场比赛的 ttg 与 crs 出自同一矩阵，隐含概率必然一致——这是矩阵被定为 canonical 的理由；单市场独立建模会破坏一致性，不允许。",
+		example: "模型 λ 主 1.4/客 1.3 → 矩阵 → P(总进球 2)≈24.5% = Σ矩阵反对角(h+a=2)；P(比分 1:1)=矩阵(1,1) 格。",
+		caution:
+			"矩阵来自 DC 模型 Forecast（仅五大联赛在售场次覆盖，无 Forecast 概率空缺不伪造）；由矩阵推得的 EV 是模型×竞彩价口径（见 model-prob 词条），模型前瞻 skill 未过线前是研究对照的诊断量，不是机会信号。",
+	},
+	{
+		id: "kelly",
+		term: "Kelly 与 ¼ fractional Kelly",
+		aliases: ["Kelly", "凯利", "fractional Kelly", "f*", "满 Kelly"],
+		definition:
+			"Kelly（对数效用）把 edge 转化为注额比例的最优解：f* = EV/(odds−1)（按 decimal 赔率与单位 EV）。实务取分数（goalx 定 1/4）以对称化模型概率的估计误差——超注惩罚是二次的、少注损失是线性的。",
+		direction:
+			"满 Kelly 是理论上限而非建议值：概率估计有误差时满注会放大回撤，故按 ¼ 起步；随前瞻证据累积再评估放宽到 1/2。EV≤0 时 Kelly 为负，一律建议 ¥0。",
+		example:
+			"EV +10%、赔率 2.00 → f* = 0.10/1.00 = 10%，取 1/4 = 2.5%：bankroll ¥10,000 建议单注 ¥250（2.5% 在 1–5% 硬区间内，不截断）。",
+		caution:
+			"Kelly 的最优性以真实概率已知为前提，goalx 的概率是模型估计——这是取 ¼ 分数的理由；倍投/斐波那契等 progression 系不改 EV 只重排破产路径，且污染 CLV/skill 统计，已全部否决（research/staking-plans.md）。",
+	},
+	{
+		id: "stake-advice",
+		term: "建议仓位",
+		aliases: ["建议注额", "stake-advice", "仓位建议", "flat", "单注 1–5%"],
+		definition:
+			"系统给出的只读注额建议（不自动改单）：纸面期一律 flat（红线）——bankroll×2% 截断到 1–5% 区间、下限竞彩最低 ¥2；真金期 = ¼ fractional Kelly 再过单注 1–5% 硬上限；EV≤0 一律 ¥0。",
+		direction:
+			"采纳与否由操作者确认：建议注额只回答“这一注投多少”，档位与截断理由随建议展示（flat/¼Kelly/已按上限截断/EV≤0）。",
+		example:
+			"bankroll ¥5,004：纸面 flat → 2% = ¥100.08；真金 EV+30% @1.50 → ¼Kelly=15% 截断到 5% = ¥250.20；EV −2% → ¥0（无价值不投）。",
+		caution:
+			"只读建议，不自动写入注额——用户可偏离建议落注（偏离记录供事后分析）；串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly 不分腿）；纸面期的 flat 红线保证 skill/CLV 验证指标无偏，任何比例策略在前瞻 skill 过线前不启用。",
+	},
 ];
 
 /** 词条 id 联合类型：页内 tooltip 接入处（GlossaryTerm）的合法取值域。 */

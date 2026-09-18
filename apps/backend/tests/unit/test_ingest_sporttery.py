@@ -255,3 +255,64 @@ def test_reschedule_updates_kickoff_not_new_fixture(db) -> None:
     assert len(rows) == 1  # 同一 fixture
     assert rows[0]["id"] == fixture_id
     assert rows[0]["kickoff_utc"] == "2026-09-13T18:00:00+00:00"
+
+
+# --- 票 wb-04：进球类（ttg/crs）单固资格（poolList 池级 single）---
+
+
+def _pool_list_payload(*, ttg_single: int, crs_single: int) -> dict:
+    """带 poolList 的载荷（实测形状：market 块恒缺 single，池级 single 为 int）。"""
+    payload = json.loads(json.dumps(SAMPLE))
+    sub = payload["value"]["matchInfoList"][0]["subMatchList"][0]
+    sub["poolList"] = [
+        {"poolCode": "HAD", "single": 1},
+        {"poolCode": "TTG", "single": ttg_single},
+        {"poolCode": "CRS", "single": crs_single},
+        {"poolCode": "HHAD", "single": 0},
+    ]
+    return payload
+
+
+def test_goals_single_eligible_from_pool_list() -> None:
+    match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
+    assert match.goals_single_eligible("ttg") is True
+    assert match.goals_single_eligible("crs") is False
+
+
+def test_goals_single_eligible_market_block_wins_then_veto() -> None:
+    payload = _pool_list_payload(ttg_single=0, crs_single=1)
+    sub = payload["value"]["matchInfoList"][0]["subMatchList"][0]
+    # 市场块 single 优先（防御路径：实测恒缺，出现时按票 35 同规则采信）
+    sub["ttg"]["single"] = "1"
+    match = sporttery.parse_matches(payload)[0]
+    assert match.goals_single_eligible("ttg") is True
+    # poolList 缺该池 + 比赛级 bettingSingle=0 → False；开放 → None（未知）
+    no_pool = json.loads(json.dumps(SAMPLE))
+    match2 = sporttery.parse_matches(no_pool)[0]
+    assert match2.goals_single_eligible("ttg") is False
+    no_pool["value"]["matchInfoList"][0]["subMatchList"][0]["bettingSingle"] = 1
+    match3 = sporttery.parse_matches(no_pool)[0]
+    assert match3.goals_single_eligible("crs") is None
+    with pytest.raises(ValueError, match="非进球类玩法"):
+        match3.goals_single_eligible("had")
+
+
+def test_store_matches_records_goals_sale_status(db) -> None:
+    """ttg/crs 销售状态行随快照落库（票 wb-04），had 口径不动。"""
+    match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
+    sporttery.store_matches(db, [match])
+    fixture = db.execute("SELECT id FROM fixtures").fetchone()["id"]
+    rows = db.execute(
+        "SELECT * FROM sale_statuses WHERE fixture_id=? ORDER BY market_code",
+        (fixture,),
+    ).fetchall()
+    by_market = {row["market_code"]: row for row in rows}
+    assert by_market[None]["sale_state"] == "on_sale"  # 比赛级
+    assert "had" in by_market  # had 行保留（bettingSingle=0 → single_eligible=0）
+    assert by_market["had"]["single_eligible"] == 0
+    assert by_market["ttg"]["market_code"] == "ttg"
+    assert by_market["ttg"]["single_eligible"] == 1
+    assert by_market["crs"]["single_eligible"] == 0
+    assert by_market["ttg"]["sale_state"] == "on_sale"
+    # hhad/hafu 不落市场级行（进球类票据面范围之外，保持原行为）
+    assert set(by_market) == {None, "had", "ttg", "crs"}

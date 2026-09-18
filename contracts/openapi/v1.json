@@ -95,8 +95,8 @@
         "tags": [
           "fixtures"
         ],
-        "summary": "今日竞彩场次对照表",
-        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。",
+        "summary": "竞彩场次对照表(按业务日窗口)",
+        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。\n\n``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内\n``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。",
         "operationId": "get_today_fixtures_api_v1_fixtures_today_get",
         "parameters": [
           {
@@ -112,10 +112,24 @@
                   "type": "null"
                 }
               ],
-              "description": "业务日(北京日期, 默认今天)",
+              "description": "起始业务日(北京日期, 默认今天)",
               "title": "Date"
             },
-            "description": "业务日(北京日期, 默认今天)"
+            "description": "起始业务日(北京日期, 默认今天)"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 7,
+              "minimum": 1,
+              "description": "窗口天数(默认1=单日)",
+              "default": 1,
+              "title": "Days"
+            },
+            "description": "窗口天数(默认1=单日)"
           }
         ],
         "responses": {
@@ -344,6 +358,182 @@
           },
           "404": {
             "description": "fixture 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixtures/{fixture_id}/research": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "单场研究页读模型",
+        "description": "一场比赛的研究视图。\n\n各欧赔 book 最新 H/D/A 与捕获时间、去水共识概率、模型（DC Forecast）\n概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。\n\n共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。",
+        "operationId": "get_fixture_research_api_v1_fixtures__fixture_id__research_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "判定时点(UTC ISO);默认现在",
+              "title": "As Of"
+            },
+            "description": "判定时点(UTC ISO);默认现在"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixtureResearchView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在或无竞彩销售编号"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/markets/goals": {
+      "get": {
+        "tags": [
+          "markets"
+        ],
+        "summary": "进球玩法页读模型(ttg/crs 报价+矩阵推导概率/EV)",
+        "description": "进球类玩法（总进球 ttg / 比分 crs）的场次行（票 wb-04/05）。\n\n每行带 ttg/crs 两块：官方选项网格 ×（竞彩在售价、比分矩阵推导概率、\n模型 EV=概率×竞彩价−1）+ 单固资格与销售状态。``days>1`` 返回业务日\n窗口（与场次列表同口径）。EV 口径为\"模型×竞彩价\"（进球类无欧共识），\n与 had 玩法页的共识 EV 不同源，页面须标注。",
+        "operationId": "get_goals_market_api_v1_markets_goals_get",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始业务日(北京日期, 默认今天)",
+              "title": "Date"
+            },
+            "description": "起始业务日(北京日期, 默认今天)"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 7,
+              "minimum": 1,
+              "description": "窗口天数(默认1=单日)",
+              "default": 1,
+              "title": "Days"
+            },
+            "description": "窗口天数(默认1=单日)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoalsFixtureView"
+                  },
+                  "title": "Response Get Goals Market Api V1 Markets Goals Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stake-advice": {
+      "post": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注 1-5% 截断",
+        "description": "只读注额建议（票 wb-06，不自动改单）。\n\nEV≤0 → ¥0；paper 一律 flat（红线，与组合引擎 flat 档同口径）；\nlive = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 1%-cap%。\n串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly，不分腿）。",
+        "operationId": "stake_advice_api_v1_stake_advice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StakeAdviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StakeSuggestion"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -1666,6 +1856,35 @@
         "title": "BetView",
         "description": "一注的复盘视图。"
       },
+      "BookQuoteView": {
+        "properties": {
+          "book": {
+            "type": "string",
+            "title": "Book"
+          },
+          "odds": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book",
+          "odds"
+        ],
+        "title": "BookQuoteView",
+        "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
+      },
       "ConditionProgress": {
         "properties": {
           "key": {
@@ -1699,6 +1918,24 @@
         ],
         "title": "ConditionProgress",
         "description": "纸面转真金三条件之一的进度（票 10）。"
+      },
+      "ConsensusView": {
+        "properties": {
+          "books": {
+            "type": "integer",
+            "title": "Books"
+          },
+          "probability": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          }
+        },
+        "type": "object",
+        "required": [
+          "books",
+          "probability"
+        ],
+        "title": "ConsensusView",
+        "description": "去水共识（Shin）与参与 book 数（口径与场次列表页一致）。"
       },
       "CostItemView": {
         "properties": {
@@ -2089,6 +2326,288 @@
         "title": "Environment",
         "description": "Deployment environments the backend understands."
       },
+      "FixtureResearchView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "is_single": {
+            "type": "boolean",
+            "title": "Is Single"
+          },
+          "joined": {
+            "type": "boolean",
+            "title": "Joined"
+          },
+          "jc_odds": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "jc_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Updated At"
+          },
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/BookQuoteView"
+            },
+            "type": "array",
+            "title": "Books"
+          },
+          "consensus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConsensusView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelForecastView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "had_quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HadQuoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "business_date",
+          "competition",
+          "tier",
+          "home_team",
+          "away_team",
+          "kickoff_utc",
+          "is_single",
+          "joined",
+          "jc_odds"
+        ],
+        "title": "FixtureResearchView",
+        "description": "单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。"
+      },
+      "GoalsFixtureView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "ttg": {
+            "$ref": "#/components/schemas/GoalsMarketBlock"
+          },
+          "crs": {
+            "$ref": "#/components/schemas/GoalsMarketBlock"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "business_date",
+          "competition",
+          "tier",
+          "home_team",
+          "away_team",
+          "kickoff_utc"
+        ],
+        "title": "GoalsFixtureView",
+        "description": "进球玩法页一行（票 wb-04）：场次信息 + ttg/crs 两块 + 模型出处。"
+      },
+      "GoalsMarketBlock": {
+        "properties": {
+          "selections": {
+            "items": {
+              "$ref": "#/components/schemas/GoalsSelectionView"
+            },
+            "type": "array",
+            "title": "Selections"
+          },
+          "single_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Eligible"
+          },
+          "sale_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale State"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "GoalsMarketBlock",
+        "description": "一场比赛一个进球玩法（ttg/crs）的选项网格与销售/单固资格。"
+      },
+      "GoalsSelectionView": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "odds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Odds"
+          },
+          "probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probability"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "GoalsSelectionView",
+        "description": "进球类玩法一个选项：竞彩价、矩阵推导概率与模型 EV。\n\nEV 口径 = 模型概率 × 竞彩价 − 1（进球类无欧赔共识，区别于 had 的\n共识 EV——had 信市场，进球类只有自家模型可依，见词典 model-prob）。\n无 Forecast 的场次 probability/ev 诚实为 null。"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2431,6 +2950,39 @@
         "title": "ModeCounts",
         "description": "一个 mode 的注/腿/场次计数（唯一 Bet 为验证分母，票 34）。"
       },
+      "ModelForecastView": {
+        "properties": {
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "issued_at": {
+            "type": "string",
+            "title": "Issued At"
+          },
+          "probability": {
+            "$ref": "#/components/schemas/SelectionTriple"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelectionTriple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "issued_at",
+          "probability"
+        ],
+        "title": "ModelForecastView",
+        "description": "该场最新 ML Forecast 的三向概率与模型 EV（模型概率 × 竞彩价 − 1）。"
+      },
       "OddsSnapshotView": {
         "properties": {
           "id": {
@@ -2728,6 +3280,104 @@
         "title": "SlipView",
         "description": "一张票的聚合视图。"
       },
+      "StakeAdviceRequest": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/BetMode"
+          },
+          "bankroll": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Bankroll"
+          },
+          "ev": {
+            "type": "number",
+            "title": "Ev"
+          },
+          "odds": {
+            "type": "number",
+            "exclusiveMinimum": 1.0,
+            "title": "Odds"
+          },
+          "cap_fraction": {
+            "type": "number",
+            "maximum": 0.05,
+            "exclusiveMinimum": 0.0,
+            "title": "Cap Fraction",
+            "default": 0.05
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "bankroll",
+          "ev",
+          "odds"
+        ],
+        "title": "StakeAdviceRequest",
+        "description": "建议仓位输入（票 wb-06）：串关由调用方传联合赔率/联合 EV（整注口径）。"
+      },
+      "StakeSuggestion": {
+        "properties": {
+          "stake": {
+            "type": "number",
+            "title": "Stake"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/StakeTier"
+          },
+          "fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fraction"
+          },
+          "full_kelly_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Kelly Fraction"
+          },
+          "capped": {
+            "type": "boolean",
+            "title": "Capped",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stake",
+          "tier",
+          "reason"
+        ],
+        "title": "StakeSuggestion",
+        "description": "建议输出：注额 + 档位 + 理由（只读，不自动改单）。"
+      },
+      "StakeTier": {
+        "type": "string",
+        "enum": [
+          "flat",
+          "quarter_kelly",
+          "ev_non_positive",
+          "unfunded"
+        ],
+        "title": "StakeTier",
+        "description": "建议档位（前端按档位渲染理由）。"
+      },
       "StatusResponse": {
         "properties": {
           "app_name": {
@@ -2760,6 +3410,10 @@
           "match_code": {
             "type": "string",
             "title": "Match Code"
+          },
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
           },
           "competition": {
             "type": "string",
@@ -2850,6 +3504,7 @@
         "required": [
           "fixture_id",
           "match_code",
+          "business_date",
           "competition",
           "tier",
           "home_team",
@@ -2860,7 +3515,7 @@
           "jc_odds"
         ],
         "title": "TodayFixtureView",
-        "description": "今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。"
+        "description": "场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。"
       },
       "ValidationError": {
         "properties": {
@@ -3007,6 +3662,10 @@
     {
       "name": "fixtures",
       "description": "竞彩场次对照与赔率时序(今日页)。"
+    },
+    {
+      "name": "markets",
+      "description": "玩法轴读模型(进球类 ttg/crs 报价与矩阵推导概率/EV)。"
     },
     {
       "name": "bets",

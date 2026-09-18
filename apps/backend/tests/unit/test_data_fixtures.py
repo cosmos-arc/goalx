@@ -123,7 +123,30 @@ def test_eu_book_odds_latest_per_book(db: sqlite3.Connection) -> None:
     assert books["a"] == {"odds_api:pinnacle": 1.80, "odds_api:bet365": 1.90}
 
 
-def test_fixtures_for_business_date(db: sqlite3.Connection) -> None:
+def test_fixtures_for_business_dates_window(db: sqlite3.Connection) -> None:
+    fixture = seed_fixture(db)
+    fx.upsert_match_code(db, match_code(fixture))
+    # 同一场次在次日的业务日再挂一个销售编号（改期场景：编号按业务日归属）
+    fx.upsert_match_code(
+        db,
+        match_code(
+            fixture,
+            business_date="2026-09-13",
+            code="周日026",
+            source_match_id="2041431",
+        ),
+    )
+    rows = fx.fixtures_for_business_dates(
+        db, ["2026-09-12", "2026-09-13", "2026-09-14"]
+    )
+    assert [row["match_code"] for row in rows] == ["周六026", "周日026"]
+    # 行内携带业务日归属（票 wb-01：前端按日分组依据）
+    assert [row["business_date"] for row in rows] == ["2026-09-12", "2026-09-13"]
+    assert fx.fixtures_for_business_dates(db, []) == []
+    assert fx.fixtures_for_business_dates(db, ["2026-09-14"]) == []
+
+
+def test_fixtures_for_business_date_single(db: sqlite3.Connection) -> None:
     fixture = seed_fixture(db)
     fx.upsert_match_code(db, match_code(fixture))
     rows = fx.fixtures_for_business_date(db, "2026-09-12")

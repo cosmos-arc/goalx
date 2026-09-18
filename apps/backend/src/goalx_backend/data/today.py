@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date, timedelta
 
 from pydantic import BaseModel, Field
 
@@ -37,10 +38,11 @@ class HadQuoteStatus(BaseModel):
 
 
 class TodayFixtureView(BaseModel):
-    """今日页一行：竞彩 vs 欧洲共识对照（票 22/36）。"""
+    """场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。"""
 
     fixture_id: int
     match_code: str
+    business_date: str
     competition: str
     tier: str
     home_team: str
@@ -57,13 +59,32 @@ class TodayFixtureView(BaseModel):
     had_quote: HadQuoteStatus | None = None
 
 
+def business_dates_from(start: str, days: int) -> list[str]:
+    """从起始业务日向后展开 ``days`` 个日历日（票 wb-01：3 日窗口）。"""
+    if days <= 1:
+        return [start]
+    begin = date.fromisoformat(start)
+    return [(begin + timedelta(days=offset)).isoformat() for offset in range(days)]
+
+
 def build_today_view(
-    conn: sqlite3.Connection, business_date: str, *, as_of: str | None = None
+    conn: sqlite3.Connection,
+    business_date: str,
+    *,
+    as_of: str | None = None,
+    days: int = 1,
 ) -> list[TodayFixtureView]:
-    """组装竞彩场次对照表（竞彩 vs 欧洲共识、EV、资格判定、books 数、调盘时点）。"""
+    """
+    组装竞彩场次对照表（竞彩 vs 欧洲共识、EV、资格判定、books 数、调盘时点）。
+
+    ``days>1`` 时覆盖 ``[business_date, business_date+days-1]`` 的业务日窗口
+    （工作台 v2 票 01），行内 ``business_date`` 标记归属日供前端按日分组。
+    """
     moment = as_of or utc_now_iso()
     rows: list[TodayFixtureView] = []
-    for fixture in fx_store.fixtures_for_business_date(conn, business_date):
+    for fixture in fx_store.fixtures_for_business_dates(
+        conn, business_dates_from(business_date, days)
+    ):
         fixture_id = int(fixture["id"])
         jc = fx_store.latest_odds_by_selection(conn, fixture_id, "had", "sporttery")
         books = fx_store.eu_book_odds(conn, fixture_id)
@@ -71,6 +92,7 @@ def build_today_view(
         view = TodayFixtureView(
             fixture_id=fixture_id,
             match_code=str(fixture["match_code"]),
+            business_date=str(fixture["business_date"]),
             competition=str(fixture["competition_name"]),
             tier=str(fixture["competition_tier"]),
             home_team=str(fixture["home_team"]),

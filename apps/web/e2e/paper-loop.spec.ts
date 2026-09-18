@@ -29,7 +29,7 @@ function dbRows(sql: string): Array<Record<string, unknown>> {
 test.describe.configure({ mode: "serial" });
 
 test("空库状态诚实显示，无需手查 Fixture ID", async ({ page }) => {
-	await page.goto("/today");
+	await page.goto("/fixtures");
 	// 票 13：统一空状态组件——空库是无数据态（非后端不可用）
 	await expect(page.getByTestId("empty-state")).toHaveAttribute("data-variant", "no-data");
 
@@ -53,28 +53,81 @@ test("seed-demo 灌入隔离演示数据（动态时间，不写主库）", asyn
 	expect(Number(fixtures[0]?.["n"])).toBe(3);
 });
 
-test("今日页展示资格判定与拒绝原因", async ({ page }) => {
-	await page.goto("/today");
-	await expect(page.getByTestId("today-row")).toHaveCount(3);
+test("场次页展示资格判定与拒绝原因", async ({ page }) => {
+	await page.goto("/fixtures");
+	await expect(page.getByTestId("fixtures-row")).toHaveCount(3);
 	const validVerdict = page.getByTestId("had-quote-valid").first();
 	await expect(validVerdict).toHaveText(/可投/);
 	await expect(validVerdict).toHaveText(/单固/);
 	await expect(page.getByTestId("had-quote-rejected")).toHaveText(/已停售/);
 	// 票 14：可投卡片置顶（001 单固在售 + 002 仅串关在售），003 停售弱化
-	await expect(page.getByTestId("today-card-1")).toBeVisible();
-	await expect(page.getByTestId("today-card-2")).toBeVisible();
-	await expect(page.getByTestId("today-not-eligible-count")).toHaveText(/1 场不可投/);
+	await expect(page.getByTestId("fixtures-card-1")).toBeVisible();
+	await expect(page.getByTestId("fixtures-card-2")).toBeVisible();
+	await expect(page.getByTestId("fixtures-not-eligible-count")).toHaveText(/1 场不可投/);
+});
+
+test("玩法页推荐流排序与组合头部（票 wb-03）：无正 EV 诚实空态，不建注", async ({ page }) => {
+	await page.goto("/markets/had");
+	await expect(page.getByRole("heading", { name: "GoalX · 胜平负" })).toBeVisible();
+
+	// demo 种子三场 EV 全为负 → 推荐流照常渲染（沉底按开赛时间：001/002/003）
+	const feed = page.getByTestId(/^market-card-/);
+	await expect(feed).toHaveCount(3);
+	await expect(feed.first()).toContainText("周六001");
+	// 停售场（003）：按钮禁用 + 拒绝徽章
+	await expect(page.getByTestId("market-pick-3-h")).toBeDisabled();
+
+	// 组合头部：EV≤0 不入选 → 诚实占位（EV 是诊断量非机会信号），不出现带入按钮
+	const combo = page.getByTestId("market-combo");
+	await expect(combo).toBeVisible();
+	await expect(combo.getByTestId("market-combo-empty")).toContainText("无正 EV 机会");
+	await expect(combo.getByTestId("market-combo-apply")).toHaveCount(0);
+	// 约束说明常驻（口径可对账）
+	await expect(combo.getByTestId("market-combo-notes")).toContainText("共识口径");
+
+	// 就地选注可用（不提交——保持后续步骤的注数断言不变）：003 停售不可选，002 可选
+	await page.getByTestId("market-pick-2-a").click();
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+	await page.getByTestId("basket-open").click();
+	await expect(page.getByTestId("basket-leg")).toHaveCount(1);
+	await page.getByRole("button", { name: "继续浏览" }).click();
+	await expect(page.getByTestId("basket-stake")).toHaveCount(0);
+});
+
+test("场次行点进研究页：逐书赔率与共识可见，可返回", async ({ page }) => {
+	await page.goto("/fixtures");
+	await page.getByTestId("fixtures-link-1").click();
+
+	await expect(page.getByRole("heading", { name: "GoalX · 场次研究" })).toBeVisible();
+	// demo 种子 fixture 1 带三家欧赔书 → 逐书行 + 去水共识；无 Forecast → 模型区诚实占位
+	await expect(page.getByTestId("research-book-row")).toHaveCount(3);
+	await expect(page.getByTestId("research-consensus")).toContainText("家三向均价");
+	await expect(page.getByTestId("research-model-missing")).toContainText("暂无模型预测");
+	// 资格徽章随研究页头部内嵌；一级导航"场次"保持激活
+	await expect(page.getByTestId("had-quote-valid").first()).toContainText("可投");
+	await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "场次" })).toHaveAttribute(
+		"aria-current",
+		"page",
+	);
+
+	await page.getByRole("navigation", { name: "返回" }).getByRole("link").click();
+	await expect(page.getByRole("heading", { name: "GoalX · 场次" })).toBeVisible();
 });
 
 test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ page }) => {
-	await page.goto("/today");
+	await page.goto("/fixtures");
 	await page.getByTestId("pick-1-h").click();
 	// 票 14：金额/模式在选注篮抽屉里（底部常驻条 → 右侧 Drawer）
 	await page.getByTestId("basket-open").click();
+	// 票 wb-06：选注篮建议仓位（只读）——demo 种子主胜 EV 为负 → EV≤0 诚实建议 ¥0
+	// （flat ¥2/未入金 的正路径在下方进球步覆盖：ttg s2 为正 EV）
+	const advice = page.getByTestId("basket-stake-advice");
+	await expect(advice).toContainText("¥0.00");
+	await expect(advice).toContainText("建议不投");
 	await page.getByTestId("basket-stake").fill("100");
 	await page.getByTestId("basket-strategy").fill("manual-v1");
 	await page.getByTestId("basket-submit").click();
-	await expect(page.getByTestId("today-message")).toContainText("已建建议");
+	await expect(page.getByTestId("fixtures-message")).toContainText("已建建议");
 
 	await page.goto("/bets");
 	// 票 16 三段分组：未锁定建议组头计数（组头 = 标题 + 计数徽章，textContent 空格分隔）
@@ -98,13 +151,13 @@ test("had 单固纸面闭环：建议→锁定→(资金变化 0)", async ({ pag
 });
 
 test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮）", async ({ page }) => {
-	await page.goto("/today");
+	await page.goto("/fixtures");
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("pick-2-a").click();
 	await page.getByTestId("basket-open").click();
 	await page.getByTestId("basket-stake").fill("2");
 	await page.getByTestId("basket-submit").click();
-	await expect(page.getByTestId("today-message")).toContainText("已建建议");
+	await expect(page.getByTestId("fixtures-message")).toContainText("已建建议");
 
 	// 锁定 2串1（两腿同一 as_of 判定，共同可购买）
 	await page.goto("/bets");
@@ -112,9 +165,9 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 	await expect(page.getByTestId("bets-message")).toContainText("已锁定纸面票");
 
 	// 停售场次：按钮禁用 + 行弱化（票 14 规则前置——无效组合到不了提交）
-	await page.goto("/today");
+	await page.goto("/fixtures");
 	await expect(page.getByTestId("pick-3-h")).toBeDisabled();
-	await expect(page.getByTestId("today-row").nth(2)).toHaveClass(/bg-muted\/50/);
+	await expect(page.getByTestId("fixtures-row").nth(2)).toHaveClass(/bg-muted\/50/);
 
 	// 服务器侧：直接以 API 提交含停售腿的串关 → 400 + 原因（前端禁用不替代服务器判定）
 	const today = await page.request.get("/api/v1/fixtures/today");
@@ -140,14 +193,14 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 });
 
 test("真实回录：实际条款结算、建议快照保留、账务按实际金额", async ({ page }) => {
-	await page.goto("/today");
+	await page.goto("/fixtures");
 	// live 单关同样须单固：选 fixture 1 客胜（该场最终 0:1 客胜）
 	await page.getByTestId("pick-1-a").click();
 	await page.getByTestId("basket-open").click();
 	await page.getByTestId("basket-mode").selectOption("live");
 	await page.getByTestId("basket-stake").fill("10");
 	await page.getByTestId("basket-submit").click();
-	await expect(page.getByTestId("today-message")).toContainText("已建建议");
+	await expect(page.getByTestId("fixtures-message")).toContainText("已建建议");
 
 	await page.goto("/bets");
 	// 票 16：回录走右侧 Drawer（不再内联在表格列），含快照对照与按实际条款记账提示
@@ -245,6 +298,35 @@ test("更正路径：预览影响→带原因导入→原子重算，纸面资�
 	const after = dbRows("SELECT COUNT(*) AS n FROM draw_result_revisions")[0]?.["n"];
 	expect(after).toBe(before);
 	expect(dbRows("SELECT COUNT(*) AS n FROM bankroll_events WHERE kind='bet_stake'")[0]?.["n"]).toBe(1);
+});
+
+test("进球玩法页（票 wb-05）：模型 EV 组合 → ttg 独立单关落地（paper 不动真金）", async ({ page }) => {
+	await page.goto("/markets/goals");
+	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
+
+	// demo 002 带模型：ttg s2 @4.50 → 模型 EV≈+10.3% → 组合非空（模型×竞彩价口径）
+	const combo = page.getByTestId("goals-combo");
+	await expect(combo.getByTestId("goals-combo-pick-2")).toContainText("总进球 2");
+	await expect(combo.getByTestId("goals-combo-notes")).toContainText("不组串");
+	// 001 无模型（概率/EV 空缺）、003 停售（禁用）：推荐流诚实呈现
+	await expect(page.getByTestId("goals-model-note-1")).toContainText("无模型覆盖");
+	await expect(page.getByTestId("goals-pick-3-ttg-2")).toBeDisabled();
+
+	// 一键带入 → 每注独立单关提交；bankroll ¥2.40 → flat 档按最低注 ¥2 建议
+	await combo.getByTestId("goals-combo-apply").click();
+	await expect(page.getByTestId("goals-basket-count")).toHaveText("1/3");
+	await expect(page.getByTestId("goals-basket-stake")).toHaveValue("2");
+	// 票 wb-06：进球篮建议仓位——bankroll ¥2.40 过小，flat 档按最低注 ¥2 建议并说明越限
+	const goalsAdvice = page.getByTestId("goals-basket-stake-advice");
+	await expect(goalsAdvice).toContainText("¥2.00");
+	await expect(goalsAdvice).toContainText("超出 5% 上限");
+	await page.getByTestId("goals-basket-submit").click();
+	await expect(page.getByTestId("goals-market-message")).toContainText("已建 1 条单关建议");
+
+	const goalsBets = dbRows(
+		"SELECT COUNT(*) AS n FROM bets b JOIN bet_legs l ON l.bet_id = b.id WHERE l.market_code = 'ttg'",
+	);
+	expect(Number(goalsBets[0]?.["n"])).toBe(1);
 });
 
 test("浏览器、API 与 DB 最终状态一致", async ({ page }) => {
