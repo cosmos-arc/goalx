@@ -23,6 +23,12 @@ OWNERS: dict[str, set[str]] = {
         "draw_sync_runs",
         "hist_matches",
         "cost_ledger",
+        # 票 43：彩池域表归 data/pool.py
+        "pool_periods",
+        "pool_states",
+        "public_shares",
+        "pool_matches",
+        "pool_sync_runs",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

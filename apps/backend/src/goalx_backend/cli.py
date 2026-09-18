@@ -16,6 +16,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli train-models [--bootstrap N]
     uv run python -m goalx_backend.cli forecast [--date YYYY-MM-DD]
     uv run python -m goalx_backend.cli align-report
+    uv run python -m goalx_backend.cli pool-sync
 """
 
 from __future__ import annotations
@@ -218,6 +219,18 @@ def _cmd_clv_reconcile() -> None:
         logger.info("report: {}", clv_mod.clv_report(conn))
 
 
+def _cmd_pool_sync() -> None:
+    """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
+    stats = tasks.pool_snapshot()
+    logger.info(
+        "pool sync: periods={} matches={} share_rows={} missing_shares={}",
+        stats.period_nos,
+        stats.matches,
+        stats.share_rows,
+        stats.missing_shares,
+    )
+
+
 def _cmd_set_alias(args: argparse.Namespace) -> None:
     """人工覆盖：给 canonical 球队追加 manual 别名（即时生效，票 25）。"""
     with task_conn() as conn:
@@ -324,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
+    sub.add_parser("pool-sync", help="手动拉一次彩池期次/对阵/人气分布(票 43)")
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -351,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-haircut": _cmd_calibrate_haircut,
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
+        "pool-sync": _cmd_pool_sync,
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

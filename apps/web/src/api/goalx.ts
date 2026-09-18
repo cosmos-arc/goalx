@@ -184,3 +184,62 @@ export function fetchBacktestRun(runId: number): Promise<BacktestRunDetail> {
 export function fetchValidationProgress(): Promise<ValidationProgress> {
 	return unwrap(client.GET("/api/v1/validation/progress"));
 }
+
+export type PoolPeriod = Schemas["PoolPeriodView"];
+export type PoolPeriodDetail = Schemas["PoolPeriodDetailView"];
+export type PoolMatch = Schemas["PoolMatchView"];
+export type PoolSelection = Schemas["PoolSelectionView"];
+export type PoolSyncStatus = Schemas["PoolSyncStatusView"];
+export type PoolStateImportInput = Schemas["PoolStateImportPayload"];
+
+/**
+ * 彩池期次列表（票 43）：期次/对阵/分布来自源B 同步；销量列仅 AI 代采可得。
+ */
+export function fetchPoolPeriods(marketCode?: string): Promise<PoolPeriod[]> {
+	return unwrap(
+		client.GET("/api/v1/pool/periods", {
+			params: { query: { ...(marketCode === undefined ? {} : { market_code: marketCode }) } },
+		}),
+	);
+}
+
+/**
+ * 彩池期次详情（票 43）：一场一选三向（概率/份额/估计派彩赔率/EV）。
+ */
+export function fetchPoolPeriodDetail(periodNo: string, marketCode?: string): Promise<PoolPeriodDetail> {
+	return unwrap(
+		client.GET("/api/v1/pool/periods/{period_no}", {
+			params: {
+				path: { period_no: periodNo },
+				query: { ...(marketCode === undefined ? {} : { market_code: marketCode }) },
+			},
+		}),
+	);
+}
+
+/** 彩池同步状态（票 43）：上次同步元信息与已采集期次数。 */
+export function fetchPoolSyncStatus(): Promise<PoolSyncStatus> {
+	return unwrap(client.GET("/api/v1/pool-sync/status"));
+}
+
+/** 触发一次彩池同步（票 43：源B 期次/对阵/人气；幂等）。 */
+export function runPoolSync(): Promise<PoolSyncStatus> {
+	return unwrap(client.POST("/api/v1/pool-sync/run"));
+}
+
+/**
+ * AI 代采导入（票 43 兜底层）：官方销量/滚存经代理结构化提交（幂等，source=agent）。
+ */
+export function importPoolState(payload: PoolStateImportInput): Promise<{ period_no: string; imported: boolean }> {
+	return unwrap(client.POST("/api/v1/pool-states", { body: payload }));
+}
+
+export type PoolSlipCreateInput = Schemas["PoolSlipCreate"];
+
+/**
+ * 创建纸面池票（票 43 接线）：picks 笛卡尔积 materialize 为组合；
+ * 奖池型只纸面（调研红线——真金须用户单独裁决）。
+ */
+export function createPoolSlip(payload: PoolSlipCreateInput): Promise<Slip> {
+	return unwrap(client.POST("/api/v1/pool-slips", { body: payload }));
+}

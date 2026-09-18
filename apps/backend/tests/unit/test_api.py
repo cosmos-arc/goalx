@@ -1240,3 +1240,112 @@ def test_draw_sync_run_maps_source_error_to_502(
         assert "draw sync source error" in run.json()["detail"]
         # 失败不落元信息行
         assert client.get("/api/v1/draw-sync/status").json()["last_run"] is None
+
+
+def test_pool_period_views_with_demo_seed(demo_client: TestClient) -> None:
+    """彩池期次端点（票 43）：列表/详情/404；概率口径与份额/EV 链路。"""
+    periods = demo_client.get("/api/v1/pool/periods")
+    assert periods.status_code == 200
+    body = periods.json()
+    assert [row["period_no"] for row in body] == ["26999"]
+    assert body[0]["match_count"] == 14
+    assert body[0]["status"] == "on_sale"
+    assert body[0]["shares_captured_at"] is not None
+    assert body[0]["state"] is None  # 无代采销量 → None（AI 代采待命）
+
+    detail = demo_client.get("/api/v1/pool/periods/26999")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert len(payload["matches"]) == 14
+    assert "返奖率" in payload["caliber"]
+    # 场 2（利物浦 vs 曼城）映射到 demo 场次且有 Forecast → 模型口径
+    mapped = [m for m in payload["matches"] if m["fixture_id"] is not None]
+    assert {m["match_seq"] for m in mapped} == {1, 2, 3}
+    model_match = next(m for m in payload["matches"] if m["match_seq"] == 2)
+    assert all(s["prob_source"] == "model" for s in model_match["selections"])
+    # 场 1 无 Forecast → 欧指去水兜底；份额 → 估计赔率 = 0.65/share
+    fallback = next(m for m in payload["matches"] if m["match_seq"] == 1)
+    assert all(s["prob_source"] == "euro_devig" for s in fallback["selections"])
+    for selection in fallback["selections"]:
+        assert selection["share"] is not None
+        assert selection["implied_odds"] == pytest.approx(
+            0.65 / selection["share"], abs=0.02
+        )
+        assert selection["ev"] == pytest.approx(
+            selection["prob"] * selection["implied_odds"] - 1, abs=0.005
+        )
+    assert demo_client.get("/api/v1/pool/periods/88888").status_code == 404
+
+
+def test_pool_sync_status_empty_when_never_synced(api_client: TestClient) -> None:
+    """从未同步：last_run 为空、期次数 0（诚实空态）。"""
+    response = api_client.get("/api/v1/pool-sync/status")
+    assert response.status_code == 200
+    assert response.json() == {"last_run": None, "period_count": 0}
+
+
+def test_pool_state_agent_import_is_idempotent(demo_client: TestClient) -> None:
+    """AI 代采入口（票 43 兜底层）：未知期次 404；导入幂等（同值重放单行）。"""
+    missing = demo_client.post(
+        "/api/v1/pool-states", json={"period_no": "88888", "sales_amount": 1.0}
+    )
+    assert missing.status_code == 404
+
+    payload = {
+        "period_no": "26999",
+        "sales_amount": 12345678.5,
+        "rollover_in": 654321.0,
+        "published_at": "2026-09-20T12:00:00+00:00",
+    }
+    created = demo_client.post("/api/v1/pool-states", json=payload)
+    assert created.status_code == 201
+    assert created.json() == {"period_no": "26999", "imported": True}
+    replay = demo_client.post("/api/v1/pool-states", json=payload)
+    assert replay.status_code == 201
+    periods = demo_client.get("/api/v1/pool/periods").json()
+    state = periods[0]["state"]
+    assert state is not None
+    assert state["sales_amount"] == 12345678.5
+    assert state["source"] == "agent"
+
+
+def test_pool_paper_slip_with_real_period(demo_client: TestClient) -> None:
+    """真实期次下的纸面池票提交（票 43：奖池型只纸面红线）。"""
+    periods = demo_client.get("/api/v1/pool/periods").json()
+    period_id = 1  # demo 库首个期次
+    assert periods[0]["period_no"] == "26999"
+    response = demo_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "pool_period_id": period_id,
+            "stake_per_combination": 2.0,
+            "picks": [
+                {"match_seq": seq, "selection_code": "3"} for seq in range(1, 10)
+            ],
+        },
+    )
+    assert response.status_code == 201
+    slip = response.json()
+    assert slip["mode"] == "paper"
+    # 池票组合在 combinations 表物化（单选 9 场 → 1 组合），bets 随购买/结算建
+    slips = demo_client.get("/api/v1/bet-slips").json()
+    assert any(row["id"] == slip["id"] for row in slips)
+
+
+def test_pool_sync_run_returns_502_when_source_unreachable(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同步源不可达 → 502（不落元信息行；调用方可重试）。"""
+    from httpx import ConnectError
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise ConnectError("source unreachable")
+
+    monkeypatch.setattr("goalx_backend.api.pool.zucai.sync_pool_data", boom)
+    response = api_client.post("/api/v1/pool-sync/run")
+    assert response.status_code == 502
+    assert "pool sync source error" in response.json()["detail"]
+    # 失败不落同步元信息
+    status = api_client.get("/api/v1/pool-sync/status").json()
+    assert status["last_run"] is None

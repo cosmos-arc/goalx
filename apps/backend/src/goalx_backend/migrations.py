@@ -716,6 +716,71 @@ def _apply_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v10(conn: sqlite3.Connection) -> None:
+    """
+    v10（票 43）：传统足彩彩池数据——pool_matches + pool_sync_runs。
+
+    - pool_matches：一个期次一行的 14 场对阵（场序/联赛/开赛时间/主客队/
+      期次页三向"99 家平均欧指"/源内部场次 id），随同步刷新当前态；
+      历史欧赔时序不在本表（欧赔时序归 odds_snapshots 域）。
+    - pool_sync_runs：一次同步一行（append-only）：来源/时点/期次集合/
+      计数/分布缺失场次。最新行即"上次同步"状态。
+      v9 留给并行的 feat/draw-sync 分支（draw_sync_runs）——两分支独立
+      建表互不依赖，先后合并皆可（迁移按号跳过已应用版本，空洞无害）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pool_matches (
+            id INTEGER PRIMARY KEY,
+            pool_period_id INTEGER NOT NULL REFERENCES pool_periods(id),
+            match_seq INTEGER NOT NULL,
+            source_match_id TEXT,
+            league TEXT,
+            kickoff_utc TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            euro_odds_h REAL,
+            euro_odds_d REAL,
+            euro_odds_a REAL,
+            UNIQUE (pool_period_id, match_seq)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pool_matches ON pool_matches(pool_period_id)"
+    )
+    # 份额快照附票数等量级参考（v1 建表无此列，源B number 口径实证可得）
+    conn.execute("ALTER TABLE public_shares ADD COLUMN meta TEXT")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pool_sync_runs (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            period_nos TEXT NOT NULL,
+            pages INTEGER NOT NULL,
+            matches INTEGER NOT NULL,
+            share_rows INTEGER NOT NULL,
+            missing_shares INTEGER NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pool_sync_runs_time
+            ON pool_sync_runs(observed_at)
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER pool_sync_runs_no_{operation.lower()}
+            BEFORE {operation} ON pool_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'pool_sync_runs is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -726,4 +791,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (7, _apply_v7),
     (8, _apply_v8),
     (9, _apply_v9),
+    (10, _apply_v10),
 )

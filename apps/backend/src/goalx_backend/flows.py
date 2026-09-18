@@ -26,6 +26,7 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
+from goalx_backend.data.ingest.zucai import stats_dict
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
@@ -114,6 +115,14 @@ def draw_results_sync_flow() -> dict[str, object]:
     stats = tasks.draw_results_sync()
     logger.info("draw sync: {}", stats)
     return stats
+
+
+@flow(name="pool-snapshot", log_prints=True)
+def pool_snapshot_flow() -> dict[str, object]:
+    """彩池同步（票 43）：源B 期次/对阵/人气分布（幂等；份额追加快照）。"""
+    stats = tasks.pool_snapshot()
+    logger.info("pool snapshot: {}", stats_dict(stats))
+    return stats_dict(stats)
 
 
 @flow(name="daily-capture", log_prints=True)

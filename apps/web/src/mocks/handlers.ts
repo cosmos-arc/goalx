@@ -841,3 +841,158 @@ handlers.push(
 		}),
 	),
 );
+
+// --- 票 43：彩池期次/分布（14场任9 页） ---
+// 三向（code h/d/a 对应官方池码 3/1/0）：概率优先 model、退化 euro_devig；
+// 份额/估计赔率/EV 链路同后端口径（odds = 0.65/share，ev = p×odds−1）。
+type PoolSelectionArgs = {
+	code: "h" | "d" | "a";
+	label: string;
+	prob: number;
+	probSource: "model" | "euro_devig";
+	share: number;
+};
+
+const poolSelection = ({ code, label, prob, probSource, share }: PoolSelectionArgs) => {
+	const odds = Number((0.65 / share).toFixed(2));
+	return {
+		code,
+		label,
+		prob,
+		prob_source: probSource,
+		share,
+		implied_odds: odds,
+		ev: Number((prob * odds - 1).toFixed(4)),
+	};
+};
+
+const poolMatchFixture = (seq: number, home: string, away: string, league: string) => {
+	// 份额形态：主热偏置 + 平局低注；场 2/5 为"低份额冷门正 EV"样本
+	const [shareH, shareD, shareA] = seq === 2 || seq === 5 ? [0.34, 0.24, 0.18] : [0.5, 0.28, 0.42];
+	const [probH, probD, probA] = seq === 2 || seq === 5 ? [0.32, 0.26, 0.36] : [0.45, 0.27, 0.33];
+	const source = seq % 3 === 2 ? "model" : "euro_devig";
+	return {
+		match_seq: seq,
+		source_match_id: String(1331800 + seq),
+		league,
+		kickoff_utc: `2026-09-20T1${seq % 10}:00:00Z`,
+		home_team: home,
+		away_team: away,
+		fixture_id: null,
+		selections: [
+			poolSelection({ code: "h", label: "胜", prob: probH, probSource: source, share: shareH }),
+			poolSelection({ code: "d", label: "平", prob: probD, probSource: source, share: shareD }),
+			poolSelection({ code: "a", label: "负", prob: probA, probSource: source, share: shareA }),
+		],
+	};
+};
+
+const poolTeams: Array<[string, string]> = [
+	["阿森纳", "切尔西"],
+	["利物浦", "曼城"],
+	["拜仁", "多特"],
+	["维拉", "热刺"],
+	["纽卡斯尔", "西汉姆"],
+	["巴萨", "塞维利亚"],
+	["马竞技", "贝蒂斯"],
+	["国米", "拉齐奥"],
+	["尤文", "佛罗伦萨"],
+	["AC米兰", "罗马"],
+	["日尔曼", "里昂"],
+	["摩纳哥", "马赛"],
+	["本菲卡", "波尔图"],
+	["阿贾克斯", "埃因霍温"],
+];
+const poolLeagues = [
+	"英超",
+	"英超",
+	"德甲",
+	"英超",
+	"英超",
+	"西甲",
+	"西甲",
+	"意甲",
+	"意甲",
+	"意甲",
+	"法甲",
+	"法甲",
+	"葡超",
+	"荷甲",
+];
+
+export const poolPeriodsFixture = [
+	{
+		period_no: "26999",
+		sales_deadline: "2026-09-20T12:30:00Z",
+		match_count: 14,
+		first_kickoff: "2026-09-20T10:00:00Z",
+		last_kickoff: "2026-09-21T02:45:00Z",
+		shares_captured_at: "2026-09-18T06:30:00Z",
+		state: null,
+		status: "on_sale",
+	},
+	{
+		period_no: "26998",
+		sales_deadline: "2026-09-17T12:30:00Z",
+		match_count: 14,
+		first_kickoff: "2026-09-16T10:00:00Z",
+		last_kickoff: "2026-09-17T02:45:00Z",
+		shares_captured_at: "2026-09-16T06:30:00Z",
+		state: null,
+		status: "finished",
+	},
+] as const;
+
+export const poolPeriodDetailFixture = {
+	period_no: "26999",
+	sales_deadline: "2026-09-20T12:30:00Z",
+	matches: poolTeams.map(([home, away], i) => poolMatchFixture(i + 1, home, away, poolLeagues[i] ?? "英超")),
+	state: null,
+	shares_captured_at: "2026-09-18T06:30:00Z",
+	caliber:
+		"概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；份额 = 第三方人气分布（公众分布代理，非官方池份额）；估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1，未建模 price impact 与分彩风险。",
+};
+
+const poolSyncStatusFixture = {
+	last_run: {
+		source: "okooo.com",
+		observed_at: "2026-09-18T06:30:00Z",
+		period_nos: ["26999"],
+		pages: 4,
+		matches: 14,
+		share_rows: 42,
+		missing_shares: 0,
+	},
+	period_count: 2,
+};
+
+handlers.push(
+	http.get("*/api/v1/pool/periods", () => HttpResponse.json(poolPeriodsFixture)),
+	http.get("*/api/v1/pool/periods/:periodNo", ({ params }) => {
+		if (params["periodNo"] !== "26999") {
+			return HttpResponse.json({ detail: "period not found" }, { status: 404 });
+		}
+		return HttpResponse.json(poolPeriodDetailFixture);
+	}),
+	http.get("*/api/v1/pool-sync/status", () => HttpResponse.json(poolSyncStatusFixture)),
+	http.post("*/api/v1/pool-sync/run", () => HttpResponse.json(poolSyncStatusFixture)),
+	http.post("*/api/v1/pool-states", async ({ request }) => {
+		const body = (await request.json()) as { period_no?: string };
+		return HttpResponse.json({ period_no: body.period_no ?? "26999", imported: true }, { status: 201 });
+	}),
+	http.post("*/api/v1/pool-slips", () =>
+		HttpResponse.json(
+			{
+				id: 901,
+				mode: "paper",
+				placed_at: null,
+				note: null,
+				created_at: "2026-09-18T07:00:00Z",
+				bet_count: 0,
+				stake_total: 0,
+				profit_total: 0,
+			},
+			{ status: 201 },
+		),
+	),
+);

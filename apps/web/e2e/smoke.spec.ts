@@ -92,14 +92,14 @@ test("stub pages say what they are and when they arrive", async ({ page }) => {
 
 // 票 18：词典页真实落地——词条常显、检索过滤、无结果 no-data 空状态
 // （票 wb-05 起含进球矩阵词条，票 wb-06 起 Kelly/建议仓位两词条，票 39 起
-// 共识低置信，票 40 起 CLV 基准分层，票 41 起注级 EV 快照词条，共 18）
+// 共识低置信，票 40 起 CLV 基准分层，票 41 起注级 EV 快照，票 43 起彩池 EV，共 19）
 test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
 	await page.goto("/glossary");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(18);
+	expect(await list.locator("article").count()).toBe(19);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -110,7 +110,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(18);
+	await expect(list.locator("article")).toHaveCount(19);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
@@ -180,26 +180,33 @@ test("had market page renders the feed and combo or degrades honestly", async ({
 	).toBeVisible({ timeout: 20_000 });
 });
 
-// 票 wb-07：14场任9 骨架页——横幅级骨架说明常显（无彩池数据时整页一眼是骨架），
-// 期次选择/14 槽位（数据或虚线待数据）/三档映射/留位/提交占位结构完整可演示
-test("pool market skeleton page is honestly a skeleton with full structure", async ({ page }) => {
+// 票 43：14场任9 页点亮——真实期次/对阵/分布（源B 同步）或后端不可用/
+// 尚无期次数据的诚实降级，双路径都算通过（骨架横幅已随首期完整数据移除）
+test("pool market page renders real periods or degrades honestly", async ({ page }) => {
 	await page.goto("/markets/pool");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 14场任9" })).toBeVisible();
-	await expect(page.getByTestId("pool-skeleton-banner")).toContainText("骨架页");
-	await expect(page.getByTestId("pool-skeleton-banner")).toContainText("goalx-quant");
-	// 口径行常显：占位概率口径 + 标记非生成器
-	await expect(page.getByTestId("pool-caliber")).toContainText("欧共识");
-	// 期次选择 + 14 个槽位（数据场或虚线待数据——结构骨架与后端可用性无关）
-	await expect(page.getByTestId("pool-period-select")).toBeVisible();
-	const slots = page.getByTestId("pool-slots");
-	await expect(slots.locator('[data-testid^="pool-slot-"]')).toHaveCount(14);
-	// 三档映射标注 + 留位 not-available 三块 + 提交占位 disabled
-	await expect(page.getByTestId("pool-tier-mapping")).toContainText("保守 = flat");
+	// 口径行常显：彩池口径（返奖率/份额）或降级态的兜底说明
+	await expect(page.getByTestId("pool-caliber")).toBeVisible();
+	// 同步状态行常显（后端不可用时也渲染"尚未同步"）
+	await expect(page.getByTestId("pool-sync-info")).toBeVisible();
+	// 数据路径（期次列表 + 真实槽位 + AI 代采待命/销量）或降级空态二选一
+	const hasPeriods = page.getByTestId("pool-period-select");
+	const degraded = page.getByTestId("empty-state").filter({ hasText: /连不上后端|尚无彩池期次/ });
+	await expect(hasPeriods.or(degraded).first()).toBeVisible({ timeout: 20_000 });
+	if (await hasPeriods.isVisible()) {
+		// 真实数据路径：14 槽位（对阵或虚线缺场）+ 销量区块（AI 代采待命或实数据）
+		const slots = page.getByTestId("pool-slots");
+		await expect(slots.locator('[data-testid^="pool-slot-"]').first()).toBeVisible({ timeout: 20_000 });
+		await expect(page.getByTestId("pool-sales")).toBeVisible();
+		// 额度建议：奖池红线（只纸面 flat；live 档禁用占位）
+		await expect(page.getByTestId("pool-tier-mapping")).toContainText("只纸面");
+		// 提交：纸面池票（不足 9 场时 disabled + 说明）
+		const submit = page.getByTestId("pool-submit");
+		await expect(submit).toContainText("任9");
+	}
+	// 留位 not-available 三块与后端可用性无关
 	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(3);
-	const submit = page.getByTestId("pool-submit");
-	await expect(submit).toBeDisabled();
-	await expect(submit).toContainText("占位");
 });
 
 // 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过
