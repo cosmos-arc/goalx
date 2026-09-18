@@ -446,7 +446,10 @@ export function HistoryPage() {
 											<p className="text-xs text-muted-foreground">平均 CLV</p>
 											<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} text-muted-foreground`}>—</p>
 											<p className="mt-2 text-xs text-muted-foreground">
-												判读：正 = 买在好价（closing 优于锁定）。注级 CLV 未随 v1 API 提供，聚合口径见验证页。
+												判读：正 = 买在好价（closing 优于锁定）。注级 CLV 未随 v1 API
+												提供，聚合口径见验证页；收盘基准已三级分层（
+												<GlossaryTerm id="clv-basis">基准分层</GlossaryTerm>
+												），来源随记录标注。
 											</p>
 										</div>
 									</div>

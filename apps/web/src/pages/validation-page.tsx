@@ -210,6 +210,8 @@ const CLV_KNOWN_KEYS = new Set([
 	"singles",
 	"parlay2",
 	"independence_assumed",
+	"close_basis_note",
+	"by_close_basis",
 	"denominator",
 	"by_minutes_bucket_single",
 	"regression",
@@ -245,6 +247,52 @@ function groupRows(dict: Record<string, unknown>, key: "singles" | "parlay2", ki
 	return rows;
 }
 
+/** 基准来源分层的显示名（票 40：锚级顺序固定，未知级原样显示）。 */
+const CLOSE_BASIS_LABELS: Record<string, string> = {
+	pinnacle: "Pinnacle 主锚",
+	betfair_ex: "Betfair 辅锚(扣佣)",
+	consensus: "多书共识 fallback",
+	legacy: "分层前共识(legacy)",
+	mixed: "串关跨基准(mixed)",
+};
+
+/** by_close_basis 字典 → 一行分层摘要（窗口期新旧口径并行判读，票 40）。 */
+function closeBasisRow(dict: Record<string, unknown>): MetricRow | null {
+	const basisDict = dict["by_close_basis"];
+	if (typeof basisDict !== "object" || basisDict === null) {
+		return null;
+	}
+	const parts: string[] = [];
+	for (const basis of ["pinnacle", "betfair_ex", "consensus", "legacy", "mixed"]) {
+		const entry = pick(basisDict, basis);
+		if (typeof entry !== "object" || entry === null) {
+			continue;
+		}
+		const bets = asNumber(pick(entry, "bets"));
+		const legs = asNumber(pick(entry, "legs"));
+		const beat = asNumber(pick(entry, "groups", "single", "paper", "beat_rate"));
+		const beatN = asNumber(pick(entry, "groups", "single", "paper", "n_bets"));
+		const pieces = [
+			bets !== null ? `${bets} 注` : null,
+			legs !== null ? `${legs} 腿` : null,
+			beat !== null && beatN ? `纸面单关 beat ${formatPct(beat)}(n=${beatN})` : null,
+		].filter((piece): piece is string => piece !== null);
+		if (pieces.length > 0) {
+			parts.push(`${CLOSE_BASIS_LABELS[basis] ?? basis} ${pieces.join(" · ")}`);
+		}
+	}
+	if (parts.length === 0) {
+		return null;
+	}
+	return {
+		id: "close-basis",
+		label: "基准来源分层",
+		term: "clv-basis",
+		value: parts.join(" · "),
+		hint: asString(dict["close_basis_note"]) ?? "pinnacle 主锚 → betfair_ex 辅 → consensus fallback",
+	};
+}
+
 /** clv 字典 → 指标行；未映射 key 原样进 unknownEntries（其他指标折叠区）。 */
 export function clvMetricRows(clv: unknown): MappedMetrics {
 	if (typeof clv !== "object" || clv === null) {
@@ -252,6 +300,11 @@ export function clvMetricRows(clv: unknown): MappedMetrics {
 	}
 	const dict = clv as Record<string, unknown>;
 	const rows: MetricRow[] = [...groupRows(dict, "singles", "单关"), ...groupRows(dict, "parlay2", "2串1")];
+
+	const basis = closeBasisRow(dict);
+	if (basis !== null) {
+		rows.push(basis);
+	}
 
 	const independence = asBool(dict["independence_assumed"]);
 	if (independence !== null) {
