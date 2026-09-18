@@ -95,10 +95,11 @@ test("renders the research view: books table with deviation highlight, consensus
 	const avgRow = bookRows.find((row) => row.textContent?.includes("avg")) as HTMLElement;
 	expect(within(avgRow).getByTestId("book-odds-h")).not.toHaveTextContent("↑");
 
-	// 共识块：books 数 + 三向概率 + 判读说明
+	// 共识块：books 数 + 三向概率 + 判读说明；分母 3 <4 → 琥珀低置信（票 39，接词条）
 	const consensus = screen.getByTestId("research-consensus");
 	expect(consensus).toHaveTextContent("主胜 53.0%");
-	expect(consensus).toHaveTextContent("4 家三向均价 → Shin 去水");
+	expect(consensus).toHaveTextContent("3 家三向均价 → Shin 去水");
+	expect(within(consensus).getByTestId("consensus-low-confidence")).toHaveTextContent("共识低置信");
 
 	// 模型块：概率 + 模型 EV 红涨绿跌 + 版本信息
 	const model = screen.getByTestId("research-model");

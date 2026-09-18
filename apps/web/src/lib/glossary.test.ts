@@ -6,16 +6,17 @@ import { filterGlossary, GLOSSARY, glossaryEntry } from "./glossary";
  * definition / direction / example / caution 非空——判读方向为必填要素，
  * 缺失的词条不上线（票 18 不变量）。票 wb-02 增补研究页两词条（12 条），
  * 票 wb-05 增补进球类矩阵推导词条（13 条），票 wb-06 增补 Kelly/建议仓位
- * 两词条（15 条）。
+ * 两词条（15 条），票 39 增补共识低置信词条（16 条）。
  */
 test("all agreed entries are present with unique ids", () => {
-	expect(GLOSSARY).toHaveLength(15);
+	expect(GLOSSARY).toHaveLength(16);
 	expect(GLOSSARY.map((entry) => entry.id)).toEqual([
 		"ev",
 		"eu-consensus",
 		"eligibility",
 		"single",
 		"books",
+		"low-confidence",
 		"paper-vs-live",
 		"pnl-roi",
 		"forward-inclusion",
@@ -59,8 +60,8 @@ test("glossaryEntry resolves by id and misses cleanly", () => {
 
 test("filterGlossary matches term, alias and definition, case-insensitively", () => {
 	// 空查询 = 全部（保持原顺序）
-	expect(filterGlossary("")).toHaveLength(15);
-	expect(filterGlossary("   ")).toHaveLength(15);
+	expect(filterGlossary("")).toHaveLength(16);
+	expect(filterGlossary("   ")).toHaveLength(16);
 	// term 命中
 	expect(filterGlossary("单固").map((entry) => entry.id)).toEqual(["single"]);
 	// 别名命中（大小写不敏感）
@@ -74,6 +75,9 @@ test("filterGlossary matches term, alias and definition, case-insensitively", ()
 	// 仓位词条（票 wb-06）可检索：Kelly 别名与建议仓位 term
 	expect(filterGlossary("凯利").map((entry) => entry.id)).toContain("kelly");
 	expect(filterGlossary("建议仓位").map((entry) => entry.id)).toContain("stake-advice");
+	// 票 39 共识低置信词条可检索：flag 名别名与 term
+	expect(filterGlossary("low_confidence").map((entry) => entry.id)).toContain("low-confidence");
+	expect(filterGlossary("共识低置信").map((entry) => entry.id)).toContain("low-confidence");
 	// 无命中 = 空
 	expect(filterGlossary("量子纠缠")).toEqual([]);
 });

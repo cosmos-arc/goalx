@@ -85,12 +85,14 @@ test("renders eligible cards on top, the full compact table, and the semantic en
 	expect(screen.getByTestId("fixtures-card-2")).toBeInTheDocument();
 	expect(screen.getByTestId("fixtures-not-eligible-count")).toHaveTextContent("1 场不可投");
 
-	// 卡片编码：EV 永远只按正负红绿；偏差/样本少走独立琥珀徽章；最强标注；不重复"可投"徽章
+	// 卡片编码：EV 永远只按正负红绿；偏差走独立琥珀徽章；最强标注；不重复"可投"徽章
 	const card = screen.getByTestId("fixtures-card-1");
 	expect(within(card).getByText("主胜 +5.3%")).toHaveClass("text-profit");
 	expect(within(card).getByText("客胜 -17.5%")).toHaveClass("text-loss");
 	expect(within(card).getByTestId("flag-ev_deviation")).toHaveTextContent("EV 偏差≥5%");
-	expect(within(card).getByTestId("flag-few_books")).toHaveTextContent("样本少");
+	// 票 39：books 2（<3 且 <4）两标并打——few_books 让位，显示位只留低置信（接词条）
+	expect(within(card).getByTestId("flag-low_confidence")).toHaveTextContent("共识低置信");
+	expect(within(card).queryByTestId("flag-few_books")).not.toBeInTheDocument();
 	expect(within(card).getByText("最强 主胜")).toBeInTheDocument();
 	expect(within(card).queryByText("可投")).not.toBeInTheDocument();
 	expect(within(card).getByText(/小时后$/)).toBeInTheDocument(); // 倒计时（kickoff +2h）
@@ -128,8 +130,10 @@ test("renders eligible cards on top, the full compact table, and the semantic en
 	// 拒绝场：行 wash 弱化 + 选注按钮禁用（停售规则前置）
 	expect(row3).toHaveClass("bg-muted/50");
 	expect(screen.getByTestId("pick-3-h")).toBeDisabled();
-	// 欧共识与 books
+	// 欧共识与 books：行内低置信显示位（票 39）——books 2/3 琥珀挂词条，行 1 覆盖、行 2 仅低置信
 	expect(rows[0]).toHaveTextContent("53/25/22");
+	expect(within(row1).getByTestId("books-low-confidence")).toHaveTextContent(/^2\s*共识低置信/);
+	expect(within(row2).getByTestId("books-low-confidence")).toHaveTextContent(/^3\s*共识低置信/);
 	expect(within(row3).getByText("—", { selector: "td:last-child" })).toBeInTheDocument();
 });
 

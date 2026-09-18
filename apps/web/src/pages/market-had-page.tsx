@@ -195,7 +195,7 @@ export function MarketHadPage() {
 						</p>
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
-						配色：红 = 正向 EV · 绿 = 负向 EV · 琥珀 = 数据警示（过期/样本少/偏差） · 蓝 = 可投资格
+						配色：红 = 正向 EV · 绿 = 负向 EV · 琥珀 = 数据警示（过期/共识低置信/偏差） · 蓝 = 可投资格
 					</p>
 				</header>
 

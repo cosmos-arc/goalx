@@ -19,6 +19,7 @@ export const MAX_LEGS = 2;
 export const FLAG_LABELS: Record<string, string> = {
 	ev_deviation: "EV 偏差≥5%",
 	few_books: "样本少",
+	low_confidence: "共识低置信",
 	not_joined: "未 join 欧赔",
 };
 
@@ -291,13 +292,16 @@ export function EligibleCard({
 				})}
 				{(fixture.flags ?? [])
 					.filter((flag) => flag in FLAG_LABELS)
+					// 票 39：低置信（<4）覆盖 few_books（<3）区间——两标并打时只显示
+					// 低置信文案，合并为一个显示位（方案待人追认，见词典 low-confidence）
+					.filter((flag) => flag !== "few_books" || !(fixture.flags ?? []).includes("low_confidence"))
 					.map((flag) => (
 						<span
 							key={flag}
 							data-testid={`flag-${flag}`}
 							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
 						>
-							{FLAG_LABELS[flag]}
+							{flag === "low_confidence" ? <GlossaryTerm id="low-confidence" /> : FLAG_LABELS[flag]}
 						</span>
 					))}
 				{best ? (
