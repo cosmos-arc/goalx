@@ -8,12 +8,14 @@
 
 | 项 | 冻结值 |
 |---|---|
-| 欧赔 sport 范围 | `soccer_epl,soccer_italy_serie_a`(英超+意甲) |
+| 欧赔 sport 范围 | `soccer_epl,soccer_italy_serie_a`(英超+意甲) → **v1.1 起六联赛**(见下) |
 | 选择理由 | 五大中最小非空组合:覆盖周末+周中赛程日,E0/I1 模型与 hist 底座齐备,2026-09-13 在售 10 场(英超3+意甲7) |
 | 竞彩 | 全玩法照采(sporttery 免费),资格判定只对 had |
 | 明确排除 | 其余联赛/杯赛的场次照常出现在今日页,但无欧赔证据(显示 not_joined/unknown),不纳入候选 |
 
 范围由 `GOALX_ODDS_API_SPORT_SCOPE` 冻结(已写入 .env);空值=动态发现全部足球,每次≈16 credits,禁止在运行期改回。
+
+**修订 v1.1(2026-09-18,用户授权)**:范围扩为六联赛——`soccer_epl,soccer_italy_serie_a,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_netherlands_eredivisie`。性质是数据覆盖扩展(六联赛模型已存在而共识对照缺失),非结果驱动改判;2026-09-18 前的销售日保持二联赛口径,验收统计按生效日分段。预算复核:基线 12 credits/日(2 拍×6 keys),日护栏 40、月护栏 480 不变。
 
 ## 2. 数据源与版本
 

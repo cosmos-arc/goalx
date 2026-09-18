@@ -93,7 +93,7 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 | 官方开奖 | 唯一事实源 | — | UI/API 人工录入，更正必带原因 |
 | 官方彩池销量/滚存 | 无自动源 | — | AI 代采（见 §8） |
 
-欧赔范围由 `GOALX_ODDS_API_SPORT_SCOPE` 冻结为英超+意甲（协议 v1 §1），运行期禁止改回空值（空=动态发现全部足球，每次 ≈16 credits）。
+欧赔范围由 `GOALX_ODDS_API_SPORT_SCOPE` 冻结为六联赛（英超/意甲/西甲/德甲/法甲/荷甲，协议 v1.1 自 2026-09-18），运行期禁止改回空值（空=动态发现全部足球，每次 ≈16 credits）。
 
 ## 5. 运维 API 端点（127.0.0.1:8000，前缀 `/api/v1`）
 

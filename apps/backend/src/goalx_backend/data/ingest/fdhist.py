@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import httpx
+from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 
-# 五大联赛 fd 代码（票 12 范围）
-FD_COMPETITIONS: tuple[str, ...] = ("E0", "D1", "SP1", "I1", "F1")
+# 联赛 fd 代码：五大 + N1 荷甲（模型线票 26 起覆盖六联赛，底座同步导入）
+FD_COMPETITIONS: tuple[str, ...] = ("E0", "D1", "SP1", "I1", "F1", "N1")
 # 回测范围三季（ADR 0007）+ 两个暖机赛季（票 28 walk-forward 训练窗需要
 # 更早历史；回测引擎只在 backtest seasons 内模拟下注，训练可用全部行）
 SEASONS: tuple[str, ...] = ("2122", "2223", "2324", "2425", "2526", "2627")
@@ -34,6 +35,7 @@ class HistImportStats:
     rows: int = 0
     written: int = 0
     skipped: int = 0
+    failed_files: int = 0
 
 
 def parse_csv(
@@ -116,17 +118,27 @@ def import_history(
     seasons: tuple[str, ...] = SEASONS,
     fetch: Callable[[str], str] | None = None,
 ) -> HistImportStats:
-    """批量拉取并 upsert 历史 CSV（幂等可重跑，票 21 验收）。"""
+    """
+    批量拉取并 upsert 历史 CSV（幂等可重跑，票 21 验收）。
+
+    单文件拉取失败（如新赛季文件未发布 404）跳过并计数，不中断其余文件；
+    失败文件下次重跑幂等补上。
+    """
     stats = HistImportStats()
     for season in seasons:
         for competition in competitions:
             url = f"{settings.fd_base_url}/{season}/{competition}.csv"
-            if fetch is not None:
-                text = fetch(url)
-            else:
-                response = client.get(url, timeout=30.0, follow_redirects=True)
-                response.raise_for_status()
-                text = response.content.decode("utf-8-sig", errors="replace")
+            try:
+                if fetch is not None:
+                    text = fetch(url)
+                else:
+                    response = client.get(url, timeout=30.0, follow_redirects=True)
+                    response.raise_for_status()
+                    text = response.content.decode("utf-8-sig", errors="replace")
+            except httpx.HTTPError as exc:
+                stats.failed_files += 1
+                logger.warning("fdhist fetch failed, skipped: {} ({})", url, exc)
+                continue
             rows, skipped = parse_csv(text, competition, season)
             stats.rows += len(rows)
             stats.skipped += skipped
