@@ -71,9 +71,23 @@ export const GLOSSARY: GlossaryEntry[] = [
 		term: "books",
 		aliases: ["book 数", "三向报价", "few_books", "样本少"],
 		definition: "给出完整 H/D/A 三向报价的欧赔 book 数，反映市场共识的样本厚度。",
-		direction: "越多越稳；<3 标 few_books（琥珀“样本少”警示），共识可信度下降。",
-		example: "8 家 book 给全三向 → books = 8；只有 2 家 → books = 2，标 few_books。",
-		caution: "books <3 标 few_books：样本薄，欧共识 p 与 EV 的可信度随之下降。",
+		direction:
+			"越多越稳；<4 标 low_confidence（琥珀“共识低置信”警示），<3 同时命中 few_books（展示层合并为一个显示位，见共识低置信词条）。",
+		example: "8 家 book 给全三向 → books = 8；只有 2 家 → books = 2，标 low_confidence（同时命中 few_books 区间）。",
+		caution:
+			"books <4：样本薄，欧共识 p 与 EV 的可信度随之下降（few_books 语义被低置信覆盖，两标并打时只显示低置信文案）。",
+	},
+	{
+		id: "low-confidence",
+		term: "共识低置信",
+		aliases: ["低置信", "low_confidence", "共识分母护栏", "样本薄"],
+		definition:
+			"共识分母护栏：完整三向 book 数 <4 时，共识概率可信度不足，打低置信标记（琥珀警示）；阈值 4 为工程初值（常量在后端 odds_math.py），不改共识概率本身（Shin/均价口径不变）。",
+		direction:
+			"标记出现 = 该场共识 p 与共识 EV 只作弱参考——分母越薄，去水共识越接近单 book 报价；亚洲联赛（日职/韩K/中超/澳超）覆盖缩水时常见。",
+		example: "某亚洲联赛场次只有 3 家 book 报全三向 → books = 3 < 4，标共识低置信；books = 4 及以上不打标。",
+		caution:
+			"低置信是展示层提示，不改变共识数值；books <3 的场次同时命中 few_books，展示层合并为一个显示位只显示低置信文案（4>3 覆盖其区间）。此合并方案与阈值 4 均待人追认（票 39）。",
 	},
 	{
 		id: "paper-vs-live",

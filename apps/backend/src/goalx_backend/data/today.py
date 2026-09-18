@@ -15,6 +15,7 @@ from goalx_backend.markets import SELECTIONS
 
 EV_FLAG_THRESHOLD = 0.05  # 今日页 EV 偏差标记阈值（票 08 report 口径）
 MIN_BOOKS_FOR_CONSENSUS = 3  # books 少于该数标记样本不足
+LOW_CONFIDENCE_FLAG = "low_confidence"  # 共识分母 <4 的低置信标记（票 39）
 
 
 class SelectionTriple(BaseModel):
@@ -138,5 +139,9 @@ def build_today_view(
             view.flags.append("not_joined")
         if view.books and view.books < MIN_BOOKS_FOR_CONSENSUS:
             view.flags.append("few_books")
+        # 共识分母护栏（票 39）：books <4 时共识可信度不足，打低置信标记
+        # （前端与 few_books 合并为一个显示位；阈值待人追认，见 odds_math）。
+        if view.books and om.consensus_low_confidence(view.books):
+            view.flags.append(LOW_CONFIDENCE_FLAG)
         rows.append(view)
     return rows

@@ -48,3 +48,16 @@ def test_expected_value() -> None:
     assert om.expected_value(0.5, 2.0) == pytest.approx(0.0)
     assert om.expected_value(0.4, 2.5) == pytest.approx(0.0)
     assert om.expected_value(0.3, 2.5) == pytest.approx(-0.25)
+
+
+def test_consensus_low_confidence_threshold() -> None:
+    """共识分母护栏（票 39）：books <4 打低置信；阈值是常量参数可调。"""
+    assert om.LOW_CONFIDENCE_BOOK_THRESHOLD == 4  # 工程初值，待人追认
+    assert om.consensus_low_confidence(0)
+    assert om.consensus_low_confidence(2)
+    assert om.consensus_low_confidence(3)
+    assert not om.consensus_low_confidence(4)  # 边界：阈值本身不打标
+    assert not om.consensus_low_confidence(5)
+    # 常量参数：收紧到 5 时 4 也打标（追认后改常量即全局生效，无须改调用点）
+    assert om.consensus_low_confidence(4, threshold=5)
+    assert not om.consensus_low_confidence(5, threshold=5)

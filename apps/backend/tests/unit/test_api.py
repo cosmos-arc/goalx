@@ -196,6 +196,93 @@ def test_today_had_quote_summary_from_demo(demo_client: TestClient) -> None:
     assert "sale_stopped" in by_code["周六003"]["had_quote"]["reasons"]
 
 
+# --- 票 39：共识分母护栏（low_confidence 标记，阈值 4 待人追认）---
+
+
+def _add_eu_books(
+    client: TestClient, fixture_id: int, books: int, *, first_index: int = 0
+) -> None:
+    """给场次补 N 本完整三向欧赔书（快照时间新鲜，共识分母 = N）。
+
+    ``first_index`` 错开书名——同一测试内多次追加时不与既有书重名。
+    """
+    from goalx_backend.data import fixtures as fx_store
+    from goalx_backend.models import SnapshotInput
+
+    db_path = client.app.state.settings.db_path  # type: ignore[attr-defined]
+    conn = connect(db_path)
+    observed = (NOW - timedelta(seconds=60)).isoformat(timespec="seconds")
+    for offset in range(books):
+        index = first_index + offset
+        for sel, odds in (("h", 6.1), ("d", 4.95), ("a", 1.29)):
+            fx_store.insert_odds_snapshot(
+                conn,
+                SnapshotInput(
+                    fixture_id=fixture_id,
+                    market_code="had",
+                    selection_code=sel,
+                    source=f"odds_api:book{index}",
+                    odds=odds + index * 0.01,
+                    captured_at=observed,
+                    observed_at=observed,
+                    source_updated_at=observed,
+                ),
+            )
+    conn.commit()
+    conn.close()
+
+
+def test_today_low_confidence_flag_below_threshold(api_client: TestClient) -> None:
+    """分母 2/3：low_confidence 打标；2 同时命中 few_books（前端合并显示）。"""
+    fixture_id = _fixture_id(api_client)
+    for books in (2, 3):
+        _add_eu_books(api_client, fixture_id, books)
+        row = api_client.get(
+            "/api/v1/fixtures/today", params={"date": BUSINESS_DATE}
+        ).json()[0]
+        assert row["books"] == books
+        assert "low_confidence" in row["flags"]
+        if books < 3:
+            assert "few_books" in row["flags"]  # 两标并打（<3 区间被 <4 覆盖）
+        else:
+            assert "few_books" not in row["flags"]  # 3 = 仅低置信
+
+
+def test_today_low_confidence_flag_at_and_above_threshold(
+    api_client: TestClient,
+) -> None:
+    """分母 4（边界）与 5：不打标——阈值本身算足额。"""
+    fixture_id = _fixture_id(api_client)
+    for books in (4, 5):
+        _add_eu_books(api_client, fixture_id, books)
+        row = api_client.get(
+            "/api/v1/fixtures/today", params={"date": BUSINESS_DATE}
+        ).json()[0]
+        assert row["books"] == books
+        assert "low_confidence" not in row["flags"]
+        assert "few_books" not in row["flags"]
+
+
+def test_fixture_research_consensus_low_confidence(api_client: TestClient) -> None:
+    """研究页共识视图：分母 <4 → low_confidence=True；≥4 → False（票 39 契约增量）。"""
+    fixture_id = _fixture_id(api_client)
+    _add_eu_books(api_client, fixture_id, 3)
+    consensus = api_client.get(f"/api/v1/fixtures/{fixture_id}/research").json()[
+        "consensus"
+    ]
+    assert consensus["books"] == 3
+    assert consensus["low_confidence"] is True
+
+    _add_eu_books(
+        api_client, fixture_id, 1, first_index=3
+    )  # 第 4 本 → 分母 4（边界不打标）
+    consensus = api_client.get(f"/api/v1/fixtures/{fixture_id}/research").json()[
+        "consensus"
+    ]
+    assert consensus["books"] == 4
+    assert consensus["low_confidence"] is False
+
+
 def test_fixture_odds_history_and_404(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     response = api_client.get(f"/api/v1/fixtures/{fixture_id}/odds")
@@ -234,8 +321,9 @@ def test_fixture_research_books_consensus_and_eligibility(
     pin = next(book for book in body["books"] if book["book"] == "odds_api:pin")
     assert pin["odds"] == {"h": 6.0, "d": 5.0, "a": 1.30}
     assert pin["captured_at"]  # 捕获时点随行
-    # 共识 = 与列表页同口径（books=3，概率和≈1）
+    # 共识 = 与列表页同口径（books=3，概率和≈1）；分母 3 <4 → 低置信（票 39）
     assert body["consensus"]["books"] == 3
+    assert body["consensus"]["low_confidence"] is True
     probs = body["consensus"]["probability"]
     assert abs(sum(probs.values()) - 1.0) < 0.01
     # 无 Forecast 种子 → 模型区诚实为空（前端显示"暂无模型预测"）

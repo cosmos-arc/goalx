@@ -352,7 +352,18 @@ export function FixtureResearchPage() {
 										</p>
 										<p className="mt-1 text-xs text-muted-foreground">
 											<GlossaryTerm id="books">books</GlossaryTerm> {data.consensus.books} 家三向均价 → Shin 去水；
-											{data.consensus.books < 3 ? " 样本少（<3），共识可信度下降。" : " 共识是市场对真实概率的估计。"}
+											{data.consensus.low_confidence ? (
+												// 票 39：共识分母护栏命中（books<4）——琥珀低置信（接词条），
+												// 与 few_books 合并为一个显示位；共识概率本身不变
+												<span
+													className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+													data-testid="consensus-low-confidence"
+												>
+													<GlossaryTerm id="low-confidence" />
+												</span>
+											) : (
+												" 共识是市场对真实概率的估计。"
+											)}
 										</p>
 									</>
 								) : (

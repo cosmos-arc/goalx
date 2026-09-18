@@ -27,6 +27,8 @@ function beijingBusinessDate(now: number): string {
  * 票 14 今日页 mock：时间相对 now 动态生成（原型 today-proto-data.ts 的场景思路），
  * 三场覆盖 可投+单固+偏差/样本少、可投+仅串关+过期报价、停售拒绝。
  * 票 wb-01：行内带 business_date；加一场"明天"场次（fixture 4，可投）驱动日期 Tab。
+ * 票 39：books 分母三例——fixture 1 = 2（few_books+low_confidence 并打，验证合并
+ * 显示位）、fixture 2 = 3（仅 low_confidence）、fixture 4 = 5（干净，不命中护栏）。
  */
 export const todayFixture = [
 	{
@@ -45,7 +47,7 @@ export const todayFixture = [
 		books: 2,
 		eu_prob: { h: 0.529, d: 0.248, a: 0.223 },
 		ev: { h: 0.053, d: -0.12, a: -0.175 },
-		flags: ["ev_deviation", "few_books", "custom_flag"],
+		flags: ["ev_deviation", "few_books", "low_confidence", "custom_flag"],
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "valid",
@@ -69,10 +71,10 @@ export const todayFixture = [
 		joined: true,
 		jc_odds: { h: 3.0, d: 3.4, a: 2.2 },
 		jc_updated_at: minutesAgoIso(45),
-		books: 9,
+		books: 3,
 		eu_prob: { h: 0.32, d: 0.29, a: 0.39 },
 		ev: { h: -0.01, d: -0.135, a: -0.171 },
-		flags: [],
+		flags: ["low_confidence"],
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "valid",
@@ -80,7 +82,7 @@ export const todayFixture = [
 			sale_state: "on_sale",
 			single_eligible: false,
 			jc_source_updated_at: minutesAgoIso(45),
-			eu_books: 9,
+			eu_books: 3,
 		},
 	},
 	{
@@ -460,6 +462,8 @@ export const drawResultsFixture = [
  * 票 wb-02 研究页 mock：fixture 1 的逐书赔率（两家全三向 + 一家缺一向）、
  * 去水共识、模型概率/EV；pinnacle 主胜 1.60（隐含 62.5%）相对共识 53% 偏高
  * ≥5pp → 琥珀高亮的可断言场景。时间相对 now。
+ * 票 39：完整三向 book 实为 3 家（avg/bet365/pinnacle，late_missing 缺 d）→
+ * 共识分母 3 <4，low_confidence 为 true（研究页低置信标注的可断言场景）。
  */
 export const researchFixture = {
 	fixture_id: 1,
@@ -496,7 +500,7 @@ export const researchFixture = {
 			captured_at: minutesAgoIso(4),
 		},
 	],
-	consensus: { books: 4, probability: { h: 0.53, d: 0.25, a: 0.22 } },
+	consensus: { books: 3, low_confidence: true, probability: { h: 0.53, d: 0.25, a: 0.22 } },
 	model: {
 		model_version: "dc-demo",
 		issued_at: minutesAgoIso(30),
@@ -510,7 +514,7 @@ export const researchFixture = {
 		sale_state: "on_sale",
 		single_eligible: true,
 		jc_source_updated_at: minutesAgoIso(8),
-		eu_books: 4,
+		eu_books: 3,
 	},
 } as const;
 

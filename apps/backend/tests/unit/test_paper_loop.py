@@ -109,7 +109,12 @@ def test_build_today_view(db: sqlite3.Connection) -> None:
     assert first.jc_updated_at == "2026-09-12T12:00:00+00:00"
     assert first.joined is True
     assert first.books == 1
-    assert set(first.flags) == {"ev_deviation", "few_books"}  # jc 6.5 vs 欧共识 6.0
+    # 票 39：books 1 <4 → 追加 low_confidence（<3 同时命中 few_books，两标并打）
+    assert set(first.flags) == {
+        "ev_deviation",
+        "few_books",
+        "low_confidence",
+    }  # jc 6.5 vs 欧共识 6.0
     # 欧赔共识去晦后：EV = p*odds-1（h: p≈0.157*6.5-1 ≈ +2%… 精确值由 Shin 决定）
     assert first.eu_prob is not None
     assert sum(v for v in first.eu_prob.model_dump().values()) == 1.0

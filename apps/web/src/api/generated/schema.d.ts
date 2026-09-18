@@ -773,10 +773,15 @@ export interface components {
         /**
          * ConsensusView
          * @description 去水共识（Shin）与参与 book 数（口径与场次列表页一致）。
+         *
+         *     ``low_confidence``（票 39）：books < 阈值（默认 4，odds_math 常量）时共识
+         *     可信度不足——展示层据此打琥珀低置信标注，不改概率本身。
          */
         ConsensusView: {
             /** Books */
             books: number;
+            /** Low Confidence */
+            low_confidence: boolean;
             probability: components["schemas"]["SelectionTriple"];
         };
         /**

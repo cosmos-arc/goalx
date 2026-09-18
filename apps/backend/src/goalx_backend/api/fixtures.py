@@ -212,9 +212,15 @@ class BookQuoteView(BaseModel):
 
 
 class ConsensusView(BaseModel):
-    """去水共识（Shin）与参与 book 数（口径与场次列表页一致）。"""
+    """
+    去水共识（Shin）与参与 book 数（口径与场次列表页一致）。
+
+    ``low_confidence``（票 39）：books < 阈值（默认 4，odds_math 常量）时共识
+    可信度不足——展示层据此打琥珀低置信标注，不改概率本身。
+    """
 
     books: int
+    low_confidence: bool
     probability: SelectionTriple
 
 
@@ -317,8 +323,10 @@ async def get_fixture_research(
         consensus = om.consensus_odds([by_selection[s] for s in SELECTIONS])
         if consensus is not None:
             probs = om.shin_implied(consensus)
+            books = max(len(prices) for prices in by_selection.values())
             view.consensus = ConsensusView(
-                books=max(len(prices) for prices in by_selection.values()),
+                books=books,
+                low_confidence=om.consensus_low_confidence(books),
                 probability=SelectionTriple(
                     **{s: round(p, 4) for s, p in zip(SELECTIONS, probs, strict=True)}
                 ),

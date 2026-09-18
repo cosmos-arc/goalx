@@ -197,9 +197,9 @@ export function FixturesPage() {
 							</span>
 						</div>
 					</div>
-					{/* 配色图例行（票 04 定稿） */}
+					{/* 配色图例行（票 04 定稿；票 39 琥珀警示含共识低置信） */}
 					<p className="mt-1 text-xs text-muted-foreground">
-						配色：红 = 正向 EV · 绿 = 负向 EV · 琥珀 = 数据警示（过期/样本少/偏差） · 蓝 = 可投资格
+						配色：红 = 正向 EV · 绿 = 负向 EV · 琥珀 = 数据警示（过期/共识低置信/偏差） · 蓝 = 可投资格
 					</p>
 				</header>
 
@@ -415,7 +415,24 @@ export function FixturesPage() {
 																	? SELECTIONS.map((sel) => <EvSpan key={sel} value={fixture.ev?.[sel]} />)
 																	: "—"}
 															</TableCell>
-															<TableCell className={`${TABULAR_NUMS} text-center`}>{fixture.books || "—"}</TableCell>
+															<TableCell className={`${TABULAR_NUMS} text-center`}>
+																{fixture.books ? (
+																	fixture.flags?.includes("low_confidence") ? (
+																		// 票 39：共识分母 <4——books 数字挂琥珀低置信
+																		//（行内单显示位，接词条；few_books 区间已被覆盖）
+																		<span
+																			className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+																			data-testid="books-low-confidence"
+																		>
+																			{fixture.books} <GlossaryTerm id="low-confidence" />
+																		</span>
+																	) : (
+																		fixture.books
+																	)
+																) : (
+																	"—"
+																)}
+															</TableCell>
 														</TableRow>
 													);
 												})}
