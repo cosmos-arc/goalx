@@ -458,8 +458,94 @@ def seed_demo(
                         ),
                     )
     conn.commit()
+    pool_period_id = _seed_demo_pool(conn, moment, observed)
     return {
         "business_date": beijing_business_date(moment),
         "fixture_ids": fixture_ids,
         "observed_at": observed,
+        "pool_period_id": pool_period_id,
     }
+
+
+# 演示彩池期次（票 43）：3 场与竞彩演示场次同队同窗（模型概率映射可命中），
+# 其余 11 场为合成对阵（期次结构/分布展示）。销量不造——留 AI 代采待命态。
+_DEMO_POOL_MATCHES: list[tuple[str, str, str, float, float, float]] = [
+    ("英超", "阿森纳", "切尔西", 6.2, 4.9, 1.32),
+    ("英超", "利物浦", "曼城", 2.6, 3.5, 2.55),
+    ("德甲", "拜仁", "多特", 1.95, 3.7, 3.6),
+    ("英超", "维拉", "热刺", 2.35, 3.45, 2.85),
+    ("英超", "纽卡斯尔", "西汉姆", 1.75, 3.8, 4.3),
+    ("西甲", "巴萨", "塞维利亚", 1.45, 4.6, 6.5),
+    ("西甲", "马竞技", "贝蒂斯", 1.6, 3.7, 5.4),
+    ("意甲", "国米", "拉齐奥", 1.55, 4.0, 5.5),
+    ("意甲", "尤文", "佛罗伦萨", 1.7, 3.6, 5.0),
+    ("意甲", "AC米兰", "罗马", 2.05, 3.4, 3.5),
+    ("法甲", "日尔曼", "里昂", 1.35, 5.0, 8.0),
+    ("法甲", "摩纳哥", "马赛", 2.3, 3.3, 3.0),
+    ("葡超", "本菲卡", "波尔图", 2.15, 3.3, 3.3),
+    ("荷甲", "阿贾克斯", "埃因霍温", 2.5, 3.6, 2.5),
+]
+
+
+def _demo_pool_shares(odds: tuple[float, float, float]) -> dict[str, float]:
+    """演示分布：欧赔反比近似 + 主队偏置/平局低注（公众分布代理典型形态）。"""
+    inv = [1.0 / o for o in odds]
+    total = sum(inv)
+    shares = [v / total for v in inv]
+    shares[0] *= 1.15
+    shares[1] *= 0.9
+    norm = sum(shares)
+    return {"3": shares[0] / norm, "1": shares[1] / norm, "0": shares[2] / norm}
+
+
+def _seed_demo_pool(conn: sqlite3.Connection, moment: datetime, observed: str) -> int:
+    """写入一个演示彩池期次（14 场 + 分布快照；幂等刷新当前态）。"""
+    from goalx_backend.data import pool as pool_store  # noqa: PLC0415
+
+    period_no = "26999"
+    deadline = (moment + timedelta(hours=28)).isoformat(timespec="seconds")
+    pool_period_id = pool_store.upsert_pool_period(conn, "ttt14", period_no, deadline)
+    # 前 3 场与竞彩演示场次同队同窗（+2/+3/+4h），模型概率映射可命中
+    kickoff_hours = [2.0, 3.0, 4.0] + [30.0 + 2.0 * seq for seq in range(11)]
+    matches: list[pool_store.PoolMatchInput] = []
+    share_rows: list[pool_store.PoolShareInput] = []
+    for seq, ((league, home, away, h, d, a), hours) in enumerate(
+        zip(_DEMO_POOL_MATCHES, kickoff_hours, strict=True), start=1
+    ):
+        odds = (float(h), float(d), float(a))
+        kickoff = (moment + timedelta(hours=hours)).isoformat(timespec="seconds")
+        matches.append(
+            pool_store.PoolMatchInput(
+                match_seq=seq,
+                source_match_id=None,
+                league=league,
+                kickoff_utc=kickoff,
+                home_team=home,
+                away_team=away,
+                euro_odds=odds,
+            )
+        )
+        share_rows.append(
+            pool_store.PoolShareInput(
+                match_seq=seq,
+                shares=_demo_pool_shares(odds),
+                votes=None,
+            )
+        )
+    pool_store.replace_pool_matches(conn, pool_period_id, matches)
+    # 同 observed 幂等：先清该时点 demo 快照再插（种子重放场景）
+    conn.execute(
+        "DELETE FROM public_shares WHERE pool_period_id = ? AND source = ?"  # noqa: S608 常量拼接
+        + " AND captured_at = ?",
+        (pool_period_id, DEMO_SOURCE_TAG, observed),
+    )
+    pool_store.insert_public_shares(
+        conn,
+        pool_period_id,
+        share_rows,
+        origin="estimated",
+        source=DEMO_SOURCE_TAG,
+        captured_at=observed,
+    )
+    conn.commit()
+    return pool_period_id

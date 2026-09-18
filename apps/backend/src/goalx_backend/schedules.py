@@ -17,6 +17,7 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 - draw-results-sync 18:00-05:59 每 30 分钟 + 08:00 补扫（双 deployment）：源D 结果页
   （票 42；无待出赛果时零成本跳过；频率待用户追认后如有调整只改 cron）
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
+- pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 
 ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，
 有分母）；要无人值守升级为 launchd/远端时换 deployment 即可，flow 不动。
@@ -35,11 +36,12 @@ from goalx_backend.flows import (
     daily_wrap_flow,
     draw_results_sync_flow,
     eu_odds_closing_flow,
+    pool_snapshot_flow,
 )
 
 
 def main() -> None:
-    """单进程服务协议 v1 的五个定时 deployment。"""
+    """单进程服务协议 v1 的六个定时 deployment。"""
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -79,7 +81,16 @@ def main() -> None:
             schedule=Schedule(cron="30 23 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    serve(daily, closing, draw_sync, draw_sync_sweep, wrap)
+    # 彩池（票 43）：期次跨 2-3 天、分布随销售累积，每日三拍足够；
+    # 官方销量无自动源（AI 代采层按需人工触发，不进调度）
+    pool = cast(
+        RunnerDeployment,
+        pool_snapshot_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="20 10,16,22 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    serve(daily, closing, draw_sync, draw_sync_sweep, wrap, pool)
 
 
 if __name__ == "__main__":

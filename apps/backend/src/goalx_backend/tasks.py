@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery
+from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery, zucai
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
@@ -135,3 +135,10 @@ def draw_results_sync() -> dict[str, object]:
     with task_conn() as conn, polite_client() as client:
         stats = caiguo.sync_draw_results(conn, settings, client)
     return caiguo.stats_dict(stats)
+
+
+def pool_snapshot() -> zucai.PoolSyncStats:
+    """彩池同步（票 43）：源B 期次/对阵/人气分布 → pool 域表。"""
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        return zucai.sync_pool_data(conn, settings, client)
