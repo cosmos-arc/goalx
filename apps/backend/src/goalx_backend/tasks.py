@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.ingest import fdhist, oddsapi, sporttery
+from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
@@ -122,3 +122,16 @@ def settlement_sweep() -> dict[str, int]:
     """结算批跑（配合开奖导入；paper/live 统一引擎）。"""
     with task_conn() as conn:
         return run_settlement(conn)
+
+
+def draw_results_sync() -> dict[str, object]:
+    """
+    赛果自动同步（票 42）：源D 结果页 → import_draw_results。
+
+    候选业务日由库内待出赛果推导；无待出赛果时不发任何请求（零成本
+    跳过，与 eu-odds-closing 同模式）。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        stats = caiguo.sync_draw_results(conn, settings, client)
+    return caiguo.stats_dict(stats)

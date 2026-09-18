@@ -14,6 +14,8 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 节奏（Asia/Shanghai，协议 run-protocol-v1.md §3，启动后不改口径）：
 - daily-capture 10:00/19:00：竞彩→预测→范围内欧赔（2 credits/次）
 - eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过
+- draw-results-sync 18:00-05:59 每 30 分钟 + 08:00 补扫（双 deployment）：源D 结果页
+  （票 42；无待出赛果时零成本跳过；频率待用户追认后如有调整只改 cron）
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
 
 ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，
@@ -31,12 +33,13 @@ from prefect.schedules import Schedule
 from goalx_backend.flows import (
     daily_capture_flow,
     daily_wrap_flow,
+    draw_results_sync_flow,
     eu_odds_closing_flow,
 )
 
 
 def main() -> None:
-    """单进程服务协议 v1 的三个定时 deployment。"""
+    """单进程服务协议 v1 的五个定时 deployment。"""
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -52,6 +55,23 @@ def main() -> None:
             schedule=Schedule(cron="*/30 * * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 票 42：赛程集中在 18:00-次日 06:00，半小时一拍；08:00 补扫收尾晚场。
+    # Prefect Schedule 单 deployment 只收一个 cron → 同 flow 双 deployment
+    # （建议频率写入票 Answer 待追认）
+    draw_sync = cast(
+        RunnerDeployment,
+        draw_results_sync_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="*/30 0-5,18-23 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    draw_sync_sweep = cast(
+        RunnerDeployment,
+        draw_results_sync_flow.to_deployment(
+            name="protocol-v1-sweep",
+            schedule=Schedule(cron="0 8 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
@@ -59,7 +79,7 @@ def main() -> None:
             schedule=Schedule(cron="30 23 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    serve(daily, closing, wrap)
+    serve(daily, closing, draw_sync, draw_sync_sweep, wrap)
 
 
 if __name__ == "__main__":
