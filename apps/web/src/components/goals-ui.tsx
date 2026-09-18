@@ -92,7 +92,9 @@ export function GoalsOddsButton({
 			<span>{selection.odds?.toFixed(2) ?? "—"}</span>
 			<span
 				className={
-					selection.ev === null || selection.ev === undefined ? "text-muted-foreground/70" : evClass(selection.ev)
+					// 缺数占位用满浊灰（不带 /70 透明度）：常驻后端数据路径下 axe
+					// color-contrast 会把 2.71:1 判 serious（票 39 双跑 e2e 暴露的存量问题）
+					selection.ev === null || selection.ev === undefined ? "text-muted-foreground" : evClass(selection.ev)
 				}
 			>
 				{selection.ev === null || selection.ev === undefined ? "EV —" : evText(selection.ev)}
