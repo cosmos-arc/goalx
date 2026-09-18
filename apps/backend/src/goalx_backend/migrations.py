@@ -641,6 +641,23 @@ def _apply_v6(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE bet_legs ADD COLUMN actual_odds REAL")
 
 
+def _apply_v8(conn: sqlite3.Connection) -> None:
+    """
+    v8（票 41）：注级 EV 概率快照——建注锁定时刻双口径概率与 EV。
+
+    bets.snap_prob_consensus / snap_ev_consensus：欧共识口径（多 book 完整
+    三向共识 Shin）；snap_prob_model / snap_ev_model：模型口径（锁定时点
+    已发出的最新赛前 Forecast 的 DC 概率）。任一口径不可得存 NULL；
+    存量注与 v1 可映射口径之外的腿（非 had）无快照（NULL）。
+    编号 v8 而非 v7：v7 留给待合 PR #24（票 40 clv_records.close_basis），
+    两分支任意顺序合入都不产生版本号冲突。
+    """
+    conn.execute("ALTER TABLE bets ADD COLUMN snap_prob_consensus REAL")
+    conn.execute("ALTER TABLE bets ADD COLUMN snap_prob_model REAL")
+    conn.execute("ALTER TABLE bets ADD COLUMN snap_ev_consensus REAL")
+    conn.execute("ALTER TABLE bets ADD COLUMN snap_ev_model REAL")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -648,4 +665,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (4, _apply_v4),
     (5, _apply_v5),
     (6, _apply_v6),
+    (8, _apply_v8),
 )
