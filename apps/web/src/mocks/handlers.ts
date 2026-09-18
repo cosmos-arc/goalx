@@ -688,6 +688,29 @@ export const validationProgressFixture = {
 			live: { n_bets: 0, beat_rate: null, avg_clv: null },
 		},
 		independence_assumed: true,
+		close_basis_note:
+			"pinnacle 主锚 → betfair_ex 辅(back 价扣佣金, 默认 2%) → consensus fallback；legacy = 分层前共识口径行(历史不重算)；mixed = 串关跨基准",
+		by_close_basis: {
+			pinnacle: {
+				legs: 6,
+				bets: 5,
+				groups: { single: { paper: { n_bets: 4, beat_rate: 0.75, avg_clv: 0.012 } } },
+			},
+			consensus: {
+				legs: 2,
+				bets: 1,
+				groups: { single: { paper: { n_bets: 1, beat_rate: 0, avg_clv: -0.004 } } },
+			},
+			legacy: {
+				legs: 6,
+				bets: 5,
+				groups: {
+					single: { paper: { n_bets: 4, beat_rate: 0.5, avg_clv: 0.008 } },
+					parlay2: { paper: { n_bets: 1, beat_rate: 0, avg_clv: -0.01 } },
+				},
+			},
+			mixed: { bets: 1, note: "串关两腿基准不同，腿级见 clv_records.close_basis" },
+		},
 		denominator: {
 			settled_bets: 12,
 			legs: 14,
