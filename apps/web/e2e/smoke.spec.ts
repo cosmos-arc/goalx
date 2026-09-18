@@ -164,14 +164,18 @@ test("had market page renders the feed and combo or degrades honestly", async ({
 	).toBeVisible({
 		timeout: 20_000,
 	});
-	// 组合区常驻：要么给出推荐腿，要么诚实占位（无正 EV / 计算中）
-	await expect(page.getByTestId("market-combo")).toBeVisible();
+	// 组合区在数据路径常驻：推荐腿 / 诚实占位（无正 EV / 计算中）；
+	// 降级路径（页面级 empty-state 已命中）不再要求组合区——与 goals 页同款双路径
+	await expect(page.getByTestId("market-combo").or(page.getByTestId("empty-state")).first()).toBeVisible({
+		timeout: 20_000,
+	});
 	await expect(
 		page
 			.getByTestId(/^market-combo-pick-/)
 			.first()
 			.or(page.getByTestId("market-combo-empty"))
-			.or(page.getByTestId("market-combo-pending")),
+			.or(page.getByTestId("market-combo-pending"))
+			.or(page.getByTestId("empty-state")),
 	).toBeVisible({ timeout: 20_000 });
 });
 
