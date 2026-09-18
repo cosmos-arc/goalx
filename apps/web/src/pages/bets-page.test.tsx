@@ -11,8 +11,9 @@ import { router } from "../router";
 /**
  * 票 16 投注生命周期测试：三段分组（未锁定建议/已锁定/已结算）+ 组头计数与
  * 状态徽章（胜=profit 红、负=loss 绿、底纹文字前景色）、真实回录右侧 Drawer
- * （建议快照 vs 实际条款对照 + 金额≠建议提示）、赛果同步面板降级态与待出列表、
- * 人工兜底表单（更正必填原因/影响预览）、锁定开赛 <5 分钟警示（不阻止）。
+ * （建议快照 vs 实际条款对照 + 金额≠建议提示）、赛果同步面板点亮态（票 42：
+ * 上次同步/来源/待出数 + 待人工清单 + 主动触发）与待出列表、人工兜底表单
+ * （更正必填原因/影响预览）、锁定开赛 <5 分钟警示（不阻止）。
  */
 
 async function renderBets() {
@@ -258,7 +259,7 @@ test("void result entry carries the void reason", async () => {
 	});
 });
 
-test("sync panel shows the degraded state and lists kickoff-passed fixtures without results", async () => {
+test("sync panel shows last run, manual list and triggers sync; pending fixtures list kept", async () => {
 	const user = userEvent.setup();
 	server.use(
 		http.get("*/api/v1/fixtures/today", () =>
@@ -294,8 +295,16 @@ test("sync panel shows the degraded state and lists kickoff-passed fixtures with
 	);
 	renderBets();
 
-	// 同步优先裁决：后端源未接入 → 降级态（人工兜底通道保留）
-	expect(await screen.findByTestId("sync-status")).toHaveTextContent("自动同步待后端源接入——当前人工兜底。");
+	// 票 42 点亮态：上次同步（时点/来源/计数）+ 待出数 + 待人工清单
+	const status = await screen.findByTestId("sync-status");
+	await waitFor(() => expect(status).toHaveTextContent("上次同步"));
+	expect(status).toHaveTextContent("来源 500.com");
+	expect(status).toHaveTextContent("新 12 / 一致 3");
+	expect(status).toHaveTextContent("待出 2 场");
+	const manual = await screen.findByTestId("sync-pending-manual");
+	expect(manual).toHaveTextContent("周三014：not_finished");
+	expect(manual).toHaveTextContent("周三009：stored_differs");
+
 	const row = await screen.findByTestId("draw-pending-row");
 	expect(row).toHaveTextContent("周五001");
 	expect(row).toHaveTextContent("C 队 vs D 队");
@@ -305,6 +314,28 @@ test("sync panel shows the degraded state and lists kickoff-passed fixtures with
 	// 待出场次一键带入人工录入表单
 	await user.click(screen.getByRole("button", { name: "录入 周五001" }));
 	expect(screen.getByTestId("draw-fixture")).toHaveValue("9");
+
+	// 主动触发：成功消息带来源与计数（刷新后状态仍可查）
+	await user.click(screen.getByTestId("sync-trigger"));
+	expect(await screen.findByTestId("bets-message")).toHaveTextContent(
+		"同步完成：新落库 12 场、一致 3 场、待人工 2 场（来源 500.com）",
+	);
+});
+
+test("sync trigger surfaces source errors without losing the panel", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.post("*/api/v1/draw-sync/run", () =>
+			HttpResponse.json({ detail: "draw sync source error: boom" }, { status: 502 }),
+		),
+	);
+	renderBets();
+
+	await user.click(await screen.findByTestId("sync-trigger"));
+	expect(await screen.findByTestId("bets-message")).toHaveTextContent("同步失败");
+	expect(screen.getByTestId("bets-message")).toHaveTextContent("draw sync source error");
+	// 状态区不受触发失败影响（上次同步仍在）
+	expect(screen.getByTestId("sync-status")).toHaveTextContent("上次同步");
 });
 
 test("surfaces lock and import errors", async () => {

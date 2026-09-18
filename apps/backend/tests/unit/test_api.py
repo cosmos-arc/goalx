@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -1125,3 +1126,117 @@ def test_live_pool_rejected_and_invalid_bet_rolled_back(api_client: TestClient) 
     )
     assert response.status_code == 400
     assert api_client.get("/api/v1/bets").json() == []
+
+
+# ---- 赛果自动同步端点（票 42：触发 + 状态；HTTP 层 MockTransport，不打外网） ----
+
+FIXTURE_PAGE_0916 = (
+    Path(__file__).parent.parent / "fixtures" / "caiguo_2026-09-16.html.txt"
+).read_text(encoding="utf-8")
+
+
+def _sync_transport(status: int = 200) -> httpx.MockTransport:
+    """固定响应的同步源传输层：200 给 2026-09-16 彩果页，其它状态码用于故障注入。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "jczq.php" in request.url.path:
+            return httpx.Response(301, headers={"Location": "/?e=2026-09-16"})
+        if status != 200:
+            return httpx.Response(status, text="boom")
+        return httpx.Response(200, content=FIXTURE_PAGE_0916.encode("gb18030"))
+
+    return httpx.MockTransport(handler)
+
+
+def _seed_pending_result_fixture(db_path: Path) -> None:
+    """种一场已开赛、无开奖的竞彩场次（business_date 对齐 fixture 页 2026-09-16）。"""
+    conn = connect(db_path)
+    migrate(conn)
+    from goalx_backend.data.fixtures import (
+        upsert_competition,
+        upsert_fixture,
+        upsert_match_code,
+        upsert_team,
+    )
+    from goalx_backend.models import MatchCodeInput
+
+    competition = upsert_competition(conn, "亚运男足")
+    home = upsert_team(conn, "中国亚运")
+    away = upsert_team(conn, "朝鲜亚运")
+    fixture_id = upsert_fixture(
+        conn, competition, (NOW - timedelta(hours=2)).isoformat(), home, away
+    )
+    upsert_match_code(
+        conn,
+        MatchCodeInput(
+            fixture_id=fixture_id,
+            kind="jingcai",
+            business_date="2026-09-16",
+            code="周三001",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_draw_sync_status_never_run(api_client: TestClient) -> None:
+    response = api_client.get("/api/v1/draw-sync/status")
+    assert response.status_code == 200
+    assert response.json() == {"last_run": None, "pending_results": 0}
+
+
+def test_draw_sync_run_imports_pending_and_reports_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "sync-api.db"
+    _seed_pending_result_fixture(db_path)
+    monkeypatch.setattr(
+        "goalx_backend.api.results.polite_client",
+        lambda: httpx.Client(transport=_sync_transport()),
+    )
+    with _make_client(db_path) as client:
+        before = client.get("/api/v1/draw-sync/status")
+        assert before.status_code == 200
+        assert before.json()["last_run"] is None
+        assert before.json()["pending_results"] == 1
+
+        run = client.post("/api/v1/draw-sync/run")
+        assert run.status_code == 200
+        body = run.json()
+        assert body["pending_results"] == 0
+        assert body["last_run"]["source"] == "500.com"
+        assert body["last_run"]["imported"] == 1
+        assert body["last_run"]["business_dates"] == ["2026-09-16"]
+        # 完场推迟的场次进待人工清单（fail-closed）
+        assert {
+            "business_date": "2026-09-16",
+            "code": "周三014",
+            "reason": "not_finished",
+        } in body["last_run"]["pending_manual"]
+
+        listing = client.get("/api/v1/draw-results")
+        assert listing.json()[0]["source"] == "500.com"
+        assert (listing.json()[0]["home_goals"], listing.json()[0]["away_goals"]) == (
+            2,
+            1,
+        )
+
+        after = client.get("/api/v1/draw-sync/status")
+        assert after.json()["last_run"] == body["last_run"]
+
+
+def test_draw_sync_run_maps_source_error_to_502(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "sync-api-502.db"
+    _seed_pending_result_fixture(db_path)
+    monkeypatch.setattr(
+        "goalx_backend.api.results.polite_client",
+        lambda: httpx.Client(transport=_sync_transport(status=500)),
+    )
+    with _make_client(db_path) as client:
+        run = client.post("/api/v1/draw-sync/run")
+        assert run.status_code == 502
+        assert "draw sync source error" in run.json()["detail"]
+        # 失败不落元信息行
+        assert client.get("/api/v1/draw-sync/status").json()["last_run"] is None

@@ -51,6 +51,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          # v4 起 config 收内联 YAML（路径字符串会报 Cannot create property 'queries'）
+          config: |
+            paths_exclude:
+              - apps/backend/tests/fixtures/**
       - name: Analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:

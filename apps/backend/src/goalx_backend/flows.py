@@ -13,6 +13,7 @@ Prefect server 调度（见 README「运行采集」）。
 - weekly_train_flow：DC 分池周训练（Tier1 五大，票 26）
 - forecast_daily_flow：每日在售场次 ML Forecast 生成（票 27）
 - settlement_flow：开奖后结算批跑（每日数次）
+- draw_results_sync_flow：源D 结果页赛果自动同步（票 42）
 """
 
 from __future__ import annotations
@@ -104,6 +105,14 @@ def settlement_flow() -> dict[str, int]:
     """结算批跑（配合开奖导入；paper/live 统一引擎）。"""
     stats = tasks.settlement_sweep()
     logger.info("settlement: {}", stats)
+    return stats
+
+
+@flow(name="draw-results-sync", log_prints=True)
+def draw_results_sync_flow() -> dict[str, object]:
+    """赛果自动同步（票 42）：源D 结果页；无待出赛果零成本跳过。"""
+    stats = tasks.draw_results_sync()
+    logger.info("draw sync: {}", stats)
     return stats
 
 

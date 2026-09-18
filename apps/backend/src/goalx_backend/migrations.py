@@ -667,6 +667,55 @@ def _apply_v8(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE bets ADD COLUMN snap_ev_model REAL")
 
 
+def _apply_v9(conn: sqlite3.Connection) -> None:
+    """
+    v9（票 42）：赛果自动同步元信息——draw_sync_runs。
+
+    一次同步一行（append-only）：来源/时点（observed_at=收到页面响应的
+    本机时间）/业务日集合/页面与场次计数/待人工清单（JSON：无效场次、对不上、
+    与库内不一致等 fail-closed 场次）。最新行即"上次同步"状态；同步结果
+    本体仍在 draw_results（source 用 caiguo.SOURCE 常量标记）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE draw_sync_runs (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            business_dates TEXT NOT NULL,
+            pages INTEGER NOT NULL,
+            fetched INTEGER NOT NULL,
+            imported INTEGER NOT NULL,
+            unchanged INTEGER NOT NULL,
+            unmatched INTEGER NOT NULL,
+            pending_manual TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_draw_sync_runs_time
+            ON draw_sync_runs(observed_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER draw_sync_runs_no_update
+            BEFORE UPDATE ON draw_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER draw_sync_runs_no_delete
+            BEFORE DELETE ON draw_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'draw_sync_runs is append-only'); END
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -676,4 +725,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (6, _apply_v6),
     (7, _apply_v7),
     (8, _apply_v8),
+    (9, _apply_v9),
 )

@@ -20,6 +20,7 @@ OWNERS: dict[str, set[str]] = {
         "quote_observations",
         "draw_results",
         "draw_result_revisions",
+        "draw_sync_runs",
         "hist_matches",
         "cost_ledger",
     },

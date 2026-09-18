@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from typing import Annotated, Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, ValidationError
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.settle import preview_draw_result_change, run_settlement
+from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.ingest import caiguo
+from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import DrawResultInput
 
@@ -154,6 +160,72 @@ class DepositCreatedView(BaseModel):
     balance: float
 
 
+class DrawSyncPendingItem(BaseModel):
+    """待人工清单条目（票 42：无效场次/对不上/与库内不一致等 fail-closed 场次）。"""
+
+    business_date: str
+    code: str
+    reason: str
+
+
+class DrawSyncRunView(BaseModel):
+    """一次赛果同步的元信息（来源/时点/场次数/待人工清单）。"""
+
+    source: str
+    observed_at: str
+    business_dates: list[str]
+    pages: int
+    fetched: int
+    imported: int
+    unchanged: int
+    unmatched: int
+    pending_manual: list[DrawSyncPendingItem]
+
+
+class DrawSyncStatusView(BaseModel):
+    """同步状态（票 42）：上次同步 + 当前待出赛果数；从未同步时 last_run 为空。"""
+
+    last_run: DrawSyncRunView | None
+    pending_results: int = Field(description="已开赛、尚无开奖的竞彩场次数")
+
+
+def _json_list(raw: str) -> list[Any]:
+    """JSON 文本 → list（解析失败/非 list 按空值处理，fail-open 只影响展示）。"""
+    try:
+        value: object = json.loads(raw)
+    except ValueError:
+        return []
+    if isinstance(value, list):
+        return cast(list[Any], value)
+    return []
+
+
+def _pending_items(raw: str) -> list[DrawSyncPendingItem]:
+    """JSON 文本 → 待人工清单（畸形条目跳过，不影响其余展示）。"""
+    items: list[DrawSyncPendingItem] = []
+    for entry in _json_list(raw):
+        try:
+            items.append(DrawSyncPendingItem.model_validate(entry))
+        except ValidationError:
+            continue
+    return items
+
+
+def _run_view(row: sqlite3.Row) -> DrawSyncRunView:
+    """draw_sync_runs 行 → 视图。"""
+    return DrawSyncRunView(
+        source=str(row["source"]),
+        observed_at=str(row["observed_at"]),
+        business_dates=[str(item) for item in _json_list(str(row["business_dates"]))],
+        pages=int(row["pages"]),
+        fetched=int(row["fetched"]),
+        imported=int(row["imported"]),
+        unchanged=int(row["unchanged"]),
+        unmatched=int(row["unmatched"]),
+        pending_manual=_pending_items(str(row["pending_manual"])),
+    )
+
+
 @router.post(
     "/api/v1/draw-results",
     summary="导入官方开奖(唯一事实源)",
@@ -267,6 +339,50 @@ async def list_draw_results(
         )
         for row in rows
     ]
+
+
+@router.post(
+    "/api/v1/draw-sync/run",
+    summary="触发一次赛果自动同步(源D 结果页)",
+    response_model=DrawSyncStatusView,
+    responses={502: {"description": "同步源不可达或返回异常"}},
+)
+async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
+    """
+    同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。
+
+    完场且口径自洽才落库, 异常场次进待人工清单;
+    与库内不一致不自动冲正(人工兜底通道, ADR 0001)。
+    """
+    settings: Settings = getattr(request.app.state, "settings", None) or get_settings()
+    now = datetime.now(UTC)
+    try:
+        with polite_client() as client:
+            caiguo.sync_draw_results(db, settings, client, now=now)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"draw sync source error: {exc}"
+        ) from exc
+    row = caiguo.latest_sync_run(db)
+    return DrawSyncStatusView(
+        last_run=_run_view(row) if row is not None else None,
+        pending_results=caiguo.pending_result_count(db, now=now),
+    )
+
+
+@router.get(
+    "/api/v1/draw-sync/status",
+    summary="赛果同步状态",
+    response_model=DrawSyncStatusView,
+)
+async def get_draw_sync_status(db: DbDep) -> DrawSyncStatusView:
+    """上次同步元信息与当前待出赛果数; 从未同步时 last_run 为空。"""
+    now = datetime.now(UTC)
+    row = caiguo.latest_sync_run(db)
+    return DrawSyncStatusView(
+        last_run=_run_view(row) if row is not None else None,
+        pending_results=caiguo.pending_result_count(db, now=now),
+    )
 
 
 @router.post(

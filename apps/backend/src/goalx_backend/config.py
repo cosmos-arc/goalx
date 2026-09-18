@@ -61,6 +61,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GOALX_API_FOOTBALL_KEY", "API_FOOTBALL_KEY"),
     )
     fd_base_url: str = "https://www.football-data.co.uk/mmz4281"
+    # 源D 结果页（票 42 实证：访问限制仅要求浏览器 UA；?e=业务日）
+    caiguo_base_url: str = "https://live.500.com/jczq.php"
 
     # --- The Odds API credit 预算护栏（票 20：免费档 500/月） ---
     odds_api_daily_credit_budget: float = 40.0

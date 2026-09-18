@@ -12,6 +12,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli ingest-odds
     uv run python -m goalx_backend.cli ingest-hist
     uv run python -m goalx_backend.cli settle
+    uv run python -m goalx_backend.cli sync-draw-results
     uv run python -m goalx_backend.cli train-models [--bootstrap N]
     uv run python -m goalx_backend.cli forecast [--date YYYY-MM-DD]
     uv run python -m goalx_backend.cli align-report
@@ -112,6 +113,11 @@ def _cmd_audit_ledger() -> None:
 def _cmd_settle() -> None:
     """手动结算批跑。"""
     logger.info("settlement: {}", tasks.settlement_sweep())
+
+
+def _cmd_sync_draw_results() -> None:
+    """手动跑一次赛果自动同步（与 flow 同一实现，票 42）。"""
+    logger.info("draw sync: {}", tasks.draw_results_sync())
 
 
 def _cmd_train_models(args: argparse.Namespace) -> None:
@@ -262,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ingest-hist", help="导入五大三季历史底座")
     sub.add_parser("audit-ledger", help="只读核查旧账与更正历史")
     sub.add_parser("settle", help="手动结算批跑")
+    sub.add_parser("sync-draw-results", help="手动跑一次赛果自动同步(票 42)")
     train = sub.add_parser("train-models", help="训练五大 DC 模型(票 26)")
     train.add_argument(
         "--competitions",
@@ -333,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-odds": _cmd_ingest_odds,
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
+        "sync-draw-results": _cmd_sync_draw_results,
         "audit-ledger": _cmd_audit_ledger,
         "train-models": lambda: _cmd_train_models(args),
         "forecast": lambda: _cmd_forecast(args),

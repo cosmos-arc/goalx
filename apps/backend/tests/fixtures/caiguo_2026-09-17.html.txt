@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>fixture 0917</title></head>
+<body>
+<!-- 票 42 fixture：2026-09-11 实测裁剪（live.500.com/jczq.php?e=2026-09-11，GB18030 解码后）。
+     仅保留比赛行 <tr>；脚本/样式/广告剥离。原始证据见 Answer。 -->
+<table>
+<tr id="a1454157" order="4001" status="4" gy="亚运女足,乌兹别克斯坦女足,中国女" yy="亚运女足,乌兹别克斯坦女足,中國女足" lid="327" fid="1454157" sid="20066" class="" infoid="165864" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1454157" />周四001</td>
+    <td bgcolor="#541AAB" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20066/">亚运女足</a></td>
+    <td align="center">第2轮</td>
+    <td align="center">09-17 13:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[02]</span><span class="yellowcard">2</span><a target="_blank" href="//liansai.500.com/team/6640/">乌兹别克斯坦女足</a><span class="sp_sr">(+3)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1454157&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1454157&r=1" target="_blank" class="clt3" >1</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/1351/">中国女</a><span class="gray">[01]</span></td>
+    <td align="center" class="red">1 - 0</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">平 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1454157.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1454157.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1454157.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1454157.shtml">欧</a> <a target="_blank" id="qing_1454157" class="red hide"   href="//odds.500.com/fenxi/youliao-1454157.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1474064" order="4002" status="4" gy="亚冠联2,上海申花,淡宾尼士" yy="亚冠联2,上海申花,淡賓尼斯隊" lid="298" fid="1474064" sid="19900" class="bg02" infoid="165874" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1474064" />周四002</td>
+    <td bgcolor="#FC9B0A" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-19900/">亚冠联2</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-17 20:15</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[02]</span><a target="_blank" href="//liansai.500.com/team/489/">上海申花</a><span class="sp_rq">(-2)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1474064&r=1" target="_blank" class="clt1" >2</a><span>-</span><a href="./detail.php?fid=1474064&r=1" target="_blank" class="clt3" >1</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/2803/">淡宾尼士</a><span class="yellowcard">3</span><span class="gray">[03]</span></td>
+    <td align="center" class="red">1 - 1</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1474064.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1474064.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1474064.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1474064.shtml">欧</a> <a target="_blank" id="qing_1474064" class="red hide"   href="//odds.500.com/fenxi/youliao-1474064.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1480084" order="4003" status="4" gy="欧罗巴,克里特,霍芬海姆" yy="欧罗巴,OFI克雷迪,賀芬咸" lid="63" fid="1480084" sid="20000" class="" infoid="165865" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1480084" />周四003</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 00:45</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[27]</span><span class="yellowcard">2</span><a target="_blank" href="//liansai.500.com/team/358/">克里特</a><span class="sp_sr">(+1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1480084&r=1" target="_blank" class="clt1" >2</a><span>-</span><a href="./detail.php?fid=1480084&r=1" target="_blank" class="clt3" >0</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/1869/">霍芬海姆</a><span class="yellowcard">3</span><span class="gray">[19]</span></td>
+    <td align="center" class="red">1 - 0</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1480084.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1480084.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1480084.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1480084.shtml">欧</a> <a target="_blank" id="qing_1480084" class="red hide"   href="//odds.500.com/fenxi/youliao-1480084.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1428029" order="4004" status="4" gy="西甲,贝蒂斯,赫塔费" yy="西甲,貝迪斯,加泰" lid="93" fid="1428029" sid="19947" class="bg02" infoid="165866" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1428029" />周四004</td>
+    <td bgcolor="#006633" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-19947/">西甲</a></td>
+    <td align="center">第6轮</td>
+    <td align="center">09-18 01:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[05]</span><span class="yellowcard">1</span><a target="_blank" href="//liansai.500.com/team/673/">贝蒂斯</a><span class="sp_rq">(-1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1428029&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1428029&r=1" target="_blank" class="clt3" >0</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/838/">赫塔费</a><span class="redcard">1</span><span class="yellowcard">4</span><span class="gray">[15]</span></td>
+    <td align="center" class="red">1 - 0</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1428029.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1428029.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1428029.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1428029.shtml">欧</a> <a target="_blank" id="qing_1428029" class="red hide"   href="//odds.500.com/fenxi/youliao-1428029.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1479975" order="4005" status="4" gy="欧罗巴,水晶宫,波兹南" yy="欧罗巴,水晶宮,列治普斯納" lid="63" fid="1479975" sid="20000" class="" infoid="165867" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1479975" />周四005</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 03:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[25]</span><a target="_blank" href="//liansai.500.com/team/516/">水晶宫</a><span class="sp_rq">(-1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1479975&r=1" target="_blank" class="clt1" >4</a><span>-</span><a href="./detail.php?fid=1479975&r=1" target="_blank" class="clt3" >0</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/1006/">波兹南</a><span class="redcard">1</span><span class="yellowcard">1</span><span class="gray">[19]</span></td>
+    <td align="center" class="red">3 - 0</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1479975.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1479975.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1479975.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1479975.shtml">欧</a> <a target="_blank" id="qing_1479975" class="red hide"   href="//odds.500.com/fenxi/youliao-1479975.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1480123" order="4006" status="4" gy="欧罗巴,皇家社会,伯恩茅斯" yy="欧罗巴,皇家蘇斯達,般尼茅夫" lid="63" fid="1480123" sid="20000" class="bg02" infoid="165868" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1480123" />周四006</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 03:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[22]</span><span class="yellowcard">3</span><a target="_blank" href="//liansai.500.com/team/885/">皇家社会</a><span class="sp_sr">(+1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1480123&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1480123&r=1" target="_blank" class="clt3" >2</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/667/">伯恩茅斯</a><span class="yellowcard">3</span><span class="gray">[24]</span></td>
+    <td align="center" class="red">0 - 2</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">负 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1480123.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1480123.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1480123.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1480123.shtml">欧</a> <a target="_blank" id="qing_1480123" class="red hide"   href="//odds.500.com/fenxi/youliao-1480123.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1480031" order="4007" status="4" gy="欧罗巴,尤文图斯,奈梅亨" yy="欧罗巴,祖雲達斯,奈梅亨" lid="63" fid="1480031" sid="20000" class="" infoid="165869" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1480031" />周四007</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 03:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[14]</span><span class="yellowcard">1</span><a target="_blank" href="//liansai.500.com/team/1330/">尤文图斯</a><span class="sp_rq">(-2)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1480031&r=1" target="_blank" class="clt1" >5</a><span>-</span><a href="./detail.php?fid=1480031&r=1" target="_blank" class="clt3" >0</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/353/">奈梅亨</a><span class="yellowcard">1</span><span class="gray">[26]</span></td>
+    <td align="center" class="red">3 - 0</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1480031.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1480031.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1480031.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1480031.shtml">欧</a> <a target="_blank" id="qing_1480031" class="red hide"   href="//odds.500.com/fenxi/youliao-1480031.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1479935" order="4008" status="4" gy="欧罗巴,贝西克塔,马赛" yy="欧罗巴,贝西克塔斯,馬賽" lid="63" fid="1479935" sid="20000" class="bg02" infoid="165870" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1479935" />周四008</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 03:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[23]</span><span class="yellowcard">2</span><a target="_blank" href="//liansai.500.com/team/688/">贝西克塔</a><span class="sp_rq">(-1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1479935&r=1" target="_blank" class="clt1" >4</a><span>-</span><a href="./detail.php?fid=1479935&r=1" target="_blank" class="clt3" >1</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/1064/">马赛</a><span class="yellowcard">1</span><span class="gray">[17]</span></td>
+    <td align="center" class="red">1 - 1</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">胜 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1479935.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1479935.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1479935.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1479935.shtml">欧</a> <a target="_blank" id="qing_1479935" class="red hide"   href="//odds.500.com/fenxi/youliao-1479935.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1480051" order="4009" status="4" gy="欧罗巴,利勒斯特,托林斯" yy="欧罗巴,利尼史特朗,杜連斯" lid="63" fid="1480051" sid="20000" class="" infoid="165871" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1480051" />周四009</td>
+    <td bgcolor="#6F00DD" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-20000/">欧罗巴</a></td>
+    <td align="center">第1轮</td>
+    <td align="center">09-18 03:00</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[18]</span><span class="yellowcard">1</span><a target="_blank" href="//liansai.500.com/team/1009/">利勒斯特</a><span class="sp_rq">(-1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1480051&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1480051&r=1" target="_blank" class="clt3" >2</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/4989/">托林斯</a><span class="redcard">1</span><span class="yellowcard">3</span><span class="gray">[27]</span></td>
+    <td align="center" class="red">0 - 1</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">负 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1480051.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1480051.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1480051.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1480051.shtml">欧</a> <a target="_blank" id="qing_1480051" class="red hide"   href="//odds.500.com/fenxi/youliao-1480051.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1428037" order="4010" status="4" gy="西甲,马拉加,比利亚雷" yy="西甲,馬拉加,維拉利爾" lid="93" fid="1428037" sid="19947" class="bg02" infoid="165872" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1428037" />周四010</td>
+    <td bgcolor="#006633" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-19947/">西甲</a></td>
+    <td align="center">第6轮</td>
+    <td align="center">09-18 03:30</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray">[18]</span><span class="yellowcard">5</span><a target="_blank" href="//liansai.500.com/team/1056/">马拉加</a><span class="sp_sr">(+1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1428037&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1428037&r=1" target="_blank" class="clt3" >3</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/683/">比利亚雷</a><span class="yellowcard">1</span><span class="gray">[19]</span></td>
+    <td align="center" class="red">1 - 2</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">负 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1428037.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1428037.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1428037.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1428037.shtml">欧</a> <a target="_blank" id="qing_1428037" class="red hide"   href="//odds.500.com/fenxi/youliao-1428037.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  <tr id="a1479261" order="4011" status="4" gy="解放者杯,弗拉门戈,德尔瓦耶" yy="自由杯,法林明高,約森獨立隊" lid="42" fid="1479261" sid="19496" class="" infoid="165873" r="1">
+    <td align="center" class=""><input type="checkbox" name="check_id[]" value="1479261" />周四011</td>
+    <td bgcolor="#01673F" class="ssbox_01"><a style="color:#fff" target="_blank" href="//liansai.500.com/zuqiu-19496/">解放者杯</a></td>
+    <td align="center">1/4决赛</td>
+    <td align="center">09-18 08:30</td>
+    <td align="center"><span class="red">完</span></td>
+    <td align="right" class="p_lr01"><span class="gray"></span><span class="yellowcard">3</span><span class="redcard">1</span><a target="_blank" href="//liansai.500.com/team/1577/">弗拉门戈</a><span class="sp_rq">(-1)</span></td>
+    <td align="center"><div class="pk"><a href="./detail.php?fid=1479261&r=1" target="_blank" class="clt1" >1</a><span>-</span><a href="./detail.php?fid=1479261&r=1" target="_blank" class="clt3" >1</a></div></td>
+    <td align="left" class="p_lr01"><a target="_blank" href="//liansai.500.com/team/6165/">德尔瓦耶</a><span class="yellowcard">1</span><span class="gray"></span></td>
+    <td align="center" class="red">0 - 1</td>
+    <td align="center" class="bf_op">&nbsp;</td>
+    <td align="center" class="red">平 </td>
+    <td align="center"><a href="//odds.500.com/fenxi/stat-1479261.shtml?showAnimation=1" class="live_animate" title="动画" target="_blank"></a></td>
+    <td align="center" class="td_warn"><a target="_blank" href="//odds.500.com/fenxi/shuju-1479261.shtml">析</a> <a target="_blank" href="//odds.500.com/fenxi/yazhi-1479261.shtml">亚</a> <a target="_blank" href="//odds.500.com/fenxi/ouzhi-1479261.shtml">欧</a> <a target="_blank" id="qing_1479261" class="red hide"   href="//odds.500.com/fenxi/youliao-1479261.shtml?channel=pc_score">推荐</a></td>
+    <td align="center" class=""><a href="javascript:void(0)" class="icon_notop">置顶</a></td>
+  </tr>
+
+
+  </tbody>
+</table>
+  <div class="bf_sm01">500.com即时比分提示：点击球队名：查看球队战绩，点击比分：查看比赛事件数据，(中)表示中立场，<img align="absmiddle" src="https://live.500.com/images/shuju_row_01.gif">表示天气，<img align="absmiddle" src="https://www.500cache.com/live/images/live_video.gif">表示视频直播，<img align="absmiddle" src="https://www.500cache.com/live/images/live-animation.png">表示动画直播。<br />
+  网站提醒：以上比分数据仅供浏览、投注参考之用，并不作为最终派奖赛果依据。
+  <p class="gray">为保证您最佳的浏览效果，请使用IE9或以上版本, Chrome等浏览器进行访问</p>
+  </div>
+
+<!--百度联盟广告start-->
+<div class="section clearfix" style="text-align: center;margin-top: 5px;">
+	<div class="" id="pc_ad_hf"></div>
+</div>
+<div style="position:fixed;bottom:0;right:0;z-index:1000; background-color:#ffffff; border:6px solid #fff;box-shadow: 0 0px 5px rgba(0,0,0,.1);-webkit-box-shadow: 0 0px 5px rgba(0,0,0,.1); cursor:pointer;">
+	<div class="" id="pc_ad_cc"></div>
+</div>
+<!--百度联盟广告end-->
+ </div>
+</div>
+<script type="text/javascript">
+// 服务器时间与客户端时间差
+var time_offset = 1789709398 - ~~((new Date).getTime() / 1000);
+var d = new Date();
+d.setTime(d.getTime()+time_offset*1000);
+if (d.getHours()<12) {
+	d.setDate(d.getDate()-1);
+}
+function date_format(D){
+	var y = D.getFullYear(),
+		m = D.getMonth() + 1,
+		d = D.getDate();
+	return y + '-' + (m<10?'0':'') + m + '-' + (d<10?'0':'') + d;
+}
+window.live_json_path = 'jczq/20260917';
+</script>
+<script type="text/javascript">
+var liveOddsList = {"1428029":{"3":["1.53","4.00","6.50"],"5":["1.42","4.15","6.10"],"280":["1.51","4.10","6.90"],"293":["1.50","3.90","6.50"],"1055":["1.50","3.98","7.54"],"0":["1.52","4.01","6.81"],"sp":["1.39","3.85","6.65"],"rqsp":["2.49","3.05","2.50"]},"1428037":{"3":["3.50","3.60","2.05"],"5":["2.85","3.58","2.06"],"280":["3.45","3.70","2.07"],"293":["3.50","3.40","2.00"],"1055":["3.61","3.64","2.10"],"0":["3.40","3.58","2.08"],"sp":["3.70","3.65","1.71"],"rqsp":["1.86","3.60","3.20"]},"1454157":{"3":["26.00","13.00","1.05"],"5":["21.00","7.90","1.01"],"293":["29.00","11.00","1.05"],"1055":["30.28","11.35","1.04"],"0":["27.12","11.40","1.04"],"rqsp":["2.58","4.65","1.90"]},"1474064":{"3":["1.36","5.00","6.00"],"5":["1.23","4.90","6.40"],"280":["1.39","4.70","5.30"],"293":["1.36","4.40","6.50"],"1055":["1.40","4.60","6.77"],"0":["1.33","4.95","6.64"],"sp":["1.33","5.10","5.50"],"rqsp":["3.36","4.35","1.66"]},"1479261":{"3":["1.25","6.50","9.50"],"5":["1.14","6.10","12.00"],"280":["1.23","5.80","10.00"],"293":["1.25","5.80","10.00"],"1055":["1.23","5.65","14.55"],"0":["1.25","5.75","10.05"],"sp":["1.19","5.30","10.00"],"rqsp":["1.68","3.90","3.60"]},"1479935":{"3":["1.67","4.33","4.33"],"5":["1.58","4.25","3.87"],"280":["1.67","3.95","4.95"],"293":["1.67","4.00","4.33"],"1055":["1.72","4.00","4.40"],"0":["1.72","4.11","4.26"],"sp":["1.64","3.80","3.90"],"rqsp":["3.06","3.45","1.95"]},"1479975":{"3":["1.44","5.00","6.00"],"5":["1.28","5.05","6.80"],"280":["1.40","5.00","5.90"],"293":["1.44","4.60","6.00"],"1055":["1.44","4.71","6.62"],"0":["1.39","5.11","6.91"],"sp":["1.22","5.45","7.90"],"rqsp":["1.71","4.10","3.32"]},"1480031":{"3":["1.22","7.00","12.00"],"5":["1.11","7.00","13.00"],"280":["1.22","7.10","11.50"],"293":["1.20","6.50","11.00"],"1055":["1.18","6.69","14.90"],"0":["1.18","7.19","13.30"],"sp":["1.08","7.30","15.00"],"rqsp":["2.09","3.60","2.68"]},"1480051":{"3":["1.75","3.90","4.50"],"5":["1.63","3.83","4.00"],"280":["1.78","3.75","3.95"],"293":["1.75","3.60","4.40"],"1055":["1.76","3.62","4.64"],"0":["1.73","3.88","4.47"],"sp":["1.45","4.15","5.05"],"rqsp":["2.34","3.75","2.30"]},"1480084":{"3":["9.00","5.75","1.30"],"5":["8.40","5.90","1.20"],"280":["9.00","5.80","1.25"],"293":["8.50","5.00","1.30"],"1055":["9.70","5.92","1.30"],"0":["8.66","5.74","1.30"],"sp":["8.80","5.70","1.19"],"rqsp":["3.56","4.00","1.67"]},"1480123":{"3":["3.40","3.60","2.05"],"5":["2.88","3.55","2.00"],"280":["3.15","3.65","2.05"],"293":["3.30","3.40","2.05"],"1055":["3.45","3.43","2.09"],"0":["3.31","3.61","2.08"],"sp":["2.90","3.24","2.10"],"rqsp":["1.55","3.90","4.40"]}};
+</script>
+		<script type="text/javascript" src="https://www.500cache.com/live/js/socket.io-1.3.4.js?v=20150812"></script>
+		<script type="text/javascript" src="https://www.500cache.com/live/js/common_ws.js?v=202607131032"></script><script type="text/javascript">
+$(function(){
+	var e = $('#sel_expect').val();
+	var a = [], d = new Date();
+	for (; a.length <= 7;) {
+		a.push(date_format(d));
+		d.setDate(d.getDate()-1);
+	}
+	if (e && in_array(e, a)==-1) {
+		a.push(e);
+	}
+	a.sort().reverse();
+	var ops = [];
+	for (var i=0; i<a.length; i++) {
+		ops.push('<option value="'+a[i]+'"'+(a[i]==e?' selected="selected"':'')+(i?'':' style="color:red"')+'>'+a[i]+'</option>');
+	}
+	$('#sel_expect').html(ops.join('')).change(expect_change);
+});
+</script>
+<div id="ft"><link rel="stylesheet" href="//www.500cache.com/public/css/footer.css?v=20181019">
+<!--百度联盟广告start
+<div class="section clearfix" style="text-align:center;margin-top: 5px;margin-bottom: 5px;">
+	<div class="" id="pc_ad_hf"></div>
+</div>
+<div style="position:fixed;bottom:0;right:0;z-index:1000; background-color:#ffffff; border:6px solid #fff;box-shadow: 0 0px 5px rgba(0,0,0,.1);-webkit-box-shadow: 0 0px 5px rgba(0,0,0,.1); cursor:pointer;">
+	<div class="" id="pc_ad_cc"></div>
+</div>
+百度联盟广告end-->
+<div class="footer">
+  <div class="recommend-desc" style="text-align:center;padding:10px 0; color:#ef5b51">500网仅提供数据和内容，网站推荐内容均为国家体彩中心、福彩中心发行的彩种和玩法，无任何购彩功能</div>
+  <div class="f-link">
+    <a title="用户注册" target="_blank" href="//passport.500.com/user/" rel="nofollow">用户注册</a> | <a title="友情链接" target="_blank" href="//www.500.com/link.shtml">友情链接</a>
+  </div>
+  <div class="copy_new">
+    <p><a href="https://www.500cache.com/public/images/icp/bg-icp.jpg" target="_blank" rel="nofollow">增值电信业务经营许可证粤B2-20231405</a>&#160;&#160;&#160;&#160;&#160;&#160;<a href="https://beian.miit.gov.cn/" target="_blank"
+        rel="nofollow">粤ICP备11007122号</a>&#160;&#160;&#160;&#160;&#160;&#160;
+      <a target="_blank" href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=44030702000009"><img
+          src="//www.500cache.com/news/images/dxt/ghs.png" width="20" height="20">粤公网安备
+        44030702000009号</a>&#160;&#160;&#160;&#160;&#160;&#160;
+      &#169;2001-2023&#160;&#160;500网&#160;&#160;版权所有&#160;&#160;&#160;&#160;&#160;&#160;<span style="display: none;">客服热线：4000-500-353</span>
+    </p>
+
+    <p class="security">
+      <a href="https://seal.qualys.com/sealserv/info/?i=8daaed52-427d-474e-bc07-9c83a8a53188" title="qualys secure"
+        target="_blank" class="security07" rel="nofollow"></a><a target="_blank"
+        href="https://www.500.com/about/wangan/index.htm" title="公共信息网络安全监察" class="security04"
+        rel="nofollow">公共信息网<br />络安全监察</a><a title="网上交易保障中心" href="http://www.315online.com.cn/member/315120077.html"
+        target="_blank" class="security03" rel="nofollow">网上交易<br />保障中心</a><a title="工商网监电子标识"
+        href="https://szcert.ebs.org.cn/ec1c33b3-f78d-483e-988c-f41abb93058a" target="_blank" class="security09"
+        rel="nofollow">工商网监<br>电子标识</a><a title="中国信用企业"
+        href="http://shuidi.cn/shuidi/company-license-aaa?digest=a9978bd9bd441ba35753a48614abfa51" target="_blank"
+        class="security05" rel="nofollow"></a><a key="5577ecb1efbfb03ac5bfa753" logo_size="124x47" logo_type="business"
+        href="https://v.yunaq.com/certificate?domain=www.500.com&from=label&code=90030" title="安全联盟标识" target="_blank"
+        class="security10" rel="nofollow"></a><a title="可信网站身份验证" href="https://www.500.com/about/knet.html"
+        target="_blank" class="security08" rel="nofollow"></a><a id='___szfw_logo___'
+        href='https://search.szfw.org/cert/l/CX20150210006686006756' target='_blank' class="szfw_logo"></a>
+      <script
+        type='text/javascript'>(function () { document.getElementById('___szfw_logo___').oncontextmenu = function () { return false; } })();</script>
+      <a title="广东省文化厅备案资质"
+        href="http://sq.ccm.gov.cn/ccnt/sczr/service/business/emark/toDetail/9EF18B0460C04F1385E18D9E23013B4D"
+        target="_blank" class="security12" rel="nofollow">广东省文化厅<br>备案资质</a><a target="_blank"
+        href="http://gdga.gd.gov.cn/" title="广东网络警察举报平台" class="security01" rel="nofollow">广东<br />网警</a><a
+        title="深圳网络警察举报平台" href="http://ga.sz.gov.cn/" target="_blank" class="security06 last"
+        rel="nofollow">深圳<br />网警</a>
+    </p>
+  </div>
+</div>
+<div class="footer-keywords">
+  <div class="footer-keywords-wrap">
+    <ul class="footer-keywords-list" id="footer-keywords-list">
+      <li><span>热点导读：</span><a href="//zx.500.com/zc/" title="足彩" target="_blank">足彩</a><a href="//zx.500.com/szpl/"
+          title="数字排列" target="_blank">数字排列</a><a href="//trade.500.com/dlt/" title="体彩大乐透" target="_blank">体彩大乐透</a><a
+          href="//trade.500.com/pls/" title="排列3" target="_blank">排列3</a><a href="//trade.500.com/plw/" title="排列5"
+          target="_blank">排列5</a><a href="//trade.500.com/sfc/" title="胜负彩" target="_blank">胜负彩</a><a
+          href="//trade.500.com/jczq/?playid=269&g=2" title="竞彩" target="_blank">竞彩</a><a
+          href="//trade.500.com/jclq/?playid=275&g=2" title="篮彩" target="_blank">篮彩</a><a href="//zx.500.com/sd/"
+          title="福彩3d" target="_blank">福彩3d</a><a href="//zx.500.com/dlt/" title="大乐透" target="_blank">大乐透</a><a
+          href="//zx.500.com/zqdc/" title="北京单场" target="_blank">北京单场</a><a href="//zx.500.com/jczq/" title="竞彩足球"
+          target="_blank">竞彩足球</a><a href="//zx.500.com/" title="彩票预测" target="_blank">彩票预测</a><a
+          href="//zx.500.com/jclq/" title="竞彩篮球" target="_blank">竞彩篮球</a><a href="//zx.500.com/ssq/" title="双色球"
+          target="_blank">双色球</a></li>
+      <li><span>彩种信息：</span><a href="//datachart.500.com/pls/" title="排列3走势图" target="_blank">排列3走势图</a><a
+          href="//datachart.500.com/plw/" title="排列5走势图" target="_blank">排列5走势图</a><a href="//kaijiang.500.com/sd.shtml"
+          title="3d开奖结果" target="_blank">3d开奖结果</a><a href="//kaijiang.500.com/dlt.shtml" title="大乐透开奖结果"
+          target="_blank">大乐透开奖结果</a><a href="//datachart.500.com/dlt/" title="大乐透走势图" target="_blank">大乐透走势图</a><a
+          href="//datachart.500.com/qxc/" title="七星彩走势图" target="_blank">七星彩走势图</a><a
+          href="//kaijiang.500.com/qxc.shtml" title="七星彩开奖结果" target="_blank">七星彩开奖结果</a><a
+          href="//datachart.500.com/sd/" title="3d走势图" target="_blank">3d走势图</a><a href="//kaijiang.500.com/pls.shtml"
+          title="排列3开奖结果" target="_blank">排列3开奖结果</a><a href="//datachart.500.com/ssq/" title="双色球走势图"
+          target="_blank">双色球走势图</a><a href="//kaijiang.500.com/plw.shtml" title="排列5开奖结果" target="_blank">排列5开奖结果</a><a
+          href="//kaijiang.500.com/ssq.shtml" title="双色球开奖结果" target="_blank">双色球开奖结果</a></li>
+      <li><span>赛事比分：</span><a href="//trade.500.com/jqc/" title="四场进球" target="_blank">四场进球</a><a
+          href="//live.500.com/jczq.php" title="竞彩足球比分直播" target="_blank">竞彩足球比分直播</a><a href="//live.500.com/lq.php"
+          title="竞彩篮球比分直播" target="_blank">竞彩篮球比分直播</a><a href="//liansai.500.com/" title="联赛资料"
+          target="_blank">联赛资料</a><a href="//trade.500.com/jczq/?playid=272&g=2" title="竞彩足球半全场"
+          target="_blank">竞彩足球半全场</a><a href="//trade.500.com/rj/" title="任选九场" target="_blank">任选九场</a><a
+          href="//trade.500.com/jclq/index.php?playid=313&g=2" title="竞彩篮球混合过关" target="_blank">竞彩篮球混合过关</a><a
+          href="//trade.500.com/jclq/index.php?playid=275" title="竞彩篮球让分胜负" target="_blank">竞彩篮球让分胜负</a><a
+          href="//trade.500.com/bqc/" title="六场半全场" target="_blank">六场半全场</a><a href="//trade.500.com/jczq/?playid=312&g=2" title="竞彩足球混合过关"
+          target="_blank">竞彩足球混合过关</a><a href="//liansai.500.com/lq/" title="篮球比赛" target="_blank">篮球比赛</a></li>
+    </ul>
+    <a href="javascript:;" data-fold="1" class="btn-keywords" id="footer-btn-keywords">+ 更多</a>
+  </div>
+</div>
+<script>
+  (function () {
+    var elemKeywords = document.getElementById('footer-btn-keywords');
+    var elemKeywordsList = document.getElementById('footer-keywords-list');
+    elemKeywords.onclick = function () {
+      if (this.getAttribute("data-fold") == 1) {
+        this.innerHTML = "- 收起"
+        this.setAttribute("data-fold", 0);
+        elemKeywordsList.style.height = "60px";
+        return;
+      }
+      this.innerHTML = "+ 更多"
+      this.setAttribute("data-fold", 1);
+      elemKeywordsList.style.height = "20px";
+    };
+
+    //500star域名替换
+    var hostUrl = window.location.host
+    if (hostUrl.indexOf('500star') > -1) {
+      var allHtml = $('body')[0].innerHTML;
+      allHtml = allHtml.replace(/500\.com/g, '500star.com')
+      $('body')[0].innerHTML = allHtml
+    }
+
+  }());
+
+
+
+</script>
+<!-- Baidu Button BEGIN -->
+<script type="text/javascript" id="bdshare_js" data="type=tools&uid=6678073"></script>
+<script type="text/javascript" id="bdshell_js"></script>
+<script type="text/javascript">
+  var https = 'https:' == document.location.protocol;
+  if (!https) {
+    document.getElementById("bdshell_js").src = "http://bdimg.share.baidu.com/static/js/shell_v2.js?cdnversion=" + Math.ceil(new Date() / 3600000)
+  }
+</script>
+<!-- Baidu Button END -->
+
+<script charset="utf-8" src="//www.500cache.com/public/js/pcad/ylh/ylh-pc-ad-sdk.v1.31.31.js"></script>
+
+<!-- 静态文件读变量清缓存 BEGIN -->
+<script>
+  // www.500cache.com站点版本号
+  document.write('<script src="//www.500cache.com/versionnumber/staticversion.js?v=' + new Date().getTime() + '"><\/script>');
+</script>
+<script>
+  (function() {
+      // 引用静态文件方法（此方法并不是固定的，可以根据具体项目，按需修改）
+      function insertStaticFile(type, src, callback) {
+          var verTxt = new Date().getTime();
+          if (src && src.indexOf('www.500cache.com') > -1 && window && window.WWW500CACHE_STATIC_VERSION) {
+              verTxt = window.WWW500CACHE_STATIC_VERSION;
+          }
+          if (src && src.indexOf('trade.500cache.com') > -1 && window && window.TRADE500CACHE_STATIC_VERSION) {
+              verTxt = window.TRADE500CACHE_STATIC_VERSION;
+          }
+          if (src && src.indexOf('www.500cache.com') === -1 && src.indexOf('trade.500cache.com') === -1) {
+              verTxt = 'default';
+          }
+          var head = document.getElementsByTagName('head').item(0);
+          var srcUrl = src + '?v=' + verTxt;
+          if (type === 'js' || type === 'js-gbk' || type === 'js-utf8') {
+              var script_dom = document.createElement('script');
+              script_dom.language = 'javascript';
+              script_dom.type = 'text/javascript';
+              script_dom.async = false;
+              if (type === 'js-gbk') {
+                  script_dom.charset = 'gbk';
+              }
+              if (type === 'js-utf8') {
+                  script_dom.charset = 'UTF-8';
+              }
+              script_dom.src = srcUrl;
+              script_dom.addEventListener("load", function() {
+                callback && callback();
+              }, false);
+              head.appendChild(script_dom);
+          }
+          if (type === 'css') {
+              var link = document.createElement('link');
+              link.type = 'text/css';
+              link.rel = 'stylesheet';
+              link.href = srcUrl;
+              head.appendChild(link);
+          }
+      };
+
+      // 引入js
+      insertStaticFile('js-utf8', '//www.500cache.com/esun-utils/index.umd.js', function() {
+        window['EsunUtils'] && window['EsunUtils'].jumpTo500Home(['https://zx.500.com/zhuanti/n_yyjc/', 'https://www.500.com/index2.shtml?2&ivk_sa=1024320u']);
+      });
+      insertStaticFile('js-utf8', '//www.500cache.com/operation/dist/js/operation.min.js');
+      insertStaticFile('js-utf8', '//www.500cache.com/public/js/public/pcTouchDownload500app.js');
+      insertStaticFile('js-utf8', '//www.500cache.com/public/js/pcad/ylh/index.js');
+      insertStaticFile('css', '//www.500cache.com/public/js/pcad/ylh/index.css');
+      insertStaticFile('js-utf8', '//www.500cache.com/public/js/whiteusercontent/index.js');
+  })()
+</script>
+<!-- 静态文件读变量清缓存 END -->
+<!-- 用户战绩调整 begin -->
+<span class="fu_icon_layer record_tips">
+    <span style="left: 6px;" class="fu_icon_top"></span>
+    <span style="width: auto;" class="fu_icon_con new_record"></span>
+</span>
+<!-- 用户战绩调整 end-->
+<script type="text/javascript" src="//www.500cache.com/public/js/stats.js?v=123"></script> </div>
+<div class="tips_m" id="goal_tip" style="width:490px;display:none;z-index:100;">
+	<div class="tips_b">
+		<div class="tips_box">
+			<div class="tips_title">
+				<h2>500.com即时比分 进球提示</h2>
+				<span class="close"><a href="javascript:void(0)" onclick="$('#goal_tip').hide();return false;">关闭</a></span>
+			</div>
+			<div class="tips_text">
+				<table cellpadding="0" cellspacing="0" style="width:100%">
+					<tr>
+						<td width="60">联赛</td>
+						<td width="56"></td>
+						<td align="center" width="50">时间</td>
+						<td align="center" width="120" style="font-weight:bold;">主队</td>
+						<td align="center" width="50" style="font-size:20px;font-family:Verdana,Arial,Helvetica,sans-serif;padding-bottom:5px;"><strong><span class="blue">0</span>-<span class="blue">0</span></strong></td>
+						<td align="center" width="120" style="font-weight:bold;">客队</td>
+					</tr>
+					<tr>
+						<td colspan="6" align="right"><a href="https://live.500.com/" target="_blank">https://live.500.com/</a></td>
+					</tr>
+				</table>
+			</div>
+		</div>
+	</div>
+</div>
+<div class="tips_m" id="yapan_tip" style="width:430px;display:none;z-index:99;">
+	<div class="tips_b">
+		<div class="tips_box">
+			<div class="tips_table">
+				<div style="text-align:center;font-size:14px;font-weight:bold;line-height:20px;"><span id="yapan_home"></span>&nbsp;<span id="yapan_score"> - </span>&nbsp;<span id="yapan_away"></span></div>
+				<table id="yapan_table" class="pub_table" cellpadding="0" cellspacing="0" style="width:100%">
+					<tr>
+						<th width="20">&nbsp;</th>
+						<th width="200">即时指数</th>
+						<th width="200">初盘指数</th>
+					</tr>
+					<tr>
+						<td>亚</td>
+						<td>&nbsp;</td>
+						<td>&nbsp;</td>
+					</tr>
+					<tr>
+						<td>欧</td>
+						<td>正在加载数据</td>
+						<td>&nbsp;</td>
+					</tr>
+					<tr>
+						<td>大</td>
+						<td>&nbsp;</td>
+						<td>&nbsp;</td>
+					</tr>
+				</table>
+			</div>
+		</div>
+	</div>
+</div>
+<div class="new_tips_box" style="width: 480px; display:none;" id="myproject">
+  <div class="tips_title">
+    <h2 class="tips_title_text">我的直播 - 导入方案</h2>
+    <a href="javascript:void(0)" class="tips_close">关闭</a> </div>
+  <form action="" method="get" class="drfa">
+  <input type="hidden" name="t" value="my" />
+  <div class="tips_content">
+   <p>可在您购买的<span class="red">竞彩足球</span>方案中选择导入(最多查看近三天复式投注方案)</p>
+    <div class="import_hml">
+      <table width="100%" cellspacing="0" cellpadding="0" border="0" class="import_table">
+        <colgroup>
+        <col width="50px">
+        <col width="110px">
+        <col width="120px">
+        <col>
+        </colgroup>
+        <tbody>
+          <tr>
+            <th>选中</th>
+            <th>购买时间</th>
+            <th>玩法</th>
+            <th>购买金额</th>
+          </tr>
+</table>
+</body></html>
