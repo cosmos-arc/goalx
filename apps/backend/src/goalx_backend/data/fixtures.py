@@ -227,6 +227,37 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     return row_id
 
 
+def sale_status_row_exists(conn: sqlite3.Connection, status: SaleStatusInput) -> bool:
+    """
+    同自然键的销售状态行是否已存在（票 38 重解析幂等用）。
+
+    自然键 = 证据身份（observation_id + observed_at）+ 判定内容
+    （fixture/market/sale_state/single_eligible）。实时采集每次观测有
+    新 observation_id，不会被本判重吸收（票 35"报价未变也保留观测证据"）；
+    只有对同一证据的重解析才会命中跳过。observation_id 为空的调用没有
+    证据身份，由调用方决定是否判重。
+    """
+    row = conn.execute(
+        """
+            SELECT 1 FROM sale_statuses
+            WHERE fixture_id = ? AND observed_at = ?
+              AND market_code IS ? AND sale_state = ?
+              AND single_eligible IS ?
+              AND observation_id IS ?
+            LIMIT 1
+        """,
+        (
+            status.fixture_id,
+            status.observed_at,
+            status.market_code,
+            status.sale_state,
+            None if status.single_eligible is None else int(status.single_eligible),
+            status.observation_id,
+        ),
+    ).fetchone()
+    return row is not None
+
+
 def latest_sale_status_asof(
     conn: sqlite3.Connection,
     fixture_id: int,

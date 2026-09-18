@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from datetime import UTC, datetime
 
@@ -12,6 +13,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import observations
 from goalx_backend.data.ingest import sporttery
+from goalx_backend.models import ObservationInput, ObservationPurpose
 
 SAMPLE = {
     "errorCode": "0",
@@ -298,7 +300,7 @@ def test_goals_single_eligible_market_block_wins_then_veto() -> None:
 
 
 def test_store_matches_records_goals_sale_status(db) -> None:
-    """ttg/crs 销售状态行随快照落库（票 wb-04），had 口径不动。"""
+    """ttg/crs 销售状态行随快照落库（票 wb-04），had 行同链读 poolList（票 38）。"""
     match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
     sporttery.store_matches(db, [match])
     fixture = db.execute("SELECT id FROM fixtures").fetchone()["id"]
@@ -308,11 +310,185 @@ def test_store_matches_records_goals_sale_status(db) -> None:
     ).fetchall()
     by_market = {row["market_code"]: row for row in rows}
     assert by_market[None]["sale_state"] == "on_sale"  # 比赛级
-    assert "had" in by_market  # had 行保留（bettingSingle=0 → single_eligible=0）
-    assert by_market["had"]["single_eligible"] == 0
+    assert "had" in by_market  # had 行保留（poolList HAD single=1，票 38 修正口径）
+    assert by_market["had"]["single_eligible"] == 1
     assert by_market["ttg"]["market_code"] == "ttg"
     assert by_market["ttg"]["single_eligible"] == 1
     assert by_market["crs"]["single_eligible"] == 0
     assert by_market["ttg"]["sale_state"] == "on_sale"
-    # hhad/hafu 不落市场级行（进球类票据面范围之外，保持原行为）
+    # hhad/hafu 不落市场级行（票据面范围之外，保持原行为）
     assert set(by_market) == {None, "had", "ttg", "crs"}
+
+
+# --- 票 38：had 单固误记修正（poolList 池级 single）---
+
+
+def test_had_single_eligible_from_pool_list() -> None:
+    """误记形状（实证）：市场块缺 single + bettingSingle=0 + poolList had=1。"""
+    match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
+    assert match.is_single is False  # 比赛级关单关
+    assert match.had_single_eligible() is True  # poolList 池级 → 单固
+    off = json.loads(json.dumps(_pool_list_payload(ttg_single=1, crs_single=0)))
+    for pool in off["value"]["matchInfoList"][0]["subMatchList"][0]["poolList"]:
+        if pool["poolCode"] == "HAD":
+            pool["single"] = 0
+    assert sporttery.parse_matches(off)[0].had_single_eligible() is False
+
+
+def test_had_single_eligible_pool_list_wins_on_conflict() -> None:
+    """票 38 人裁决项：市场块字段与 poolList 冲突时以 poolList 为准。"""
+    payload = _pool_list_payload(ttg_single=1, crs_single=0)
+    sub = payload["value"]["matchInfoList"][0]["subMatchList"][0]
+    sub["had"]["single"] = "0"  # 防御路径出现且与池级冲突（实证未观测）
+    match = sporttery.parse_matches(payload)[0]
+    assert match.had_single_eligible() is True  # poolList 裁决优先
+    # poolList 缺 had 池时市场块仍采信（票 35 防御路径保留）
+    no_had_pool = json.loads(json.dumps(payload))
+    pools = no_had_pool["value"]["matchInfoList"][0]["subMatchList"][0]["poolList"]
+    pools[:] = [pool for pool in pools if pool["poolCode"] != "HAD"]
+    match2 = sporttery.parse_matches(no_had_pool)[0]
+    assert match2.had_single_eligible() is False  # 市场块 single="0"
+
+
+def test_had_single_eligible_legacy_and_unknown_pool_value() -> None:
+    """旧数据兼容：无 poolList 时票 35 口径逐分支持保留。"""
+    # 无 poolList + 市场块 single（票 35 主路径）
+    legacy = json.loads(json.dumps(SAMPLE))
+    legacy["value"]["matchInfoList"][0]["subMatchList"][0]["had"]["single"] = "1"
+    assert sporttery.parse_matches(legacy)[0].had_single_eligible() is True
+    # 无 poolList + 市场块缺 + bettingSingle=0 → False（票 35 否决）
+    assert sporttery.parse_matches(SAMPLE)[0].had_single_eligible() is False
+    # poolList 列了 had 池但 single 值未知 → None（保守未知，不被比赛级否决翻转）
+    unknown = json.loads(json.dumps(_pool_list_payload(ttg_single=1, crs_single=0)))
+    for pool in unknown["value"]["matchInfoList"][0]["subMatchList"][0]["poolList"]:
+        if pool["poolCode"] == "HAD":
+            pool["single"] = "x"
+    assert sporttery.parse_matches(unknown)[0].had_single_eligible() is None
+
+
+def _seed_observation(
+    db, tmp_path, *, payload: dict, raw_ref: bool = True
+) -> tuple[int, str]:
+    """
+    手工落一条观测证据（含/不含原始文件），返回 ``(observation_id, observed_at)``。
+
+    重解析测试用它搭 v2 底座：observed_at 固定，v2 行随后由
+    ``store_matches`` 以"旧解析（忽略 poolList）"写入——与 sale_statuses
+    的 append-only 触发器相容，且忠实复现 v2 采集路径。
+    """
+    raw = json.dumps(payload).encode()
+    sha, ref = (
+        observations.save_raw(tmp_path, "sporttery", raw)
+        if raw_ref
+        else (observations.sha256_hex(raw), None)
+    )
+    observed = "2026-09-12T14:30:00+00:00"
+    observation_id = fx_store.record_quote_observation(
+        db,
+        ObservationInput(
+            source="sporttery",
+            purpose=ObservationPurpose.LIVE,
+            observed_at=observed,
+            endpoint="getMatchCalculatorV1.qry",
+            parse_version="sporttery_calculator_v2",
+            raw_sha256=sha,
+            raw_ref=ref,
+            summary="matches=1",
+        ),
+    )
+    return observation_id, observed
+
+
+def _drop_pool_list(payload: dict) -> dict:
+    stripped = json.loads(json.dumps(payload))
+    sub = stripped["value"]["matchInfoList"][0]["subMatchList"][0]
+    sub.pop("poolList", None)
+    return stripped
+
+
+def test_reprocess_corrects_misrecord_and_is_idempotent(db, tmp_path) -> None:
+    """存量修正：重解析原始证据追加修正行（旧行保留），重复执行零增量。"""
+    payload = _pool_list_payload(ttg_single=1, crs_single=0)
+    observation_id, observed = _seed_observation(db, tmp_path, payload=payload)
+    # 模拟 v2 采集：旧解析不读 poolList → bettingSingle=0 否决 → had 误记 0
+    v2_matches = sporttery.parse_matches(_drop_pool_list(payload))
+    assert v2_matches[0].had_single_eligible() is False
+    sporttery.store_matches(
+        db, v2_matches, observed_at=observed, observation_id=observation_id
+    )
+    fixture = db.execute("SELECT id FROM fixtures").fetchone()["id"]
+    misrecord = fx_store.latest_sale_status_asof(
+        db, fixture, "had", "2026-09-12T14:31:00+00:00"
+    )
+    assert misrecord is not None
+    assert misrecord["single_eligible"] == 0
+    sale_rows_before = db.execute("SELECT COUNT(*) AS n FROM sale_statuses").fetchone()[
+        "n"
+    ]
+
+    first = sporttery.reprocess_observations(db, tmp_path)
+    assert first.observations == 1
+    assert first.reparsed == 1
+    assert first.snapshots == 0  # 快照 append-only 判重（v2 行已写入同内容）
+    assert first.duplicate_snapshots > 0
+    # 修正行追加：同证据身份（observation_id/observed_at）+ single=1，
+    # 旧误记行保留（append-only 审计痕迹，sale_statuses 禁 UPDATE）
+    had_rows = db.execute(
+        "SELECT single_eligible FROM sale_statuses"
+        " WHERE fixture_id=? AND market_code='had' ORDER BY id",
+        (fixture,),
+    ).fetchall()
+    assert [row["single_eligible"] for row in had_rows] == [0, 1]
+    corrected = fx_store.latest_sale_status_asof(
+        db, fixture, "had", "2026-09-12T14:31:00+00:00"
+    )
+    assert corrected is not None
+    assert corrected["single_eligible"] == 1
+    # as-of 早于首个观测 → 无行（不倒填时间线）
+    assert (
+        fx_store.latest_sale_status_asof(
+            db, fixture, "had", "2026-09-12T10:00:00+00:00"
+        )
+        is None
+    )
+
+    # 第一次重解析的增量 = 2：had 误记修正行（0→1）+ ttg 行（v2 模拟缺
+    # poolList 时被比赛级否决成 False，重解析按池级回到 1；真实 v2 库无
+    # ttg 市场行，重解析只补新行）。比赛级/crs 行同内容被证据身份判重。
+    sale_rows_mid = db.execute("SELECT COUNT(*) AS n FROM sale_statuses").fetchone()[
+        "n"
+    ]
+    assert sale_rows_mid == sale_rows_before + 2
+
+    # 幂等：再跑一遍零增量
+    second = sporttery.reprocess_observations(db, tmp_path)
+    assert second.reparsed == 1
+    assert second.snapshots == 0
+    sale_rows_after = db.execute("SELECT COUNT(*) AS n FROM sale_statuses").fetchone()[
+        "n"
+    ]
+    assert sale_rows_after == sale_rows_mid
+
+
+def test_reprocess_skips_observations_without_raw(db, tmp_path) -> None:
+    """raw_ref 为空（只记哈希）的观测跳过，不入库不报错。"""
+    payload = _pool_list_payload(ttg_single=1, crs_single=0)
+    _seed_observation(db, tmp_path, payload=payload, raw_ref=False)
+    stats = sporttery.reprocess_observations(db, tmp_path)
+    assert stats.observations == 1
+    assert stats.reparsed == 0
+    assert stats.skipped_no_raw == 1
+    assert stats.matches == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM fixtures").fetchone()["n"] == 0
+
+
+def test_reprocess_fails_closed_on_hash_mismatch(db, tmp_path) -> None:
+    """证据哈希不符 = 损坏：立即失败，不产生部分修正。"""
+    payload = _pool_list_payload(ttg_single=1, crs_single=0)
+    observation_id, _ = _seed_observation(db, tmp_path, payload=payload)
+    obs = db.execute(
+        "SELECT raw_ref FROM quote_observations WHERE id = ?", (observation_id,)
+    ).fetchone()
+    (tmp_path / str(obs["raw_ref"])).write_bytes(gzip.compress(b"tampered"))
+    with pytest.raises(ValueError, match="hash mismatch"):
+        sporttery.reprocess_observations(db, tmp_path)
