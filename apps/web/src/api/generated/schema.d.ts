@@ -336,6 +336,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/draw-sync/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 触发一次赛果自动同步(源D 结果页)
+         * @description 同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。
+         *
+         *     完场且口径自洽才落库, 异常场次进待人工清单;
+         *     与库内不一致不自动冲正(人工兜底通道, ADR 0001)。
+         */
+        post: operations["run_draw_sync_api_v1_draw_sync_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/draw-sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 赛果同步状态
+         * @description 上次同步元信息与当前待出赛果数; 从未同步时 last_run 为空。
+         */
+        get: operations["get_draw_sync_status_api_v1_draw_sync_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settlements/run": {
         parameters: {
             query?: never;
@@ -945,6 +988,54 @@ export interface components {
             source: string;
             /** Published At */
             published_at: string | null;
+        };
+        /**
+         * DrawSyncPendingItem
+         * @description 待人工清单条目（票 42：无效场次/对不上/与库内不一致等 fail-closed 场次）。
+         */
+        DrawSyncPendingItem: {
+            /** Business Date */
+            business_date: string;
+            /** Code */
+            code: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * DrawSyncRunView
+         * @description 一次赛果同步的元信息（来源/时点/场次数/待人工清单）。
+         */
+        DrawSyncRunView: {
+            /** Source */
+            source: string;
+            /** Observed At */
+            observed_at: string;
+            /** Business Dates */
+            business_dates: string[];
+            /** Pages */
+            pages: number;
+            /** Fetched */
+            fetched: number;
+            /** Imported */
+            imported: number;
+            /** Unchanged */
+            unchanged: number;
+            /** Unmatched */
+            unmatched: number;
+            /** Pending Manual */
+            pending_manual: components["schemas"]["DrawSyncPendingItem"][];
+        };
+        /**
+         * DrawSyncStatusView
+         * @description 同步状态（票 42）：上次同步 + 当前待出赛果数；从未同步时 last_run 为空。
+         */
+        DrawSyncStatusView: {
+            last_run: components["schemas"]["DrawSyncRunView"] | null;
+            /**
+             * Pending Results
+             * @description 已开赛、尚无开奖的竞彩场次数
+             */
+            pending_results: number;
         };
         /**
          * Environment
@@ -2081,6 +2172,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_draw_sync_api_v1_draw_sync_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawSyncStatusView"];
+                };
+            };
+            /** @description 同步源不可达或返回异常 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_draw_sync_status_api_v1_draw_sync_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawSyncStatusView"];
                 };
             };
         };
