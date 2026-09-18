@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { bankrollFixture, todayFixture } from "../mocks/handlers";
+import { bankrollFixture, poolListTodayFixture, todayFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -323,4 +323,23 @@ test("bankroll 读取失败：组合注额建议诚实缺席（不按未入金�
 	expect(within(combo).queryByTestId("market-combo-apply")).not.toBeInTheDocument();
 	// 推荐流不依赖 bankroll：照常渲染
 	expect(within(screen.getByTestId("market-feed")).getAllByTestId(/^market-card-/)).toHaveLength(4);
+});
+
+// --- 票 38：poolList 口径单固进入组合引擎（误记时被"非单固"错误排除）---
+
+test("poolList-derived single fixture enters the combo picks instead of being excluded", async () => {
+	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json([poolListTodayFixture])));
+	await renderAt("/markets/had");
+
+	// 修正前误记形状（is_single=false + single_eligible=false）会被引擎排除；
+	// 修正后（池级 single=1 → single_eligible=true）唯一正 EV 场进入单关推荐
+	const combo = await screen.findByTestId("market-combo");
+	expect(within(combo).getByTestId("market-combo-count")).toHaveTextContent("1");
+	expect(within(combo).getByTestId("market-combo-pick-6")).toHaveTextContent("周四006");
+	expect(within(combo).getByTestId("market-combo-pick-6")).toHaveTextContent("主胜");
+
+	// 推荐流卡片：不显示"仅串关"，选注钮可用
+	const card = screen.getByTestId("market-card-6");
+	expect(within(card).queryByText("仅串关")).not.toBeInTheDocument();
+	expect(screen.getByTestId("market-pick-6-h")).toBeEnabled();
 });

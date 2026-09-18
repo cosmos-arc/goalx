@@ -8,6 +8,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
 
     uv run python -m goalx_backend.cli migrate
     uv run python -m goalx_backend.cli ingest-jingcai
+    uv run python -m goalx_backend.cli reprocess-sporttery
     uv run python -m goalx_backend.cli ingest-odds
     uv run python -m goalx_backend.cli ingest-hist
     uv run python -m goalx_backend.cli settle
@@ -28,7 +29,9 @@ from loguru import logger
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
+from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data.ingest import sporttery
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -53,6 +56,22 @@ def _cmd_ingest_jingcai() -> None:
     stats = tasks.jingcai_snapshot()
     logger.info(
         "matches={} snapshots={} dup={}",
+        stats.matches,
+        stats.snapshots,
+        stats.duplicate_snapshots,
+    )
+
+
+def _cmd_reprocess_sporttery() -> None:
+    """重解析 sporttery 原始证据重放入库（票 38 存量单固修正，幂等）。"""
+    settings = get_settings()
+    with task_conn() as conn:
+        stats = sporttery.reprocess_observations(conn, settings.observations_dir)
+    logger.info(
+        "observations={} reparsed={} no_raw={} matches={} snapshots={} dup={}",
+        stats.observations,
+        stats.reparsed,
+        stats.skipped_no_raw,
         stats.matches,
         stats.snapshots,
         stats.duplicate_snapshots,
@@ -235,6 +254,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="执行 schema 迁移")
     sub.add_parser("ingest-jingcai", help="手动拉一次竞彩快照")
+    sub.add_parser(
+        "reprocess-sporttery",
+        help="重解析 sporttery 原始证据入库(票 38 存量单固修正,幂等)",
+    )
     sub.add_parser("ingest-odds", help="手动拉一次欧赔(走 credit 护栏)")
     sub.add_parser("ingest-hist", help="导入五大三季历史底座")
     sub.add_parser("audit-ledger", help="只读核查旧账与更正历史")
@@ -306,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers: dict[str, Callable[[], None]] = {
         "migrate": _cmd_migrate,
         "ingest-jingcai": _cmd_ingest_jingcai,
+        "reprocess-sporttery": _cmd_reprocess_sporttery,
         "ingest-odds": _cmd_ingest_odds,
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,

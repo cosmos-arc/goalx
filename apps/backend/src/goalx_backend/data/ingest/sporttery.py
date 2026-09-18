@@ -11,19 +11,27 @@ sporttery 竞彩采集（票 19；票 35 补观测证据）：getMatchCalculator
 - 旧数据只有 captured_at，按本源解释为源调盘时间；当时是否已知
   observed_at 不可证明，不倒填。
 
-销售状态（票 35）：
+销售状态（票 35，had 部分被票 38 细化，见下节）：
 - 计算器端点只返回在售场次，payload 缺 sellStatus 字段时按 on_sale 记录
   （端点语义，非伪造）；出现但值未知 → unknown，保守不进正式候选；
-- 单固资格：had 块的 single 字段优先（"1"/"0"），缺失时若比赛级
-  bettingSingle=0 则该场无任何单关（False），否则未知（None）。
+- 原票 35 口径：had 块 single 优先，缺失时比赛级 bettingSingle=0 →
+  无单关（False），否则未知（None）。
+
+had 单固（票 38）：市场块实测恒缺 single 字段（票 wb-04 实证），同
+ttg/crs 接入 matchInfo 的 poolList 各池 single（1/0）——解析与入库机制
+与进球类同构；裁决差异一处：poolList 池级与市场块字段冲突时以 poolList
+为准（票 38 人裁决项，实证市场块恒缺、冲突为未观测理论分支），故 had
+链为 poolList 池级 → 市场块 single（防御保留）→ 比赛级否决。had_quote
+判定语义不动（票 35 口径），本模块只修正 sale_statuses 数据口径。
 
 进球类单固（票 wb-04）：ttg/crs 市场块实测恒缺 single 字段，单固资格取
 matchInfo 的 poolList 各池 single（1/0，实测为唯一可靠来源）；poolList 也
-缺失时同 had 的比赛级否决规则。had 口径不动（票 35 语义）。
+缺失时同 had 的比赛级否决规则。
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -48,7 +56,9 @@ from goalx_backend.models import (
 
 CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
 POOL_CODES = ("had", "hhad", "crs", "ttg", "hafu")
-PARSE_VERSION = "sporttery_calculator_v2"
+# v3（票 38）：had 单固补 poolList 池级解析（v2 会把 poolList single=1 的
+# 场次误记为非单固）；重解析历史证据时以本版本为准。
+PARSE_VERSION = "sporttery_calculator_v3"
 
 # sellStatus 原始值 → 内部状态；未列出值视为未知（保守拒绝，票 35）。
 SELL_STATUS_MAP: dict[str, str] = {"0": "on_sale", "1": "stopped"}
@@ -109,7 +119,15 @@ class ParsedMatch:
         return SELL_STATUS_MAP.get(self.sell_status_raw, "unknown")
 
     def had_single_eligible(self) -> bool | None:
-        """Had 单固资格：市场级 single 优先；比赛级否决；否则未知。"""
+        """
+        Had 单固资格（票 38）。
+
+        poolList 池级 single 优先（实测唯一可靠来源，与市场块冲突时以其
+        为准——票 38 裁决）→ 市场块 single（防御保留，实测恒缺）→
+        比赛级否决（bettingSingle=0 → False）→ None。
+        """
+        if "had" in self.pool_single:
+            return self.pool_single["had"]
         for quote in self.markets:
             if quote.market_code == "had" and quote.single is not None:
                 return quote.single
@@ -148,6 +166,18 @@ class IngestStats:
     snapshots: int = 0
     duplicate_snapshots: int = 0
     observation_id: int | None = None
+
+
+@dataclass
+class ReprocessStats:
+    """一次证据重解析重放的统计（票 38）。"""
+
+    observations: int = 0  # 库中 sporttery 观测行总数
+    reparsed: int = 0  # 成功重解析重放的观测数
+    skipped_no_raw: int = 0  # raw_ref 为空（只记了哈希）无法重解析的观测数
+    matches: int = 0
+    snapshots: int = 0
+    duplicate_snapshots: int = 0
 
 
 def fetch_calculator(settings: Settings, client: httpx.Client) -> FetchedCalculator:
@@ -264,7 +294,8 @@ def _parse_pool_single(sub_match: dict[str, Any]) -> dict[str, bool | None]:
 
     实测 payload 的市场块（had/ttg/crs/...）恒缺 ``single`` 字段，
     poolList 的 ``single``（int 1/0）是单固资格唯一可靠来源；未列出的
-    池不进字典（调用方继续走比赛级否决规则）。
+    池不进字典（调用方继续走市场块/比赛级否决规则）。ttg/crs 与 had
+    （票 38）共用本解析。
     """
     out: dict[str, bool | None] = {}
     pools: list[dict[str, Any]] = sub_match.get("poolList") or []
@@ -338,6 +369,21 @@ def _resolve_fixture(
     return fx_store.upsert_fixture(conn, competition_id, match.kickoff_utc, home, away)
 
 
+def _append_sale_status_once(conn: sqlite3.Connection, status: SaleStatusInput) -> bool:
+    """
+    幂等追加销售状态行（票 38）。
+
+    证据身份（observation_id）相同的重复行跳过——同一证据重解析可安全
+    重跑；返回是否真的追加了。
+    """
+    if status.observation_id is not None and fx_store.sale_status_row_exists(
+        conn, status
+    ):
+        return False
+    fx_store.append_sale_status(conn, status)
+    return True
+
+
 def store_matches(
     conn: sqlite3.Connection,
     matches: list[ParsedMatch],
@@ -367,7 +413,7 @@ def store_matches(
                 is_single=match.is_single,
             ),
         )
-        fx_store.append_sale_status(
+        _append_sale_status_once(
             conn,
             SaleStatusInput(
                 fixture_id=fixture,
@@ -379,7 +425,8 @@ def store_matches(
         )
         for quote in match.markets:
             if quote.market_code == "had":
-                fx_store.append_sale_status(
+                # had 单固（票 38）：poolList 池级 single 接入解析链
+                _append_sale_status_once(
                     conn,
                     SaleStatusInput(
                         fixture_id=fixture,
@@ -391,8 +438,8 @@ def store_matches(
                     ),
                 )
             elif quote.market_code in GOALS_MARKETS:
-                # 进球类单固（票 wb-04）：poolList 池级 single（had 口径不动）
-                fx_store.append_sale_status(
+                # 进球类单固（票 wb-04）：poolList 池级 single
+                _append_sale_status_once(
                     conn,
                     SaleStatusInput(
                         fixture_id=fixture,
@@ -468,3 +515,44 @@ def capture_jingcai(
     return store_matches(
         conn, matches, observed_at=observed, observation_id=observation_id
     )
+
+
+def reprocess_observations(conn: sqlite3.Connection, raw_root: Path) -> ReprocessStats:
+    """
+    重解析全部 sporttery 原始证据并重放入库（票 38 存量单固修正）。
+
+    计算器端点只返回在售场次，误记历史无法靠重拉修复；票 35 的原始
+    证据存档（gzip + 哈希）可离线重解析。对每个观测行：校验 sha256 →
+    以当前解析版本重放 ``store_matches``（快照 INSERT OR IGNORE、销售
+    状态行按证据身份判重，可重复执行）。
+
+    时间语义：重放行的 observed_at/observation_id 沿用原观测——修正内容
+    在原证据时间线上即已可知（当时误解析），不倒填也不推迟；旧行保留
+    （append-only 证据设计），同 observed_at 下 as-of 判定取新行（id 大）。
+    哈希不符视为证据损坏，立即失败（fail-closed，不产生部分修正）。
+    """
+    stats = ReprocessStats()
+    rows = conn.execute(
+        "SELECT * FROM quote_observations WHERE source = 'sporttery' ORDER BY id"
+    ).fetchall()
+    stats.observations = len(rows)
+    for row in rows:
+        raw_ref = row["raw_ref"]
+        if raw_ref is None:
+            stats.skipped_no_raw += 1
+            continue
+        raw = observations.read_raw(raw_root, str(raw_ref))
+        if observations.sha256_hex(raw) != str(row["raw_sha256"]):
+            raise ValueError(f"raw evidence hash mismatch for observation {row['id']}")
+        replayed = store_matches(
+            conn,
+            parse_matches(json.loads(raw)),
+            observed_at=str(row["observed_at"]),
+            observation_id=int(row["id"]),
+        )
+        stats.reparsed += 1
+        stats.matches += replayed.matches
+        stats.snapshots += replayed.snapshots
+        stats.duplicate_snapshots += replayed.duplicate_snapshots
+    conn.commit()
+    return stats

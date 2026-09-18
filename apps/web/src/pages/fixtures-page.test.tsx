@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { todayFixture } from "../mocks/handlers";
+import { poolListTodayFixture, todayFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -504,4 +504,30 @@ test("selection basket spans the 3-day window", async () => {
 	await user.click(await screen.findByTestId("pick-4-h"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周六001 主胜 × 周日004 主胜");
+});
+
+// --- 票 38：poolList 口径单固（比赛级关单关、池级单固）---
+
+test("poolList-derived single fixture shows no parlay-only badge and can lead a single", async () => {
+	const user = userEvent.setup();
+	server.use(http.get("*/api/v1/fixtures/today", () => HttpResponse.json([poolListTodayFixture, todayFixture[1]])));
+	await renderAt("/fixtures");
+
+	// 修正口径：poolList 单固场（周四006）不显示"仅串关"；对照场（周六002）仍显示
+	const card = await screen.findByTestId("fixtures-card-6");
+	expect(within(card).queryByText("仅串关")).not.toBeInTheDocument();
+	expect(within(screen.getByTestId("fixtures-card-2")).getByText("仅串关")).toBeInTheDocument();
+
+	// 表格资格徽章：valid + 单固（glossary 徽章只在 single_eligible=true 时渲染；
+	// 对照场周六002 非单固 → 只有"可投"）
+	const validBadges = screen.getAllByTestId("had-quote-valid");
+	expect(validBadges).toHaveLength(2);
+	expect(validBadges[0]?.textContent).toBe("可投单固");
+	expect(validBadges[1]?.textContent).toBe("可投");
+
+	// 单关首腿：不触发"非单固只能作串关腿"提示（票面影响的组合路径）
+	await user.click(screen.getByTestId("pick-6-h"));
+	expect(screen.queryByTestId("fixtures-message")).not.toBeInTheDocument();
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
+	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周四006 主胜");
 });

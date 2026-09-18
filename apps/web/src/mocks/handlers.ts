@@ -139,6 +139,41 @@ export const todayFixture = [
 	},
 ] as const;
 
+/**
+ * 票 38 poolList 口径样例：比赛级 bettingSingle=0（is_single=false）但
+ * poolList HAD 池 single=1 → 修正后 had_quote.single_eligible=true。
+ * 复刻主库误记场次（2026-09-17 周四006 皇家社会 vs 伯恩茅斯）的修正后
+ * 形状——徽章不应显示"仅串关"、组合引擎应纳入单关推荐。默认 handler 不
+ * 返回它（不扰动既有计数断言），消费方用 server.use 覆盖注入。
+ */
+export const poolListTodayFixture = {
+	fixture_id: 6,
+	match_code: "周四006",
+	competition: "西甲",
+	tier: "tier1",
+	home_team: "皇家社会",
+	away_team: "伯恩茅斯",
+	business_date: beijingBusinessDate(Date.now()),
+	kickoff_utc: hoursFromNow(3.5),
+	is_single: false, // 比赛级关单关（bettingSingle=0）
+	joined: true,
+	jc_odds: { h: 2.05, d: 3.4, a: 3.6 },
+	jc_updated_at: minutesAgoIso(12),
+	books: 6,
+	eu_prob: { h: 0.51, d: 0.25, a: 0.24 },
+	ev: { h: 0.046, d: -0.15, a: -0.136 },
+	flags: [],
+	had_quote: {
+		as_of: minutesAgoIso(1),
+		status: "valid",
+		reasons: [],
+		sale_state: "on_sale",
+		single_eligible: true, // poolList 池级单固（票 38 修正口径）
+		jc_source_updated_at: minutesAgoIso(12),
+		eu_books: 6,
+	},
+} as const;
+
 export const betsFixture = [
 	{
 		id: 1,
