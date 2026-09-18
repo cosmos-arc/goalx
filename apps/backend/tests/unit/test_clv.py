@@ -1,9 +1,11 @@
-"""CLV 跟踪测试（票 32 验收：CLV_proxy 计算、beat rate 报表、回归可复现）。"""
+"""CLV 跟踪测试（票 32 验收：CLV_proxy 计算、beat rate 报表、回归可复现；
+票 40：基准分层降级矩阵与 close_basis 标注）。"""
 
 from __future__ import annotations
 
 import pytest
 
+from goalx_backend import odds_math as om
 from goalx_backend.betting.bets import BetDraft, create_bet_with_legs
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation import clv
@@ -22,16 +24,17 @@ def seed_fixture(db, *, league: str = "英超") -> int:
     return fx_store.upsert_fixture(db, competition, KICKOFF, home, away)
 
 
-def seed_closing_snapshots(
+def seed_closing_books(
     db,
     fixture_id: int,
-    prices: tuple[float, float, float],
+    books: dict[str, tuple[float, float, float]],
     *,
     captured: str = "2026-09-12T18:45:00+00:00",
 ) -> None:
+    """closing 快照按 book 显式播种（票 40 降级矩阵用）。"""
     from goalx_backend.models import SnapshotPurpose
 
-    for book in ("pin", "avg"):
+    for book, prices in books.items():
         for sel, odds in zip(("h", "d", "a"), prices, strict=True):
             fx_store.insert_odds_snapshot(
                 db,
@@ -46,6 +49,18 @@ def seed_closing_snapshots(
                 ),
             )
     db.commit()
+
+
+def seed_closing_snapshots(
+    db,
+    fixture_id: int,
+    prices: tuple[float, float, float],
+    *,
+    captured: str = "2026-09-12T18:45:00+00:00",
+) -> None:
+    seed_closing_books(
+        db, fixture_id, {"pin": prices, "avg": prices}, captured=captured
+    )
 
 
 def settle_bet(db, bet_id: int, *, status: str = "won") -> None:
@@ -78,8 +93,9 @@ def test_closing_prob_requires_closing_purpose(db) -> None:
     seed_closing_snapshots(db, fixture, (2.0, 3.5, 3.5))
     close = clv._closing_prob(db, fixture, "h")
     assert close is not None
-    prob, source = close
+    prob, source, basis = close
     assert source == "odds_api_closing"
+    assert basis == "consensus"  # pin/avg 非锚书 → 共识口径（票 40）
     assert 0.45 < prob < 0.55
 
 
@@ -413,3 +429,219 @@ def test_paper_live_reported_separately(db) -> None:
     report = clv.clv_report(db)
     assert report["singles"]["paper"]["n_bets"] == 1
     assert report["singles"]["live"]["n_bets"] == 1  # 分开报告,不混
+
+
+# --- 票 40：基准分层（Pinnacle 主锚 → Betfair 辅 → 共识 fallback） ---
+
+
+def test_anchor_pinnacle_primary_beats_exchange_and_consensus(db) -> None:
+    """主锚在场即用 Pinnacle 单书 Shin，不与辅锚/其他书混均价。"""
+    fixture = seed_fixture(db)
+    seed_closing_books(
+        db,
+        fixture,
+        {
+            "pinnacle": (2.10, 3.40, 3.60),  # sharp 主锚
+            "betfair_ex_eu": (2.20, 3.50, 3.50),
+            "bet365": (1.90, 3.60, 4.20),
+        },
+    )
+    close = clv._closing_prob(db, fixture, "h")
+    assert close is not None
+    prob, _, basis = close
+    assert basis == "pinnacle"
+    expected = om.shin_implied((2.10, 3.40, 3.60))
+    assert prob == pytest.approx(expected[0], abs=1e-9)
+
+
+def test_anchor_betfair_exchange_commission_adjusted(db) -> None:
+    """无 Pinnacle 有交易所 → 辅锚：back 价按佣金调有效赔率后归一化。"""
+    fixture = seed_fixture(db)
+    back = (2.20, 3.50, 3.50)
+    seed_closing_books(db, fixture, {"betfair_ex_eu": back})
+    close = clv._closing_prob(db, fixture, "h")
+    assert close is not None
+    prob, _, basis = close
+    assert basis == "betfair_ex"
+    expected = om.normalized_implied(
+        tuple(1.0 + (o - 1.0) * (1.0 - clv.BETFAIR_COMMISSION) for o in back)
+    )
+    assert prob == pytest.approx(expected[0], abs=1e-9)
+    # 佣金率参数化（调研区间 2–5%）：5% 覆写改变概率
+    close5 = clv._closing_prob(db, fixture, "h", betfair_commission=0.05)
+    assert close5 is not None
+    prob5, _, _ = close5
+    expected5 = om.normalized_implied(tuple(1.0 + (o - 1.0) * 0.95 for o in back))
+    assert prob5 == pytest.approx(expected5[0], abs=1e-9)
+    assert prob5 != pytest.approx(prob)
+    # UK 区域交易所键同认（实采是 EU 区变体）
+    fixture_uk = seed_fixture(db, league="西甲")
+    seed_closing_books(db, fixture_uk, {"betfair_ex_uk": back})
+    close_uk = clv._closing_prob(db, fixture_uk, "h")
+    assert close_uk is not None
+    assert close_uk[2] == "betfair_ex"
+
+
+def test_anchor_consensus_fallback_without_sharp_books(db) -> None:
+    """无主辅锚 → 共识 fallback；高 margin 书（onexbet）只进共识不作锚。"""
+    fixture = seed_fixture(db)
+    books = {"onexbet": (1.85, 3.80, 4.40), "bet365": (1.95, 3.60, 4.00)}
+    seed_closing_books(db, fixture, books)
+    close = clv._closing_prob(db, fixture, "a")
+    assert close is not None
+    prob, _, basis = close
+    assert basis == "consensus"
+    consensus = tuple(
+        sum(prices[i] for prices in books.values()) / len(books) for i in range(3)
+    )
+    expected = om.shin_implied(consensus)
+    assert prob == pytest.approx(expected[2], abs=1e-9)
+
+
+def test_anchor_tier_order_betfair_before_consensus(db) -> None:
+    """辅锚优先于共识：Betfair 在场（即使还有别的书）仍取 Betfair。"""
+    fixture = seed_fixture(db)
+    seed_closing_books(
+        db,
+        fixture,
+        {"betfair_ex_eu": (2.20, 3.50, 3.50), "onexbet": (1.85, 3.80, 4.40)},
+    )
+    close = clv._closing_prob(db, fixture, "h")
+    assert close is not None
+    assert close[2] == "betfair_ex"
+
+
+def test_anchor_none_when_no_closing_books(db) -> None:
+    """两级都缺且无任何 closing 书 → 无基准（保留排除路径）。"""
+    fixture = seed_fixture(db)
+    assert clv._closing_prob(db, fixture, "h") is None
+
+
+def test_reconcile_writes_close_basis_per_tier(db) -> None:
+    """对账落库带 close_basis：Pinnacle 场记 pinnacle，共识场记 consensus。"""
+    f_pin = seed_fixture(db, league="英超")
+    f_cons = seed_fixture(db, league="西甲")
+    seed_closing_books(db, f_pin, {"pinnacle": (2.0, 3.5, 3.5)})
+    seed_closing_snapshots(db, f_cons, (4.5, 3.5, 3.0))  # pin/avg → 共识
+    for fixture in (f_pin, f_cons):
+        bet = create_bet_with_legs(
+            db,
+            BetDraft(
+                mode=BetMode.PAPER,
+                stake=50.0,
+                legs=[
+                    LegInput(
+                        fixture_id=fixture,
+                        market_code="had",
+                        selection_code="h",
+                        locked_odds=2.2,
+                    )
+                ],
+            ),
+        )
+        db.execute(
+            "UPDATE bets SET placed_at = ? WHERE id = ?",
+            ("2026-09-12T18:50:00+00:00", bet),
+        )
+        settle_bet(db, bet, status="won")
+    clv.reconcile_clv(db)
+    bases = {
+        int(r["fixture_id"]): r["close_basis"]
+        for r in db.execute(
+            "SELECT fixture_id, close_basis FROM clv_records"
+        ).fetchall()
+    }
+    assert bases == {f_pin: "pinnacle", f_cons: "consensus"}
+
+
+def test_report_by_close_basis_parallel_presentation(db) -> None:
+    """报表 by_close_basis：分层行按级分列，历史 NULL 行记 legacy 不重算。"""
+    f_new = seed_fixture(db, league="英超")
+    f_old = seed_fixture(db, league="西甲")
+    seed_closing_books(db, f_new, {"pinnacle": (2.0, 3.5, 3.5)})
+    seed_closing_snapshots(db, f_old, (2.0, 3.5, 3.5))
+    for fixture in (f_new, f_old):
+        bet = create_bet_with_legs(
+            db,
+            BetDraft(
+                mode=BetMode.PAPER,
+                stake=50.0,
+                legs=[
+                    LegInput(
+                        fixture_id=fixture,
+                        market_code="had",
+                        selection_code="h",
+                        locked_odds=2.2,  # 隐含 0.4545 < 收盘 → beat
+                    )
+                ],
+            ),
+        )
+        db.execute(
+            "UPDATE bets SET placed_at = ? WHERE id = ?",
+            ("2026-09-12T18:50:00+00:00", bet),
+        )
+        settle_bet(db, bet, status="won")
+    clv.reconcile_clv(db)
+    # 模拟分层前历史行：置 NULL（历史行不重算的呈现路径）
+    db.execute(
+        "UPDATE clv_records SET close_basis = NULL WHERE fixture_id = ?", (f_old,)
+    )
+    db.commit()
+
+    report = clv.clv_report(db)
+    assert report["close_basis_note"].startswith("pinnacle 主锚")
+    by_basis = report["by_close_basis"]
+    assert set(by_basis) == {"pinnacle", "legacy"}
+    assert by_basis["pinnacle"]["legs"] == 1
+    assert by_basis["pinnacle"]["bets"] == 1
+    assert by_basis["pinnacle"]["groups"]["single"]["paper"]["beat_rate"] == 1.0
+    assert by_basis["legacy"]["legs"] == 1
+    assert by_basis["legacy"]["bets"] == 1
+    # 主口径不分基准：两组各 1 注（窗口期新旧并行呈现）
+    assert report["singles"]["paper"]["n_bets"] == 2
+    assert report["singles"]["paper"]["beat_rate"] == 1.0
+
+
+def test_report_mixed_basis_parlay(db) -> None:
+    """串关两腿基准不同 → 票级 mixed，只计注不进单级分组。"""
+    f_pin = seed_fixture(db, league="英超")
+    f_cons = seed_fixture(db, league="西甲")
+    seed_closing_books(db, f_pin, {"pinnacle": (2.0, 3.5, 3.5)})
+    seed_closing_snapshots(db, f_cons, (4.5, 3.5, 3.0))
+    bet = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode=BetMode.PAPER,
+            stake=50.0,
+            legs=[
+                LegInput(
+                    fixture_id=f_pin,
+                    market_code="had",
+                    selection_code="h",
+                    locked_odds=2.2,
+                ),
+                LegInput(
+                    fixture_id=f_cons,
+                    market_code="had",
+                    selection_code="a",
+                    locked_odds=3.0,
+                ),
+            ],
+        ),
+    )
+    db.execute(
+        "UPDATE bets SET placed_at = ? WHERE id = ?",
+        ("2026-09-12T18:50:00+00:00", bet),
+    )
+    settle_bet(db, bet, status="won")
+    clv.reconcile_clv(db)
+    report = clv.clv_report(db)
+    by_basis = report["by_close_basis"]
+    assert by_basis["mixed"]["bets"] == 1
+    # 腿数归各级：pinnacle 1 腿、consensus 1 腿，但单级注数不收 mixed 票
+    assert by_basis["pinnacle"]["legs"] == 1
+    assert by_basis["pinnacle"]["bets"] == 0
+    assert by_basis["consensus"]["legs"] == 1
+    assert by_basis["consensus"]["bets"] == 0
+    # 主口径串关组照常计票
+    assert report["parlay2"]["paper"]["n_bets"] == 1

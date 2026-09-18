@@ -132,6 +132,9 @@ def test_validation_progress_real_state(seeded_client: TestClient) -> None:
     first = body["yield_curve"][0]
     assert first["cumulative_yield"] == pytest.approx(40.0 / 50.0)
     assert body["clv"]["denominator"]["unique_bets"] == 2
+    # 基准分层（票 40）：直插行 close_basis=NULL → legacy 分列呈现
+    assert body["clv"]["by_close_basis"]["legacy"]["bets"] == 2
+    assert body["clv"]["close_basis_note"].startswith("pinnacle 主锚")
     assert body["latest_run"]["label"] == "m2-smoke"  # 仅展示,不供 skill
 
 
