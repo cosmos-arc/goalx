@@ -1131,7 +1131,7 @@ def test_live_pool_rejected_and_invalid_bet_rolled_back(api_client: TestClient) 
 # ---- 赛果自动同步端点（票 42：触发 + 状态；HTTP 层 MockTransport，不打外网） ----
 
 FIXTURE_PAGE_0916 = (
-    Path(__file__).parent.parent / "fixtures" / "caiguo_2026-09-16.html"
+    Path(__file__).parent.parent / "fixtures" / "caiguo_2026-09-16.html.txt"
 ).read_text(encoding="utf-8")
 
 
