@@ -24,6 +24,10 @@ _Avoid_: Slot, 场次号
 一个可投注的玩法市场，以官方 poolCode 标识（had 胜平负 / hhad 让球 / crs 比分 / ttg 总进球 / hafu 半全场 / ttt14 十四场 / pick9 任选九 / goals4 四场进球 / htft6 六场半全场）。
 _Avoid_: PlayType, 玩法（口语可用，实体一律 Market）
 
+**MarketGroup**:
+按研究方法与投注策略划分的玩法类别：胜平负类（had/hhad，固定赔率、模型概率×市场 EV 对照、串关主场）、进球类（ttg/crs，固定赔率、概率由比分矩阵推导、单关为主）、奖池型（ttt14/pick9，彩池分红、无固定赔率、覆盖策略）。半全场（hafu 等）暂不归类不呈现。
+_Avoid_: 玩法入口（口语）， BetType
+
 **Selection**:
 Market 内的一个具体选项（如"比分 2:1""总进球 3"）。
 _Avoid_: Outcome, Pick
