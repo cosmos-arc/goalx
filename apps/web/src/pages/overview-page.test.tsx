@@ -300,6 +300,10 @@ test("no deposits yet: the live zone shows the deposit onboarding empty state", 
 });
 
 test("today's live flows color the pnl red/green; paper zone stays isolated with its badge", async () => {
+	// 冻结在本地 11:05：minutesAgoIso(30) 必与"今天"同本地日——CI（UTC）在午夜后 30 分钟内
+	// 跑会跨日，当日流水为空（2026-09-18 00:04 UTC 实际触发过）
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date(2026, 8, 15, 11, 5, 0));
 	const todayIso = new Date().toISOString();
 	mockAll({
 		fixtures: [makeFixture({ fixture_id: 1 })],
