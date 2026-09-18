@@ -25,7 +25,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def _issue_page() -> FetchedPage:
-    raw = (FIXTURES / "zucai_issue_26131.html").read_bytes()
+    raw = (FIXTURES / "zucai_issue_26131.html.txt").read_bytes()
     return FetchedPage(url="x", text=raw.decode("gb18030", errors="replace"), raw=raw)
 
 
@@ -39,7 +39,7 @@ def _number() -> dict[str, object]:
 
 def test_parse_index_periods() -> None:
     """索引页 → 近期期号（升序去重，实测样本含在售与预售期）。"""
-    raw = (FIXTURES / "zucai_index.html").read_bytes()
+    raw = (FIXTURES / "zucai_index.html.txt").read_bytes()
     page = FetchedPage(url="x", text=raw.decode("gb18030", errors="replace"), raw=raw)
     assert parse_index_periods(page) == ["26129", "26130", "26131", "26132"]
 
@@ -108,8 +108,8 @@ def test_parse_popularity_drops_invalid_triples() -> None:
 
 def _mock_client() -> httpx.Client:
     """按 URL 分发的 MockTransport（期次页/索引/人气三种响应）。"""
-    issue_raw = (FIXTURES / "zucai_issue_26131.html").read_bytes()
-    index_raw = (FIXTURES / "zucai_index.html").read_bytes()
+    issue_raw = (FIXTURES / "zucai_issue_26131.html.txt").read_bytes()
+    index_raw = (FIXTURES / "zucai_index.html.txt").read_bytes()
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -228,7 +228,7 @@ def test_sync_discovers_periods_via_index(db) -> None:
 def test_sync_records_missing_shares_for_popularity_less_period(db) -> None:
     """无人气数据的期次（如预售期）：missing_shares 如实计数、不发份额行。"""
 
-    issue_raw = (FIXTURES / "zucai_issue_26131.html").read_bytes()
+    issue_raw = (FIXTURES / "zucai_issue_26131.html.txt").read_bytes()
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
