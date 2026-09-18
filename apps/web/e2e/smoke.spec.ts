@@ -92,14 +92,14 @@ test("stub pages say what they are and when they arrive", async ({ page }) => {
 
 // 票 18：词典页真实落地——词条常显、检索过滤、无结果 no-data 空状态
 // （票 wb-05 起含进球矩阵词条，票 wb-06 起 Kelly/建议仓位两词条，票 39 起含
-// 共识低置信词条，共 16）
+// 共识低置信词条，票 41 起含注级 EV 快照词条，共 17）
 test("glossary page lists first-batch entries, searches, and empties honestly", async ({ page }) => {
 	await page.goto("/glossary");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(16);
+	expect(await list.locator("article").count()).toBe(17);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -110,7 +110,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(16);
+	await expect(list.locator("article")).toHaveCount(17);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过

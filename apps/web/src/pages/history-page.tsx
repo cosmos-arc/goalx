@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { type Bet, fetchBets, fetchTodayFixtures } from "../api/goalx";
+import { type Bet, type BetEvSnapshot, fetchBets, fetchTodayFixtures } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import type { EChartsOption } from "../components/charts/echarts";
 import { useECharts } from "../components/charts/use-echarts";
@@ -21,8 +21,11 @@ import { SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * - 页头固定一行按 07 Answer 逐字："统计已锁定且已结算的注；前瞻验证口径（含排除
  *   规则）见验证页。"两页数字不同时各自以口径标注为准；术语"前瞻纳入"由 17 号的
  *   链接占位升级为 18 号的 GlossaryTerm Popover（悬停/聚焦就地看口径）。
- * - 平均 EV / 平均 CLV：BetView 无注级 EV/CLV 字段（v1 API），按缺失显示"—"并注明
- *   口径与判读方向（CLV 正 = 买在好价）；不造假数据，聚合口径见验证页。
+ * - 平均 EV（票 41 点亮）：建注时随 BetView 落注级快照（共识/模型双口径概率与
+ *   EV），均值共识口径优先、两口径不混算，样本数（有快照注 / 筛选注数）注明，
+ *   无快照注保持"—"兜底；平均 CLV 仍缺注级 API 字段（clv_records 已有链路，
+ *   BetView 增量待后续票），按缺失显示"—"并注明口径与判读方向（CLV 正 = 买在
+ *   好价）；不造假数据，聚合口径见验证页。
  * - Competition 归因取自今日列表的 competition 字段（v1 无历史 fixture 详情端点），
  *   不在今日列表的场次无法归因、仅"全部"下可见；筛选选项随数据推导，不写死。
  * - 聚合行 → 注明细的下钻本页闭环；明细 → Fixture 的最后一跳留待场次详情页
@@ -123,6 +126,43 @@ export function buildCumulativePoints(bets: Bet[]): Array<{ label: string; value
 		cumulative += bet.profit ?? 0;
 		return { label: shortTime(bet.settled_at), value: Math.round(cumulative * 100) / 100 };
 	});
+}
+
+/** EV 口径标签：均值展示与样本数注明共用（共识优先，模型为回退口径）。 */
+export type EvCaliber = "consensus" | "model";
+
+export const EV_CALIBER_LABELS: Record<EvCaliber, string> = {
+	consensus: "共识口径",
+	model: "模型口径",
+};
+
+/**
+ * 注级 EV 快照均值（票 41）：共识口径优先，共识/模型两口径不混算——共识有
+ * 样本只算共识，全缺才回退模型；无快照注不入分母（null 兜底由调用方处理）。
+ */
+export function averageEv(bets: Bet[]): { value: number; caliber: EvCaliber; count: number } | null {
+	const collect = (pick: (snapshot: BetEvSnapshot) => number | null | undefined): number[] =>
+		bets.flatMap((bet) => {
+			const value = bet.ev_snapshot ? pick(bet.ev_snapshot) : null;
+			return value == null ? [] : [value];
+		});
+	const consensus = collect((snapshot) => snapshot.ev_consensus);
+	if (consensus.length > 0) {
+		return {
+			value: consensus.reduce((acc, value) => acc + value, 0) / consensus.length,
+			caliber: "consensus",
+			count: consensus.length,
+		};
+	}
+	const model = collect((snapshot) => snapshot.ev_model);
+	if (model.length > 0) {
+		return {
+			value: model.reduce((acc, value) => acc + value, 0) / model.length,
+			caliber: "model",
+			count: model.length,
+		};
+	}
+	return null;
 }
 
 /** 数据 → option 的纯映射（use-echarts 测试约定）：折线 + 0 基准虚线 markline。 */
@@ -242,6 +282,8 @@ export function HistoryPage() {
 	const wonCount = filtered.filter((bet) => bet.status === "won").length;
 	const decidedCount = filtered.filter((bet) => bet.status !== "void").length;
 	const hitRate = decidedCount > 0 ? wonCount / decidedCount : null;
+	// 注级 EV 均值（票 41）：共识口径优先、两口径不混算、样本数注明
+	const ev = averageEv(filtered);
 
 	const points = buildCumulativePoints(filtered);
 
@@ -437,9 +479,23 @@ export function HistoryPage() {
 										</div>
 										<div className="rounded-lg border border-border p-4" data-testid="metric-ev">
 											<p className="text-xs text-muted-foreground">平均 EV</p>
-											<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} text-muted-foreground`}>—</p>
+											<p
+												className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${
+													ev ? pnlClass(ev.value) : "text-muted-foreground"
+												}`}
+											>
+												{ev ? `${ev.value >= 0 ? "+" : ""}${(ev.value * 100).toFixed(1)}%` : "—"}
+											</p>
 											<p className="mt-2 text-xs text-muted-foreground">
-												判读：正 = 有正期望。注级 EV 未随 v1 API 提供（机会级 EV 见今日页），暂不可算。
+												{ev ? (
+													<>
+														判读：正 = 有正期望。
+														<GlossaryTerm id="bet-ev-snapshot">{EV_CALIBER_LABELS[ev.caliber]}</GlossaryTerm>
+														快照均值 {ev.count}/{filtered.length} 注（无快照注不计）。
+													</>
+												) : (
+													"判读：正 = 有正期望。暂无带 EV 快照的已结算注（快照随新注落库，存量注无快照不计；机会级 EV 见今日页）。"
+												)}
 											</p>
 										</div>
 										<div className="rounded-lg border border-border p-4" data-testid="metric-clv">
