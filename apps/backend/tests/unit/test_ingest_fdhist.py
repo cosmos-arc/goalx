@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import httpx
+
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import fdhist
@@ -67,3 +69,19 @@ def test_import_history_full_matrix_urls(db) -> None:
     fdhist.import_history(db, Settings(), None, fetch=fetch)
     assert len(urls) == len(fdhist.FD_COMPETITIONS) * len(fdhist.SEASONS)
     assert "https://www.football-data.co.uk/mmz4281/2324/SP1.csv" in urls
+
+
+def test_import_history_skips_failed_file(db) -> None:
+    """单文件拉取失败（404 等）只计数跳过，不中断其余文件（票 02 根修）。"""
+
+    def fetch(url: str) -> str:
+        if url.endswith("/2425/E0.csv"):
+            raise httpx.HTTPError("404 not found")
+        return CSV_TEXT + CSV_ROWS
+
+    stats = fdhist.import_history(
+        db, Settings(), None, competitions=("E0", "D1"), seasons=("2425",), fetch=fetch
+    )
+    assert stats.failed_files == 1
+    assert stats.written == 3  # D1 正常入库
+    assert rs_store.hist_match_stats(db)["total"] == 3

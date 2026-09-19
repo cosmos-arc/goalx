@@ -93,10 +93,14 @@ def _cmd_ingest_odds() -> None:
 
 
 def _cmd_ingest_hist() -> None:
-    """导入历史底座(五大三季)。"""
+    """导入历史底座(六大联赛全季)。"""
     stats = tasks.fd_history_import()
     logger.info(
-        "rows={} written={} skipped={}", stats.rows, stats.written, stats.skipped
+        "rows={} written={} skipped={} failed_files={}",
+        stats.rows,
+        stats.written,
+        stats.skipped,
+        stats.failed_files,
     )
 
 
