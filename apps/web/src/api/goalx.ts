@@ -233,6 +233,17 @@ export function generateColdVariants(payload: ColdVariantsInput): Promise<ColdVa
 	return unwrap(client.POST("/api/v1/pool/cold-variants", { body: payload }));
 }
 
+export type TargetPlanInput = Schemas["TargetPlanPayload"];
+export type TargetPlan = Schemas["TargetPlanView"];
+
+/**
+ * 目标金额反推（票 pool-v2/03）：任9 贪心选场 + 冷替换抬派彩；
+ * 估计口径不承诺目标达成（实际派彩随最终池变）。
+ */
+export function buildTargetPlan(payload: TargetPlanInput): Promise<TargetPlan> {
+	return unwrap(client.POST("/api/v1/pool/target-plan", { body: payload }));
+}
+
 /** 触发一次彩池同步（票 43：源B 期次/对阵/人气；幂等）。 */
 export function runPoolSync(): Promise<PoolSyncStatus> {
 	return unwrap(client.POST("/api/v1/pool-sync/run"));

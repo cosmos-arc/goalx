@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1307,6 +1308,50 @@ def test_pool_state_agent_import_is_idempotent(demo_client: TestClient) -> None:
     assert state is not None
     assert state["sales_amount"] == 12345678.5
     assert state["source"] == "agent"
+
+
+def test_pool_target_plan_risk_tiers_and_units(demo_client: TestClient) -> None:
+    """目标金额反推（票 pool-v2/03）：稳档全票/中搏档任9+冷替换、注数数学。"""
+    missing = demo_client.post(
+        "/api/v1/pool/target-plan",
+        json={"period_no": "88888", "target_amount": 5000},
+    )
+    assert missing.status_code == 404
+
+    steady = demo_client.post(
+        "/api/v1/pool/target-plan",
+        json={"period_no": "26999", "target_amount": 10000, "risk": "steady"},
+    )
+    assert steady.status_code == 200
+    steady_body = steady.json()
+    assert len(steady_body["ticket"]["picks"]) == 14  # 全场
+    assert steady_body["ticket"]["swaps"] == []
+    assert "稳档" in steady_body["note"]
+    # 注数 = ceil(目标 ÷ 单注估计派彩)
+    per_unit = steady_body["est_payout_per_unit"]
+    assert steady_body["suggested_units"] == pytest.approx(math.ceil(10000 / per_unit))
+
+    bold = demo_client.post(
+        "/api/v1/pool/target-plan",
+        json={"period_no": "26999", "target_amount": 50000, "risk": "bold"},
+    )
+    assert bold.status_code == 200
+    bold_body = bold.json()
+    # 任9：9 场；搏档冷替换命中 demo 唯一冷门样本（场 6 平局，含于 top9）
+    assert len(bold_body["ticket"]["picks"]) == 9
+    assert [
+        (swap["match_seq"], swap["to_code"]) for swap in bold_body["ticket"]["swaps"]
+    ] == [(6, "d")]
+    assert bold_body["ticket"]["picks"]["6"] == "d"
+    # 中档与搏档同选场逻辑（无第二冷门样本时注数同）
+    balanced = demo_client.post(
+        "/api/v1/pool/target-plan",
+        json={"period_no": "26999", "target_amount": 50000, "risk": "balanced"},
+    )
+    assert balanced.status_code == 200
+    assert len(balanced.json()["ticket"]["picks"]) == 9
+    # 口径与不承诺声明
+    assert "不承诺" in bold_body["caliber"]
 
 
 def test_pool_cold_variants_greedy_and_valuation(demo_client: TestClient) -> None:

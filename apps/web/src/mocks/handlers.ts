@@ -870,7 +870,7 @@ const poolMatchFixture = (seq: number, home: string, away: string, league: strin
 	// 份额形态：主热偏置 + 平局低注；场 2/5 为"低份额冷门正 EV"样本
 	// （客胜 EV>0 且推荐位=主胜 → 搏冷标记落在客胜，票 pool-v2/01 判定）
 	const [shareH, shareD, shareA] = seq === 2 || seq === 5 ? [0.34, 0.24, 0.18] : [0.5, 0.28, 0.42];
-	const [probH, probD, probA] = seq === 2 || seq === 5 ? [0.42, 0.24, 0.34] : [0.45, 0.27, 0.33];
+	const [probH, probD, probA] = seq === 2 || seq === 5 ? [0.48, 0.22, 0.34] : [0.45, 0.27, 0.33];
 	const source = seq % 3 === 2 ? "model" : "euro_devig";
 	return {
 		match_seq: seq,
@@ -1043,6 +1043,85 @@ handlers.push(
 		});
 	}),
 	http.post("*/api/v1/pool-sync/run", () => HttpResponse.json(poolSyncStatusFixture)),
+	http.post("*/api/v1/pool/target-plan", async ({ request }) => {
+		const body = (await request.json()) as { risk?: string; target_amount?: number };
+		const risk = body.risk ?? "balanced";
+		const target = body.target_amount ?? 10000;
+		// 与后端同口径的简化反推（mock 只服务前端测试）
+		const basePicks: Record<string, string> = {};
+		const maxProb: Record<string, number> = {};
+		for (const match of poolPeriodDetailFixture.matches) {
+			const best = match.selections.reduce((acc, sel) => ((sel.prob ?? 0) > (acc.prob ?? 0) ? sel : acc));
+			basePicks[String(match.match_seq)] = best.code;
+			maxProb[String(match.match_seq)] = best.prob ?? 0;
+		}
+		const selOf = (seq: string, code: string) =>
+			poolPeriodDetailFixture.matches.find((m) => String(m.match_seq) === seq)?.selections.find((s) => s.code === code);
+		const estimate = (picks: Record<string, string>) => {
+			let prob = 1;
+			let shareProd = 1;
+			for (const [seq, code] of Object.entries(picks)) {
+				prob *= selOf(seq, code)?.prob ?? 0;
+				shareProd *= selOf(seq, code)?.share ?? 1;
+			}
+			return { prob, odds: 0.65 / shareProd };
+		};
+		const ticketOf = (
+			picks: Record<string, string>,
+			swaps: Array<{ seq: string; from: string; to: string; gain: number }>,
+		) => {
+			const { prob, odds } = estimate(picks);
+			return {
+				picks,
+				swaps: swaps.map((s) => ({
+					match_seq: Number(s.seq),
+					from_code: s.from,
+					to_code: s.to,
+					ev_gain: Number(s.gain.toFixed(4)),
+				})),
+				hit_prob: Number(prob.toFixed(6)),
+				est_odds: Number(odds.toFixed(2)),
+				ev: Number((prob * odds - 1).toFixed(4)),
+			};
+		};
+		if (risk === "steady") {
+			const t = ticketOf(basePicks, []);
+			return HttpResponse.json({
+				period_no: "26999",
+				risk,
+				ticket: t,
+				est_payout_per_unit: Number((t.est_odds * 2).toFixed(2)),
+				suggested_units: Math.ceil(target / (t.est_odds * 2)),
+				target_reached: t.est_odds * 2 >= target,
+				note: "稳档：14 场全稳票，不做冷替换（派彩不足目标时如实告知）。",
+				caliber: "估计派彩随最终池变，不承诺目标达成。",
+			});
+		}
+		const top9 = Object.keys(maxProb)
+			.sort((a, b) => (maxProb[b] ?? 0) - (maxProb[a] ?? 0))
+			.slice(0, 9);
+		const picks: Record<string, string> = {};
+		for (const seq of top9) picks[seq] = basePicks[seq] ?? "h";
+		// 搏档：场 2（fixture 冷门样本）若入选则替换到客胜
+		const swaps: Array<{ seq: string; from: string; to: string; gain: number }> = [];
+		if (risk === "bold" && "2" in picks && picks["2"] === "h") {
+			picks["2"] = "a";
+			const fromEv = selOf("2", "h")?.ev ?? 0;
+			const toEv = selOf("2", "a")?.ev ?? 0;
+			swaps.push({ seq: "2", from: "h", to: "a", gain: toEv - fromEv });
+		}
+		const t = ticketOf(picks, swaps);
+		return HttpResponse.json({
+			period_no: "26999",
+			risk,
+			ticket: t,
+			est_payout_per_unit: Number((t.est_odds * 2).toFixed(2)),
+			suggested_units: Math.ceil(target / (t.est_odds * 2)),
+			target_reached: t.est_odds * 2 >= target,
+			note: `${risk === "bold" ? "搏" : "中"}档：任9 贪心选场${swaps.length ? " + 1 处冷替换抬派彩" : ""}。`,
+			caliber: "估计派彩随最终池变，不承诺目标达成。",
+		});
+	}),
 	http.post("*/api/v1/pool-states", async ({ request }) => {
 		const body = (await request.json()) as { period_no?: string };
 		return HttpResponse.json({ period_no: body.period_no ?? "26999", imported: true }, { status: 201 });

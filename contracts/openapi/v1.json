@@ -914,6 +914,44 @@
         }
       }
     },
+    "/api/v1/pool/target-plan": {
+      "post": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "目标金额反推票面(任9 贪心+冷替换,票 pool-v2/03)",
+        "description": "目标奖金 → 推荐票面 + 建议注数（估计口径，诚实标注不承诺）。",
+        "operationId": "build_target_plan_api_v1_pool_target_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetPlanPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetPlanView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "期次不存在"
+          },
+          "422": {
+            "description": "期次无可选概率"
+          }
+        }
+      }
+    },
     "/api/v1/pool-sync/run": {
       "post": {
         "tags": [
@@ -4488,6 +4526,96 @@
         ],
         "title": "StatusResponse",
         "description": "Machine-readable service identity."
+      },
+      "TargetPlanPayload": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Period No"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code",
+            "default": "ttt14"
+          },
+          "target_amount": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Target Amount"
+          },
+          "risk": {
+            "type": "string",
+            "enum": [
+              "steady",
+              "balanced",
+              "bold"
+            ],
+            "title": "Risk",
+            "default": "balanced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "target_amount"
+        ],
+        "title": "TargetPlanPayload",
+        "description": "反推入参：风险档 steady=14场全稳/balanced=任9+至多1冷/bold=任9+至多3冷。"
+      },
+      "TargetPlanView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "risk": {
+            "type": "string",
+            "title": "Risk"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/ColdTicketView"
+          },
+          "est_payout_per_unit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Est Payout Per Unit"
+          },
+          "suggested_units": {
+            "type": "integer",
+            "title": "Suggested Units",
+            "default": 0
+          },
+          "target_reached": {
+            "type": "boolean",
+            "title": "Target Reached"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "risk",
+          "ticket",
+          "target_reached",
+          "note",
+          "caliber"
+        ],
+        "title": "TargetPlanView",
+        "description": "反推结果：推荐票面 + 建议注数 + 是否达到目标（不承诺达成）。"
       },
       "TodayFixtureView": {
         "properties": {

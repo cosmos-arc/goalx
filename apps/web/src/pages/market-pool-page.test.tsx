@@ -184,10 +184,36 @@ test("coming-soon blocks stay as reserved placeholders", async () => {
 
 	const coming = screen.getByTestId("pool-coming-soon");
 	const blocks = within(coming).getAllByTestId("empty-state");
-	expect(blocks).toHaveLength(2);
+	expect(blocks).toHaveLength(1);
 	expect(blocks[0]).toHaveTextContent("AI 证据总结");
 	expect(blocks[0]).toHaveAttribute("data-variant", "not-available");
-	expect(blocks[1]).toHaveTextContent("目标金额反推");
+});
+
+test("target reverse builds a plan and adopting applies picks", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 默认中档 ¥10000 → 任9 票面 + 建议注数 + 不承诺口径
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	const result = await screen.findByTestId("pool-target-result");
+	expect(result).toBeVisible();
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("中档票面（9 场）");
+	const units = screen.getByTestId("pool-target-units");
+	expect(units).toHaveTextContent(/建议 \d+ 注/);
+	expect(units).toHaveTextContent("¥2/注");
+
+	// 搏档：任9 + 场 2 冷替换（fixture 冷门样本）
+	await userEvent.selectOptions(screen.getByTestId("pool-target-risk"), "bold");
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("搏档票面（9 场）");
+	});
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("第2场 胜→负");
+
+	// 采用 → 9 场选择回填
+	await userEvent.click(screen.getByTestId("pool-target-ticket-adopt"));
+	expect(await screen.findByTestId("pool-target-message")).toHaveTextContent("已采用反推票面");
+	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
 });
 
 test("cold generator produces greedy variants and adopting applies picks", async () => {
@@ -227,7 +253,7 @@ test("backend-unavailable degrades honestly with dashed slots", async () => {
 	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位块照常
 	await userEvent.click(within(degraded).getByRole("button", { name: "重试" }));
 	expect(screen.queryByTestId("pool-slots")).toBeNull();
-	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(2);
+	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(1);
 });
 
 test("empty period list degrades to an honest no-data state", async () => {

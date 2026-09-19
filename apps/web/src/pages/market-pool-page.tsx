@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
+	buildTargetPlan,
 	type ColdVariants,
 	createPoolSlip,
 	fetchBankroll,
@@ -100,6 +101,9 @@ function selectionOf(match: PoolMatch, code: string): PoolSelection | undefined 
 
 /** 池页三向短标（官方口径：胜/平/负，非 had 页的主胜/客胜）。 */
 const POOL_LABELS: Record<string, string> = { h: "胜", d: "平", a: "负" };
+
+/** 反推风险档标签（票 pool-v2/03）。 */
+const RISK_LABELS: Record<string, string> = { steady: "稳", balanced: "中", bold: "搏" };
 
 /** 生成器票行（票 pool-v2/02）：替换明细 + 命中概率/估计派彩/EV + 采用。 */
 function TicketRow({
@@ -202,10 +206,14 @@ export function MarketPoolPage() {
 	const [submitResult, setSubmitResult] = useState<string | null>(null);
 	const [coldness, setColdness] = useState(2);
 	const [generatorMessage, setGeneratorMessage] = useState<string | null>(null);
+	const [targetAmount, setTargetAmount] = useState(10000);
+	const [targetRisk, setTargetRisk] = useState<"steady" | "balanced" | "bold">("balanced");
+	const [targetMessage, setTargetMessage] = useState<string | null>(null);
 	const generatorMutation = useMutation({
 		mutationFn: generateColdVariants,
 		onSuccess: () => setGeneratorMessage(null),
 	});
+	const targetMutation = useMutation({ mutationFn: buildTargetPlan });
 	const submitMutation = useMutation({
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
@@ -220,6 +228,7 @@ export function MarketPoolPage() {
 	const detail = detailQuery.data;
 	const matches = detail?.matches ?? [];
 	const variants = generatorMutation.data;
+	const plan = targetMutation.data;
 	// 已选（一场一选）：match + 所选向，索引访问经 flatMap 收窄（无 undefined）
 	const pickedEntries = matches.flatMap((m) => {
 		const code = picks[m.match_seq];
@@ -671,10 +680,98 @@ export function MarketPoolPage() {
 					</section>
 				) : null}
 
-				{/* 留位：AI 证据总结 / 目标金额反推（not-available） */}
-				<section aria-label="随 M3/v2 上线" className="mb-8 grid gap-3 sm:grid-cols-2" data-testid="pool-coming-soon">
+				{/* 目标金额反推（票 pool-v2/03）：输入目标 → 推荐票面 + 建议注数 */}
+				{periods.length > 0 ? (
+					<section
+						aria-labelledby="pool-target-heading"
+						className="mb-8 rounded-lg border border-border bg-card p-4"
+						data-testid="pool-target"
+					>
+						<h2 id="pool-target-heading" className="text-sm font-medium">
+							目标金额反推
+						</h2>
+						<p className="mt-1 text-xs text-muted-foreground">
+							输入目标奖金，反推推荐票面与建议注数。估计派彩随最终池变——输出是"若命中估计得 X"，不承诺达成。
+						</p>
+						<div className="mt-3 flex flex-wrap items-center gap-2">
+							<label className="text-xs text-muted-foreground" htmlFor="pool-target-amount">
+								目标（¥）
+							</label>
+							<input
+								id="pool-target-amount"
+								data-testid="pool-target-amount"
+								type="number"
+								min={1}
+								value={targetAmount}
+								onChange={(event) => setTargetAmount(Number(event.target.value))}
+								className="w-32 rounded-md border border-border bg-background px-2 py-1 text-sm"
+							/>
+							<select
+								aria-label="风险档"
+								data-testid="pool-target-risk"
+								value={targetRisk}
+								onChange={(event) => setTargetRisk(event.target.value as "steady" | "balanced" | "bold")}
+								className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+							>
+								<option value="steady">稳（14 场全稳）</option>
+								<option value="balanced">中（任9 + 至多 1 冷）</option>
+								<option value="bold">搏（任9 + 至多 3 冷）</option>
+							</select>
+							<button
+								type="button"
+								data-testid="pool-target-generate"
+								disabled={
+									!activePeriod || targetMutation.isPending || !Number.isFinite(targetAmount) || targetAmount <= 0
+								}
+								className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+								onClick={() =>
+									targetMutation.mutate({
+										period_no: activePeriod ?? "",
+										market_code: "ttt14",
+										target_amount: targetAmount,
+										risk: targetRisk,
+									})
+								}
+							>
+								{targetMutation.isPending ? "反推中…" : "反推票面"}
+							</button>
+						</div>
+						{plan ? (
+							<div className="mt-3 space-y-2" data-testid="pool-target-result">
+								<p className="text-xs text-muted-foreground">{plan.note}</p>
+								<TicketRow
+									label={`${RISK_LABELS[plan.risk]}档票面（${Object.keys(plan.ticket.picks).length} 场）`}
+									ticket={plan.ticket}
+									testid="pool-target-ticket"
+									onAdopt={() => {
+										setPicks(
+											Object.fromEntries(Object.entries(plan.ticket.picks).map(([seq, code]) => [Number(seq), code])),
+										);
+										setTargetMessage("已采用反推票面作为当前选择");
+									}}
+								/>
+								<p className="text-sm" data-testid="pool-target-units">
+									单注估计派彩{" "}
+									{plan.est_payout_per_unit === null || plan.est_payout_per_unit === undefined
+										? "缺数据"
+										: `¥${plan.est_payout_per_unit.toLocaleString("zh-CN")}`}
+									，建议 <span className={TABULAR_NUMS}>{plan.suggested_units}</span> 注（¥2/注）达目标 ¥
+									{targetAmount.toLocaleString("zh-CN")}
+									{plan.target_reached ? "（单注即达标）" : ""}
+								</p>
+								{targetMessage ? (
+									<p className="text-xs text-info" data-testid="pool-target-message">
+										{targetMessage}
+									</p>
+								) : null}
+							</div>
+						) : null}
+					</section>
+				) : null}
+
+				{/* 留位：AI 证据总结（not-available，随 M3） */}
+				<section aria-label="随 M3 上线" className="mb-8 grid gap-3" data-testid="pool-coming-soon">
 					<EmptyState variant="not-available" message="AI 证据总结（为何这样研判）" hint="随 M3 LLM 线上线。" />
-					<EmptyState variant="not-available" message="目标金额反推选择" hint="随 v2 反推票上线（生成器已上线）。" />
 				</section>
 
 				{/* 提交：纸面池票（pool-slips 接线，票 43）；真金不呈现 */}
