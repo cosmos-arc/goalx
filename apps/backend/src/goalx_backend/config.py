@@ -72,6 +72,22 @@ class Settings(BaseSettings):
     # 冻结采集范围（票 37 运行协议）：逗号分隔 sport key；空=动态发现全部足球
     odds_api_sport_scope: str | None = None
 
+    # --- GLM 线（票 08：Coding Plan key 实测定案） ---
+    glm_api_key: str = Field(
+        default="", validation_alias=AliasChoices("GOALX_GLM_API_KEY", "GLM_API_KEY")
+    )
+    # 默认 Coding Plan 端面（订阅额度内零边际成本），配额耗尽降级按量端面
+    glm_base_url: str = Field(
+        default="https://open.bigmodel.cn/api/coding/paas/v4",
+        validation_alias=AliasChoices("GOALX_GLM_BASE_URL", "GLM_BASE_URL"),
+    )
+    glm_payg_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    glm_scout_model: str = "glm-5.3-flash"
+    glm_analyst_model: str = "glm-5.3"
+    glm_fallback_model: str = "glm-4.7-flash"
+    glm_monthly_budget_cny: float = 360.0  # $50 硬上限（票 02）
+    glm_request_timeout: float = 90.0
+
     @property
     def is_production(self) -> bool:
         """Whether the process runs with production posture."""

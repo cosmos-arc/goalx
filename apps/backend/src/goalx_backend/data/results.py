@@ -308,6 +308,22 @@ WHERE category =
     return float(row["used"])
 
 
+def category_spend_cny(
+    conn: sqlite3.Connection, category: str, since_utc: str
+) -> float:
+    """指定类别自某时点起的金额合计（LLM 月预算熔断等跨域读取入口）。"""
+    row = conn.execute(
+        """
+            SELECT COALESCE(SUM(amount_cny), 0) AS s FROM cost_ledger
+            WHERE category = ? AND occurred_at >= ?
+        """,
+        (category, since_utc),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("category_spend_cny 查询失败")
+    return float(row["s"])
+
+
 def cost_summary(
     conn: sqlite3.Connection, since_utc: str | None = None
 ) -> list[sqlite3.Row]:
