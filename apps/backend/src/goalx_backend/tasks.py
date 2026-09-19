@@ -15,6 +15,9 @@ import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 
+import httpx
+from loguru import logger
+
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
@@ -23,6 +26,7 @@ from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
+from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
 
@@ -147,7 +151,14 @@ def pool_snapshot() -> zucai.PoolSyncStats:
 
 
 def intel_collection() -> dict[str, object]:
-    """情报采集（票 09）：当期彩池场次内部推导情报（幂等，零外部请求）。"""
+    """情报采集（票 09）：内部推导 + qiumibao 伤停（幂等；伤停面故障不阻塞推导）。"""
     with task_conn() as conn:
         stats = collect_pool_intel(conn)
-    return intel_stats_dict(stats)
+    injury: dict[str, object] = {}
+    try:
+        with task_conn() as conn, httpx.Client() as client:
+            injury = injury_stats_dict(collect_injury_intel(conn, client))
+    except httpx.HTTPError as exc:
+        logger.warning("qiumibao 伤停采集整体失败（推导情报不受影响）: {}", exc)
+        injury = {"error": str(exc)}
+    return {**intel_stats_dict(stats), "injury": injury}

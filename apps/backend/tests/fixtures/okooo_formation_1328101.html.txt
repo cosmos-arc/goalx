@@ -1,0 +1,3290 @@
+<!DOCTYPE html >
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><meta charset="gb2312" />
+<meta http-equiv="Content-Language" content="zh-CN" />
+<title>阵容实力-佛罗伦萨vs那不勒斯-意甲 26/27</title>
+<meta name="keywords" content="佛罗伦萨VS那不勒斯阵容,球员阵容, 最新伤停,文字比分直播,意甲 26/27" />
+<meta name="description" content="网站提供最准确的佛罗伦萨VS那不勒斯阵容，通过球员阵容、首发阵容、本场技术统计和最新伤停熟悉两队实力对比，预测比赛结果，方便您分析竞猜足球。" />
+<meta name="robots" content="all" />
+<meta name="copyright" content="澳客官网" />
+<meta name="mobile-agent" content="format=html5;url=https://m.okooo.com/match/form.php?MatchID=1328101">
+<meta name="mobile-agent" content="format=xhtml;url=https://m.okooo.com/">
+<meta name="renderer" content="webkit">
+<meta name="referrer" content="unsafe-url"/>
+<link rel="Shortcut Icon" href="/favicon_a_1.ico" />
+<script type="text/javascript">
+
+//ie6下图片重复加载bug解决
+var isIE = !!window.ActiveXObject;
+var isIE6 = isIE && !window.XMLHttpRequest;
+if(isIE6){document.execCommand("BackgroundImageCache", false, true);}
+
+var googleLotteryType="";
+    var GoogleTJKG=true;
+
+var googledataobjs=new Date();
+var googlestarttime=googledataobjs.getTime();
+
+var ejsversion = '202609181653';
+var js_version = '202609181653';
+var googleversion='202102051123';
+var googlegaurl='https://imgv1.okoooimg.cn';
+
+var confingVersion='202604081814';
+
+var AgentLoginType='';
+var PayMethod='okooo';
+var AgentType='';
+var AgentUserID = '';
+var IsClub='';
+var IsSeparateDomain='';
+var currentDomainName = 'www.okooo.com';
+
+var gateway = '//www.okooo.com/Remoting/json.php';
+var LoginDomain = '//www.okooo.com';
+var SecureUrl =  '//www.okooo.com';
+var StaticUrl =  'https://imgv1.okoooimg.cn';
+var MainUrl = 'http://www.okooo.com';
+var jsrequire = '202608031717';
+var BaseUrl = '//www.okooo.com';
+var isNeedCors = '';
+var default_wager;
+var jsCombineTag = 1;
+//导航
+var LotteryTypeList = null;
+var HaveSetupIndexInfo = 'N';
+
+if(!LotteryTypeList){LotteryTypeList = {};}
+
+var saleGlobalStatus = false;
+</script>
+    <link href="https://imgv1.okoooimg.cn/min/?f=style%2fcss%2fglobal.css,style%2fcss%2flogin.css,style%2fcss%2fheader.css,style%2fcss%2fbdsstyle.css,style%2fcss%2fadv_ok.css&amp;_v=202608041624" rel="stylesheet" type="text/css" />
+                                                        <link href="https://imgv1.okoooimg.cn/min/?b=style/css&f=newmatch.css,dataicon.css,matchlive.css,wenzizhibo.css,new-pc/css/new-pc-formation.css&_v=202604101112" rel="stylesheet" type="text/css"></link>
+        <script src='https://static.geetest.com/static/tools/gt.js' async="true" defer ></script>
+    <script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=jquery%2fjquery.js,jquery.jsonp.min.js,wxLogin.js,jquery%2fliScroll.js,public%2fejs.js,public%2futil.js,jquery%2fbgiframe.js,jquery%2fjson.js,cookie.js,header.js,login.js,public/jsencrypt.js,loginNew.js,jivelive.js,public%2fpublic.js,public%2fxiaomishu.js,public%2fdown_menu_config.js,prompt.js,public%2fgoogle.js,public%2fadvs%2fadv.js&amp;_v=202609161508"></script>
+
+
+                                                                            <script src="https://imgv1.okoooimg.cn/min/?b=JS&f=jquery/jquery.jmp3.js,web_socket/swfobject.js,web_socket/web_socket.js,socket_connect/socket_connect.js,dataanalysis/form.js&_v=202609181653"></script>
+
+<script src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=jquery/ajaxfiledataupload.js&amp;_v=202609181653"></script>
+
+
+
+<script type="text/javascript">
+//判断是否是移动终端
+//var mobileHref = "http://wap.okooo.com/choose.php?from="+encodeURIComponent(location.href)+"&rand="+Math.floor(Math.random()*99999999);
+if('getMobileHref' in window) mobileHref = getMobileHref(); //getMobileHref()定义在header.js
+else mobileHref = 'http://a.okooo.com/detect.php?fs=pc&from='+encodeURIComponent(location.href)+"&rand="+Math.floor(Math.random()*99999999);
+try
+{
+	var params = parseURL(location.href)['params'];
+}
+catch(e)
+{
+	var params = {};
+}
+var jump_to_mobile = 1;
+if(params && params['mobile_app']) jump_to_mobile = 0;
+if(jump_to_mobile && mobileHref && document.cookie.indexOf("mobile_app")<0&&location.hostname.indexOf("itou.com")<0 &&location.hostname.indexOf("www.okooo.com")>=0 &&navigator.userAgent.indexOf('iPad')<0){var u = navigator.userAgent;if(!!u.match(/AppleWebKit.*Mobile.*/)){location.href = mobileHref;}else if(u.indexOf('Android') > -1){location.href = mobileHref;}else if(u.indexOf('iPhone') > -1){location.href = mobileHref;}else if(u.indexOf('iPad') > -1){location.href = mobileHref;}else if(u.indexOf("Linux") > -1 && u.indexOf("360browser") > -1){location.href = mobileHref;}else if(u.indexOf("U;") > -1 && u.indexOf("Mac OS") > -1){location.href = mobileHref;}else if(u.indexOf("Windows Phone")>-1){location.href = mobileHref}}
+
+    if (typeof (Common.cors) == 'undefined') {
+        // 跨域改造，在头部添加Common的方法
+        Common.cors = {};
+        Common.cors.json = 'json';
+        // if (typeof (isNeedCors) != 'undefined' && isNeedCors) {
+        //   Common.cors.json = 'jsonp';
+        // }
+        Common.cors.needCors = function(_url) {
+            var url = _url;
+            if (typeof (isNeedCors) != 'undefined' && isNeedCors) {
+                // url = BaseUrl + url + '&format=jsonp&jsoncallback=?';
+                url = BaseUrl + url;
+            }
+            return url;
+        }
+        Common.cors.baseUrl = function (_url) {
+            var url = _url;
+            if (typeof (isNeedCors) != 'undefined' && isNeedCors) {
+                url = BaseUrl + url;
+            }
+            return url;
+        }
+        Common.cors.ajaxCorsFn = function (_url, _type, _param, callback, otherParam) {
+            var url = _url;
+            var param1 = {
+                type: _type || 'get',
+                url: url,
+                data: _param,
+                dataType: 'json',
+                success: callback
+            }
+            if (typeof (isNeedCors) != 'undefined' && isNeedCors) {
+                // param.json = 'jsonp';
+                // param.url = BaseUrl + param.url + '&format=jsonp&jsoncallback=?';
+                param1.url = BaseUrl + param1.url;
+                param1.xhrFields = {};
+                param1.xhrFields.withCredentials = true;
+                param1.crossDomain = true;
+            }
+            if (otherParam && typeof(otherParam) == 'object') {
+                if(typeof Object.assign != 'function') {
+                    (function() {
+                        Object.assign = function(target) {
+                            'use strict';
+                            if(target === undefined || target === null) {
+                                throw new TypeError('Cannot convert undefined or null to object');
+                            }
+                            var output = Object(target);
+                            for(var index = 1; index < arguments.length; index++) {
+                                var source = arguments[index];
+                                if(source !== undefined && source !== null) {
+                                    for(var nextKey in source) {
+                                        if(source.hasOwnProperty(nextKey)) {
+                                            output[nextKey] = source[nextKey];
+                                        }
+                                    }
+                                }
+                            }
+                            return output;
+                        };
+                    })();
+                }
+                Object.assign(param1, otherParam);
+            }
+            $N.ajax(param1);
+        }
+    }
+</script>
+
+
+</script>    <script type="text/javascript">
+        var timeTem= '';
+        var betradarMatchId=71945268;
+    </script>
+</head>
+<body>
+<div class="adv_ok adv_ok_top" id="adv_258"></div>
+<div align="center"><link rel="stylesheet" href="https://imgv1.okoooimg.cn/style/css/headernew.css?v=202608041624">
+<link rel="stylesheet" href="https://imgv1.okoooimg.cn/style/css/new-pc/css/new-pc-public.css?v=202608041624">
+
+
+
+
+
+<div class="ok-header-placeholder"></div>
+<header class="ok-header header-fixed">
+	<div class="ok-container flex AIC ok-header-body">
+		<a href="//www.okooo.com" class="logo-link" style="width:120px; height:auto;margin-right: 25px;">
+			<img src="https://imgv1.okoooimg.cn/style/img/index/logo.png?v=20251106001" alt="澳客网" class="logo-img">
+		</a>
+				            				<div class="ok-header-item">
+					<div class="text">
+						<a  href="//www.okooo.com/jingcai/"   >赛程前瞻</a> <i class="glyphicon glyphicon-triangle-bottom"></i>					</div>
+                    						<div class="header-item-dropdown clearfix">
+                            								<a href="//www.okooo.com/jingcai/" class="dropdown-item ">竞足</a>
+                            								<a href="//www.okooo.com/jingcailanqiu/hunhe/" class="dropdown-item ">竞篮</a>
+                            								<a href="//www.okooo.com/danchang/" class="dropdown-item ">北单</a>
+                            								<a href="//www.okooo.com/zucai/" class="dropdown-item ">传统14场</a>
+                            								<a href="//www.okooo.com/zucai/ren9/" class="dropdown-item "> 任选9场</a>
+                            								<a href="//kj.okooo.com" class="dropdown-item ">赛果大厅</a>
+                            						</div>
+                    				</div>
+            				<div class="ok-header-item">
+					<div class="text">
+						<a  href="//www.okooo.com/livecenter/"   >比分直播</a> <i class="glyphicon glyphicon-triangle-bottom"></i>					</div>
+                    						<div class="header-item-dropdown clearfix">
+                            								<a href="//www.okooo.com/livecenter/" class="dropdown-item ">竞足直播</a>
+                            								<a href="//www.okooo.com/livecenter/football/" class="dropdown-item ">足球直播</a>
+                            								<a href="//www.okooo.com/livecenter/danchang/" class="dropdown-item ">单场直播</a>
+                            								<a href="//www.okooo.com/livecenter/zucai/" class="dropdown-item ">十四直播</a>
+                            								<a href="//www.okooo.com/livecenter/jingcailanqiu/" class="dropdown-item ">竞篮直播</a>
+                            						</div>
+                    				</div>
+            				<div class="ok-header-item">
+					<div class="text">
+						<a  href="//www.okooo.com/circle/"   >彩友圈</a>					</div>
+                    				</div>
+            				<div class="ok-header-item selected">
+					<div class="text">
+						<a  href="//www.okooo.com/soccer/"   >足球数据</a> <i class="glyphicon glyphicon-triangle-bottom"></i>					</div>
+                    						<div class="header-item-dropdown clearfix">
+                            								<a href="//www.okooo.com/soccer/" class="dropdown-item ">足球数据</a>
+                            								<a href="//www.okooo.com/basketball/" class="dropdown-item ">篮球数据</a>
+                            						</div>
+                    				</div>
+            				<div class="ok-header-item">
+					<div class="text">
+						<a  href="//www.okooo.com/jinnang/"   >锦囊</a>					</div>
+                    				</div>
+            				<div class="ok-header-item">
+					<div class="text">
+						<a  href="//www.okooo.com/app/down/"   >下载APP</a>					</div>
+                    				</div>
+            				<div class="ok-header-search">
+			<i class="glyphicon glyphicon-search"></i><input type="text" class="search-input JSsearchInput" placeholder="搜高手搜比赛">
+		</div>
+		<div class="ok-header-acc-body" style="display: none;" id="userLoginDiv">
+			<div class="ok-header-acc flex AIC">
+				<a id="loginBtn" class="acc-btn">登录</a>
+				<!--<a id="registerBtn" class="acc-btn">注册</a>-->
+			</div>
+		</div>
+		<div style="display: none;margin-left: auto;">
+			<div
+				style="
+					display: -webkit-box;
+					display: -ms-flexbox;
+					display: -webkit-flex;
+					display: flex;
+					-webkit-box-align: center;
+					-ms-flex-align: center;
+					-webkit-align-items: center;
+					align-items: center;
+				"
+			>
+				<div class="ok-header-acc-body">
+					<div class="ok-header-acc flex AIC">
+						<a href="//www.okooo.com/member//" class="acc-avatar userinfo_img">
+												<img  alt="" class="avatar-img" />
+												<i class="msg_numdot "></i>
+										</a>
+						<a href="//www.okooo.com/member//" class="acc-link" id="iTxtUserName"></a>
+						<div class="header-acc-dropdown">
+							<a href="//www.okooo.com/member//" class="dropdown-item">社交主页</a>
+							<a href="//www.okooo.com/Buy/UserBetList.php" class="dropdown-item">保存记录</a>
+							<a href="//www.okooo.com/userinfo/account/" class="dropdown-item">我的钱包</a>
+							<a href="//www.okooo.com/userinfo/pm/" class="dropdown-item">站内消息<i class="msg_num" style="display: none;" id="userLoginSucInfo"></i></a>
+							<a href="//www.okooo.com/userinfo/settings/" class="dropdown-item">个人设置</a>
+							<a href="javascript:void(0);" onclick="logout();" class="dropdown-item">退出登录</a>
+						</div>
+					</div>
+				</div>
+				<div onclick="logout();" style="
+						padding: 2px 6px;
+						margin-left: 22px;
+						border: 1px solid #eee;
+						border-radius: 4px;
+						cursor: pointer;
+				">退出</div>
+			</div>
+		</div>
+	</div>
+</header>
+<div class="ok-nav-placeholder"></div>
+<nav class="ok-nav header-fixed">
+	<div class="ok-container flex AIC ok-nav-body">
+					<div class="ok-nav-item">
+							<div class="text">
+					<a href="/soccer/"  >赛事一览</a>
+				</div>
+									</div>
+					<div class="ok-nav-item">
+							<div class="text">
+					<a href="/soccer/team/"  >球队一览</a>
+				</div>
+									</div>
+					<div class="ok-nav-item">
+							<div class="text">
+					<a href="/data/football/players/"  >球员一览</a>
+				</div>
+									</div>
+					<div class="ok-nav-item">
+							<div class="text">
+					<a href="/soccer/match/"  >足球日历</a>
+				</div>
+									</div>
+			</div>
+</nav>
+
+<script>
+	//导航菜单下拉事件
+	$(function(){
+		var hoverPanelEvent = function (hoverClass, addClass) {
+			/*
+			hoverClass   string CSSclassName
+			addClass     string DOMclassName
+			*/
+			var hoverTime, outTime;
+			$(hoverClass).hover(function () {
+				clearTimeout(outTime);
+				var $this = $(this);
+				$(hoverClass).removeClass(addClass);
+				$this.addClass(addClass);
+			}, function () {
+				var $this = $(this);
+				outTime = setTimeout(function () {
+					$this.removeClass(addClass);
+				}, 100);
+			});
+		}
+		hoverPanelEvent('.ok-header-item', 'ok-active');
+		hoverPanelEvent('.ok-nav-item', 'ok-active');
+		hoverPanelEvent('.ok-header-acc', 'ok-active');
+		hoverPanelEvent('.home-banner-top-left>.top-left-main>.item', 'ok-active');
+
+		// 动态添加点击事件
+		$N('.ok-header-item a').each(function (i,v) {
+			var $this = $N(v);
+			$this.attr("onclick", "google_p(['页面顶部公共导航', '" + $this.text() + "'])");
+		});
+	});
+</script>
+</div>
+<div class="matchnavboxbg">
+    <!--EventID:3002543-->
+
+    <style>
+    .payOyaSureBtn{
+        font-size: 10px;
+        border: 1px solid #f20;
+        padding: 2px 4px;
+        border-radius: 4px;
+        color: #F20;
+    }
+    </style>
+<script language="javascript">
+
+    var LotteryType ='WDL'; //彩种
+    var league_id = '23';	//联赛id
+    var action= 'formation';   //页面
+    var belongTo= 'jingcai,danchang';   //页面
+	var sportid = '1'; //赛事类型
+    var matchid = '1328101';
+    var matchTime = '1789900200';
+    var betting_type_id = '';
+
+	//tujh@okooo.com 11-2-18
+	//showdiv函数更新
+	var disnoneobj;
+	var s;
+	var olddiv="";
+	function showTipsDiv(disdiv,thisobj){
+		//初始化时间
+		var displaytime=isNaN(arguments[2])?0 :arguments[2];
+		var disnonetime=isNaN(arguments[3])?500 :arguments[3];
+		var parametersval=arguments.length;
+		var disdivfun=function (){
+			$("#"+disdiv).css("display","block");
+		}
+		var disnonefun=function (){
+			$("#"+disdiv).css("display","none");
+		}
+		//结束隐藏
+		clearTimeout(disnoneobj);
+		//隐藏上次调用的div
+		if(olddiv!=""&&olddiv!=disdiv){
+			clearTimeout(s);
+			$("#"+olddiv).css("display","none");
+		}
+		olddiv=disdiv;
+
+		//显示div并记录鼠标在this上停留时间
+		s=setTimeout(disdivfun,displaytime);
+		var starttime=0;
+		var endtime=0;
+		var date1=new Date();
+		starttime=date1.getTime();
+		thisobj.onmouseout=function(){
+			var date2=new Date();
+			endtime=date2.getTime();
+			//根据停留时间是否中断显示div
+			if(endtime-starttime<displaytime){
+				clearTimeout(s);
+			}
+			disnoneobj=setTimeout(disnonefun,disnonetime);
+		};
+
+		//移入移除div事件
+		document.getElementById(disdiv).onmouseover=function(){
+			clearTimeout(disnoneobj);
+		}
+		document.getElementById(disdiv).onmouseout=function(){
+			disnoneobj=setTimeout(disnonefun,disnonetime);
+		}
+	}
+	if(typeof $==='object'){
+		$().ready(function(e) {
+			$('#jcdgpTips').bgiframe();
+		});
+	}
+</script>
+
+<div class="adv_ok adv_ok_column" id=""></div>
+<div id="bookmaker_dialog" class="dialog_layer makertBoxSmall" style="display:none;">
+	<div style="width:670px;" class="toploginbox">
+    	<div class="title"><b style="color:#333;">公司定制</b><a class="close" href="javascript:void(0);" id="bftipsclose"><b>X</b></a></div>
+   		<div class="clearfix makertBoxSmalmain">
+        	<div class="float_l makertNavBox">
+                <div id="bookmarker_list" class="makertNav">
+                    <h3 class="makertNavTit">公司定制分类</h3>
+                    <div class="makertNavlist makertNavlist01">数据加载中……</div>
+                    <div class="makertNavlist makertNavlist02">数据加载中……</div>
+                    <div class="makertNavlist makertNavlist03">数据加载中……</div>
+                </div>
+                <div id="bookmaker_loign" class="makerLogin">
+                	<h3 class="makerLoginh3">登陆享受特权</h3>
+                    <p>1、可定制更多分类</p>
+                    <p>2、永久保存定制分类</p>
+                    <div class="clearfix makerLoginBtn"><a class="float_l orangeBtn77" href="/User/RegForm.php?From=/soccer/match/1328101/formation/" hidefocus>立即登录</a><a class="float_r makerbtn" href="/User/Register.php" hidefocus>我要注册</a></div>
+                </div>
+            </div>
+            <div class="float_r makertMain">
+                <div class="clearfix makertMainTop">
+                    <span class="float_l">分类名称：</span><input id="self_bookmakername" class="float_l" style="margin-right:20px;" name="" type="text" disabled="disabled" maxlength="8" />
+                    <div id="leaguebooks_company_layer" class="float_l saishibox" style="display: none;">
+						<div class="saishised"><span id="nation_name" nationid="4778" class="saishiTxt">英格兰</span><em id="leaguebooks_menu" class="saishiIcon"></em></div>
+						<div id="leaguebooks_menu_list" class="saishiDiv" style="display:none;">
+							<label for="n4778"><input id="n4778" type="radio" checked="checked" value="4778" name="nation">英格兰</label>
+							<label for="n4796"><input id="n4796" type="radio" value="4796" name="nation">意大利</label>
+							<label for="n4831"><input id="n4831" type="radio" value="4831" name="nation">西班牙</label>
+							<label for="n4784"><input id="n4784" type="radio" value="4784" name="nation">德国</label>
+							<label for="n4782"><input id="n4782" type="radio" value="4782" name="nation">法国</label>
+							<label for="n4787"><input id="n4787" type="radio" value="4787" name="nation">荷兰</label>
+							<label for="n4824"><input id="n4824" type="radio" value="4824" name="nation">苏格兰</label>
+							<label for="n4818"><input id="n4818" type="radio" value="4818" name="nation">葡萄牙</label>
+							<label for="n4781"><input id="n4781" type="radio" value="4781" name="nation">芬兰</label>
+							<label for="n4813"><input id="n4813" type="radio" value="4813" name="nation">挪威</label>
+							<label for="n4832"><input id="n4832" type="radio" value="4832" name="nation">瑞典</label>
+							<label for="n4775"><input id="n4775" type="radio" value="4775" name="nation">丹麦</label>
+							<label for="n4758"><input id="n4758" type="radio" value="4758" name="nation">奥地利</label>
+							<label for="n4762"><input id="n4762" type="radio" value="4762" name="nation">比利时</label>
+							<label for="n4833"><input id="n4833" type="radio" value="4833" name="nation">瑞士</label>
+							<label for="n4765"><input id="n4765" type="radio" value="4765" name="nation">巴西</label>
+							<label for="n4755"><input id="n4755" type="radio" value="4755" name="nation">阿根廷</label>
+							<label for="n4838"><input id="n4838" type="radio" value="4838" name="nation">美国</label>
+							<label for="n4769"><input id="n4769" type="radio" value="4769" name="nation">中国</label>
+							<label for="n4797"><input id="n4797" type="radio" value="4797" name="nation">日本</label>
+						</div>
+					</div>
+					<a id="reset_btn" class="makerbtn"  href="javascript:void(0);" hidefocus>恢复默认</a>
+					<a id="odds_save_btn" class="float_l orangeBtn77"  href="javascript:void(0);" hidefocus>保存</a>
+                </div>
+                                <div class="float_l makertMainAll">
+                    <div class="clearfix makertMainTit"><b class="float_l">可选公司[<span id="totalselect_company_num">0</span>]</b><p class="float_r makertMainTitp"><em class="float_l makertMainTiticon">&nbsp;</em><input id="search_company" class="float_l makertMainTitinput" placeholder="搜索" name="" type="text" /></p></div>
+                    <div class="makertMainInfo">
+                       <div id="filter_company" class="clearfix makertMainInfoNav">
+							<a class="makertMainInfoNav_a makertMainInfoNav_ased" href="javascript:void(0);" filter="all" hidefocus>[全部]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="zhuliu" hidefocus>[主流]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="jiaoyisuo" hidefocus>[交易所]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="feijiaoyisuo" hidefocus>[非交易所]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="ch" hidefocus>[中文]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="num" hidefocus>[数字]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="abcdABCD" hidefocus>[A-D]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="efghEFGH" hidefocus>[E-H]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="ijklIJKL" hidefocus>[I-L]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="mnopMNOP" hidefocus>[M-P]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="qrstQSRT" hidefocus>[Q-T]</a>
+							<a class="makertMainInfoNav_a" href="javascript:void(0);" filter="uvwxyzUVWXYZ" hidefocus>[U-Z]</a>
+						</div>                        <ul id="odds_allcompany_list" class="makertAllList">
+                            <li class="makertAllListli">数据加载中……</li>
+                        </ul>                    </div>                </div>
+                                <div class="float_l makertMainBtn">
+                    <span class="makertAdd">&nbsp;</span>
+                    <span class="makertDel">&nbsp;</span>
+                </div>
+                                <div class="float_l makertMainsed">
+                    <div class="makertMainTit"><b>已选公司[<span id="select_company_num">0</span>/50]</b></div>
+                    <div class="makertMainInfo">
+                        <div class="clearfix makertMainInfoNav" style="font-family:'宋体';">
+                            <p class="gray6">1、点“×”可删除公司</p>
+                            <p class="gray6">2、拖动公司可以调整顺序</p>
+                        </div>                        <ul id="selfselectedcompany" class="makertAllList">
+                            <li class="makertAllListli">数据加载中……</li>
+                        </ul>                    </div>
+
+                </div>
+            </div>
+                    </div>
+    </div>
+</div>
+
+<div class="card">
+<div class="qbox">
+    <div class="float_l qbox_1">
+    	<div class="qbx" >
+        	<div class="qbx_1"id="lunci">
+			                <div class="qk_two">
+                    <p><span><a href="/soccer/league/23/">意甲</a>&nbsp;<a href="/soccer/league/23/schedule/110652/">26/27</a></span><i></i></p>
+                    <span> 第5轮</span>
+                </div>
+			            <div class="lunci_1" style="display:none"></div>
+            </div>
+        </div>
+    </div>
+    <div class="float_l qbox_2">
+		<div class="N_data_tip">
+			<span class="new_cd_data" style="display:none">弗兰基球场</span><span></span><span></span>
+								</div>
+    	<div id="matchTeam" class="qb2_t">
+        	<div class="qb2_t_1">
+            	<div class="qpai_m"><p class="qpai_q">[16]</p></div>
+                <div class="qpai_zi jsTeamName">佛罗伦萨</div>
+            </div>
+            <div class="vs">
+							<span class="time">26-09-20<br />18:30</span>
+						</div>
+            <div class="qb2_t_1">
+            	<div class="qpai_zi_1 jsTeamName">那不勒斯</div>
+                <div class="qpai_m"><p class="qpai_q">[10]</p></div>
+            </div>
+        </div>
+		<!--球队身价-->
+		<div class="N_data">
+			<div class="N_data_l">2.28亿&euro;</div>
+						<div class="N_data_r">3.96亿&euro;</div>
+		</div>
+        	        <div class="shuj">
+        	<table border="0" cellspacing="0" cellpadding="0" >
+            	<tr>
+                	<td width="40">总</td>
+                    <td>1胜0平3负</td>
+                    <td>3分</td>
+                    <td>16名</td>
+                </tr>
+                <tr class="tr">
+                	<td>主</td>
+                    <td>0胜0平2负</td>
+                    <td>0分</td>
+                    <td>20名</td>
+                </tr>
+            </table>
+            <div class="jifen_dashi1">积分大势<span></span></div>
+            <table border="0" cellspacing="0" cellpadding="0" >
+            	<tr>
+                	<td width="40">总</td>
+                    <td>2胜0平2负</td>
+                    <td>6分</td>
+                    <td style="border-right:none">10名</td>
+                </tr>
+                <tr class="tr">
+                	<td>客</td>
+                    <td>1胜0平1负</td>
+                    <td>3分</td>
+                    <td style="border-right:none">7名</td>
+                </tr>
+            </table>
+        </div>
+	                <div class="fuchu1" style="display:none">
+        	<div class="fc1"><div class="float_l">上赛季<br/>甲[15]</div><div class="float_r">上赛季<br/>甲[2]</div></div>
+            <div class="float_l fc1_co">
+            	<div class="fc1_co_tit">
+                    <span class="float_l">意甲 26/27 赛季 赛前积分榜</span>
+                    <div class="float_r jifen_h">
+                        <span><input name="q" type="radio" value="total" checked/>总</span>
+                        <span><input name="q" type="radio" value="home" />主场</span>
+                        <span><input name="q" type="radio" value="away" />客场</span>
+                    </div>
+                </div>
+				                <div id="fuchu_total" style="display:block">
+                     <table border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <th width="46">排名</th>
+                                <th width="100"><div class="ik">球队</div></th>
+                                <th width="49">赛</th>
+                                <th width="49">胜</th>
+                                <th width="49">平</th>
+                                <th width="49">负</th>
+                                <th width="49">均进</th>
+                                <th width="49">均失</th>
+                                <th width="49">分</th>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgred" title="冠军联赛" style="font-weight:normal">1</td>
+                                <td><div class="du_m"><span class="float_l du">罗马</span></div></td>
+                                <td>4</td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>3.00</td>
+                                <td>0.25</td>
+                                <td>12</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgred" title="冠军联赛" style="font-weight:normal">2</td>
+                                <td><div class="du_m"><span class="float_l du">国际米兰</span></div></td>
+                                <td>4</td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>3.25</td>
+                                <td>1.50</td>
+                                <td>12</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgred" title="冠军联赛" style="font-weight:normal">3</td>
+                                <td><div class="du_m"><span class="float_l du">科莫</span></div></td>
+                                <td>4</td>
+                                <td>3</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>2.25</td>
+                                <td>1.00</td>
+                                <td>10</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgred" title="冠军联赛" style="font-weight:normal">4</td>
+                                <td><div class="du_m"><span class="float_l du">拉齐奥</span></div></td>
+                                <td>4</td>
+                                <td>3</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1.50</td>
+                                <td>0.75</td>
+                                <td>10</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbggreen2" title="欧足联欧洲联赛" style="font-weight:normal">5</td>
+                                <td><div class="du_m"><span class="float_l du">卡利亚里</span></div></td>
+                                <td>4</td>
+                                <td>3</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>0.50</td>
+                                <td>9</td>
+                            </tr>
+							                            <tr >
+                                <td  title="欧洲协会联赛资格赛" style="font-weight:normal">6</td>
+                                <td><div class="du_m"><span class="float_l du">AC米兰</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1.75</td>
+                                <td>1.00</td>
+                                <td>8</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">7</td>
+                                <td><div class="du_m"><span class="float_l du">弗洛西诺内</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>1.75</td>
+                                <td>1.00</td>
+                                <td>7</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">8</td>
+                                <td><div class="du_m"><span class="float_l du">尤文</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>1.50</td>
+                                <td>1.00</td>
+                                <td>7</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">9</td>
+                                <td><div class="du_m"><span class="float_l du">萨索洛</span></div></td>
+                                <td>5</td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>1.80</td>
+                                <td>1.80</td>
+                                <td>7</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td   style="font-weight:normal">10</td>
+                                <td><div class="du_m"><span class="float_l du">那不勒斯</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>1.50</td>
+                                <td>1.25</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">11</td>
+                                <td><div class="du_m"><span class="float_l du">亚特兰大</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>1.25</td>
+                                <td>1.25</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">12</td>
+                                <td><div class="du_m"><span class="float_l du">莱切</span></div></td>
+                                <td>4</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>1.25</td>
+                                <td>1.75</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">13</td>
+                                <td><div class="du_m"><span class="float_l du">乌迪内斯</span></div></td>
+                                <td>4</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>2.00</td>
+                                <td>2.50</td>
+                                <td>4</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">14</td>
+                                <td><div class="du_m"><span class="float_l du">蒙扎</span></div></td>
+                                <td>5</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>3</td>
+                                <td>1.60</td>
+                                <td>2.40</td>
+                                <td>4</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">15</td>
+                                <td><div class="du_m"><span class="float_l du">都灵</span></div></td>
+                                <td>4</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>3</td>
+                                <td>1.00</td>
+                                <td>1.75</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td   style="font-weight:normal">16</td>
+                                <td><div class="du_m"><span class="float_l du">佛罗伦萨</span></div></td>
+                                <td>4</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>3</td>
+                                <td>1.25</td>
+                                <td>2.75</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td   style="font-weight:normal">17</td>
+                                <td><div class="du_m"><span class="float_l du">博洛尼亚</span></div></td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>3</td>
+                                <td>0.50</td>
+                                <td>1.25</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgblack" title="降级" style="font-weight:normal">18</td>
+                                <td><div class="du_m"><span class="float_l du">帕尔马</span></div></td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>3</td>
+                                <td>0.50</td>
+                                <td>1.50</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgblack" title="降级" style="font-weight:normal">19</td>
+                                <td><div class="du_m"><span class="float_l du">热那亚</span></div></td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>3</td>
+                                <td>0.50</td>
+                                <td>2.00</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td class="jfbgblack" title="降级" style="font-weight:normal">20</td>
+                                <td><div class="du_m"><span class="float_l du">威尼斯</span></div></td>
+                                <td>4</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>4</td>
+                                <td>1.00</td>
+                                <td>2.75</td>
+                                <td>0</td>
+                            </tr>
+							                        </table>
+                </div>
+				                <div id="fuchu_home" style="display:none">
+                     <table border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <th width="46">排名</th>
+                                <th width="100"><div class="ik">球队</div></th>
+                                <th width="49">赛</th>
+                                <th width="49">胜</th>
+                                <th width="49">平</th>
+                                <th width="49">负</th>
+                                <th width="49">均进</th>
+                                <th width="49">均失</th>
+                                <th width="49">分</th>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">1</td>
+                                <td><div class="du_m"><span class="float_l du">国际米兰</span></div></td>
+                                <td>3</td>
+                                <td>3</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>4.00</td>
+                                <td>2.00</td>
+                                <td>9</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">2</td>
+                                <td><div class="du_m"><span class="float_l du">罗马</span></div></td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>3.00</td>
+                                <td>0.50</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">3</td>
+                                <td><div class="du_m"><span class="float_l du">萨索洛</span></div></td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2.50</td>
+                                <td>1.50</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">4</td>
+                                <td><div class="du_m"><span class="float_l du">亚特兰大</span></div></td>
+                                <td>3</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.33</td>
+                                <td>1.00</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">5</td>
+                                <td><div class="du_m"><span class="float_l du">尤文</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1.50</td>
+                                <td>0.50</td>
+                                <td>4</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">6</td>
+                                <td><div class="du_m"><span class="float_l du">拉齐奥</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1.50</td>
+                                <td>1.00</td>
+                                <td>4</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">7</td>
+                                <td><div class="du_m"><span class="float_l du">AC米兰</span></div></td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2.00</td>
+                                <td>0.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">8</td>
+                                <td><div class="du_m"><span class="float_l du">科莫</span></div></td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2.00</td>
+                                <td>1.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">9</td>
+                                <td><div class="du_m"><span class="float_l du">蒙扎</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2.00</td>
+                                <td>2.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">10</td>
+                                <td><div class="du_m"><span class="float_l du">弗洛西诺内</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.50</td>
+                                <td>1.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td  style="font-weight:normal">11</td>
+                                <td><div class="du_m"><span class="float_l du">那不勒斯</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>1.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">12</td>
+                                <td><div class="du_m"><span class="float_l du">卡利亚里</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>0.50</td>
+                                <td>0.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">13</td>
+                                <td><div class="du_m"><span class="float_l du">莱切</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.50</td>
+                                <td>3.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">14</td>
+                                <td><div class="du_m"><span class="float_l du">乌迪内斯</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>1.50</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">15</td>
+                                <td><div class="du_m"><span class="float_l du">博洛尼亚</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>1.50</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">16</td>
+                                <td><div class="du_m"><span class="float_l du">帕尔马</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0.50</td>
+                                <td>1.00</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">17</td>
+                                <td><div class="du_m"><span class="float_l du">热那亚</span></div></td>
+                                <td>3</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>0.67</td>
+                                <td>2.33</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">18</td>
+                                <td><div class="du_m"><span class="float_l du">都灵</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>0.50</td>
+                                <td>2.00</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">19</td>
+                                <td><div class="du_m"><span class="float_l du">威尼斯</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>1.00</td>
+                                <td>3.00</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td  style="font-weight:normal">20</td>
+                                <td><div class="du_m"><span class="float_l du">佛罗伦萨</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>0.50</td>
+                                <td>2.50</td>
+                                <td>0</td>
+                            </tr>
+							                        </table>
+                </div>
+				                <div id="fuchu_away" style="display:none">
+                     <table border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <th width="46">排名</th>
+                                <th width="100"><div class="ik">球队</div></th>
+                                <th width="49">赛</th>
+                                <th width="49">胜</th>
+                                <th width="49">平</th>
+                                <th width="49">负</th>
+                                <th width="49">均进</th>
+                                <th width="49">均失</th>
+                                <th width="49">分</th>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">1</td>
+                                <td><div class="du_m"><span class="float_l du">科莫</span></div></td>
+                                <td>3</td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>2.33</td>
+                                <td>1.00</td>
+                                <td>7</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">2</td>
+                                <td><div class="du_m"><span class="float_l du">罗马</span></div></td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>3.00</td>
+                                <td>0.00</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">3</td>
+                                <td><div class="du_m"><span class="float_l du">拉齐奥</span></div></td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>1.50</td>
+                                <td>0.50</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">4</td>
+                                <td><div class="du_m"><span class="float_l du">卡利亚里</span></div></td>
+                                <td>2</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>1.50</td>
+                                <td>0.50</td>
+                                <td>6</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">5</td>
+                                <td><div class="du_m"><span class="float_l du">AC米兰</span></div></td>
+                                <td>3</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>1.67</td>
+                                <td>1.33</td>
+                                <td>5</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">6</td>
+                                <td><div class="du_m"><span class="float_l du">弗洛西诺内</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>2.00</td>
+                                <td>0.50</td>
+                                <td>4</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td  style="font-weight:normal">7</td>
+                                <td><div class="du_m"><span class="float_l du">那不勒斯</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2.00</td>
+                                <td>1.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">8</td>
+                                <td><div class="du_m"><span class="float_l du">莱切</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>0.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">9</td>
+                                <td><div class="du_m"><span class="float_l du">国际米兰</span></div></td>
+                                <td>1</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>1.00</td>
+                                <td>0.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">10</td>
+                                <td><div class="du_m"><span class="float_l du">尤文</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.50</td>
+                                <td>1.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">11</td>
+                                <td><div class="du_m"><span class="float_l du">都灵</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.50</td>
+                                <td>1.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">12</td>
+                                <td><div class="du_m"><span class="float_l du">乌迪内斯</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>3.00</td>
+                                <td>3.50</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr class="dq">
+                                <td  style="font-weight:normal">13</td>
+                                <td><div class="du_m"><span class="float_l du">佛罗伦萨</span></div></td>
+                                <td>2</td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2.00</td>
+                                <td>3.00</td>
+                                <td>3</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">14</td>
+                                <td><div class="du_m"><span class="float_l du">萨索洛</span></div></td>
+                                <td>3</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>1.33</td>
+                                <td>2.00</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">15</td>
+                                <td><div class="du_m"><span class="float_l du">蒙扎</span></div></td>
+                                <td>3</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>2</td>
+                                <td>1.33</td>
+                                <td>2.67</td>
+                                <td>1</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">16</td>
+                                <td><div class="du_m"><span class="float_l du">亚特兰大</span></div></td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>1.00</td>
+                                <td>2.00</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">17</td>
+                                <td><div class="du_m"><span class="float_l du">热那亚</span></div></td>
+                                <td>1</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>1</td>
+                                <td>0.00</td>
+                                <td>1.00</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">18</td>
+                                <td><div class="du_m"><span class="float_l du">博洛尼亚</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>0.00</td>
+                                <td>1.00</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">19</td>
+                                <td><div class="du_m"><span class="float_l du">威尼斯</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>1.00</td>
+                                <td>2.50</td>
+                                <td>0</td>
+                            </tr>
+							                            <tr >
+                                <td  style="font-weight:normal">20</td>
+                                <td><div class="du_m"><span class="float_l du">帕尔马</span></div></td>
+                                <td>2</td>
+                                <td>0</td>
+                                <td>0</td>
+                                <td>2</td>
+                                <td>0.50</td>
+                                <td>2.00</td>
+                                <td>0</td>
+                            </tr>
+							                        </table>
+                </div>
+				                           </div>
+        </div>
+    </div>
+    <div class="float_r qbox_3">
+    	<div class="q3_t">
+        	<div class="jcselectBox">
+             <table width="100%" border="0" cellspacing="0" cellpadding="0" class="selectTable">
+                    <tr id="showlist">
+                         <td tp="SportteryWDL"><div class="qhboxh jch"><p id="" showid="jclist" clsname="select" class="qhboxhBorder">竞足<em></em><span></span></p></div></td>                         <td tp="WDL"><div class="qhboxh jch"><p id="" showid="jclist" clsname="select" class="qhboxhBorder">单场<em></em><span></span></p></div></td>                                              </tr>
+             </table>
+             </div>
+			<div class="qhboxhDiv1" style="display:none;">
+			</div>
+        </div>
+            </div>
+</div>
+<div id="qnav" class="qnav">
+	<div class="float_l qnav_1 jsSoccerAutherContent1">
+        <a href="javascript:void(0);" class="jsPayOyaSureBtn">
+            开通欧亚数据权限 >
+            <em class="payOyaSureBtn">去开通</em>
+        </a>
+        <div class="jsBuyShujuBtn jsPayOyaSureBtnNext" type="shujubianhua" style="display: none;">开通</div>
+    </div>
+	<div class="float_l qnav_1 jsSoccerAutherContent1_1" style="display: none;">
+    	<div class="co_99"><i>指数：</i></div>
+		        	<a href="/soccer/match/1328101/odds/" target="_self"><p hover="hover"  style="border-left:1px solid #fff;">欧指</p></a>
+		        	<a href="/soccer/match/1328101/ah/" target="_self"><p hover="hover"  >亚指</p></a>
+				        <div class="tongji  hoverSel">
+            <span class="float_l"><a href="/soccer/match/1328101/overunder/">大小球 </a></span>
+                        <i class="float_l"></i>
+                    	<ul>
+							<li><a href="/soccer/match/1328101/hodds/">让球</a></li>
+							<li><a href="/soccer/match/1328101/oe/">单双数</a></li>
+							<li><a href="/soccer/match/1328101/goals/">总进球</a></li>
+							<li><a href="/soccer/match/1328101/cs/">比分</a></li>
+							<li><a href="/soccer/match/1328101/htft/">半全场</a></li>
+			            </ul>
+        </div>
+		    </div>
+    <div class="float_l qnav_1">
+    	<div class="co_99"><i>实力：</i></div>
+		        	<a
+        onclick="google_e_content('比赛详情', '比赛历史')"
+        href="/soccer/match/1328101/history/" target="_self"><p hover="hover"  style="border-left:1px solid #fff;">比赛历史</p></a>
+		        	<a
+        onclick="google_e_content('比赛详情', '阵容实力')"
+        href="/soccer/match/1328101/formation/" target="_self"><p hover="hover" class="sel" >阵容实力</p></a>
+		        	<a
+        onclick="google_e_content('比赛详情', '战绩走势')"
+        href="/soccer/match/1328101/sfzs/" target="_self"><p hover="hover"  >战绩走势</p></a>
+		        	<a
+        onclick="google_e_content('比赛详情', '球路走势')"
+        href="/soccer/match/1328101/trends/" target="_self"><p hover="hover"  >球路走势</p></a>
+		        	<a
+        onclick="google_e_content('比赛详情', '战绩特征')"
+        href="/soccer/match/1328101/feature/" target="_self"><p hover="hover"  >战绩特征</p></a>
+				    </div>
+    <div class="float_l qnav_1">
+    	<div class="co_99"><i>独家：</i></div>
+		                    	<a href="/soccer/match/1328101/node/" target="_self" ><p hover="hover"  style="border-left:1px solid #fff;">比赛预测</p></a>
+		                    	<a href="/soccer/match/1328101/qingbao/" target="_self" onclick="google_e_content('比赛详情', '情报')"><p hover="hover"  >比赛情报</p></a>
+				        <div style="display:none" class="tongji jsSoccerAutherContent1_1  hoverSel" >
+            <span class="float_l">
+                <a href="/soccer/match/1328101/exchanges/">交易盈亏</a>
+            </span>
+
+                        <i class="float_l"></i>
+                        <ul>
+                            <li><a href="/soccer/match/1328101/okoooexponent/">澳客指数</a></li>
+                        </ul>
+        </div>
+
+    </div>
+    <div class="float_l qnav_1" style="margin-right: 0">
+                            <a href="/soccer/match/1328101/news/" target="_self"><p hover="hover"  style="border-left:1px solid #fff;">动态</p></a>
+
+    </div>
+
+</div>
+</div>
+	<script>
+
+
+		var actionConf={ah:2,odds:1};
+		var teamName = $('.jsTeamName');
+		teamName.each(function () {
+			var $this = $(this);
+			var text = $this.text();
+			if (text.length == 6) {
+				$this.css('font-size', '24px');
+			} else if (text.length == 7) {
+				$this.css('font-size', '20px');
+			} else if (text.length == 8) {
+				$this.css('font-size', '18px');
+			} else if (text.length == 9) {
+				$this.css('font-size', '16px');
+			} else if (text.length == 10) {
+				$this.css('font-size', '15px');
+			}
+		});
+
+		var biJi_Version = '202603181616';
+		var biJi_StaticUrl='https://imgv1.okoooimg.cn';					//静态资源跟目录
+		var biJi_MatchId = '1328101';			//当前比赛的ID
+		var biJi_TypeId=actionConf[action] || 1;			//当前比赛的笔记类型ID 1欧赔，2亚盘
+        var biji_link_url = 'node/';
+	</script>
+	<script>
+		var biJi_Page = actionConf[action]?action:'default';//当前页面对应的笔记脚本
+	</script>
+    <script type="text/javascript"  src="https://imgv1.okoooimg.cn/min/?b=JS&f=lottery/handleAutherContent.js&_v=202609181653"></script>
+  <script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=biji/bijiNew.js&amp;v=202603181616"></script>
+  <script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=public/ejs.js&amp;v=202603181616"></script>
+<script src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=public/require.js&amp;v=202609161508" data-main="https://imgv1.okoooimg.cn/JS/public/require.config.js?_v=202608031717" defer></script>
+
+  <script>
+    var isReadCharge = true;
+  </script>
+
+</div>
+
+
+<div class="matchboxbg">
+  <div class="card">
+    <div class="match-battle-wrap match-formation">
+      <div class="match-battle-desc">
+        <span class="text">
+          主队身价2.28亿元,平均25岁,平均身高185cm |
+          客队身价3.96亿元,平均29岁,平均身高183cm
+        </span>
+      </div>
+      <div class="match-battle-box clearfix">
+        <div class="match-battle-item">
+          <div class="item-title">进攻能力</div>
+          <div class="item-box">
+            <table class="item-table">
+              <tr>
+                <th>主队锋线阵容</th>
+                <th></th>
+                <th>客队锋线阵容</th>
+              </tr>
+              <tr>
+                <td class="price red-text"><em>1.04</em>亿</td>
+                <td>
+                  <div class="tip">锋线身价</div>
+                                      <div class="match-live-pie-wrap">
+                        <div class="pie">
+                                                            <div class="pie-1" style="transform: rotate(180deg);"></div>
+                                <div class="pie-2" style="transform: rotate(39deg); opacity: 1;"></div>
+                                                    </div>
+                    </div>
+                                  </td>
+                <td class="price blue-text"><em>1.61</em>亿</td>
+              </tr>
+              <tr>
+                <td>180cm 22岁</td>
+                <td>身高年龄</td>
+                <td>28岁 181cm</td>
+              </tr>
+              <tr>
+                <td><em>8.8</em>次</td>
+                <td>场均射门</td>
+                <td><em>8</em>次</td>
+              </tr>
+              <tr>
+                <td><em>2.2</em>个</td>
+                <td>场均进球</td>
+                <td><em>2.3</em>个</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+        <div class="match-battle-item">
+          <div class="item-title">中场控制力</div>
+          <div class="item-box">
+            <table class="item-table">
+              <tr>
+                <th>主队中场阵容</th>
+                <th></th>
+                <th>客队中场阵容</th>
+              </tr>
+              <tr>
+                <td class="price red-text"><em>9200</em>万</td>
+                <td>
+                  <div class="tip">中场身价</div>
+                                      <div class="match-live-pie-wrap">
+                        <div class="pie">
+                                                            <div class="pie-1" style="transform: rotate(180deg);"></div>
+                                <div class="pie-2" style="transform: rotate(28deg); opacity: 1;"></div>
+                                                    </div>
+                    </div>
+                                  </td>
+                <td class="price blue-text"><em>1.26</em>亿</td>
+              </tr>
+              <tr>
+                <td>184cm 23岁</td>
+                <td>身高年龄</td>
+                <td>29岁 175cm</td>
+              </tr>
+              <tr>
+                <td><em>48.05</em>%</td>
+                <td>场均控球率</td>
+                <td><em>56.85</em>%</td>
+              </tr>
+              <tr>
+                <td><em>11</em>次</td>
+                <td>场均犯规数</td>
+                <td><em>10</em>次</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+        <div class="match-battle-item">
+          <div class="item-title">防守能力</div>
+          <div class="item-box">
+            <table class="item-table">
+              <tr>
+                <th>主队后卫和门将阵容</th>
+                <th></th>
+                <th>客队后卫和门将阵容</th>
+              </tr>
+              <tr>
+                <td class="price red-text"><em>1</em>亿</td>
+                <td>
+                  <div class="tip">防线身价</div>
+                                      <div class="match-live-pie-wrap">
+                        <div class="pie">
+                                                            <div class="pie-1" style="transform: rotate(180deg);"></div>
+                                <div class="pie-2" style="transform: rotate(48deg); opacity: 1;"></div>
+                                                    </div>
+                    </div>
+                                  </td>
+                <td class="price blue-text"><em>1.72</em>亿</td>
+              </tr>
+              <tr>
+                <td>187cm 25岁</td>
+                <td>身高年龄</td>
+                <td>25岁 188cm</td>
+              </tr>
+              <tr>
+                <td><em>4.8</em>次</td>
+                <td>对手场均射门</td>
+                <td><em>3.8</em>次</td>
+              </tr>
+              <tr>
+                <td><em>1.3</em>个</td>
+                <td>场均失球</td>
+                <td><em>1.4</em>个</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="match-battle-tip">场均数据来自近20场球队技术统计</div>
+    </div>
+    <!--seo文字添加-->
+    <div class="container_wrapper">
+      <div class="newsbox newsjc">
+        <p>
+            1）、任意球（英语：Free Kick），又称罚球 ，是一种在足球比赛中发生犯规后重新开始比赛的方法。任意球分两种：直接任意球（踢球队员可将球直接射入犯规队球门得分）及间接任意球（踢球队员不得直接射门得分，球在进入球门前必须被其他队员踢或触及）。</br>
+            2）、角球弧内称为角球区，四个角球区内各竖角旗。角球区位于足球场的四角，是角球弧内的区域。半径1米，距离大禁区13.84米。</br>
+            3）、界外球是足球比赛中重新开始比赛的一种方式。</br>
+            4）、球门球是足球比赛中重新开始比赛的一种方法。球门球应由守方球员在球门区，直接向球场中踢出。球门球一般由守门员开出。</br>
+            5）、越位(Offside)是对进攻方向前传球时接球运动员允许站到的位置作出严格限制。在足球比赛中，进球时进球球员不得越过距离更近球门的防守方最后一名球员进球（除门将外)。</br>
+            6）、犯规在足球比赛中，队员故意违反下列九项中的任何一项者</br>
+            a.踢或企图踢对方队员。</br>
+            b.绊摔对方队员，即在对方身后或身前，伸腿或屈体绊摔或企图绊摔对方。</br>
+            c.跳向对方队员。</br>
+            d.猛烈地或带有危险性地冲撞对方队员。</br>
+            e.除对方正在阻挡外，从背后冲撞对方队员。</br>
+            f.打准企图打对方队员准向对方吐唾沫。</br>
+            g.拉扯对方队员。</br>
+            h.推对方队员。</br>
+            i.用手触球，例如：用手或臂部携带、推击球（守门员在本方罚球区内除外）。</br>
+            7）、红牌是在一场足球比赛中，当一名球员在比赛中严重犯规，在场裁判员会举起红牌命令球员离场。
+            在此情况下，被驱逐的球员将不能继续进行嘞碌娜?事。球队也不能用后备球员补上，需在缺人下继续比赛；若有一方被红牌罚到场上只剩六人，会被判弃权落败。被罚下场的球员根据犯规情节的严重程度会被禁赛一场以上。</br>
+            8）、黄牌是裁判在一场足球比赛中，当一名球员在比赛中犯规，会对犯规球员出示黄牌 (Yellow card)作出警告。传统上裁判员会将球员的犯规详情记录在随身的小记事簿内，因此警告亦被称为记名（booking）。被黄牌警告的球员仍可继续比赛，但当接受第二次警告时便会被逐离场，按程序裁判员会先出示第二面黄牌，再出示红牌，被罚红牌离场的球员将不能继续进行余下的赛事。球队也不能用后备球员补上，球队需在缺人状态下继续比赛。
+        </p>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-top: 10px;">
+    <div class="match-battle-wrap match-formation">
+      <div class="match-battle-box clearfix">
+        <div class="match-battle-item">
+          <div class="item-title">伤停影响</div>
+          <div class="item-box clearfix">
+            <div class="match-battle-shangting item-home">
+              <div class="shangting-title">
+                <div class="price">600万</div>
+                <div class="desc">主队伤停</div>
+              </div>
+                              <div class="shangting-list-scroll">
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【卫】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="384324"  class="name playersObj">法比安</a>
+                        <div class="price">600万</div>
+                        <div class="text">出场:0 进球:0</div>
+                      </div>
+                    </div>
+                                                    </div>
+                          </div>
+            <div class="match-battle-shangting item-away">
+              <div class="shangting-title">
+                <div class="price">1.46亿</div>
+                <div class="desc">客队伤停</div>
+              </div>
+                              <div class="shangting-list-scroll">
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【门】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="269028"  class="name playersObj">梅雷特</a>
+                        <div class="price">1400万</div>
+                        <div class="text">出场:3 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【中】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="274517"  class="name playersObj">安古伊萨</a>
+                        <div class="price">2000万</div>
+                        <div class="text">出场:3 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【卫】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="327766"  class="name playersObj">布诺吉尼奥</a>
+                        <div class="price">3500万</div>
+                        <div class="text">出场:0 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【中】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="333660"  class="name playersObj">麦克托米奈</a>
+                        <div class="price">4500万</div>
+                        <div class="text">出场:2 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【锋】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="457658"  class="name playersObj">桑托斯</a>
+                        <div class="price">1300万</div>
+                        <div class="text">出场:3 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【锋】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="460312"  class="name playersObj">纳西门托</a>
+                        <div class="price">1200万</div>
+                        <div class="text">出场:0 进球:0</div>
+                      </div>
+                    </div>
+                                      <div class="shangting-list-item clearfix">
+                      <div class="item-state shang">伤</div>
+                      <div class="item-text">【卫】</div>
+                      <div class="item-detail">
+                                                <a href="javascript:void(0)" data_player="528041"  class="name playersObj">马里安努奇·卢卡</a>
+                        <div class="price">750万</div>
+                        <div class="text">出场:0 进球:0</div>
+                      </div>
+                    </div>
+                                                    </div>
+                          </div>
+          </div>
+        </div>
+        <div class="match-battle-item col2">
+          <div class="item-title">上场阵容</div>
+          <div class="item-box">
+            <div class="match-battle-field">
+                            <!-- 左半部分 -->
+              <div class="field-flex-col">
+                <!-- 第一列 -->
+                <div class="flex-item field-flex-row">
+                                      <div class="flex-item">
+                    <a href="/data/football/player-69378/" target="_blank">
+                      <div class="field-player-box">
+                        <div class="qiuyi playersObj" data_player="69378">
+                          <div class="l-capsule" style="background:#000000;"></div>
+                          <div class="qius" style="background:#000000;color:#FFFFFF;">43</div>
+                          <div class="r-capsule" style="background:#000000;"></div>
+                        </div>
+                        <div class="player-name">德赫亚</div>
+                                                <div class="player-price">350万</div>
+                      </div>
+                    </a>
+                    </div>
+                                  </div>
+                <!-- 第二列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-557741/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="557741">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">21</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">塔拉韦拉</div>
+                          <div class="chang"></div>                          <div class="player-price">--</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-315470/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="315470">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">5</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">庞格拉契</div>
+                                                    <div class="player-price">750万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-426203/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="426203">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">3</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">德拉古辛</div>
+                          <div class="chang"></div>                          <div class="player-price">2000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-372233/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="372233">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">17</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">若奥</div>
+                                                    <div class="player-price">850万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+                <!-- 第三列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-370626/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="370626">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">4</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">布雷西亚</div>
+                          <div class="chang"></div>                          <div class="player-price">900万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-550239/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="550239">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">42</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">奥莱</div>
+                                                    <div class="player-price">1700万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-442273/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="442273">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">27</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">恩杜尔</div>
+                                                    <div class="player-price">1000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+                <!-- 第四列 -->
+                                <!-- 第五列 -->
+                                <!-- 第六列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-421582/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="421582">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">29</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">德格南德</div>
+                                                    <div class="player-price">1800万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-437538/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="437538">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">32</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">卡桑吉拉</div>
+                          <div class="chang"></div>                          <div class="player-price">1500万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-533697/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="533697">
+                            <div class="l-capsule" style="background:#6633CC;"></div>
+                            <div class="qius" style="background:#6633CC;color:#FFFFFF;">30</div>
+                            <div class="r-capsule" style="background:#6633CC;"></div>
+                          </div>
+                          <div class="player-name">弗朗哥·</div>
+                          <div class="chang"></div>                          <div class="player-price">4500万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+              </div>
+              <!-- 左半部分结束 -->
+              <!-- 右半部分 -->
+              <div class="field-flex-col field-right">
+                <!-- 第一列 -->
+                <div class="flex-item field-flex-row">
+                                      <div class="flex-item">
+                        <a href="/data/football/player-264479/" target="_blank">
+                      <div class="field-player-box left-price">
+                        <div class="qiuyi playersObj" data_player="264479">
+                          <div class="l-capsule" style="background:#FF9900;"></div>
+                          <div class="qius" style="background:#FF9900;color:#00FFFF;">32</div>
+                          <div class="r-capsule" style="background:#FF9900;"></div>
+                        </div>
+                        <div class="player-name">萨维奇</div>
+                                                <div class="player-price">2000万</div>
+                      </div>
+                        </a>
+                    </div>
+                                  </div>
+                <!-- 第二列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-153257/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="153257">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">22</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">迪洛伦佐</div>
+                                                    <div class="player-price">1000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-271485/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="271485">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">13</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">拉马尼</div>
+                                                    <div class="player-price">1200万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-390338/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="390338">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">16</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">拉法</div>
+                                                    <div class="player-price">1200万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-148899/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="148899">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">37</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">斯皮纳佐</div>
+                                                    <div class="player-price">350万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+                <!-- 第三列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-366865/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="366865">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">6</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">吉尔莫</div>
+                                                    <div class="player-price">2000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-150383/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="150383">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">68</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">洛博特卡</div>
+                                                    <div class="player-price">1500万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-70996/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="70996">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">11</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">德布劳内</div>
+                          <div class="chang"></div>                          <div class="player-price">1000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+                <!-- 第四列 -->
+                                 <!-- 第五列 -->
+                                <!-- 第六列 -->
+                <div class="flex-item field-flex-row">
+                                                            <div class="flex-item">
+                          <a href="/data/football/player-238460/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="238460">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">21</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">波利塔诺</div>
+                          <div class="chang"></div>                          <div class="player-price">800万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-435864/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="435864">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">19</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">霍伊伦德</div>
+                          <div class="chang"></div>                          <div class="player-price">5000万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                                                <div class="flex-item">
+                          <a href="/data/football/player-459911/" target="_blank">
+                        <div class="field-player-box">
+                          <div class="qiuyi playersObj" data_player="459911">
+                            <div class="l-capsule" style="background:#000000;"></div>
+                            <div class="qius" style="background:#666666;color:#66FFFF;">26</div>
+                            <div class="r-capsule" style="background:#000000;"></div>
+                          </div>
+                          <div class="player-name">安东尼奥</div>
+                          <div class="chang"></div>                          <div class="player-price">1500万</div>
+                        </div>
+                          </a>
+                      </div>
+                                                      </div>
+              </div>
+              <!-- 右半部分结束 -->
+            </div>
+            <div class="match-battle-substitution clearfix">
+              <div class="substitution-item">
+                <div class="item-title">主队替补</div>
+                                                      <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="贡萨尔维斯"  data_player="350484" class="name playersObj">贡萨尔维斯</a>
+                      <div class="price">
+                        2500万                        <em class="plEventObj icon17 icon17_jq" ></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="桑切斯"  data_player="518189" class="name playersObj">桑切斯</a>
+                      <div class="price">
+                        2200万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="贝图卡尔"  data_player="409954" class="name playersObj">贝图卡尔</a>
+                      <div class="price">
+                        2000万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="多米尔森"  data_player="297591" class="name playersObj">多米尔森</a>
+                      <div class="price">
+                        1800万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="法乔利"  data_player="356333" class="name playersObj">法乔利</a>
+                      <div class="price">
+                        1600万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="卢卡"  data_player="342374" class="name playersObj">卢卡</a>
+                      <div class="price">
+                        700万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="维埃里"  data_player="525993" class="name playersObj">维埃里</a>
+                      <div class="price">
+                        600万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="恩杰"  data_player="536804" class="name playersObj">恩杰</a>
+                      <div class="price">
+                        250万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="克里斯腾森"  data_player="322649" class="name playersObj">克里斯腾森</a>
+                      <div class="price">
+                        150万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="莱泽里尼"  data_player="139272" class="name playersObj">莱泽里尼</a>
+                      <div class="price">
+                        35万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                </div>
+              <div class="substitution-item">
+                <div class="item-title">客队替补</div>
+                                                      <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="内雷斯"  data_player="318007" class="name playersObj">内雷斯</a>
+                      <div class="price">
+                        2800万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="卢卡"  data_player="358790" class="name playersObj">卢卡</a>
+                      <div class="price">
+                        2500万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="布尔科马"  data_player="346986" class="name playersObj">布尔科马</a>
+                      <div class="price">
+                        2500万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="诺亚朗"  data_player="334957" class="name playersObj">诺亚朗</a>
+                      <div class="price">
+                        2500万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="巴迪亚什勒"  data_player="353953" class="name playersObj">巴迪亚什勒</a>
+                      <div class="price">
+                        1800万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="奥利维拉"  data_player="287579" class="name playersObj">奥利维拉</a>
+                      <div class="price">
+                        1500万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="法瓦苏利"  data_player="519009" class="name playersObj">法瓦苏利</a>
+                      <div class="price">
+                        140万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 icon17_huanren" ></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="孔蒂尼"  data_player="259157" class="name playersObj">孔蒂尼</a>
+                      <div class="price">
+                        40万                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                                        <div class="item-item clearfix">
+                                            <a href="javascript:void(0)" title="克劳迪奥·普利耶塞"  data_player="580779" class="name playersObj">克劳迪奥·普利耶塞</a>
+                      <div class="price">
+                        --                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                        <em class="plEventObj icon17 " style="display:none"></em>
+                      </div>
+                    </div>
+                                                </div>
+            </div>
+          </div>
+        </div>
+      </div>
+            <div class="clearfix qiuyuandata">
+          <div class="float_l qiuyuandata_left">
+              <div class="livemaintit">
+                  佛罗伦萨-赛前球员统计
+              </div>
+              <table class="qiuyuandata_table">
+                  <tr>
+                      <th>号码</th>
+                      <th>位置</th>
+                      <th>出场</th>
+                      <th>首/替</th>
+                      <th>进球</th>
+                      <th>助攻</th>
+                      <th>红牌</th>
+                      <th>黄牌</th>
+                                        </tr>
+                                        <tr>
+                          <td>30</td>
+                          <td>门将</td>
+                                                    <td>马蒂内利</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>40</td>
+                          <td>门将</td>
+                                                    <td>万努奇</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>50</td>
+                          <td>门将</td>
+                                                    <td>莱奥纳尔德利</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>19</td>
+                          <td>门将</td>
+                                                    <td>莱泽里尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>53</td>
+                          <td>门将</td>
+                                                    <td>克里斯腾森</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>43</td>
+                          <td>门将</td>
+                                                    <td>德赫亚</td>
+                          <td>4(4/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>21</td>
+                          <td>后卫</td>
+                                                    <td>戈森斯</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>65</td>
+                          <td>后卫</td>
+                                                    <td>法比安</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>67</td>
+                          <td>后卫</td>
+                                                    <td>爱德华多·萨多蒂</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>22</td>
+                          <td>后卫</td>
+                                                    <td>莫雷诺</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>15</td>
+                          <td>后卫</td>
+                                                    <td>彼得罗</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>29</td>
+                          <td>后卫</td>
+                                                    <td>福蒂尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>60</td>
+                          <td>后卫</td>
+                                                    <td>库阿迪奥</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>67</td>
+                          <td>后卫</td>
+                                                    <td>洛伦佐·罗曼尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>后卫</td>
+                                                    <td>米尔科·埃利亚</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>71</td>
+                          <td>后卫</td>
+                                                    <td>科斯波</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>2</td>
+                          <td>后卫</td>
+                                                    <td>多米尔森</td>
+                          <td>1(1/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>5</td>
+                          <td>后卫</td>
+                                                    <td>庞格拉契奇</td>
+                          <td>2(1/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>6</td>
+                          <td>后卫</td>
+                                                    <td>卢卡</td>
+                          <td>2(2/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>17</td>
+                          <td>后卫</td>
+                                                    <td>若奥</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>3</td>
+                          <td>后卫</td>
+                                                    <td>德拉古辛</td>
+                          <td>4(4/0)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>20</td>
+                          <td>后卫</td>
+                                                    <td>桑切斯</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>33</td>
+                          <td>后卫</td>
+                                                    <td>维埃里</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>21</td>
+                          <td>后卫</td>
+                                                    <td>塔拉韦拉</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>7</td>
+                          <td>中场</td>
+                                                    <td>S.索姆</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>22</td>
+                          <td>中场</td>
+                                                    <td>弗兰</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>32</td>
+                          <td>中场</td>
+                                                    <td>因凡蒂诺</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>24</td>
+                          <td>中场</td>
+                                                    <td>理查森</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>80</td>
+                          <td>中场</td>
+                                                    <td>乔瓦尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>62</td>
+                          <td>中场</td>
+                                                    <td>蒙特内格罗</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>63</td>
+                          <td>中场</td>
+                                                    <td>特拉帕尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>27</td>
+                          <td>中场</td>
+                                                    <td>拉波·德利</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>73</td>
+                          <td>中场</td>
+                                                    <td>皮罗·安东尼奥</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>14</td>
+                          <td>中场</td>
+                                                    <td>阿瑟</td>
+                          <td>4(3/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>28</td>
+                          <td>中场</td>
+                                                    <td>贡萨尔维斯</td>
+                          <td>2(0/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>44</td>
+                          <td>中场</td>
+                                                    <td>法乔利</td>
+                          <td>4(3/1)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>4</td>
+                          <td>中场</td>
+                                                    <td>布雷西亚尼</td>
+                          <td>4(2/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>27</td>
+                          <td>中场</td>
+                                                    <td>恩杜尔</td>
+                          <td>4(3/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>42</td>
+                          <td>中场</td>
+                                                    <td>奥莱</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>7</td>
+                          <td>前锋</td>
+                                                    <td>索蒂尔</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>24</td>
+                          <td>前锋</td>
+                                                    <td>皮科利</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>9</td>
+                          <td>前锋</td>
+                                                    <td>贝尔特兰</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>63</td>
+                          <td>前锋</td>
+                                                    <td>丹尼尔</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>66</td>
+                          <td>前锋</td>
+                                                    <td>鲁比诺</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>71</td>
+                          <td>前锋</td>
+                                                    <td>苏莱曼·贾洛</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>70</td>
+                          <td>前锋</td>
+                                                    <td>Federico·Croci</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>72</td>
+                          <td>前锋</td>
+                                                    <td>Brando·Mazzeo</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>25</td>
+                          <td>前锋</td>
+                                                    <td>恩杰</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>11</td>
+                          <td>前锋</td>
+                                                    <td>古德蒙德松</td>
+                          <td>1(1/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>9</td>
+                          <td>前锋</td>
+                                                    <td>基恩</td>
+                          <td>1(0/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>23</td>
+                          <td>前锋</td>
+                                                    <td>贝图卡尔</td>
+                          <td>2(1/1)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>29</td>
+                          <td>前锋</td>
+                                                    <td>德格南德</td>
+                          <td>2(0/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>32</td>
+                          <td>前锋</td>
+                                                    <td>卡桑吉拉</td>
+                          <td>4(3/1)</td>
+                          <td>2</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>30</td>
+                          <td>前锋</td>
+                                                    <td>弗朗哥·马斯坦托诺</td>
+                          <td>4(4/0)</td>
+                          <td>3</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                </table>
+          </div>
+          <div class="float_r qiuyuandata_right">
+              <div class="livemaintit">
+                  那不勒斯-赛前球员统计
+              </div>
+              <table class="qiuyuandata_table">
+                  <tr>
+                      <th>号码</th>
+                      <th>位置</th>
+                      <th>出场</th>
+                      <th>首/替</th>
+                      <th>进球</th>
+                      <th>助攻</th>
+                      <th>红牌</th>
+                      <th>黄牌</th>
+                                        </tr>
+                                        <tr>
+                          <td>25</td>
+                          <td>门将</td>
+                          <td>费兰特</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>14</td>
+                          <td>门将</td>
+                          <td>孔蒂尼</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>12</td>
+                          <td>门将</td>
+                          <td>克劳迪奥·普利耶塞</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>1</td>
+                          <td>门将</td>
+                          <td>梅雷特</td>
+                          <td>3(3/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>32</td>
+                          <td>门将</td>
+                          <td>萨维奇</td>
+                          <td>1(1/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>30</td>
+                          <td>后卫</td>
+                          <td>马佐基</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>4</td>
+                          <td>后卫</td>
+                          <td>布诺吉尼奥</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>后卫</td>
+                          <td>诺萨</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>35</td>
+                          <td>后卫</td>
+                          <td>马里安努奇·卢卡</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>50</td>
+                          <td>后卫</td>
+                          <td>达维诺</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>47</td>
+                          <td>后卫</td>
+                          <td>克里斯蒂安·加罗法洛</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>31</td>
+                          <td>后卫</td>
+                          <td>布尔科马</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>37</td>
+                          <td>后卫</td>
+                          <td>斯皮纳佐拉</td>
+                          <td>4(3/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>22</td>
+                          <td>后卫</td>
+                          <td>迪洛伦佐</td>
+                          <td>4(4/0)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>13</td>
+                          <td>后卫</td>
+                          <td>拉马尼</td>
+                          <td>4(4/0)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>17</td>
+                          <td>后卫</td>
+                          <td>奥利维拉</td>
+                          <td>3(1/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>5</td>
+                          <td>后卫</td>
+                          <td>巴迪亚什勒</td>
+                          <td>1(0/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>16</td>
+                          <td>后卫</td>
+                          <td>拉法</td>
+                          <td>4(4/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>24</td>
+                          <td>中场</td>
+                          <td>卡尤斯特</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>90</td>
+                          <td>中场</td>
+                          <td>弗罗伦索</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>29</td>
+                          <td>中场</td>
+                          <td>杰斯佩</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>36</td>
+                          <td>中场</td>
+                          <td>斯加尔比</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>中场</td>
+                          <td>劳</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>中场</td>
+                          <td>埃斯波西托·马蒂亚</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>98</td>
+                          <td>中场</td>
+                          <td>埃曼努埃萊·德基亞拉</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>99</td>
+                          <td>中场</td>
+                          <td>安古伊萨</td>
+                          <td>3(3/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>8</td>
+                          <td>中场</td>
+                          <td>麦克托米奈</td>
+                          <td>2(2/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>11</td>
+                          <td>中场</td>
+                          <td>德布劳内</td>
+                          <td>4(1/3)</td>
+                          <td>1</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>68</td>
+                          <td>中场</td>
+                          <td>洛博特卡</td>
+                          <td>4(4/0)</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>6</td>
+                          <td>中场</td>
+                          <td>吉尔莫</td>
+                          <td>2(1/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>26</td>
+                          <td>中场</td>
+                          <td>安东尼奥</td>
+                          <td>3(2/1)</td>
+                          <td>1</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>2</td>
+                          <td>中场</td>
+                          <td>法瓦苏利</td>
+                          <td>1(0/1)</td>
+                          <td>0</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>前锋</td>
+                          <td>恩贡格</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>69</td>
+                          <td>前锋</td>
+                          <td>安布罗西诺</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>23</td>
+                          <td>前锋</td>
+                          <td>纳西门托</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>&nbsp;</td>
+                          <td>前锋</td>
+                          <td>马加良斯</td>
+                          <td>0(0/0)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>27</td>
+                          <td>前锋</td>
+                          <td>桑托斯</td>
+                          <td>3(2/1)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>21</td>
+                          <td>前锋</td>
+                          <td>波利塔诺</td>
+                          <td>4(4/0)</td>
+                          <td>1</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>1</td>
+                                                </tr>
+                                        <tr>
+                          <td>7</td>
+                          <td>前锋</td>
+                          <td>内雷斯</td>
+                          <td>2(0/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>70</td>
+                          <td>前锋</td>
+                          <td>诺亚朗</td>
+                          <td>3(1/2)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>20</td>
+                          <td>前锋</td>
+                          <td>卢卡</td>
+                          <td>4(0/4)</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                        <tr>
+                          <td>19</td>
+                          <td>前锋</td>
+                          <td>霍伊伦德</td>
+                          <td>4(4/0)</td>
+                          <td>2</td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>0</td>
+                                                </tr>
+                                </table>
+          </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<!--广告区-->
+
+<div class="clearbox"></div>
+<div align="center">    <div class="footerbox">
+	       <div class="aboutlink" style="display:none">
+       		<a href="//www.okooo.com/about/us/" target="_blank" rel="nofollow" style="color:#8c8c8c;">关于澳客</a>
+       		<a href="//www.okooo.com/about/co/" target="_blank" rel="nofollow" style="color:#8c8c8c;">商务合作</a>
+       		<a href="//www.okooo.com/about/service/" target="_blank" rel="nofollow" style="color:#8c8c8c;">客户服务</a>
+       		<a href="//www.okooo.com/about/security/" target="_blank" rel="nofollow" style="color:#8c8c8c;">安全承诺</a>
+       		<a href="//www.okooo.com/about/hr/" target="_blank" rel="nofollow" style="color:#8c8c8c;">加入澳客</a>
+       		<a href="//www.okooo.com/about/declare/" target="_blank" rel="nofollow" style="color:#8c8c8c;">法律声明</a>
+       		<a href="//www.okooo.com/about/sitemap/" target="_blank" rel="nofollow" style="color:#8c8c8c;">网站地图</a>
+       		<a href="//www.okooo.com/about/contact/" target="_blank" rel="nofollow" style="color:#8c8c8c;">联系我们</a>
+			       		<a class="noborder_r" href="//www.okooo.com/speedtest.html" target="_blank" rel="nofollow" style="color:#8c8c8c;">测试网速</a>
+       </div>
+    	<div class="new-footer">
+		<div class="new-footer-left">
+			<dl>
+			 	<dt>关于澳客</dt>
+				<dd><a href="//www.okooo.com/about/declare/">法律声明</a></dd>
+				<dd><a href="//www.okooo.com/about/security/">安全保障</a></dd>
+			</dl>
+			<dl>
+			 	<dt>联系我们</dt>
+				<dd><a href="//www.okooo.com/about/co/">商务合作</a></dd>
+				<dd><a href="//www.okooo.com/about/hr/">加入澳客</a></dd>
+			</dl>
+			<dl>
+			 	<dt>澳客产品</dt>
+				<dd><a href="//m.okooo.com/">触屏版</a></dd>
+							</dl>
+			<dl>
+			 	<dt>帮助中心</dt>
+				<dd><a href="//www.okooo.com/help/" target="_blank" onclick="google_p([&quot;小秘书点击统计&quot;, &quot;点击帮助中心&quot;, &quot;分类：&quot;]);">自助服务</a></dd>
+				<dd><a href="javascript:void(0)" id="clickKefuFn">客户反馈</a></dd>
+			</dl>
+				<div class="copyright">
+				<p class="imglink" style="padding-left:0px">
+				<a class="bzzc" href="http://www.okooo.com/rel.php?url=http://www.315online.com.cn/member/315100151.html" target="_blank" rel="nofollow">网上交易保障中心</a>
+				<a id='___szfw_logo___' href='https://credit.szfw.org/CX20161227031782020357.html' style="width:94px" target='_blank'>
+								</a>
+
+					<script type='text/javascript'>(function(){document.getElementById('___szfw_logo___').oncontextmenu = function(){return false;}})();</script>
+
+				<span id="knet"></span>
+								<a class="fzxb" href="http://www.okooo.com/rel.php?url=http%3a%2f%2fwww.bj.cyberpolice.cn%2findex.htm" target="_blank" rel="nofollow">网络违法犯罪举报</a>
+				<a class="wfjb" href="http://www.okooo.com/rel.php?url=http%3a%2f%2fwww.bjjubao.org%2f" target="_blank" rel="nofollow">违法不良信息举报</a>
+				</p>
+			   			</div>
+		</div>
+		<div class="new-footer-right">
+                        <span><em>澳客APP下载</em><img src="https://imgv1.okoooimg.cn/style/img/index/code.png?v=20250605"><em>安卓手机扫码</em></span>
+            <span><em> </em><img src="https://imgv1.okoooimg.cn/style/img/index/code-mi.png?v=20250605"><em>小米手机扫码</em></span>
+        </div>
+    </div>
+    <div class="new-copyright_txt">
+        <p>Copyright <em>&copy;</em> 2002-2026 <a href="http://www.okooo.com/" target="_blank">澳客网</a>&nbsp;&nbsp;All rights reserved.&nbsp;&nbsp;&nbsp;
+            <a href="https://beian.miit.gov.cn" target="_blank" rel="nofollow" >京ICP备2023027454号-2</a>&nbsp;&nbsp;<a href="//www.okooo.com/about/security/" target="_blank" rel="nofollow" >增值电信业务经营许可证：京B2-20240263</a>&nbsp;&nbsp;<a href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=11010802026576" target="_blank" rel="nofollow">京公网安备11010802026576号</a></p>
+	</div>
+	   	         	   </div>
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F213d524a1d07274f17dfa17b79db318f' type='text/javascript'%3E%3C/script%3E"));
+
+    var jsVison = 202609161508 ; // 获取版本号
+
+</script>
+
+
+
+
+<script type="text/javascript">
+
+/*$(function(){
+	var r = Math.random();
+	var t = '<a href="https://ss.knet.cn/verifyseal.dll?sn=e131205110100438489vsm000000&ct=df&amp;a=1&pa='+r+'" target="_blank" kx_type="缩放式" style="display:inline-block;position:relative;width:102px;height:37px;"><img src="http://rr.knet.cn/static/images/logo/cnnic.png" height="37" width="102" style="left:0;position:absolute;top:0;border:none;" title="澳客网-值得信赖的网站" alt="澳客网-值得信赖的网站"></a>';
+	$('#knet').html(t);
+});*/
+var adversion = '20190827150000';
+
+
+
+		if(typeof (okXiaoMiShu) == 'undefined' && typeof isRegPage == 'undefined' && typeof isLoginPage == 'undefined' ){
+			var newScript = document.createElement("script");
+			newScript.type = 'text/javascript' ;
+			newScript.src = StaticUrl + '/JS/public/xiaomishu.js?v=' +jsVison;
+			document.getElementsByTagName("head")[0].appendChild(newScript);
+		}
+
+		// 显示小秘书
+		setTimeout(function(){
+				if($('#xms_menulist').size() == 0 && typeof isRegPage == 'undefined' && typeof isLoginPage == 'undefined'){
+						typeof xiaomishuConf !== 'undefined' ? okXiaoMiShu(xiaomishuConf) : okXiaoMiShu() ;
+				}
+		},1000)
+		$("#clickKefuFn").click(function () {
+			$(".kefu_function02").click();
+		});
+
+
+</script>
+
+
+
+<script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=public%2Fsearch.js&_v=202609161508"></script>
+
+<script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=jquery.jsonp.min.js,wxLogin.js,public/jsencrypt.js,loginNew.js&_v=202609161508"></script></div>
+<span id="playgoalsound"></span>
+<div class="adv_ok adv_ok_left none1300"  id="adv_256">
+</div>
+<div class="adv_ok adv_ok_right" id="adv_257"></div>
+
+
+
+<!--右下角悬浮广告-->
+
+
+
+
+
+
+
+
+</body>
+<script type="text/javascript" src="https://imgv1.okoooimg.cn/min/?b=JS&amp;f=dataanalysis%2fheaderdata.js&amp;v=202603181616"></script>
+
+<script type="text/javascript">
+            var timeData = [];
+    var minute = 0;
+    var overType = "";
+    var matchId = '1328101';
+    var playerAllData= {"69378":{"logo":"\/Upload\/Player\/69378ls.png","name":"\u5fb7\u8d6b\u4e9a","pos":"\u95e8\u5c06","number":"43","chuchang":4,"jinqiu":0,"Worth":"350\u4e07"},"139272":{"logo":"\/Upload\/Player\/139272.jpg","name":"\u83b1\u6cfd\u91cc\u5c3c","pos":"\u95e8\u5c06","number":"19","chuchang":0,"jinqiu":0,"Worth":"35\u4e07"},"259557":{"logo":"\/Upload\/Player\/259557ls.png","name":"\u6208\u68ee\u65af","pos":"\u540e\u536b","number":"21","chuchang":0,"jinqiu":0,"Worth":"450\u4e07"},"290635":{"logo":"\/Upload\/Player\/290635ls.png","name":"\u53e4\u5fb7\u8499\u5fb7\u677e","pos":"\u524d\u950b","number":"11","chuchang":1,"jinqiu":0,"Worth":"1300\u4e07"},"297591":{"logo":"\/Upload\/Player\/297591ls.png","name":"\u591a\u7c73\u5c14\u68ee","pos":"\u540e\u536b","number":"2","chuchang":1,"jinqiu":0,"Worth":"1800\u4e07"},"307456":{"logo":"\/Upload\/Player\/307456ls.png","name":"\u57fa\u6069","pos":"\u524d\u950b","number":"9","chuchang":1,"jinqiu":0,"Worth":"4000\u4e07"},"315470":{"logo":"\/Upload\/Player\/315470ls.png","name":"\u5e9e\u683c\u62c9\u5951\u5947","pos":"\u540e\u536b","number":"5","chuchang":2,"jinqiu":0,"Worth":"750\u4e07"},"322649":{"logo":"\/Upload\/Player\/322649ls.png","name":"\u514b\u91cc\u65af\u817e\u68ee","pos":"\u95e8\u5c06","number":"53","chuchang":0,"jinqiu":0,"Worth":"150\u4e07"},"342373":{"logo":"\/Upload\/Player\/342373ls.png","name":"\u7d22\u8482\u5c14","pos":"\u524d\u950b","number":"7","chuchang":0,"jinqiu":0,"Worth":"350\u4e07"},"342374":{"logo":"\/Upload\/Player\/342374ls.png","name":"\u5362\u5361","pos":"\u540e\u536b","number":"6","chuchang":2,"jinqiu":0,"Worth":"700\u4e07"},"350484":{"logo":"\/Upload\/Player\/350484.jpg","name":"\u8d21\u8428\u5c14\u7ef4\u65af","pos":"\u4e2d\u573a","number":"28","chuchang":2,"jinqiu":0,"Worth":"2500\u4e07","event":{"60":[60],"30":[90]}},"352770":{"logo":"\/Upload\/Player\/352770ls.png","name":"S.\u7d22\u59c6","pos":"\u4e2d\u573a","number":"7","chuchang":0,"jinqiu":0,"Worth":"800\u4e07"},"356333":{"logo":"\/Upload\/Player\/356333ls.png","name":"\u6cd5\u4e54\u5229","pos":"\u4e2d\u573a","number":"44","chuchang":4,"jinqiu":0,"Worth":"1600\u4e07"},"370626":{"logo":"\/Upload\/Player\/370626ls.png","name":"\u5e03\u96f7\u897f\u4e9a\u5c3c","pos":"\u4e2d\u573a","number":"4","chuchang":4,"jinqiu":0,"Worth":"900\u4e07","event":{"60":[60]}},"372233":{"logo":"\/Upload\/Player\/372233ls.png","name":"\u82e5\u5965","pos":"\u540e\u536b","number":"17","chuchang":3,"jinqiu":0,"Worth":"850\u4e07"},"379455":{"logo":"\/Upload\/Player\/379455ls.png","name":"\u76ae\u79d1\u5229","pos":"\u524d\u950b","number":"24","chuchang":0,"jinqiu":0,"Worth":"1600\u4e07","event":{"60":[58]}},"384324":{"logo":"\/Upload\/Player\/384324ls.png","name":"\u6cd5\u6bd4\u5b89","pos":"\u540e\u536b","number":"65","chuchang":0,"jinqiu":0,"Worth":"600\u4e07"},"409954":{"logo":"\/Upload\/Player\/409954ls.png","name":"\u8d1d\u56fe\u5361\u5c14","pos":"\u524d\u950b","number":"23","chuchang":2,"jinqiu":0,"Worth":"2000\u4e07","event":{"60":[83]}},"421582":{"logo":"\/Upload\/Player\/421582ls.png","name":"\u5fb7\u683c\u5357\u5fb7","pos":"\u524d\u950b","number":"29","chuchang":2,"jinqiu":0,"Worth":"1800\u4e07","event":{"30":[71]}},"422200":{"logo":"","name":"\u8d1d\u5c14\u7279\u5170","pos":"\u524d\u950b","number":"9","chuchang":0,"jinqiu":0,"Worth":"800\u4e07"},"423267":{"logo":"\/Upload\/Player\/423267ls.png","name":"\u5f17\u5170","pos":"\u4e2d\u573a","number":"22","chuchang":0,"jinqiu":0,"Worth":"900\u4e07"},"426203":{"logo":"\/Upload\/Player\/426203ls.png","name":"\u5fb7\u62c9\u53e4\u8f9b","pos":"\u540e\u536b","number":"3","chuchang":4,"jinqiu":0,"Worth":"2000\u4e07","event":{"60":[46]}},"436367":{"logo":"\/Upload\/Player\/436367ls.png","name":"\u56e0\u51e1\u8482\u8bfa","pos":"\u4e2d\u573a","number":"32","chuchang":0,"jinqiu":0,"Worth":"35\u4e07"},"437538":{"logo":"","name":"\u5361\u6851\u5409\u62c9","pos":"\u524d\u950b","number":"32","chuchang":4,"jinqiu":2,"Worth":"1500\u4e07","event":{"30":[40],"60":[83]}},"442273":{"logo":"\/Upload\/Player\/442273ls.png","name":"\u6069\u675c\u5c14","pos":"\u4e2d\u573a","number":"27","chuchang":4,"jinqiu":0,"Worth":"1000\u4e07"},"443526":{"logo":"\/Upload\/Player\/443526ls.png","name":"\u7406\u67e5\u68ee","pos":"\u4e2d\u573a","number":"24","chuchang":0,"jinqiu":0,"Worth":"450\u4e07"},"487712":{"logo":"\/Upload\/Player\/487712ls.png","name":"\u4e54\u74e6\u5c3c","pos":"\u4e2d\u573a","number":"80","chuchang":0,"jinqiu":0,"Worth":"1000\u4e07"},"518189":{"logo":"\/Upload\/Player\/518189ls.png","name":"\u6851\u5207\u65af","pos":"\u540e\u536b","number":"20","chuchang":3,"jinqiu":0,"Worth":"2200\u4e07","event":{"60":[72]}},"520461":{"logo":"\/Upload\/Player\/520461ls.png","name":"\u9a6c\u8482\u5185\u5229","pos":"\u95e8\u5c06","number":"30","chuchang":0,"jinqiu":0,"Worth":"350\u4e07"},"520990":{"logo":"\/Upload\/Player\/520990ls.png","name":"\u963f\u745f","pos":"\u4e2d\u573a","number":"14","chuchang":4,"jinqiu":0,"Worth":"1500\u4e07"},"523126":{"logo":"\/Upload\/Player\/523126ls.png","name":"\u4e07\u52aa\u5947","pos":"\u95e8\u5c06","number":"40","chuchang":0,"jinqiu":0,"Worth":"40\u4e07"},"524748":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u7231\u5fb7\u534e\u591a\u00b7\u8428\u591a\u8482","pos":"\u540e\u536b","number":"67","chuchang":0,"jinqiu":0,"Worth":0},"524921":{"logo":"\/Upload\/Player\/524921ls.png","name":"\u83ab\u96f7\u8bfa","pos":"\u540e\u536b","number":"22","chuchang":0,"jinqiu":0,"Worth":"400\u4e07"},"525993":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u7ef4\u57c3\u91cc","pos":"\u540e\u536b","number":"33","chuchang":3,"jinqiu":0,"Worth":"600\u4e07","event":{"60":[46]}},"527339":{"logo":"\/Upload\/Player\/527339ls.png","name":"\u5f7c\u5f97\u7f57","pos":"\u540e\u536b","number":"15","chuchang":0,"jinqiu":0,"Worth":"2300\u4e07"},"533697":{"logo":"\/Upload\/Player\/533697ls.png","name":"\u5f17\u6717\u54e5\u00b7\u9a6c\u65af\u5766\u6258\u8bfa","pos":"\u524d\u950b","number":"30","chuchang":4,"jinqiu":3,"Worth":"4500\u4e07","event":{"40":[6],"60":[60]}},"536804":{"logo":"\/Upload\/Player\/536804ls.png","name":"\u6069\u6770","pos":"\u524d\u950b","number":"25","chuchang":0,"jinqiu":0,"Worth":"250\u4e07","event":{"60":[60]}},"543180":{"logo":"\/Upload\/Player\/543180ls.png","name":"\u4e39\u5c3c\u5c14","pos":"\u524d\u950b","number":"63","chuchang":0,"jinqiu":0,"Worth":"200\u4e07"},"543747":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u798f\u8482\u5c3c","pos":"\u540e\u536b","number":"29","chuchang":0,"jinqiu":0,"Worth":"1000\u4e07"},"550239":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u5965\u83b1","pos":"\u4e2d\u573a","number":"42","chuchang":3,"jinqiu":0,"Worth":"1700\u4e07"},"551613":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u5e93\u963f\u8fea\u5965","pos":"\u540e\u536b","number":"60","chuchang":0,"jinqiu":0,"Worth":"250\u4e07"},"553380":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u9c81\u6bd4\u8bfa","pos":"\u524d\u950b","number":"66","chuchang":0,"jinqiu":0,"Worth":"80\u4e07"},"553535":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u82cf\u83b1\u66fc\u00b7\u8d3e\u6d1b","pos":"\u524d\u950b","number":"71","chuchang":0,"jinqiu":0,"Worth":0},"555705":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u83b1\u5965\u7eb3\u5c14\u5fb7\u5229","pos":"\u95e8\u5c06","number":"50","chuchang":0,"jinqiu":0,"Worth":0},"557741":{"logo":"\/Upload\/Player\/557741ls.png","name":"\u5854\u62c9\u97e6\u62c9","pos":"\u540e\u536b","number":"21","chuchang":3,"jinqiu":0,"Worth":0,"event":{"40":[55],"60":[72]}},"558983":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u6d1b\u4f26\u4f50\u00b7\u7f57\u66fc\u5c3c","pos":"\u540e\u536b","number":"67","chuchang":0,"jinqiu":0,"Worth":0},"559521":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u8499\u7279\u5185\u683c\u7f57","pos":"\u4e2d\u573a","number":"62","chuchang":0,"jinqiu":0,"Worth":0},"562535":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u7c73\u5c14\u79d1\u00b7\u57c3\u5229\u4e9a","pos":"\u540e\u536b","number":"0","chuchang":0,"jinqiu":0,"Worth":"2.5\u4e07"},"563037":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u79d1\u65af\u6ce2","pos":"\u540e\u536b","number":"71","chuchang":0,"jinqiu":0,"Worth":"150\u4e07"},"563038":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u7279\u62c9\u5e15\u5c3c","pos":"\u4e2d\u573a","number":"63","chuchang":0,"jinqiu":0,"Worth":0},"570338":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u62c9\u6ce2\u00b7\u5fb7\u5229","pos":"\u4e2d\u573a","number":"27","chuchang":0,"jinqiu":0,"Worth":0},"575003":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u76ae\u7f57\u00b7\u5b89\u4e1c\u5c3c\u5965","pos":"\u4e2d\u573a","number":"73","chuchang":0,"jinqiu":0,"Worth":0},"576045":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"Federico\u00b7Croci","pos":"\u524d\u950b","number":"70","chuchang":0,"jinqiu":0,"Worth":0},"578622":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"Brando\u00b7Mazzeo","pos":"\u524d\u950b","number":"72","chuchang":0,"jinqiu":0,"Worth":0},"70996":{"logo":"\/Upload\/Player\/70996ls.png","name":"\u5fb7\u5e03\u52b3\u5185","pos":"\u4e2d\u573a","number":"11","chuchang":4,"jinqiu":1,"Worth":"1000\u4e07","event":{"60":[88]}},"148899":{"logo":"\/Upload\/Player\/148899ls.png","name":"\u65af\u76ae\u7eb3\u4f50\u62c9","pos":"\u540e\u536b","number":"37","chuchang":4,"jinqiu":0,"Worth":"350\u4e07"},"150383":{"logo":"\/Upload\/Player\/150383ls.png","name":"\u6d1b\u535a\u7279\u5361","pos":"\u4e2d\u573a","number":"68","chuchang":4,"jinqiu":1,"Worth":"1500\u4e07","event":{"30":[66]}},"153257":{"logo":"\/Upload\/Player\/153257ls.png","name":"\u8fea\u6d1b\u4f26\u4f50","pos":"\u540e\u536b","number":"22","chuchang":4,"jinqiu":0,"Worth":"1000\u4e07"},"238460":{"logo":"\/Upload\/Player\/238460ls.png","name":"\u6ce2\u5229\u5854\u8bfa","pos":"\u524d\u950b","number":"21","chuchang":4,"jinqiu":1,"Worth":"800\u4e07","event":{"60":[46]}},"259157":{"logo":"\/Upload\/Player\/259157ls.png","name":"\u5b54\u8482\u5c3c","pos":"\u95e8\u5c06","number":"14","chuchang":0,"jinqiu":0,"Worth":"40\u4e07"},"259654":{"logo":"\/Upload\/Player\/259654ls.png","name":"\u9a6c\u4f50\u57fa","pos":"\u540e\u536b","number":"30","chuchang":0,"jinqiu":0,"Worth":"170\u4e07"},"264479":{"logo":"\/Upload\/Player\/264479ls.png","name":"\u8428\u7ef4\u5947","pos":"\u95e8\u5c06","number":"32","chuchang":1,"jinqiu":0,"Worth":"2000\u4e07"},"269028":{"logo":"\/Upload\/Player\/269028ls.png","name":"\u6885\u96f7\u7279","pos":"\u95e8\u5c06","number":"1","chuchang":3,"jinqiu":0,"Worth":"1400\u4e07"},"271485":{"logo":"\/Upload\/Player\/271485ls.png","name":"\u62c9\u9a6c\u5c3c","pos":"\u540e\u536b","number":"13","chuchang":4,"jinqiu":0,"Worth":"1200\u4e07"},"274517":{"logo":"\/Upload\/Player\/274517ls.png","name":"\u5b89\u53e4\u4f0a\u8428","pos":"\u4e2d\u573a","number":"99","chuchang":3,"jinqiu":0,"Worth":"2000\u4e07"},"287579":{"logo":"\/Upload\/Player\/287579ls.png","name":"\u5965\u5229\u7ef4\u62c9","pos":"\u540e\u536b","number":"17","chuchang":3,"jinqiu":0,"Worth":"1500\u4e07","event":{"60":[88]}},"318007":{"logo":"\/Upload\/Player\/318007ls.png","name":"\u5185\u96f7\u65af","pos":"\u524d\u950b","number":"7","chuchang":2,"jinqiu":0,"Worth":"2800\u4e07"},"320455":{"logo":"\/Upload\/Player\/320455ls.png","name":"\u5361\u5c24\u65af\u7279","pos":"\u4e2d\u573a","number":"24","chuchang":0,"jinqiu":0,"Worth":"700\u4e07"},"327443":{"logo":"\/Upload\/Player\/327443ls.png","name":"\u5f17\u7f57\u4f26\u7d22","pos":"\u4e2d\u573a","number":"90","chuchang":0,"jinqiu":0,"Worth":"600\u4e07"},"327766":{"logo":"\/Upload\/Player\/327766ls.png","name":"\u5e03\u8bfa\u5409\u5c3c\u5965","pos":"\u540e\u536b","number":"4","chuchang":0,"jinqiu":0,"Worth":"3500\u4e07"},"333660":{"logo":"\/Upload\/Player\/333660ls.png","name":"\u9ea6\u514b\u6258\u7c73\u5948","pos":"\u4e2d\u573a","number":"8","chuchang":2,"jinqiu":0,"Worth":"4500\u4e07"},"334957":{"logo":"\/Upload\/Player\/334957ls.png","name":"\u8bfa\u4e9a\u6717","pos":"\u524d\u950b","number":"70","chuchang":3,"jinqiu":0,"Worth":"2500\u4e07","event":{"60":[46]}},"346986":{"logo":"\/Upload\/Player\/346986ls.png","name":"\u5e03\u5c14\u79d1\u9a6c","pos":"\u540e\u536b","number":"31","chuchang":0,"jinqiu":0,"Worth":"2500\u4e07"},"353953":{"logo":"\/Upload\/Player\/353953ls.png","name":"\u5df4\u8fea\u4e9a\u4ec0\u52d2","pos":"\u540e\u536b","number":"5","chuchang":1,"jinqiu":0,"Worth":"1800\u4e07"},"358790":{"logo":"\/Upload\/Player\/358790ls.png","name":"\u5362\u5361","pos":"\u524d\u950b","number":"20","chuchang":4,"jinqiu":0,"Worth":"2500\u4e07","event":{"60":[75]}},"366865":{"logo":"\/Upload\/Player\/366865ls.png","name":"\u5409\u5c14\u83ab","pos":"\u4e2d\u573a","number":"6","chuchang":2,"jinqiu":0,"Worth":"2000\u4e07"},"373892":{"logo":"\/Upload\/Player\/373892ls.png","name":"\u6770\u65af\u4f69","pos":"\u4e2d\u573a","number":"29","chuchang":0,"jinqiu":0,"Worth":"400\u4e07"},"381886":{"logo":"\/Upload\/Player\/381886ls.png","name":"\u6069\u8d21\u683c","pos":"\u524d\u950b","number":"0","chuchang":0,"jinqiu":0,"Worth":"800\u4e07"},"390338":{"logo":"\/Upload\/Player\/390338ls.png","name":"\u62c9\u6cd5","pos":"\u540e\u536b","number":"16","chuchang":4,"jinqiu":0,"Worth":"1200\u4e07"},"434304":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u65af\u52a0\u5c14\u6bd4","pos":"\u4e2d\u573a","number":"36","chuchang":0,"jinqiu":0,"Worth":"35\u4e07"},"435864":{"logo":"\/Upload\/Player\/435864ls.png","name":"\u970d\u4f0a\u4f26\u5fb7","pos":"\u524d\u950b","number":"19","chuchang":4,"jinqiu":2,"Worth":"5000\u4e07","event":{"60":[75]}},"457366":{"logo":"\/Upload\/Player\/457366tf.jpg","name":"\u5b89\u5e03\u7f57\u897f\u8bfa","pos":"\u524d\u950b","number":"69","chuchang":0,"jinqiu":0,"Worth":"250\u4e07"},"457658":{"logo":"\/Upload\/Player\/457658ls.png","name":"\u6851\u6258\u65af","pos":"\u524d\u950b","number":"27","chuchang":3,"jinqiu":0,"Worth":"1300\u4e07"},"459911":{"logo":"\/Upload\/Player\/459911ls.png","name":"\u5b89\u4e1c\u5c3c\u5965","pos":"\u4e2d\u573a","number":"26","chuchang":3,"jinqiu":1,"Worth":"1500\u4e07","event":{"60":[46]}},"460312":{"logo":"\/Upload\/Player\/460312ls.png","name":"\u7eb3\u897f\u95e8\u6258","pos":"\u524d\u950b","number":"23","chuchang":0,"jinqiu":0,"Worth":"1200\u4e07"},"487686":{"logo":"\/Upload\/Player\/487686ls.png","name":"\u8bfa\u8428","pos":"\u540e\u536b","number":"0","chuchang":0,"jinqiu":0,"Worth":"100\u4e07"},"519009":{"logo":"\/Upload\/Player\/519009ls.png","name":"\u6cd5\u74e6\u82cf\u5229","pos":"\u4e2d\u573a","number":"2","chuchang":1,"jinqiu":0,"Worth":"140\u4e07","event":{"60":[46]}},"521446":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u52b3","pos":"\u4e2d\u573a","number":"0","chuchang":0,"jinqiu":0,"Worth":"320\u4e07","event":{"60":[59]}},"528041":{"logo":"\/Upload\/Player\/528041ls.png","name":"\u9a6c\u91cc\u5b89\u52aa\u5947\u00b7\u5362\u5361","pos":"\u540e\u536b","number":"35","chuchang":0,"jinqiu":0,"Worth":"750\u4e07"},"529452":{"logo":"\/Upload\/Player\/529452ls.png","name":"\u8fbe\u7ef4\u8bfa","pos":"\u540e\u536b","number":"50","chuchang":0,"jinqiu":0,"Worth":0},"529461":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u9a6c\u52a0\u826f\u65af","pos":"\u524d\u950b","number":"0","chuchang":0,"jinqiu":0,"Worth":"25\u4e07"},"550124":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u57c3\u65af\u6ce2\u897f\u6258\u00b7\u9a6c\u8482\u4e9a","pos":"\u4e2d\u573a","number":"0","chuchang":0,"jinqiu":0,"Worth":0},"560234":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u514b\u91cc\u65af\u8482\u5b89\u00b7\u52a0\u7f57\u6cd5\u6d1b","pos":"\u540e\u536b","number":"47","chuchang":0,"jinqiu":0,"Worth":0},"561991":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u8d39\u5170\u7279","pos":"\u95e8\u5c06","number":"25","chuchang":0,"jinqiu":0,"Worth":"20\u4e07"},"569114":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u57c3\u66fc\u52aa\u57c3\u840a\u00b7\u5fb7\u57fa\u4e9e\u62c9","pos":"\u4e2d\u573a","number":"98","chuchang":0,"jinqiu":0,"Worth":0},"580779":{"logo":"\/style\/img\/live\/morenqiuy.gif","name":"\u514b\u52b3\u8fea\u5965\u00b7\u666e\u5229\u8036\u585e","pos":"\u95e8\u5c06","number":"12","chuchang":0,"jinqiu":0,"Worth":0}};
+    var homeChName = "佛罗伦萨";
+    var awayChName = "那不勒斯";
+        var homebf = 0;
+    var awaybf = 0;
+    </script>
+</html>
