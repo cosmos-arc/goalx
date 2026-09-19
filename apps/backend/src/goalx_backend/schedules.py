@@ -38,11 +38,12 @@ from goalx_backend.flows import (
     eu_odds_closing_flow,
     intel_collect_flow,
     pool_snapshot_flow,
+    scout_line_flow,
 )
 
 
 def main() -> None:
-    """单进程服务协议 v1 的七个定时 deployment。"""
+    """单进程服务协议 v1 的八个定时 deployment。"""
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -99,7 +100,15 @@ def main() -> None:
             schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    serve(daily, closing, draw_sync, draw_sync_sweep, wrap, pool, intel)
+    # scout（票 10）：读已存证情报出三项概率，跟情报采集后 10 分钟
+    scout = cast(
+        RunnerDeployment,
+        scout_line_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="50 10,22 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    serve(daily, closing, draw_sync, draw_sync_sweep, wrap, pool, intel, scout)
 
 
 if __name__ == "__main__":

@@ -156,3 +156,11 @@ def intel_collect_flow() -> dict[str, object]:
     stats = tasks.intel_collection()
     logger.info("intel collect: {}", stats)
     return stats
+
+
+@flow(name="scout-line", log_prints=True)
+def scout_line_flow() -> dict[str, object]:
+    """Scout 线（票 10）：读已存证情报出三项概率（跟 intel-collect 后）。"""
+    stats = tasks.scout_line()
+    logger.info("scout line: {}", stats)
+    return stats
