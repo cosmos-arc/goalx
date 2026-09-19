@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M3 证据卡原型（THROWAWAY PROTOTYPE — 票 06）</title>
+<style>
+  :root { --bd:#e2e8f0; --bg:#f8fafc; --card:#fff; --txt:#0f172a; --sub:#64748b; --acc:#0284c7; --ok:#059669; --warn:#b45309; --bad:#b91c1c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); padding:16px 16px 96px; }
+  .proto-note { background:#fef3c7; border:1px solid #f59e0b; padding:6px 12px; border-radius:8px; font-size:12px; margin-bottom:12px; }
+  h1 { font-size:16px; margin-bottom:4px; } .sub { color:var(--sub); font-size:12px; margin-bottom:16px; }
+  h2 { font-size:14px; margin:18px 0 8px; } h3 { font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:10px; padding:12px; margin-bottom:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--bd); color:var(--sub); background:#fff; }
+  .pill.src { border-color:#bae6fd; background:#f0f9ff; color:#0369a1; }
+  .pill.tag { border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
+  .pill.warn { border-color:#fde68a; background:#fffbeb; color:var(--warn); }
+  .pill.js { border-color:#c7d2fe; background:#eef2ff; color:#4338ca; }
+  .match { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px dashed var(--bd); }
+  .match:last-child { border-bottom:none; }
+  .teams { font-weight:600; font-size:14px; }
+  .meta { font-size:11px; color:var(--sub); }
+  .bar { display:flex; height:8px; border-radius:4px; overflow:hidden; margin:6px 0; }
+  .bar span { height:100%; }
+  table { width:100%; border-collapse:collapse; font-size:12px; margin:6px 0; }
+  th,td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--bd); }
+  th { color:var(--sub); font-weight:500; }
+  .num { font-variant-numeric:tabular-nums; }
+  details summary { cursor:pointer; font-size:13px; font-weight:600; padding:4px 0; color:var(--acc); }
+  .evidence-item { border-left:3px solid var(--acc); padding:6px 10px; margin:6px 0; background:#f8fafc; border-radius:0 8px 8px 0; font-size:12.5px; }
+  .degraded { border-left:3px solid var(--warn); background:#fffbeb; }
+  .chat { max-width:520px; }
+  .msg { padding:8px 12px; border-radius:12px; margin:6px 0; font-size:13px; max-width:88%; }
+  .msg.user { background:#e0f2fe; margin-left:auto; }
+  .msg.bot { background:#fff; border:1px solid var(--bd); }
+  .msg .cites { margin-top:6px; display:flex; gap:4px; flex-wrap:wrap; }
+  .cursor { display:inline-block; width:7px; height:14px; background:var(--acc); animation:blink .8s infinite; vertical-align:-2px; }
+  @keyframes blink { 50% { opacity:0; } }
+  button.replay { font-size:12px; padding:4px 10px; border-radius:8px; border:1px solid var(--acc); color:var(--acc); background:#fff; cursor:pointer; }
+  #bar { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); display:flex; gap:6px; background:#fff; border:1px solid var(--bd); border-radius:999px; padding:6px 10px; box-shadow:0 4px 16px rgba(0,0,0,.08); z-index:9; }
+  #bar button { font-size:12px; border:none; background:transparent; padding:4px 10px; border-radius:999px; cursor:pointer; color:var(--sub); }
+  #bar button.on { background:var(--acc); color:#fff; }
+  .variant { display:none; } .variant.on { display:block; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:720px){ .cols{grid-template-columns:1fr;} }
+  .prob3 { display:flex; gap:10px; font-size:12px; }
+  .state { font-size:11px; color:var(--sub); margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="proto-note"><b>THROWAWAY PROTOTYPE</b> · goalx-m3 票 06 · 一次性原型，双击即看 · 底部条切换四个变体 · 数据为模拟（贴近真实期次形态）</div>
+<h1>M3 证据卡原型</h1>
+<div class="sub">变体：V1 彩池页证据卡 · V2 详情·挂现有页 · V3 详情·独立路由 · V4 追问 analyst（AG-UI）</div>
+
+<!-- ============ V1 彩池页证据卡 ============ -->
+<section class="variant on" id="v1">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2>胜负彩 第 26135 期 · 2026-09-20 开售</h2>
+      <div class="row"><span class="pill">冷门度 1</span><span class="pill src">数据：源B 彩池同步 09-19 22:20</span></div>
+    </div>
+    <div class="match">
+      <div><div class="teams">1. 阿森纳 vs 切尔西</div><div class="meta">英超 · 周六 22:00</div></div>
+      <div class="prob3 num"><span>胜48%</span><span style="color:var(--sub)">平22%</span><span style="color:var(--sub)">负30%</span></div>
+    </div>
+    <details open>
+      <summary>证据卡 · 3 条已存证情报 + 分歧点 1</summary>
+      <div class="evidence-item"><b>伤停</b>：萨卡（腿筋，缺阵）、厄德高（复出名单）<div class="row" style="margin-top:4px"><span class="pill src">来源 okooo 伤停栏</span><span class="pill">采集 09-19 09:12</span></div></div>
+      <div class="evidence-item"><b>近况</b>：主队近 5 轮 W3D1L1 · 客队近 5 轮 W2D2L1 · H2H 近 6 次主 3 胜<div class="row" style="margin-top:4px"><span class="pill src">内部推导 fdhist 2627</span><span class="pill">每日重算</span></div></div>
+      <div class="evidence-item"><b>共识 vs 模型</b>：公众份额 平 24% ≪ 模型 22%…负 18% ≪ 模型 30%<div class="row" style="margin-top:4px"><span class="pill src">源B 人气 + ML Forecast</span><span class="pill warn">分歧点：客胜</span></div></div>
+      <div class="state">状态：scout 已跑（GLM-5.3-Flash 09:30）· analyst 未路由（JS 0.014 &lt; 0.06）· Fused=三项融合已生成</div>
+    </details>
+    <div class="match">
+      <div><div class="teams">2. 拜仁 vs 多特蒙德</div><div class="meta">德甲 · 周六 21:30</div></div>
+      <div class="prob3 num"><span>胜61%</span><span style="color:var(--sub)">平21%</span><span style="color:var(--sub)">负18%</span></div>
+    </div>
+    <details>
+      <summary>证据卡 · 4 条已存证情报 + 分歧点 1（analyst 已复核）</summary>
+      <div class="evidence-item"><b>伤停</b>：穆西亚拉（存疑，赛前评估）<div class="row" style="margin-top:4px"><span class="pill src">来源 GLM web-search</span><span class="pill">采集 09-19 10:05</span></div></div>
+      <div class="evidence-item"><b>轮换风险</b>：主队周中有欧冠，历史上赛后联赛轮换率偏高<div class="row" style="margin-top:4px"><span class="pill src">analyst 复核 GLM-5.3</span><span class="pill">11:02</span></div></div>
+      <div class="evidence-item"><b>共识 vs 模型</b>：负 12% ≪ 模型 18%<span class="pill warn" style="margin-left:6px">分歧点：客胜</span></div>
+      <div class="state">状态：gate JS 0.072 &gt; 0.06 → analyst 已复核（LLM 修正：负 12%→17%）· Fused 已融合</div>
+    </details>
+    <div class="match">
+      <div><div class="teams">6. 加的夫城 vs 诺维奇</div><div class="meta">英冠 · 周六 19:30</div></div>
+      <div class="prob3 num"><span>—</span><span style="color:var(--sub)">—</span><span style="color:var(--sub)">—</span></div>
+    </div>
+    <details>
+      <summary>证据卡 · 本场无已存证情报（诚实降级）</summary>
+      <div class="evidence-item degraded"><b>无情报</b>：英冠场次暂无 scout 覆盖内的采集源命中；模型未训练该联赛（无 N1 外 DC 模型）→ 本场不出概率与证据，仅展示官方份额。<div class="row" style="margin-top:4px"><span class="pill warn">不装懂</span></div></div>
+      <div class="state">状态：scout 0 条 · forecast 无 · 该场参与任9 生成时按份额降权处理</div>
+    </details>
+  </div>
+</section>
+
+<!-- ============ V2 详情·挂现有 fixture-research 页 ============ -->
+<section class="variant" id="v2">
+  <div class="card">
+    <h2>方案 A：挂现有场次调研页（fixture-research 内新增"证据链"区块）</h2>
+    <div class="meta">路由不变 · 概率对照/情报/复核都在现有页滚动到底部 · 改动面小，信息密度高</div>
+    <div class="cols">
+      <div class="card">
+        <h3>…现有内容（欧赔历史等）…</h3>
+        <div class="meta" style="padding:20px 0; text-align:center; border:1px dashed var(--bd); border-radius:8px;">现有 fixture-research 页原有区块</div>
+      </div>
+      <div class="card" style="border-color:var(--acc)">
+        <h3>↓ 新增：证据链区块</h3>
+        <table class="num">
+          <tr><th>轨道</th><th>胜</th><th>平</th><th>负</th><th>时点</th></tr>
+          <tr><td>ML</td><td>0.61</td><td>0.21</td><td>0.18</td><td>09-19 10:00</td></tr>
+          <tr><td>LLM（scout+analyst）</td><td>0.56</td><td>0.22</td><td>0.22</td><td>11:02</td></tr>
+          <tr><td><b>Fused</b>（LEAP）</td><td><b>0.59</b></td><td><b>0.21</b></td><td><b>0.20</b></td><td>11:03</td></tr>
+        </table>
+        <div class="row"><span class="pill js">JS(ML,LLM)=0.072 → 已复核</span><span class="pill tag">复核结论：情报有关键贡献</span></div>
+        <div class="evidence-item">情报条目按时间线展开（同 V1 卡片样式，来源+时点齐全）</div>
+        <div class="row" style="margin-top:8px"><button class="replay">追问 analyst（见 V4 对话）</button><button class="replay">加入复核队列</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ V3 详情·独立证据页 ============ -->
+<section class="variant" id="v3">
+  <div class="card">
+    <h2>方案 B：独立证据页（新路由 /fixtures/:id/evidence）</h2>
+    <div class="meta">专职页面：证据链满幅展开，可放完整情报时间线与盲评入口 · 代价：新增路由+导航改动</div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h3>拜仁 vs 多特蒙德 · 证据</h3><span class="pill js">JS 0.072 · Tier1 · 已复核</span></div>
+      <div class="cols">
+        <div>
+          <h3>情报时间线（全部存证）</h3>
+          <div class="evidence-item">09-19 09:30 · scout · 伤停/近况汇总（3 条）<span class="pill src" style="margin-left:4px">GLM-5.3-Flash</span></div>
+          <div class="evidence-item">09-19 10:05 · web-search · 穆西亚拉赛前评估<span class="pill src" style="margin-left:4px">GLM web-search</span></div>
+          <div class="evidence-item">09-19 11:02 · analyst 复核 · 轮换风险上调负概率<span class="pill src" style="margin-left:4px">GLM-5.3</span></div>
+        </div>
+        <div>
+          <h3>概率对照与融合</h3>
+          <table class="num"><tr><th>轨道</th><th>胜</th><th>平</th><th>负</th></tr><tr><td>ML</td><td>.61</td><td>.21</td><td>.18</td></tr><tr><td>LLM</td><td>.56</td><td>.22</td><td>.22</td></tr><tr><td>Fused</td><td><b>.59</b></td><td><b>.21</b></td><td><b>.20</b></td></tr></table>
+          <div class="evidence-item">盲评入口（双周）：匿名 ML 摘要 vs 证据卡 二选一 → 只进评测集</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ V4 追问 analyst ============ -->
+<section class="variant" id="v4">
+  <div class="card chat">
+    <h2>追问 analyst（AG-UI 协议：FastAPI + ag-ui-protocol，SSE 流式）</h2>
+    <div class="meta">前端 A：ai-sdk useChat + 自定义 transport（@ag-ui/client）｜前端 B：assistant-ui 适配器 —— 本原型只定产品形态</div>
+    <div class="msg user">这场为什么把负的概率从 18% 上调到 22%？</div>
+    <div class="msg bot" id="bot">…</div>
+    <div class="row"><button class="replay" onclick="replay()">▶ 重播流式回答</button><span class="meta">回答只引用已存证情报，边生成边出字</span></div>
+  </div>
+</section>
+
+<div id="bar">
+  <button class="on" onclick="go('v1',this)">V1 彩池证据卡</button>
+  <button onclick="go('v2',this)">V2 详情·挂现有页</button>
+  <button onclick="go('v3',this)">V3 详情·独立页</button>
+  <button onclick="go('v4',this)">V4 追问对话</button>
+</div>
+<script>
+function go(id, btn) {
+  document.querySelectorAll('.variant').forEach(v => v.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  document.querySelectorAll('#bar button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  if (id === 'v4') replay();
+}
+const FULL = [
+  ['负概率上调有两层依据。', 0],
+  ['第一，伤停情报：穆西亚拉赛前评估为存疑（来源 GLM web-search，采集 09-19 10:05），中场创造力下降对主队胜率的伤害大于市场定价。', 600],
+  ['第二，轮换风险：主队周中有欧冠，analyst 复核（11:02）引用历史轮换率数据，认为客队拿分的路径被低估。', 1200],
+  ['综合后 LLM 线给出负 22%，与 ML 线 18% 的分歧 JS=0.072 触发了复核；LEAP 融合最终落在 20%。', 1800],
+  ['注意：本场 Tier B 证据仅两条，若穆西亚拉赛前被确认出战，该判断会在下一轮 scout 采集后修正。', 2400],
+];
+function replay() {
+  const bot = document.getElementById('bot');
+  bot.innerHTML = '<span class="cursor"></span>';
+  let acc = '';
+  FULL.forEach(([text, delay]) => setTimeout(() => {
+    acc += text + '<br>';
+    bot.innerHTML = acc + '<span class="cursor"></span>';
+    if (text === FULL[FULL.length - 1][0]) {
+      bot.innerHTML = acc + '<div class="cites"><span class="pill src">okooo 伤停栏 09:12</span><span class="pill src">web-search 10:05</span><span class="pill src">analyst 11:02</span></div>';
+    }
+  }, delay));
+}
+</script>
+</body>
+</html>

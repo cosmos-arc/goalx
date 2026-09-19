@@ -64,8 +64,16 @@ _Avoid_: 人气（单独使用）
 _Avoid_: Prediction（口语）
 
 **MatchIntel**:
-某场比赛的结构化情报（伤停、轮换风险、动机、舆情），LLM 线的产物。
+某场比赛的原始情报素材（伤停、轮换风险、动机、舆情），携带来源与时点；未经存证提炼。
 _Avoid_: News
+
+**IntelObservation**:
+已存证的情报条目：append-only，携带来源 URL、采集时点、采集器标识与 raw 内容哈希——LLM 线的证据层工件。
+_Avoid_: evidence（泛指）, 数据
+
+**EvidenceSummary**:
+LLM 对 IntelObservation 的结构化提炼与展示产物（证据卡内容），advisory 层，不改写任何概率工件。
+_Avoid_: 摘要（口语）
 
 **Divergence**:
 ML 轨道与 LLM/市场基准之间的分歧度量，决定人工复核路由。
