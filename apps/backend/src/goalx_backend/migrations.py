@@ -781,6 +781,46 @@ def _apply_v10(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v11(conn: sqlite3.Connection) -> None:
+    """
+    v11（票 09）：LLM 线情报存证——intel_observations；废弃 match_intels。
+
+    - intel_observations：情报证据层工件（append-only + 哈希）：一场一条
+      采集记录，携带来源/采集时点/采集器/原始素材 JSON 与其 sha256。
+      唯一键 (fixture_id, collector, raw_hash) 天然幂等——重复采集同内容
+      零新行。SQL 归 llm 域（ADR-0008，OWNERS 登记）。
+    - match_intels：v1 空脚手架（无来源/哈希列，无业务代码引用）——
+      票 03 废弃定案，DROP。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS intel_observations (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL,
+            source TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            collector TEXT NOT NULL,
+            raw_payload TEXT NOT NULL,
+            raw_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (fixture_id, collector, raw_hash)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_intel_fixture ON intel_observations(fixture_id)"
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER intel_observations_no_{operation.lower()}
+            BEFORE {operation} ON intel_observations
+            BEGIN SELECT RAISE(ABORT, 'intel_observations is append-only'); END
+        """)
+    conn.execute("DROP TABLE IF EXISTS match_intels")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -792,4 +832,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (8, _apply_v8),
     (9, _apply_v9),
     (10, _apply_v10),
+    (11, _apply_v11),
 )

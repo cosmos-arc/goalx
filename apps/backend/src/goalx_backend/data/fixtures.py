@@ -594,3 +594,23 @@ def kickoffs_for_fixtures(
         fixture_ids,
     ).fetchall()
     return {int(row["id"]): str(row["kickoff_utc"]) for row in rows}
+
+
+def fixture_team_info(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None:
+    """Fixture → 主客队 id/名称与联赛标识（票 09 情报采集桥接用）。"""
+    return conn.execute(
+        """
+        SELECT f.id AS fixture_id, f.kickoff_utc,
+               f.home_team_id, f.away_team_id,
+               th.canonical_name AS home_name,
+               ta.canonical_name AS away_name,
+               c.name AS competition_name, c.tier AS competition_tier,
+               c.odds_api_sport_key AS sport_key
+        FROM fixtures f
+        JOIN teams th ON th.id = f.home_team_id
+        JOIN teams ta ON ta.id = f.away_team_id
+        JOIN competitions c ON c.id = f.competition_id
+        WHERE f.id = ?
+        """,
+        (fixture_id,),
+    ).fetchone()

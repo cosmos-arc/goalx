@@ -21,6 +21,8 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery, zucai
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
+from goalx_backend.llm.collect import collect_pool_intel
+from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
 
@@ -142,3 +144,10 @@ def pool_snapshot() -> zucai.PoolSyncStats:
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
         return zucai.sync_pool_data(conn, settings, client)
+
+
+def intel_collection() -> dict[str, object]:
+    """情报采集（票 09）：当期彩池场次内部推导情报（幂等，零外部请求）。"""
+    with task_conn() as conn:
+        stats = collect_pool_intel(conn)
+    return intel_stats_dict(stats)

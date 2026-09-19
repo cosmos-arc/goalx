@@ -272,7 +272,8 @@ layers = [
     "goalx_backend.cli | goalx_backend.flows | goalx_backend.export_openapi",
     "goalx_backend.main",
     "goalx_backend.api | goalx_backend.tasks | goalx_backend.server",
-    # ingest 是采集用例编排（可用 modelling/betting/data；与 api/tasks 同级语义）
+    # ingest 是采集用例编排（可用 modelling/betting/data）；llm 情报域在其上
+    "goalx_backend.llm",
     "goalx_backend.data.ingest",
     "goalx_backend.evaluation",
     "goalx_backend.betting",
