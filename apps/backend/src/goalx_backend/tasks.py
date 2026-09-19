@@ -26,6 +26,7 @@ from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
+from goalx_backend.llm.gate import gate_stats_dict, gate_sweep
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
@@ -166,8 +167,9 @@ def intel_collection() -> dict[str, object]:
 
 
 def scout_line() -> dict[str, object]:
-    """Scout 线（票 10）：GLM 三项概率 → forecasts(track='llm')（幂等）。"""
+    """Scout 线（票 10/11）：GLM 三项概率 → gate JS 散度路由 → analyst 复核。"""
     settings = get_settings()
     with task_conn() as conn:
-        stats = scout_sweep(conn, settings)
-    return scout_stats_dict(stats)
+        scout = scout_stats_dict(scout_sweep(conn, settings))
+        gate = gate_stats_dict(gate_sweep(conn, settings))
+    return {**scout, "gate": gate}

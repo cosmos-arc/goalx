@@ -49,8 +49,8 @@ OWNERS: dict[str, set[str]] = {
         "settlement_revisions",
         "bankroll_events",
     },
-    # 票 09：LLM 线情报域（M3）
-    "llm": {"intel_observations"},
+    # 票 09/11：LLM 线域（M3）——divergences 脚手架表移交 llm
+    "llm": {"intel_observations", "divergences", "review_items"},
 }
 TABLE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 # 仅匹配大写动词：仓库 SQL 关键字全大写，避开 "Insert or update a..." 类 docstring

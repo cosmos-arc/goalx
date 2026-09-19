@@ -16,7 +16,7 @@ from goalx_backend.llm.scout import (
     INSERTED,
     KNOWN,
     PARSE_FAILED,
-    _parse_probs,
+    parse_probs,
     scout_fixture,
     scout_targets,
 )
@@ -105,21 +105,21 @@ def _seed_intel(db: sqlite3.Connection, fixture_id: int) -> None:
 
 
 def test_parse_probs_variants() -> None:
-    assert _parse_probs(_GOOD) == pytest.approx((0.45, 0.27, 0.28, "主队伤停较多"))
+    assert parse_probs(_GOOD) == pytest.approx((0.45, 0.27, 0.28, "主队伤停较多"))
     # 包裹在说明文字里的 JSON 也能抽出来
     wrapped = f"分析如下：{_GOOD} 以上。"
-    assert _parse_probs(wrapped) is not None
+    assert parse_probs(wrapped) is not None
     # 轻微不闭和 → 归一
-    r = _parse_probs('{"h": 0.5, "d": 0.3, "a": 0.3, "rationale": "x"}')
+    r = parse_probs('{"h": 0.5, "d": 0.3, "a": 0.3, "rationale": "x"}')
     assert r is not None
     assert sum(r[:3]) == pytest.approx(1.0)
     # 坏输出 → None
-    assert _parse_probs("我认为主队会赢") is None
-    assert _parse_probs('{"h": 2.0, "d": -1, "a": 0, "rationale": ""}') is None
+    assert parse_probs("我认为主队会赢") is None
+    assert parse_probs('{"h": 2.0, "d": -1, "a": 0, "rationale": ""}') is None
     assert (
-        _parse_probs('{"h": 0.25, "d": 0.25, "a": 0.25}') is not None
+        parse_probs('{"h": 0.25, "d": 0.25, "a": 0.25}') is not None
     )  # 和=0.75 容忍归一
-    assert _parse_probs('{"h": 0.1, "d": 0.1, "a": 0.1}') is None  # 和=0.3 超容忍
+    assert parse_probs('{"h": 0.1, "d": 0.1, "a": 0.1}') is None  # 和=0.3 超容忍
 
 
 def test_scout_fixture_inserts_forecast(
