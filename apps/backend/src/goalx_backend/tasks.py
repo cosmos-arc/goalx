@@ -27,6 +27,7 @@ from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
+from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
 
@@ -162,3 +163,11 @@ def intel_collection() -> dict[str, object]:
         logger.warning("qiumibao 伤停采集整体失败（推导情报不受影响）: {}", exc)
         injury = {"error": str(exc)}
     return {**intel_stats_dict(stats), "injury": injury}
+
+
+def scout_line() -> dict[str, object]:
+    """Scout 线（票 10）：GLM 三项概率 → forecasts(track='llm')（幂等）。"""
+    settings = get_settings()
+    with task_conn() as conn:
+        stats = scout_sweep(conn, settings)
+    return scout_stats_dict(stats)

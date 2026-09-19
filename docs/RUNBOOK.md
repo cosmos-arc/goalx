@@ -10,7 +10,7 @@ goalx 是本机单机运行的足彩量化研究系统：FastAPI 后端（SQLite
 |---|---|---|---|
 | API server（granian） | 127.0.0.1:8000 | `nohup task server >> .scratch/server.log 2>&1 &` | `.scratch/server.log` |
 | Prefect server | 127.0.0.1:4200（API+UI） | 由 `task serve-schedules` 自动拉起 | `.scratch/prefect-server.log` |
-| 调度（serve 六 deployment） | — | `nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &` | `.scratch/prefect-serve.log` |
+| 调度（serve 八 deployment） | — | `nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &` | `.scratch/prefect-serve.log` |
 | Web dev server（vite） | 5173 | `nohup task dev >> .scratch/web.log 2>&1 &` | `.scratch/web.log` |
 
 **为什么是 server + serve 两进程**：Prefect ≥3.7 的临时 server 不运行 scheduler，单进程 `flow.serve()` 的 schedule 永不触发（票 37 day0 连续两天 0 触发的根因）。`task serve-schedules` 先探活并按需启动专用 server（`PREFECT_API_URL=http://127.0.0.1:4200/api`），再启动 serve；server 存活独立于 serve，serve 重启不影响已排程 run。
@@ -25,7 +25,7 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 
 重启顺序：先启 Prefect server（serve-schedules 自带），再启 API server；两者无依赖也可并行。Mac 睡眠会暂停进程，漏跑窗口如实计入分母（协议允许）；长期无人值守时改 `caffeinate -s task serve-schedules` 或迁 launchd/远端，flow 与 deployment 不用动。
 
-## 2. 定时调度（六个 deployment，Asia/Shanghai）
+## 2. 定时调度（八个 deployment，Asia/Shanghai）
 
 | deployment | cron | 内容 | 成本 |
 |---|---|---|---|
@@ -35,6 +35,8 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 | draw-results-sync/protocol-v1-sweep | `0 8 * * *` | 同上，早场补扫收尾 | 0 |
 | daily-wrap/protocol-v1 | `30 23 * * *` | 结算批跑 + CLV 对账 + 只读账务核查 | 0 |
 | pool-snapshot/protocol-v1 | `20 10,16,22 * * *` | 彩池期次/对阵/人气分布（源B） | 0 |
+| intel-collect/protocol-v1 | `40 10,22 * * *` | 情报采集：内部推导（fdhist 近况/H2H）+ 澳客 formation 伤停 | 0（formation 页 ~28/拍） |
+| scout-line/protocol-v1 | `50 10,22 * * *` | scout（GLM-5.3-Flash）读情报出三项 → forecasts(track=llm) | GLM 订阅额度 |
 
 全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `apps/backend/src/goalx_backend/schedules.py` 的 cron（当前值为 2026-09-18 用户追认定案）。
 
