@@ -92,3 +92,6 @@ logs/
 
 # 本地 SQLite 数据库（goalx 运行数据不入库）
 /data/
+
+# 相对 cwd 陷阱：从子目录跑 CLI 会误建库（RUNBOOK §3）
+apps/backend/data/
