@@ -1309,6 +1309,56 @@ def test_pool_state_agent_import_is_idempotent(demo_client: TestClient) -> None:
     assert state["source"] == "agent"
 
 
+def test_pool_cold_variants_greedy_and_valuation(demo_client: TestClient) -> None:
+    """搏冷生成器（票 pool-v2/02）：缺省基础票、贪心替换、估值口径自洽。"""
+    missing = demo_client.post(
+        "/api/v1/pool/cold-variants", json={"period_no": "88888"}
+    )
+    assert missing.status_code == 404
+
+    response = demo_client.post(
+        "/api/v1/pool/cold-variants", json={"period_no": "26999", "coldness": 3}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "贪心替换" in payload["caliber"]
+    detail = demo_client.get("/api/v1/pool/periods/26999").json()
+    base = payload["base"]
+    # 缺省基础票 = 全部场有概率 → 14 场齐全、估值非空
+    assert len(base["picks"]) == len(detail["matches"])
+    assert base["hit_prob"] is not None
+    share_product = 1.0
+    for match in detail["matches"]:
+        code = base["picks"][str(match["match_seq"])]
+        sel = next(s for s in match["selections"] if s["code"] == code)
+        share_product *= sel["share"]
+    assert base["est_odds"] == pytest.approx(0.65 / share_product, rel=0.01)
+    assert base["ev"] == pytest.approx(
+        base["hit_prob"] * base["est_odds"] - 1, abs=0.01
+    )
+    # 变体 1..N：每变体恰比前一变体多一处替换，各场至多一处
+    variants = payload["variants"]
+    assert 1 <= len(variants) <= 3
+    for index, variant in enumerate(variants, start=1):
+        assert len(variant["swaps"]) == index
+        seqs = [swap["match_seq"] for swap in variant["swaps"]]
+        assert len(set(seqs)) == len(seqs)
+        for swap in variant["swaps"]:
+            assert swap["ev_gain"] > 0
+            assert variant["picks"][str(swap["match_seq"])] == swap["to_code"]
+            assert base["picks"][str(swap["match_seq"])] == swap["from_code"]
+        # 冷替换降命中、抬赔率
+        assert variant["hit_prob"] < base["hit_prob"]
+        assert variant["est_odds"] > base["est_odds"]
+
+    # 指定基础票 + 非法选项 → 422
+    bad = demo_client.post(
+        "/api/v1/pool/cold-variants",
+        json={"period_no": "26999", "base_picks": {"1": "x"}},
+    )
+    assert bad.status_code == 422
+
+
 def test_pool_paper_slip_with_real_period(demo_client: TestClient) -> None:
     """真实期次下的纸面池票提交（票 43：奖池型只纸面红线）。"""
     periods = demo_client.get("/api/v1/pool/periods").json()

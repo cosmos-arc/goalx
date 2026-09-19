@@ -976,6 +976,72 @@ handlers.push(
 		return HttpResponse.json(poolPeriodDetailFixture);
 	}),
 	http.get("*/api/v1/pool-sync/status", () => HttpResponse.json(poolSyncStatusFixture)),
+	http.post("*/api/v1/pool/cold-variants", async ({ request }) => {
+		const body = (await request.json()) as { coldness?: number };
+		const coldness = body.coldness ?? 2;
+		// 与后端同口径的最小贪心（mock 只服务前端测试：fixture 场 2/5 为冷门样本）
+		const basePicks: Record<string, string> = {};
+		for (const match of poolPeriodDetailFixture.matches) {
+			const best = match.selections.reduce((acc, sel) => ((sel.prob ?? 0) > (acc.prob ?? 0) ? sel : acc));
+			basePicks[String(match.match_seq)] = best.code;
+		}
+		const baseSel = (seq: number, code: string) =>
+			poolPeriodDetailFixture.matches.find((m) => m.match_seq === seq)?.selections.find((s) => s.code === code);
+		const candidates = poolPeriodDetailFixture.matches.flatMap((match) => {
+			const from = basePicks[String(match.match_seq)] ?? "h";
+			const fromEv = baseSel(match.match_seq, from)?.ev ?? -9;
+			return match.selections
+				.filter(
+					(sel) =>
+						sel.share !== null &&
+						sel.share < 0.25 &&
+						sel.code !== from &&
+						sel.ev !== null &&
+						sel.ev > 0 &&
+						sel.ev > fromEv,
+				)
+				.map((sel) => ({ gain: (sel.ev ?? 0) - fromEv, seq: match.match_seq, from, to: sel.code }));
+		});
+		candidates.sort((a, b) => b.gain - a.gain);
+		const ticket = (
+			picks: Record<string, string>,
+			swaps: Array<{ seq: number; from: string; to: string; gain: number }>,
+		) => {
+			let prob = 1;
+			let shareProd = 1;
+			for (const [seqStr, code] of Object.entries(picks)) {
+				const sel = baseSel(Number(seqStr), code);
+				prob *= sel?.prob ?? 0;
+				shareProd *= sel?.share ?? 1;
+			}
+			const odds = 0.65 / shareProd;
+			return {
+				picks,
+				swaps: swaps.map((s) => ({
+					match_seq: s.seq,
+					from_code: s.from,
+					to_code: s.to,
+					ev_gain: Number(s.gain.toFixed(4)),
+				})),
+				hit_prob: Number(prob.toFixed(6)),
+				est_odds: Number(odds.toFixed(2)),
+				ev: Number((prob * odds - 1).toFixed(4)),
+			};
+		};
+		const variants = [];
+		for (let k = 1; k <= coldness && k <= candidates.length; k += 1) {
+			const taken = candidates.slice(0, k);
+			const picks = { ...basePicks };
+			for (const swap of taken) picks[String(swap.seq)] = swap.to;
+			variants.push(ticket(picks, taken));
+		}
+		return HttpResponse.json({
+			period_no: "26999",
+			base: ticket(basePicks, []),
+			variants,
+			caliber: "变体 = 基础票按「冷选项 EV − 基础向 EV」降序贪心替换 1..N 处。",
+		});
+	}),
 	http.post("*/api/v1/pool-sync/run", () => HttpResponse.json(poolSyncStatusFixture)),
 	http.post("*/api/v1/pool-states", async ({ request }) => {
 		const body = (await request.json()) as { period_no?: string };

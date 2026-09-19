@@ -201,6 +201,21 @@ async def get_pool_period(
     if pool_period_id is None:
         raise HTTPException(status_code=404, detail=f"period {period_no} not found")
     now = utc_now_iso()
+    views = _match_views(db, pool_period_id, now)
+    return PoolPeriodDetailView(
+        period_no=period_no,
+        sales_deadline=pool_store.pool_period_deadline(db, pool_period_id),
+        matches=views,
+        state=_state_view(pool_store.pool_state_for_period(db, pool_period_id)),
+        shares_captured_at=pool_store.shares_captured_at(db, pool_period_id),
+        caliber=CALIBER_TEXT,
+    )
+
+
+def _match_views(
+    db: sqlite3.Connection, pool_period_id: int, now: str
+) -> list[PoolMatchView]:
+    """期次 → 三向视图列表（概率/份额/估计赔率/EV 装配；详情与生成器共用）。"""
     matches = pool_store.pool_matches_for_period(db, pool_period_id)
     shares = pool_store.latest_shares_for_period(db, pool_period_id)
     views: list[PoolMatchView] = []
@@ -255,13 +270,194 @@ async def get_pool_period(
                 selections=selection_views,
             )
         )
-    return PoolPeriodDetailView(
-        period_no=period_no,
-        sales_deadline=pool_store.pool_period_deadline(db, pool_period_id),
-        matches=views,
-        state=_state_view(pool_store.pool_state_for_period(db, pool_period_id)),
-        shares_captured_at=pool_store.shares_captured_at(db, pool_period_id),
-        caliber=CALIBER_TEXT,
+    return views
+
+
+# ---- 搏冷生成器（票 pool-v2/02）：纯函数贪心，口径与详情页一致 ----
+
+COLD_SHARE_MAX = 0.25  # 冷门阈值（与前端判定同口径）
+
+
+class ColdSwapView(BaseModel):
+    """一处冷门替换。"""
+
+    match_seq: int
+    from_code: str
+    to_code: str
+    ev_gain: float  # to.ev − from.ev
+
+
+class ColdTicketView(BaseModel):
+    """一张票的估值：命中概率 / 估计派彩赔率 / EV。"""
+
+    picks: dict[str, str]  # str(seq) → h/d/a
+    swaps: list[ColdSwapView] = []
+    hit_prob: float | None = None  # ∏p；任一场缺概率 → None
+    est_odds: float | None = None  # 0.65 ÷ ∏share（单次抽水口径）
+    ev: float | None = None  # hit_prob × est_odds − 1
+
+
+class ColdVariantsPayload(BaseModel):
+    """生成器入参：基础票缺省 = 各场最高概率向。"""
+
+    period_no: str = Field(min_length=1)
+    market_code: str = "ttt14"
+    base_picks: dict[str, str] | None = None
+    coldness: int = Field(default=2, ge=1, le=3)
+
+
+class ColdVariantsView(BaseModel):
+    """基础票 + 冷度 1..N 的贪心变体；口径说明前端原样展示。"""
+
+    period_no: str
+    base: ColdTicketView
+    variants: list[ColdTicketView]
+    caliber: str
+
+
+COLD_CALIBER_TEXT = (
+    "变体 = 基础票按「冷选项 EV − 基础向 EV」降序贪心替换 1..N 处"
+    "（冷选项 = 份额 <25% 且 EV 为正）；"
+    "命中概率 = 各场概率连乘；估计派彩赔率 = 返奖率 65% ÷ 各场份额连乘"
+    "（单次抽水近似，未建模分彩与 price impact）；EV = 概率 × 赔率 − 1。"
+)
+
+
+def _ticket_view(
+    picks: dict[int, str],
+    views: list[PoolMatchView],
+    swaps: list[ColdSwapView] | None = None,
+) -> ColdTicketView:
+    """票面 → 估值视图（任一场缺概率/份额时概率/赔率/EV 为 None，picks 照返）。"""
+    by_seq = {v.match_seq: v for v in views}
+    hit_prob: float | None = 1.0
+    est_odds: float | None = None
+    share_prod = 1.0
+    for seq, code in sorted(picks.items()):
+        sel = next((s for s in by_seq[seq].selections if s.code == code), None)
+        if sel is None or sel.prob is None or sel.share is None:
+            hit_prob, est_odds = None, None
+            break
+        hit_prob *= sel.prob
+        share_prod *= sel.share
+    if hit_prob is not None:
+        est_odds = 0.65 / share_prod
+    ev = (
+        hit_prob * est_odds - 1
+        if (hit_prob is not None and est_odds is not None)
+        else None
+    )
+    return ColdTicketView(
+        picks={str(seq): code for seq, code in sorted(picks.items())},
+        swaps=swaps or [],
+        hit_prob=round(hit_prob, 6) if hit_prob is not None else None,
+        est_odds=round(est_odds, 2) if est_odds is not None else None,
+        ev=round(ev, 4) if ev is not None else None,
+    )
+
+
+def _cold_variants(
+    views: list[PoolMatchView],
+    base_picks: dict[int, str],
+    coldness: int,
+) -> tuple[ColdTicketView, list[ColdTicketView]]:
+    """贪心：全局按 EV 增益降序候选，各场至多一处替换，输出冷度 1..N 变体。"""
+    base = _ticket_view(base_picks, views)
+    by_seq = {v.match_seq: v for v in views}
+    candidates: list[tuple[float, int, str, str]] = []  # (ev_gain, seq, from, to)
+    for seq, from_code in base_picks.items():
+        from_ev = next(
+            (
+                s.ev
+                for s in by_seq[seq].selections
+                if s.code == from_code and s.ev is not None
+            ),
+            None,
+        )
+        if from_ev is None:
+            continue
+        for sel in by_seq[seq].selections:
+            if (
+                sel.code == from_code
+                or sel.share is None
+                or sel.share >= COLD_SHARE_MAX
+            ):
+                continue
+            if sel.ev is None or sel.ev <= 0 or sel.ev <= from_ev:
+                continue
+            candidates.append((round(sel.ev - from_ev, 6), seq, from_code, sel.code))
+    candidates.sort(reverse=True)
+    variants: list[ColdTicketView] = []
+    taken: dict[int, tuple[str, str, float]] = {}
+    for ev_gain, seq, from_code, to_code in candidates:
+        if len(taken) >= coldness:
+            break
+        if seq in taken:
+            continue
+        taken[seq] = (from_code, to_code, ev_gain)
+        picks = dict(base_picks)
+        swaps: list[ColdSwapView] = []
+        for swap_seq, (swap_from, swap_to, swap_gain) in taken.items():
+            picks[swap_seq] = swap_to
+            swaps.append(
+                ColdSwapView(
+                    match_seq=swap_seq,
+                    from_code=swap_from,
+                    to_code=swap_to,
+                    ev_gain=round(swap_gain, 4),
+                )
+            )
+        variants.append(_ticket_view(picks, views, swaps))
+    return base, variants
+
+
+@router.post(
+    "/api/v1/pool/cold-variants",
+    summary="搏冷变体生成(贪心,票 pool-v2/02)",
+    response_model=ColdVariantsView,
+    responses={
+        404: {"description": "期次不存在"},
+        422: {"description": "基础票场次/选项非法"},
+    },
+)
+async def generate_cold_variants(
+    payload: ColdVariantsPayload, db: DbDep
+) -> ColdVariantsView:
+    """基础票 + 冷度 1..N 贪心冷门变体（估值口径与期次详情一致）。"""
+    pool_period_id = pool_store.pool_period_id(
+        db, payload.market_code, payload.period_no
+    )
+    if pool_period_id is None:
+        raise HTTPException(
+            status_code=404, detail=f"period {payload.period_no} not found"
+        )
+    views = _match_views(db, pool_period_id, utc_now_iso())
+    by_seq = {v.match_seq: v for v in views}
+    if payload.base_picks is not None:
+        for seq_str, code in payload.base_picks.items():
+            if not seq_str.isdigit() or int(seq_str) not in by_seq:
+                raise HTTPException(422, detail=f"unknown match_seq {seq_str}")
+            if code not in {"h", "d", "a"}:
+                raise HTTPException(422, detail=f"unknown selection {code}")
+        base_picks = {int(seq): code for seq, code in payload.base_picks.items()}
+    else:
+        base_picks = {}
+        for view in views:
+            prob_sel = max(
+                (s for s in view.selections if s.prob is not None),
+                key=lambda s: s.prob or 0,
+                default=None,
+            )
+            if prob_sel is not None:
+                base_picks[view.match_seq] = prob_sel.code
+        if not base_picks:
+            raise HTTPException(422, detail="期次无可用概率")
+    base, variants = _cold_variants(views, base_picks, payload.coldness)
+    return ColdVariantsView(
+        period_no=payload.period_no,
+        base=base,
+        variants=variants,
+        caliber=COLD_CALIBER_TEXT,
     )
 
 

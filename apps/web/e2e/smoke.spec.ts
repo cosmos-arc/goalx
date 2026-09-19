@@ -205,8 +205,8 @@ test("pool market page renders real periods or degrades honestly", async ({ page
 		const submit = page.getByTestId("pool-submit");
 		await expect(submit).toContainText("任9");
 	}
-	// 留位 not-available 三块与后端可用性无关
-	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(3);
+	// 留位 not-available（票 pool-v2/02 起生成器已上线，余两块）与后端可用性无关
+	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(2);
 });
 
 // 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过

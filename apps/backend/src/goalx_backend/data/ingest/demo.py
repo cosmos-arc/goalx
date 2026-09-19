@@ -469,6 +469,10 @@ def seed_demo(
 
 # 演示彩池期次（票 43）：3 场与竞彩演示场次同队同窗（模型概率映射可命中），
 # 其余 11 场为合成对阵（期次结构/分布展示）。销量不造——留 AI 代采待命态。
+_DEMO_POOL_COLD_DRAW_SEQ = (
+    6  # 场 6（巴萨 vs 塞维利亚）：冷门正 EV 样本（票 pool-v2/02）
+)
+
 _DEMO_POOL_MATCHES: list[tuple[str, str, str, float, float, float]] = [
     ("英超", "阿森纳", "切尔西", 6.2, 4.9, 1.32),
     ("英超", "利物浦", "曼城", 2.6, 3.5, 2.55),
@@ -487,13 +491,20 @@ _DEMO_POOL_MATCHES: list[tuple[str, str, str, float, float, float]] = [
 ]
 
 
-def _demo_pool_shares(odds: tuple[float, float, float]) -> dict[str, float]:
-    """演示分布：欧赔反比近似 + 主队偏置/平局低注（公众分布代理典型形态）。"""
+def _demo_pool_shares(
+    odds: tuple[float, float, float], cold_draw: bool = False
+) -> dict[str, float]:
+    """
+    演示分布：欧赔反比近似 + 主队偏置/平局低注（公众分布代理典型形态）。
+
+    cold_draw（票 pool-v2/02）：场 6 平局份额额外压低——模型概率与公众分布
+    背离的冷门正 EV 样本，供搏冷生成器/判定演示与测试。
+    """
     inv = [1.0 / o for o in odds]
     total = sum(inv)
     shares = [v / total for v in inv]
     shares[0] *= 1.15
-    shares[1] *= 0.9
+    shares[1] *= 0.55 if cold_draw else 0.9
     norm = sum(shares)
     return {"3": shares[0] / norm, "1": shares[1] / norm, "0": shares[2] / norm}
 
@@ -528,7 +539,9 @@ def _seed_demo_pool(conn: sqlite3.Connection, moment: datetime, observed: str) -
         share_rows.append(
             pool_store.PoolShareInput(
                 match_seq=seq,
-                shares=_demo_pool_shares(odds),
+                shares=_demo_pool_shares(
+                    odds, cold_draw=seq == _DEMO_POOL_COLD_DRAW_SEQ
+                ),
                 votes=None,
             )
         )

@@ -184,11 +184,33 @@ test("coming-soon blocks stay as reserved placeholders", async () => {
 
 	const coming = screen.getByTestId("pool-coming-soon");
 	const blocks = within(coming).getAllByTestId("empty-state");
-	expect(blocks).toHaveLength(3);
+	expect(blocks).toHaveLength(2);
 	expect(blocks[0]).toHaveTextContent("AI 证据总结");
 	expect(blocks[0]).toHaveAttribute("data-variant", "not-available");
 	expect(blocks[1]).toHaveTextContent("目标金额反推");
-	expect(blocks[2]).toHaveTextContent("搏冷模式生成器");
+});
+
+test("cold generator produces greedy variants and adopting applies picks", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 默认冷度 2；fixture 场 2/5 为冷门样本（客胜 EV+23% 优于主胜推荐位）
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	const variants = await screen.findByTestId("pool-variants");
+	expect(screen.getByTestId("pool-variant-base")).toHaveTextContent("基础票（14 场）");
+	const variant1 = within(screen.getByTestId("pool-variant-1"));
+	expect(variant1.getByText(/1 处冷门/)).toBeVisible();
+	expect(screen.getByTestId("pool-variant-1")).toHaveTextContent("第2场 胜→负");
+	expect(screen.getByTestId("pool-variant-1")).toHaveTextContent("EV+");
+	expect(screen.getByTestId("pool-variant-2")).toHaveTextContent("第2场");
+	expect(screen.getByTestId("pool-variant-2")).toHaveTextContent("第5场");
+	expect(variants).toBeVisible();
+
+	// 采用变体 1 → 场 2 选择变为负（冷选项），其余保持基础票
+	await userEvent.click(screen.getByTestId("pool-variant-1-adopt"));
+	expect(await screen.findByTestId("pool-generator-message")).toHaveTextContent("已采用变体 1");
+	expect(screen.getByTestId("pool-pick-2-a")).toHaveAttribute("aria-pressed", "true");
+	expect(screen.getByTestId("pool-pick-2-h")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("backend-unavailable degrades honestly with dashed slots", async () => {
@@ -202,10 +224,10 @@ test("backend-unavailable degrades honestly with dashed slots", async () => {
 		expect(found).toHaveLength(1);
 		return found[0] as HTMLElement;
 	});
-	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位三块照常
+	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位块照常
 	await userEvent.click(within(degraded).getByRole("button", { name: "重试" }));
 	expect(screen.queryByTestId("pool-slots")).toBeNull();
-	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(3);
+	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(2);
 });
 
 test("empty period list degrades to an honest no-data state", async () => {

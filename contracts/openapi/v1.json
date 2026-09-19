@@ -876,6 +876,44 @@
         }
       }
     },
+    "/api/v1/pool/cold-variants": {
+      "post": {
+        "tags": [
+          "pool"
+        ],
+        "summary": "搏冷变体生成(贪心,票 pool-v2/02)",
+        "description": "基础票 + 冷度 1..N 贪心冷门变体（估值口径与期次详情一致）。",
+        "operationId": "generate_cold_variants_api_v1_pool_cold_variants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ColdVariantsPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColdVariantsView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "期次不存在"
+          },
+          "422": {
+            "description": "基础票场次/选项非法"
+          }
+        }
+      }
+    },
     "/api/v1/pool-sync/run": {
       "post": {
         "tags": [
@@ -2188,6 +2226,165 @@
         ],
         "title": "BookQuoteView",
         "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
+      },
+      "ColdSwapView": {
+        "properties": {
+          "match_seq": {
+            "type": "integer",
+            "title": "Match Seq"
+          },
+          "from_code": {
+            "type": "string",
+            "title": "From Code"
+          },
+          "to_code": {
+            "type": "string",
+            "title": "To Code"
+          },
+          "ev_gain": {
+            "type": "number",
+            "title": "Ev Gain"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_seq",
+          "from_code",
+          "to_code",
+          "ev_gain"
+        ],
+        "title": "ColdSwapView",
+        "description": "一处冷门替换。"
+      },
+      "ColdTicketView": {
+        "properties": {
+          "picks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Picks"
+          },
+          "swaps": {
+            "items": {
+              "$ref": "#/components/schemas/ColdSwapView"
+            },
+            "type": "array",
+            "title": "Swaps",
+            "default": []
+          },
+          "hit_prob": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit Prob"
+          },
+          "est_odds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Est Odds"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "picks"
+        ],
+        "title": "ColdTicketView",
+        "description": "一张票的估值：命中概率 / 估计派彩赔率 / EV。"
+      },
+      "ColdVariantsPayload": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Period No"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code",
+            "default": "ttt14"
+          },
+          "base_picks": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Picks"
+          },
+          "coldness": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Coldness",
+            "default": 2
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no"
+        ],
+        "title": "ColdVariantsPayload",
+        "description": "生成器入参：基础票缺省 = 各场最高概率向。"
+      },
+      "ColdVariantsView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "base": {
+            "$ref": "#/components/schemas/ColdTicketView"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/ColdTicketView"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "base",
+          "variants",
+          "caliber"
+        ],
+        "title": "ColdVariantsView",
+        "description": "基础票 + 冷度 1..N 的贪心变体；口径说明前端原样展示。"
       },
       "ConditionProgress": {
         "properties": {
