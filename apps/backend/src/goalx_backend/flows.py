@@ -148,3 +148,11 @@ def daily_wrap_flow() -> dict[str, object]:
         findings,
     )
     return {"settlement": settlement, "clv": clv_stats, "audit_findings": findings}
+
+
+@flow(name="intel-collect", log_prints=True)
+def intel_collect_flow() -> dict[str, object]:
+    """情报采集（票 09）：当期彩池场次内部推导情报（幂等，零外部请求）。"""
+    stats = tasks.intel_collection()
+    logger.info("intel collect: {}", stats)
+    return stats

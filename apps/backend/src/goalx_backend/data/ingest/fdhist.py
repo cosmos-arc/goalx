@@ -146,3 +146,50 @@ def import_history(
             time.sleep(0.5)  # 对源站礼貌限速
     conn.commit()
     return stats
+
+
+def hist_team_names(conn: sqlite3.Connection, competition: str) -> list[str]:
+    """某 fd 联赛在库的全部队名（别名匹配候选集）。"""
+    return [
+        str(r[0])
+        for r in conn.execute(
+            """
+            SELECT DISTINCT home_team FROM hist_matches WHERE competition = ?
+            UNION
+            SELECT DISTINCT away_team FROM hist_matches WHERE competition = ?
+            """,
+            (competition, competition),
+        )
+    ]
+
+
+def recent_team_matches(
+    conn: sqlite3.Connection, competition: str, team: str, *, limit: int = 6
+) -> list[sqlite3.Row]:
+    """某队最近 N 场已赛（当前赛季优先，跨季自然衔接）。"""
+    return conn.execute(
+        """
+        SELECT season, match_date, home_team, away_team, fthg, ftag, ftr
+        FROM hist_matches
+        WHERE competition = ? AND (home_team = ? OR away_team = ?)
+        ORDER BY match_date DESC LIMIT ?
+        """,
+        (competition, team, team, limit),
+    ).fetchall()
+
+
+def h2h_matches(
+    conn: sqlite3.Connection, competition: str, home: str, away: str, *, limit: int = 6
+) -> list[sqlite3.Row]:
+    """两队最近 N 次同联赛交锋。"""
+    return conn.execute(
+        """
+        SELECT season, match_date, home_team, away_team, fthg, ftag, ftr
+        FROM hist_matches
+        WHERE competition = ?
+          AND ((home_team = ? AND away_team = ?)
+               OR (home_team = ? AND away_team = ?))
+        ORDER BY match_date DESC LIMIT ?
+        """,
+        (competition, home, away, away, home, limit),
+    ).fetchall()

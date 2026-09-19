@@ -36,12 +36,13 @@ from goalx_backend.flows import (
     daily_wrap_flow,
     draw_results_sync_flow,
     eu_odds_closing_flow,
+    intel_collect_flow,
     pool_snapshot_flow,
 )
 
 
 def main() -> None:
-    """单进程服务协议 v1 的六个定时 deployment。"""
+    """单进程服务协议 v1 的七个定时 deployment。"""
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -90,7 +91,15 @@ def main() -> None:
             schedule=Schedule(cron="20 10,16,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    serve(daily, closing, draw_sync, draw_sync_sweep, wrap, pool)
+    # 情报（票 09）：跟在 10:20/22:20 彩池同步与 10:00 采集之后（幂等增量）
+    intel = cast(
+        RunnerDeployment,
+        intel_collect_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    serve(daily, closing, draw_sync, draw_sync_sweep, wrap, pool, intel)
 
 
 if __name__ == "__main__":
