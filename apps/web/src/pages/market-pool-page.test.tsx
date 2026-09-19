@@ -216,6 +216,51 @@ test("target reverse builds a plan and adopting applies picks", async () => {
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
 });
 
+test("panels degrade honestly on missing data and endpoint errors", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 缺数据票面：估值字段全 null + 无冷门变体 → 票行降级文案 + 空变体说明
+	server.use(
+		http.post("*/api/v1/pool/cold-variants", () =>
+			HttpResponse.json({
+				period_no: "26999",
+				base: { picks: { "1": "h" }, swaps: [], hit_prob: null, est_odds: null, ev: null },
+				variants: [],
+				caliber: "缺份额/概率的票面估值不可得（诚实降级）。",
+			}),
+		),
+		http.post("*/api/v1/pool/target-plan", () =>
+			HttpResponse.json({
+				period_no: "26999",
+				risk: "balanced",
+				ticket: { picks: { "1": "h" }, swaps: [], hit_prob: null, est_odds: null, ev: null },
+				est_payout_per_unit: null,
+				suggested_units: 0,
+				target_reached: false,
+				note: "所选场次有缺份额/概率数据，估计派彩不可得——注数建议为 0（诚实降级）。",
+				caliber: "不承诺目标达成。",
+			}),
+		),
+	);
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	expect(await screen.findByTestId("pool-variants")).toBeVisible();
+	expect(screen.getByTestId("pool-variant-base")).toHaveTextContent("命中率缺数据");
+	expect(screen.getByTestId("pool-variants-empty")).toHaveTextContent("无正期望冷门");
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	expect(await screen.findByTestId("pool-target-result")).toBeVisible();
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("命中率缺数据");
+	expect(screen.getByTestId("pool-target-units")).toHaveTextContent("缺数据");
+	expect(screen.getByTestId("pool-target-units")).toHaveTextContent("0 注");
+
+	// 端点错误：生成失败信息如实呈现（不崩、可重试）
+	server.use(http.post("*/api/v1/pool/cold-variants", () => HttpResponse.error()));
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-generator-error")).toBeInTheDocument();
+	});
+});
+
 test("cold generator produces greedy variants and adopting applies picks", async () => {
 	await renderAt("/markets/pool");
 	await screen.findByTestId("pool-slot-1");
