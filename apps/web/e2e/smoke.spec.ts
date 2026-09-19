@@ -99,7 +99,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(19);
+	expect(await list.locator("article").count()).toBe(20);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -110,7 +110,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(19);
+	await expect(list.locator("article")).toHaveCount(20);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
@@ -205,8 +205,8 @@ test("pool market page renders real periods or degrades honestly", async ({ page
 		const submit = page.getByTestId("pool-submit");
 		await expect(submit).toContainText("任9");
 	}
-	// 留位 not-available 三块与后端可用性无关
-	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(3);
+	// 留位 not-available（票 pool-v2/02 起生成器已上线，余两块）与后端可用性无关
+	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(1);
 });
 
 // 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过

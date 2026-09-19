@@ -222,6 +222,28 @@ export function fetchPoolSyncStatus(): Promise<PoolSyncStatus> {
 	return unwrap(client.GET("/api/v1/pool-sync/status"));
 }
 
+export type ColdVariantsInput = Schemas["ColdVariantsPayload"];
+export type ColdVariants = Schemas["ColdVariantsView"];
+
+/**
+ * 搏冷变体生成（票 pool-v2/02）：基础票（缺省=各场最高概率）按 EV 增益
+ * 贪心替换 1..N 处冷门；估值口径与期次详情一致。
+ */
+export function generateColdVariants(payload: ColdVariantsInput): Promise<ColdVariants> {
+	return unwrap(client.POST("/api/v1/pool/cold-variants", { body: payload }));
+}
+
+export type TargetPlanInput = Schemas["TargetPlanPayload"];
+export type TargetPlan = Schemas["TargetPlanView"];
+
+/**
+ * 目标金额反推（票 pool-v2/03）：任9 贪心选场 + 冷替换抬派彩；
+ * 估计口径不承诺目标达成（实际派彩随最终池变）。
+ */
+export function buildTargetPlan(payload: TargetPlanInput): Promise<TargetPlan> {
+	return unwrap(client.POST("/api/v1/pool/target-plan", { body: payload }));
+}
+
 /** 触发一次彩池同步（票 43：源B 期次/对阵/人气；幂等）。 */
 export function runPoolSync(): Promise<PoolSyncStatus> {
 	return unwrap(client.POST("/api/v1/pool-sync/run"));

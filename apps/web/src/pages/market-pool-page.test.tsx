@@ -59,15 +59,20 @@ test("real periods render 14 matches with probability/share/odds/ev chain", asyn
 	expect(slots.querySelectorAll('[data-testid^="pool-slot-empty-"]')).toHaveLength(0);
 	expect(screen.queryByTestId("pool-skeleton-banner")).toBeNull();
 
-	// 场 1 三向链路：概率 + 份额 + 估计赔率@ + EV；推荐/搏冷标记
+	// 场 1 三向链路：概率 + 份额 + 估计赔率@ + EV；推荐标记（无冷门正 EV → 无搏冷）
 	const pickGroup = screen.getByTestId("pool-pick-1");
 	expect(within(pickGroup).getByText(/推荐/)).toBeInTheDocument();
-	expect(within(pickGroup).getByText(/搏冷/)).toBeInTheDocument();
+	expect(within(pickGroup).queryByText(/搏冷/)).toBeNull();
 	const home = screen.getByTestId("pool-pick-1-h");
 	expect(home).toHaveTextContent("45%"); // 概率
 	expect(home).toHaveTextContent("份50%"); // 公众份额
 	expect(home).toHaveTextContent("@1.30"); // 估计派彩赔率 = 0.65/0.5
 	expect(home).toHaveTextContent("EV-42%"); // 0.45×1.3−1
+
+	// 场 2 价值判定搏冷：客胜份额 18%<25% 且 EV 0.34×3.61−1≈+23% 优于推荐位主胜
+	const coldSlot = screen.getByTestId("pool-pick-2-a");
+	expect(within(coldSlot).getByText(/搏冷/)).toHaveAttribute("title", expect.stringContaining("冷门正期望"));
+	expect(within(coldSlot).getByText(/搏冷/)).toHaveAttribute("title", expect.stringContaining("EV+23%"));
 });
 
 test("picks are one-per-match toggles and prefill fills best selections", async () => {
@@ -86,8 +91,8 @@ test("picks are one-per-match toggles and prefill fills best selections", async 
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("1 注");
 	expect(screen.getByTestId("pool-pick-1-h")).toHaveAttribute("aria-pressed", "true");
-	// 场 2 概率最高 = 负 36%（> 主 32%）——概率而非份额驱动推荐
-	expect(screen.getByTestId("pool-pick-2-a")).toHaveAttribute("aria-pressed", "true");
+	// 场 2 概率最高 = 主 42%（票 pool-v2/01 fixture：搏冷样本的推荐位与冷门位分离）
+	expect(screen.getByTestId("pool-pick-2-h")).toHaveAttribute("aria-pressed", "true");
 	// 手动补选第 10 场 → C(10,9) = 10 注
 	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("10 注");
@@ -179,11 +184,104 @@ test("coming-soon blocks stay as reserved placeholders", async () => {
 
 	const coming = screen.getByTestId("pool-coming-soon");
 	const blocks = within(coming).getAllByTestId("empty-state");
-	expect(blocks).toHaveLength(3);
+	expect(blocks).toHaveLength(1);
 	expect(blocks[0]).toHaveTextContent("AI 证据总结");
 	expect(blocks[0]).toHaveAttribute("data-variant", "not-available");
-	expect(blocks[1]).toHaveTextContent("目标金额反推");
-	expect(blocks[2]).toHaveTextContent("搏冷模式生成器");
+});
+
+test("target reverse builds a plan and adopting applies picks", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 默认中档 ¥10000 → 任9 票面 + 建议注数 + 不承诺口径
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	const result = await screen.findByTestId("pool-target-result");
+	expect(result).toBeVisible();
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("中档票面（9 场）");
+	const units = screen.getByTestId("pool-target-units");
+	expect(units).toHaveTextContent(/建议 \d+ 注/);
+	expect(units).toHaveTextContent("¥2/注");
+
+	// 搏档：任9 + 场 2 冷替换（fixture 冷门样本）
+	await userEvent.selectOptions(screen.getByTestId("pool-target-risk"), "bold");
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("搏档票面（9 场）");
+	});
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("第2场 胜→负");
+
+	// 采用 → 9 场选择回填
+	await userEvent.click(screen.getByTestId("pool-target-ticket-adopt"));
+	expect(await screen.findByTestId("pool-target-message")).toHaveTextContent("已采用反推票面");
+	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
+});
+
+test("panels degrade honestly on missing data and endpoint errors", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 缺数据票面：估值字段全 null + 无冷门变体 → 票行降级文案 + 空变体说明
+	server.use(
+		http.post("*/api/v1/pool/cold-variants", () =>
+			HttpResponse.json({
+				period_no: "26999",
+				base: { picks: { "1": "h" }, swaps: [], hit_prob: null, est_odds: null, ev: null },
+				variants: [],
+				caliber: "缺份额/概率的票面估值不可得（诚实降级）。",
+			}),
+		),
+		http.post("*/api/v1/pool/target-plan", () =>
+			HttpResponse.json({
+				period_no: "26999",
+				risk: "balanced",
+				ticket: { picks: { "1": "h" }, swaps: [], hit_prob: null, est_odds: null, ev: null },
+				est_payout_per_unit: null,
+				suggested_units: 0,
+				target_reached: false,
+				note: "所选场次有缺份额/概率数据，估计派彩不可得——注数建议为 0（诚实降级）。",
+				caliber: "不承诺目标达成。",
+			}),
+		),
+	);
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	expect(await screen.findByTestId("pool-variants")).toBeVisible();
+	expect(screen.getByTestId("pool-variant-base")).toHaveTextContent("命中率缺数据");
+	expect(screen.getByTestId("pool-variants-empty")).toHaveTextContent("无正期望冷门");
+	await userEvent.click(screen.getByTestId("pool-target-generate"));
+	expect(await screen.findByTestId("pool-target-result")).toBeVisible();
+	expect(screen.getByTestId("pool-target-ticket")).toHaveTextContent("命中率缺数据");
+	expect(screen.getByTestId("pool-target-units")).toHaveTextContent("缺数据");
+	expect(screen.getByTestId("pool-target-units")).toHaveTextContent("0 注");
+
+	// 端点错误：生成失败信息如实呈现（不崩、可重试）
+	server.use(http.post("*/api/v1/pool/cold-variants", () => HttpResponse.error()));
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-generator-error")).toBeInTheDocument();
+	});
+});
+
+test("cold generator produces greedy variants and adopting applies picks", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 默认冷度 2；fixture 场 2/5 为冷门样本（客胜 EV+23% 优于主胜推荐位）
+	await userEvent.click(screen.getByTestId("pool-generate"));
+	const variants = await screen.findByTestId("pool-variants");
+	expect(screen.getByTestId("pool-variant-base")).toHaveTextContent("基础票（14 场）");
+	const variant1 = within(screen.getByTestId("pool-variant-1"));
+	expect(variant1.getByText(/1 处冷门/)).toBeVisible();
+	expect(screen.getByTestId("pool-variant-1")).toHaveTextContent("第2场 胜→负");
+	expect(screen.getByTestId("pool-variant-1")).toHaveTextContent("EV+");
+	expect(screen.getByTestId("pool-variant-2")).toHaveTextContent("第2场");
+	expect(screen.getByTestId("pool-variant-2")).toHaveTextContent("第5场");
+	expect(variants).toBeVisible();
+
+	// 采用变体 1 → 场 2 选择变为负（冷选项），其余保持基础票
+	await userEvent.click(screen.getByTestId("pool-variant-1-adopt"));
+	expect(await screen.findByTestId("pool-generator-message")).toHaveTextContent("已采用变体 1");
+	expect(screen.getByTestId("pool-pick-2-a")).toHaveAttribute("aria-pressed", "true");
+	expect(screen.getByTestId("pool-pick-2-h")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("backend-unavailable degrades honestly with dashed slots", async () => {
@@ -197,10 +295,10 @@ test("backend-unavailable degrades honestly with dashed slots", async () => {
 		expect(found).toHaveLength(1);
 		return found[0] as HTMLElement;
 	});
-	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位三块照常
+	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位块照常
 	await userEvent.click(within(degraded).getByRole("button", { name: "重试" }));
 	expect(screen.queryByTestId("pool-slots")).toBeNull();
-	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(3);
+	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(1);
 });
 
 test("empty period list degrades to an honest no-data state", async () => {

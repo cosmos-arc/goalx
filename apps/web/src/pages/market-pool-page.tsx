@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
+	buildTargetPlan,
+	type ColdVariants,
 	createPoolSlip,
 	fetchBankroll,
 	fetchPoolPeriodDetail,
 	fetchPoolPeriods,
 	fetchPoolSyncStatus,
+	generateColdVariants,
 	type PoolMatch,
 	type PoolSelection,
 	runPoolSync,
@@ -68,24 +71,98 @@ function bestSelection(match: PoolMatch): string | null {
 	return best;
 }
 
-/** 一场搏冷向（概率最低）；无概率场返回 null。 */
-function coldestSelection(match: PoolMatch): string | null {
-	let worst: string | null = null;
-	let worstProb = 2;
+/** 冷门阈值（票 pool-v2/01）：公众份额低于此值才算冷门。 */
+const COLD_SHARE_MAX = 0.25;
+
+/**
+ * 一场"值得搏冷"的选项（票 pool-v2/01 价值判定，替代旧"概率最低"标注）：
+ * 冷选项（份额 <25% 且 EV>0）中 EV 最高者，且 EV 须高于本场推荐（最高概率）
+ * 选项的 EV——牺牲命中换赔率只在正期望且优于稳妥选时值得。无则 null。
+ */
+function coldWorthySelection(match: PoolMatch): { code: string; ev: number } | null {
+	let best: { code: string; ev: number } | null = null;
 	for (const sel of match.selections) {
-		if (sel.prob === null || sel.prob === undefined) {
-			continue;
-		}
-		if (worst === null || sel.prob < worstProb) {
-			worst = sel.code;
-			worstProb = sel.prob;
-		}
+		const share = sel.share ?? null;
+		const ev = sel.ev ?? null;
+		if (share === null || share >= COLD_SHARE_MAX) continue;
+		if (ev === null || ev <= 0) continue;
+		if (best === null || ev > best.ev) best = { code: sel.code, ev };
 	}
-	return worst;
+	if (!best) return null;
+	const recommended = bestSelection(match);
+	const recommendedEv = recommended ? (selectionOf(match, recommended)?.ev ?? null) : null;
+	if (recommendedEv !== null && recommendedEv >= best.ev) return null;
+	return best;
 }
 
 function selectionOf(match: PoolMatch, code: string): PoolSelection | undefined {
 	return match.selections.find((sel) => sel.code === code);
+}
+
+/** 池页三向短标（官方口径：胜/平/负，非 had 页的主胜/客胜）。 */
+const POOL_LABELS: Record<string, string> = { h: "胜", d: "平", a: "负" };
+
+/** 反推风险档标签（票 pool-v2/03）。 */
+const RISK_LABELS: Record<string, string> = { steady: "稳", balanced: "中", bold: "搏" };
+
+/** 生成器票行（票 pool-v2/02）：替换明细 + 命中概率/估计派彩/EV + 采用。 */
+function TicketRow({
+	label,
+	ticket,
+	testid,
+	onAdopt,
+}: {
+	label: string;
+	ticket: ColdVariants["base"];
+	testid: string;
+	onAdopt?: () => void;
+}) {
+	return (
+		<div
+			className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border p-3 text-sm"
+			data-testid={testid}
+		>
+			<span className="font-medium">{label}</span>
+			{ticket.swaps.length > 0 ? (
+				<span className="text-xs text-muted-foreground">
+					{ticket.swaps
+						.map(
+							(swap) =>
+								`第${swap.match_seq}场 ${POOL_LABELS[swap.from_code]}→${POOL_LABELS[swap.to_code]}（EV+${(swap.ev_gain * 100).toFixed(0)}%）`,
+						)
+						.join("；")}
+				</span>
+			) : null}
+			{ticket.hit_prob !== null && ticket.hit_prob !== undefined ? (
+				<span className={TABULAR_NUMS} title="各场概率连乘">
+					命中 {(ticket.hit_prob * 100).toFixed(1)}%
+				</span>
+			) : (
+				<span className="text-muted-foreground">命中率缺数据</span>
+			)}
+			{ticket.est_odds !== null && ticket.est_odds !== undefined ? (
+				<span className={TABULAR_NUMS} title="返奖率 65% ÷ 各场份额连乘">
+					@{ticket.est_odds.toFixed(0)}
+				</span>
+			) : null}
+			{ticket.ev !== null && ticket.ev !== undefined ? (
+				<span className={`${TABULAR_NUMS} ${ticket.ev > 0 ? "text-info" : "text-muted-foreground"}`}>
+					EV{ticket.ev >= 0 ? "+" : ""}
+					{(ticket.ev * 100).toFixed(0)}%
+				</span>
+			) : null}
+			{onAdopt ? (
+				<button
+					type="button"
+					data-testid={`${testid}-adopt`}
+					className="ml-auto rounded-md border border-border px-2 py-1 text-xs"
+					onClick={onAdopt}
+				>
+					采用
+				</button>
+			) : null}
+		</div>
+	);
 }
 
 /** 开赛时间（北京时间口径展示）。 */
@@ -127,6 +204,16 @@ export function MarketPoolPage() {
 	/** 已选场序 → 三向选择（一场一选，任9 口径）。 */
 	const [picks, setPicks] = useState<Record<number, string>>({});
 	const [submitResult, setSubmitResult] = useState<string | null>(null);
+	const [coldness, setColdness] = useState(2);
+	const [generatorMessage, setGeneratorMessage] = useState<string | null>(null);
+	const [targetAmount, setTargetAmount] = useState(10000);
+	const [targetRisk, setTargetRisk] = useState<"steady" | "balanced" | "bold">("balanced");
+	const [targetMessage, setTargetMessage] = useState<string | null>(null);
+	const generatorMutation = useMutation({
+		mutationFn: generateColdVariants,
+		onSuccess: () => setGeneratorMessage(null),
+	});
+	const targetMutation = useMutation({ mutationFn: buildTargetPlan });
 	const submitMutation = useMutation({
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
@@ -140,6 +227,8 @@ export function MarketPoolPage() {
 
 	const detail = detailQuery.data;
 	const matches = detail?.matches ?? [];
+	const variants = generatorMutation.data;
+	const plan = targetMutation.data;
 	// 已选（一场一选）：match + 所选向，索引访问经 flatMap 收窄（无 undefined）
 	const pickedEntries = matches.flatMap((m) => {
 		const code = picks[m.match_seq];
@@ -228,7 +317,7 @@ export function MarketPoolPage() {
 						) : (
 							<>
 								14 场任选 9 场；<GlossaryTerm id="pool-ev">彩池 EV</GlossaryTerm> 为彩池口径（估计派彩赔率 = 返奖率 65%
-								÷ 份额）。推荐/搏冷标记 = 概率最高/最低向（非生成器产出）。
+								÷ 份额）。推荐 = 概率最高向；搏冷 = 价值判定（冷选项份额低于 25% 且 EV 为正、优于推荐向，悬浮看理由）。
 							</>
 						)}
 					</p>
@@ -360,7 +449,7 @@ export function MarketPoolPage() {
 					<section aria-label="14 场列表" data-testid="pool-slots" className="mb-8 space-y-2">
 						{matches.map((match) => {
 							const recommended = bestSelection(match);
-							const coldest = coldestSelection(match);
+							const cold = coldWorthySelection(match);
 							return (
 								<article
 									key={match.match_seq}
@@ -428,8 +517,13 @@ export function MarketPoolPage() {
 													{recommended === sel ? (
 														<span className="ml-1 rounded bg-info/10 px-1 text-info">推荐</span>
 													) : null}
-													{coldest === sel && recommended !== coldest ? (
-														<span className="ml-1 rounded bg-warning/10 px-1">搏冷</span>
+													{cold?.code === sel ? (
+														<span
+															className="ml-1 rounded bg-warning/10 px-1"
+															title={`冷门正期望：概率 ${((data?.prob ?? 0) * 100).toFixed(0)}% vs 份额 ${((data?.share ?? 0) * 100).toFixed(0)}%，估计赔率 @${(data?.implied_odds ?? 0).toFixed(2)}，EV+${(cold.ev * 100).toFixed(0)}%（高于推荐向）`}
+														>
+															搏冷
+														</span>
 													) : null}
 												</button>
 											);
@@ -490,15 +584,194 @@ export function MarketPoolPage() {
 					</section>
 				) : null}
 
-				{/* 留位：AI 证据总结 / 目标金额反推 / 搏冷生成器（not-available） */}
-				<section aria-label="随 M3/v2 上线" className="mb-8 grid gap-3 sm:grid-cols-3" data-testid="pool-coming-soon">
+				{/* 搏冷生成器（票 pool-v2/02）：基础票按 EV 增益贪心替换 1..N 处冷门 */}
+				{periods.length > 0 ? (
+					<section
+						aria-labelledby="pool-generator-heading"
+						className="mb-8 rounded-lg border border-border bg-card p-4"
+						data-testid="pool-generator"
+					>
+						<h2 id="pool-generator-heading" className="text-sm font-medium">
+							搏冷生成器
+						</h2>
+						<p className="mt-1 text-xs text-muted-foreground">
+							基础票 = 当前全选（未选满时用各场最高概率），按「冷选项 EV − 基础向 EV」降序贪心替换；
+							变体牺牲命中率抬估计派彩，采用前看 EV 与命中概率两栏。
+						</p>
+						<div className="mt-3 flex flex-wrap items-center gap-2">
+							<label className="text-xs text-muted-foreground" htmlFor="pool-coldness">
+								冷度（替换处数）
+							</label>
+							<select
+								id="pool-coldness"
+								data-testid="pool-coldness"
+								value={coldness}
+								onChange={(event) => setColdness(Number(event.target.value))}
+								className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+							>
+								<option value={1}>1 处</option>
+								<option value={2}>2 处</option>
+								<option value={3}>3 处</option>
+							</select>
+							<button
+								type="button"
+								data-testid="pool-generate"
+								disabled={!activePeriod || generatorMutation.isPending}
+								className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+								onClick={() =>
+									generatorMutation.mutate({
+										period_no: activePeriod ?? "",
+										market_code: "ttt14",
+										coldness,
+										...(pickedEntries.length === matches.length && matches.length > 0
+											? {
+													base_picks: Object.fromEntries(
+														pickedEntries.map(({ match, code }) => [String(match.match_seq), code]),
+													),
+												}
+											: {}),
+									})
+								}
+							>
+								{generatorMutation.isPending ? "生成中…" : "生成变体"}
+							</button>
+							{generatorMutation.isError ? (
+								<span className="text-xs text-destructive" data-testid="pool-generator-error">
+									生成失败：{generatorMutation.error instanceof Error ? generatorMutation.error.message : "未知错误"}
+								</span>
+							) : null}
+						</div>
+						{variants ? (
+							<div className="mt-3 space-y-2" data-testid="pool-variants">
+								<p className="text-xs text-muted-foreground" data-testid="pool-generator-caliber">
+									{variants.caliber}
+								</p>
+								<TicketRow
+									label={`基础票（${Object.keys(variants.base.picks).length} 场）`}
+									ticket={variants.base}
+									testid="pool-variant-base"
+								/>
+								{variants.variants.map((variant) => (
+									<TicketRow
+										key={variant.swaps.map((s) => `${s.match_seq}${s.to_code}`).join("-")}
+										label={`变体 ${variant.swaps.length}（${variant.swaps.length} 处冷门）`}
+										ticket={variant}
+										testid={`pool-variant-${variant.swaps.length}`}
+										onAdopt={() => {
+											setPicks(
+												Object.fromEntries(Object.entries(variant.picks).map(([seq, code]) => [Number(seq), code])),
+											);
+											setGeneratorMessage(`已采用变体 ${variant.swaps.length} 作为当前选择`);
+										}}
+									/>
+								))}
+								{variants.variants.length === 0 ? (
+									<p className="text-xs text-muted-foreground" data-testid="pool-variants-empty">
+										本期无正期望冷门可替换（冷选项 EV 均为负或不如基础向）——跟大众是更优解。
+									</p>
+								) : null}
+								{generatorMessage ? (
+									<p className="text-xs text-info" data-testid="pool-generator-message">
+										{generatorMessage}
+									</p>
+								) : null}
+							</div>
+						) : null}
+					</section>
+				) : null}
+
+				{/* 目标金额反推（票 pool-v2/03）：输入目标 → 推荐票面 + 建议注数 */}
+				{periods.length > 0 ? (
+					<section
+						aria-labelledby="pool-target-heading"
+						className="mb-8 rounded-lg border border-border bg-card p-4"
+						data-testid="pool-target"
+					>
+						<h2 id="pool-target-heading" className="text-sm font-medium">
+							目标金额反推
+						</h2>
+						<p className="mt-1 text-xs text-muted-foreground">
+							输入目标奖金，反推推荐票面与建议注数。估计派彩随最终池变——输出是"若命中估计得 X"，不承诺达成。
+						</p>
+						<div className="mt-3 flex flex-wrap items-center gap-2">
+							<label className="text-xs text-muted-foreground" htmlFor="pool-target-amount">
+								目标（¥）
+							</label>
+							<input
+								id="pool-target-amount"
+								data-testid="pool-target-amount"
+								type="number"
+								min={1}
+								value={targetAmount}
+								onChange={(event) => setTargetAmount(Number(event.target.value))}
+								className="w-32 rounded-md border border-border bg-background px-2 py-1 text-sm"
+							/>
+							<select
+								aria-label="风险档"
+								data-testid="pool-target-risk"
+								value={targetRisk}
+								onChange={(event) => setTargetRisk(event.target.value as "steady" | "balanced" | "bold")}
+								className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+							>
+								<option value="steady">稳（14 场全稳）</option>
+								<option value="balanced">中（任9 + 至多 1 冷）</option>
+								<option value="bold">搏（任9 + 至多 3 冷）</option>
+							</select>
+							<button
+								type="button"
+								data-testid="pool-target-generate"
+								disabled={
+									!activePeriod || targetMutation.isPending || !Number.isFinite(targetAmount) || targetAmount <= 0
+								}
+								className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+								onClick={() =>
+									targetMutation.mutate({
+										period_no: activePeriod ?? "",
+										market_code: "ttt14",
+										target_amount: targetAmount,
+										risk: targetRisk,
+									})
+								}
+							>
+								{targetMutation.isPending ? "反推中…" : "反推票面"}
+							</button>
+						</div>
+						{plan ? (
+							<div className="mt-3 space-y-2" data-testid="pool-target-result">
+								<p className="text-xs text-muted-foreground">{plan.note}</p>
+								<TicketRow
+									label={`${RISK_LABELS[plan.risk]}档票面（${Object.keys(plan.ticket.picks).length} 场）`}
+									ticket={plan.ticket}
+									testid="pool-target-ticket"
+									onAdopt={() => {
+										setPicks(
+											Object.fromEntries(Object.entries(plan.ticket.picks).map(([seq, code]) => [Number(seq), code])),
+										);
+										setTargetMessage("已采用反推票面作为当前选择");
+									}}
+								/>
+								<p className="text-sm" data-testid="pool-target-units">
+									单注估计派彩{" "}
+									{plan.est_payout_per_unit === null || plan.est_payout_per_unit === undefined
+										? "缺数据"
+										: `¥${plan.est_payout_per_unit.toLocaleString("zh-CN")}`}
+									，建议 <span className={TABULAR_NUMS}>{plan.suggested_units}</span> 注（¥2/注）达目标 ¥
+									{targetAmount.toLocaleString("zh-CN")}
+									{plan.target_reached ? "（单注即达标）" : ""}
+								</p>
+								{targetMessage ? (
+									<p className="text-xs text-info" data-testid="pool-target-message">
+										{targetMessage}
+									</p>
+								) : null}
+							</div>
+						) : null}
+					</section>
+				) : null}
+
+				{/* 留位：AI 证据总结（not-available，随 M3） */}
+				<section aria-label="随 M3 上线" className="mb-8 grid gap-3" data-testid="pool-coming-soon">
 					<EmptyState variant="not-available" message="AI 证据总结（为何这样研判）" hint="随 M3 LLM 线上线。" />
-					<EmptyState variant="not-available" message="目标金额反推选择" hint="随 v2 上线（骨架落地后毕业）。" />
-					<EmptyState
-						variant="not-available"
-						message="搏冷模式生成器"
-						hint="随 v2 上线（当前搏冷标记仅为前端标注）。"
-					/>
 				</section>
 
 				{/* 提交：纸面池票（pool-slips 接线，票 43）；真金不呈现 */}

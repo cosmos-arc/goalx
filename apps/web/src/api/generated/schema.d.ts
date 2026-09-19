@@ -332,6 +332,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pool/cold-variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 搏冷变体生成(贪心,票 pool-v2/02)
+         * @description 基础票 + 冷度 1..N 贪心冷门变体（估值口径与期次详情一致）。
+         */
+        post: operations["generate_cold_variants_api_v1_pool_cold_variants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool/target-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 目标金额反推票面(任9 贪心+冷替换,票 pool-v2/03)
+         * @description 目标奖金 → 推荐票面 + 建议注数（估计口径，诚实标注不承诺）。
+         */
+        post: operations["build_target_plan_api_v1_pool_target_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pool-sync/run": {
         parameters: {
             query?: never;
@@ -915,6 +955,76 @@ export interface components {
             odds: components["schemas"]["SelectionTriple"];
             /** Captured At */
             captured_at?: string | null;
+        };
+        /**
+         * ColdSwapView
+         * @description 一处冷门替换。
+         */
+        ColdSwapView: {
+            /** Match Seq */
+            match_seq: number;
+            /** From Code */
+            from_code: string;
+            /** To Code */
+            to_code: string;
+            /** Ev Gain */
+            ev_gain: number;
+        };
+        /**
+         * ColdTicketView
+         * @description 一张票的估值：命中概率 / 估计派彩赔率 / EV。
+         */
+        ColdTicketView: {
+            /** Picks */
+            picks: {
+                [key: string]: string;
+            };
+            /**
+             * Swaps
+             * @default []
+             */
+            swaps: components["schemas"]["ColdSwapView"][];
+            /** Hit Prob */
+            hit_prob?: number | null;
+            /** Est Odds */
+            est_odds?: number | null;
+            /** Ev */
+            ev?: number | null;
+        };
+        /**
+         * ColdVariantsPayload
+         * @description 生成器入参：基础票缺省 = 各场最高概率向。
+         */
+        ColdVariantsPayload: {
+            /** Period No */
+            period_no: string;
+            /**
+             * Market Code
+             * @default ttt14
+             */
+            market_code: string;
+            /** Base Picks */
+            base_picks?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Coldness
+             * @default 2
+             */
+            coldness: number;
+        };
+        /**
+         * ColdVariantsView
+         * @description 基础票 + 冷度 1..N 的贪心变体；口径说明前端原样展示。
+         */
+        ColdVariantsView: {
+            /** Period No */
+            period_no: string;
+            base: components["schemas"]["ColdTicketView"];
+            /** Variants */
+            variants: components["schemas"]["ColdTicketView"][];
+            /** Caliber */
+            caliber: string;
         };
         /**
          * ConditionProgress
@@ -1704,6 +1814,51 @@ export interface components {
             environment: components["schemas"]["Environment"];
         };
         /**
+         * TargetPlanPayload
+         * @description 反推入参：风险档 steady=14场全稳/balanced=任9+至多1冷/bold=任9+至多3冷。
+         */
+        TargetPlanPayload: {
+            /** Period No */
+            period_no: string;
+            /**
+             * Market Code
+             * @default ttt14
+             */
+            market_code: string;
+            /** Target Amount */
+            target_amount: number;
+            /**
+             * Risk
+             * @default balanced
+             * @enum {string}
+             */
+            risk: "steady" | "balanced" | "bold";
+        };
+        /**
+         * TargetPlanView
+         * @description 反推结果：推荐票面 + 建议注数 + 是否达到目标（不承诺达成）。
+         */
+        TargetPlanView: {
+            /** Period No */
+            period_no: string;
+            /** Risk */
+            risk: string;
+            ticket: components["schemas"]["ColdTicketView"];
+            /** Est Payout Per Unit */
+            est_payout_per_unit?: number | null;
+            /**
+             * Suggested Units
+             * @default 0
+             */
+            suggested_units: number;
+            /** Target Reached */
+            target_reached: boolean;
+            /** Note */
+            note: string;
+            /** Caliber */
+            caliber: string;
+        };
+        /**
          * TodayFixtureView
          * @description 场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。
          */
@@ -2384,6 +2539,82 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    generate_cold_variants_api_v1_pool_cold_variants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ColdVariantsPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ColdVariantsView"];
+                };
+            };
+            /** @description 期次不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 基础票场次/选项非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    build_target_plan_api_v1_pool_target_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TargetPlanPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetPlanView"];
+                };
+            };
+            /** @description 期次不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 期次无可选概率 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
