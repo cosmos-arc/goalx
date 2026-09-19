@@ -59,15 +59,20 @@ test("real periods render 14 matches with probability/share/odds/ev chain", asyn
 	expect(slots.querySelectorAll('[data-testid^="pool-slot-empty-"]')).toHaveLength(0);
 	expect(screen.queryByTestId("pool-skeleton-banner")).toBeNull();
 
-	// 场 1 三向链路：概率 + 份额 + 估计赔率@ + EV；推荐/搏冷标记
+	// 场 1 三向链路：概率 + 份额 + 估计赔率@ + EV；推荐标记（无冷门正 EV → 无搏冷）
 	const pickGroup = screen.getByTestId("pool-pick-1");
 	expect(within(pickGroup).getByText(/推荐/)).toBeInTheDocument();
-	expect(within(pickGroup).getByText(/搏冷/)).toBeInTheDocument();
+	expect(within(pickGroup).queryByText(/搏冷/)).toBeNull();
 	const home = screen.getByTestId("pool-pick-1-h");
 	expect(home).toHaveTextContent("45%"); // 概率
 	expect(home).toHaveTextContent("份50%"); // 公众份额
 	expect(home).toHaveTextContent("@1.30"); // 估计派彩赔率 = 0.65/0.5
 	expect(home).toHaveTextContent("EV-42%"); // 0.45×1.3−1
+
+	// 场 2 价值判定搏冷：客胜份额 18%<25% 且 EV 0.34×3.61−1≈+23% 优于推荐位主胜
+	const coldSlot = screen.getByTestId("pool-pick-2-a");
+	expect(within(coldSlot).getByText(/搏冷/)).toHaveAttribute("title", expect.stringContaining("冷门正期望"));
+	expect(within(coldSlot).getByText(/搏冷/)).toHaveAttribute("title", expect.stringContaining("EV+23%"));
 });
 
 test("picks are one-per-match toggles and prefill fills best selections", async () => {
@@ -86,8 +91,8 @@ test("picks are one-per-match toggles and prefill fills best selections", async 
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("1 注");
 	expect(screen.getByTestId("pool-pick-1-h")).toHaveAttribute("aria-pressed", "true");
-	// 场 2 概率最高 = 负 36%（> 主 32%）——概率而非份额驱动推荐
-	expect(screen.getByTestId("pool-pick-2-a")).toHaveAttribute("aria-pressed", "true");
+	// 场 2 概率最高 = 主 42%（票 pool-v2/01 fixture：搏冷样本的推荐位与冷门位分离）
+	expect(screen.getByTestId("pool-pick-2-h")).toHaveAttribute("aria-pressed", "true");
 	// 手动补选第 10 场 → C(10,9) = 10 注
 	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("10 注");

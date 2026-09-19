@@ -68,20 +68,28 @@ function bestSelection(match: PoolMatch): string | null {
 	return best;
 }
 
-/** 一场搏冷向（概率最低）；无概率场返回 null。 */
-function coldestSelection(match: PoolMatch): string | null {
-	let worst: string | null = null;
-	let worstProb = 2;
+/** 冷门阈值（票 pool-v2/01）：公众份额低于此值才算冷门。 */
+const COLD_SHARE_MAX = 0.25;
+
+/**
+ * 一场"值得搏冷"的选项（票 pool-v2/01 价值判定，替代旧"概率最低"标注）：
+ * 冷选项（份额 <25% 且 EV>0）中 EV 最高者，且 EV 须高于本场推荐（最高概率）
+ * 选项的 EV——牺牲命中换赔率只在正期望且优于稳妥选时值得。无则 null。
+ */
+function coldWorthySelection(match: PoolMatch): { code: string; ev: number } | null {
+	let best: { code: string; ev: number } | null = null;
 	for (const sel of match.selections) {
-		if (sel.prob === null || sel.prob === undefined) {
-			continue;
-		}
-		if (worst === null || sel.prob < worstProb) {
-			worst = sel.code;
-			worstProb = sel.prob;
-		}
+		const share = sel.share ?? null;
+		const ev = sel.ev ?? null;
+		if (share === null || share >= COLD_SHARE_MAX) continue;
+		if (ev === null || ev <= 0) continue;
+		if (best === null || ev > best.ev) best = { code: sel.code, ev };
 	}
-	return worst;
+	if (!best) return null;
+	const recommended = bestSelection(match);
+	const recommendedEv = recommended ? (selectionOf(match, recommended)?.ev ?? null) : null;
+	if (recommendedEv !== null && recommendedEv >= best.ev) return null;
+	return best;
 }
 
 function selectionOf(match: PoolMatch, code: string): PoolSelection | undefined {
@@ -228,7 +236,7 @@ export function MarketPoolPage() {
 						) : (
 							<>
 								14 场任选 9 场；<GlossaryTerm id="pool-ev">彩池 EV</GlossaryTerm> 为彩池口径（估计派彩赔率 = 返奖率 65%
-								÷ 份额）。推荐/搏冷标记 = 概率最高/最低向（非生成器产出）。
+								÷ 份额）。推荐 = 概率最高向；搏冷 = 价值判定（冷选项份额低于 25% 且 EV 为正、优于推荐向，悬浮看理由）。
 							</>
 						)}
 					</p>
@@ -360,7 +368,7 @@ export function MarketPoolPage() {
 					<section aria-label="14 场列表" data-testid="pool-slots" className="mb-8 space-y-2">
 						{matches.map((match) => {
 							const recommended = bestSelection(match);
-							const coldest = coldestSelection(match);
+							const cold = coldWorthySelection(match);
 							return (
 								<article
 									key={match.match_seq}
@@ -428,8 +436,13 @@ export function MarketPoolPage() {
 													{recommended === sel ? (
 														<span className="ml-1 rounded bg-info/10 px-1 text-info">推荐</span>
 													) : null}
-													{coldest === sel && recommended !== coldest ? (
-														<span className="ml-1 rounded bg-warning/10 px-1">搏冷</span>
+													{cold?.code === sel ? (
+														<span
+															className="ml-1 rounded bg-warning/10 px-1"
+															title={`冷门正期望：概率 ${((data?.prob ?? 0) * 100).toFixed(0)}% vs 份额 ${((data?.share ?? 0) * 100).toFixed(0)}%，估计赔率 @${(data?.implied_odds ?? 0).toFixed(2)}，EV+${(cold.ev * 100).toFixed(0)}%（高于推荐向）`}
+														>
+															搏冷
+														</span>
 													) : null}
 												</button>
 											);
@@ -497,7 +510,7 @@ export function MarketPoolPage() {
 					<EmptyState
 						variant="not-available"
 						message="搏冷模式生成器"
-						hint="随 v2 上线（当前搏冷标记仅为前端标注）。"
+						hint="随 v2 生成器票上线（当前搏冷标记已是价值判定，非随手标注）。"
 					/>
 				</section>
 

@@ -868,8 +868,9 @@ const poolSelection = ({ code, label, prob, probSource, share }: PoolSelectionAr
 
 const poolMatchFixture = (seq: number, home: string, away: string, league: string) => {
 	// 份额形态：主热偏置 + 平局低注；场 2/5 为"低份额冷门正 EV"样本
+	// （客胜 EV>0 且推荐位=主胜 → 搏冷标记落在客胜，票 pool-v2/01 判定）
 	const [shareH, shareD, shareA] = seq === 2 || seq === 5 ? [0.34, 0.24, 0.18] : [0.5, 0.28, 0.42];
-	const [probH, probD, probA] = seq === 2 || seq === 5 ? [0.32, 0.26, 0.36] : [0.45, 0.27, 0.33];
+	const [probH, probD, probA] = seq === 2 || seq === 5 ? [0.42, 0.24, 0.34] : [0.45, 0.27, 0.33];
 	const source = seq % 3 === 2 ? "model" : "euro_devig";
 	return {
 		match_seq: seq,

@@ -99,7 +99,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	await expect(page.getByRole("heading", { name: "GoalX · 词典" })).toBeVisible();
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
-	expect(await list.locator("article").count()).toBe(19);
+	expect(await list.locator("article").count()).toBe(20);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -110,7 +110,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(19);
+	await expect(list.locator("article")).toHaveCount(20);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过
