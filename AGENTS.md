@@ -79,7 +79,10 @@ below assumes `task`:
   them — preserving the relative layout so cross-links keep resolving (see
   `docs/plans/goalx-quant/` for the pattern).
 - Branching: `main` is protected (`no-commit-to-branch` hook + fail-closed CI);
-  land changes via short-lived branches and PRs, as in ditto.
+  land changes via short-lived branches and PRs, as in ditto. **PR 一律
+  base=main**（`pr-base-guard` workflow 对 base≠main 红叉）：依赖前票时
+  等前票合入后再开 PR，勿开叠层 base——叠层 PR 的 "Merged" 是合进那个
+  分支而非 main（2026-09-20 票 15 曾因此漏进主线）。
 
 ## Agent skills
 

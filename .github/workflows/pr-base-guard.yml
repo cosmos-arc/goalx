@@ -1,0 +1,24 @@
+name: PR base guard
+
+# 票 15 教训（2026-09-20）：叠层 PR（base 指向另一分支）合并时改动落在
+# 该分支而非 main，且 ci.yml 只对 base=main 的 PR 触发——无任何红叉信号。
+# 本 workflow 对所有 PR 触发：base 非 main 直接 fail-closed 红叉。
+# 依赖前票时按顺序合入后再开 PR，勿开叠层 base。
+
+'on':
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  base-must-be-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail if the PR base is not main
+        if: ${{ github.event.pull_request.base.ref != 'main' }}
+        run: |
+          echo "::error::PR base 是 '${{ github.event.pull_request.base.ref }}' 而非 main——合并会落进该分支而不是主线。改法：等前票合入后再开 PR，或直接以 main 为 base（先合的先落）。"
+          exit 1
