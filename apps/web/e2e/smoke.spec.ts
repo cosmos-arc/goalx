@@ -312,3 +312,82 @@ for (const route of ALL_ROUTES) {
 		await expectNoSeriousAxeViolations(page);
 	});
 }
+
+// 票 15：AG-UI 追问流式 e2e——route mock 完整 SSE 事件序列
+// （RUN_STARTED → TEXT_MESSAGE_* → RUN_FINISHED），断言流式回答渲染与引用徽章
+test("ask analyst streams AG-UI events end to end", async ({ page }) => {
+	// 后端三端点全 mock：研究视图 + 证据链 + 追问 SSE
+	const now = new Date().toISOString();
+	await page.route("**/api/v1/fixtures/1/research", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				fixture_id: 1,
+				match_code: "周六001",
+				business_date: "2026-09-20",
+				competition: "英超",
+				tier: "tier1",
+				home_team: "阿森纳",
+				away_team: "切尔西",
+				kickoff_utc: now,
+				is_single: true,
+				joined: false,
+				jc_odds: { h: 1.9, d: 3.5, a: 3.8 },
+				jc_updated_at: now,
+				books: [],
+				had_quote: null,
+			}),
+		}),
+	);
+	await page.route("**/api/v1/fixtures/1/evidence", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				fixture_id: 1,
+				generated_at: now,
+				caliber: "证据链 = 已存证工件渲染。",
+				tracks: { ml: null, llm: null, fused: null },
+				divergence: { js: null, routed: false },
+				intels: [
+					{
+						kind: "formation",
+						text: "主队主力中卫伤缺",
+						source: "okooo formation",
+						collected_at: "2026-09-19T09:00:00Z",
+					},
+				],
+				reviews: [],
+			}),
+		}),
+	);
+	await page.route("**/api/v1/fixtures/1/ask", async (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "text/event-stream",
+			// SSE 事件以空行（\n\n）分界
+			body: [
+				'data: {"type":"RUN_STARTED","threadId":"fixture-1","runId":"e2e"}\n\n',
+				'data: {"type":"TEXT_MESSAGE_START","messageId":"a1","role":"assistant"}\n\n',
+				'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"依据伤停情报，"}\n\n',
+				'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"主力中卫缺阵削弱防线。"}\n\n',
+				'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"证据弱点：情报仅一条。"}\n\n',
+				'data: {"type":"TEXT_MESSAGE_END","messageId":"a1"}\n\n',
+				'data: {"type":"RUN_FINISHED","threadId":"fixture-1","runId":"e2e"}\n\n',
+			].join(""),
+		}),
+	);
+
+	await page.goto("/fixtures/1");
+	const chain = page.getByTestId("research-chain");
+	await expect(chain).toBeVisible({ timeout: 20_000 });
+	await chain.getByTestId("chain-ask-toggle").click();
+	await chain.getByTestId("ask-input").fill("这场防守端怎么看？");
+	await chain.getByTestId("ask-submit").click();
+
+	const answer = chain.getByTestId("ask-msg-assistant");
+	await expect(answer).toContainText("主力中卫缺阵削弱防线", { timeout: 20_000 });
+	await expect(answer).toContainText("证据弱点：情报仅一条");
+	await expect(chain.getByTestId("ask-citations")).toContainText("okooo formation");
+});

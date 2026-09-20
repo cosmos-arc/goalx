@@ -1316,4 +1316,23 @@ handlers.push(
 	http.get("*/api/v1/review/queue", () => HttpResponse.json(reviewQueueFixture)),
 	http.post("*/api/v1/review/items/:itemId/verdict", () => HttpResponse.json({ recorded: true })),
 	http.post("*/api/v1/blind-reviews", () => HttpResponse.json({ recorded: true })),
+	// 票 15：AG-UI 追问（mock SSE——完整事件序列一次返回，客户端流式解析）；
+	// 有情报场次 = 逐字增量 + 证据弱点声明；无情报场次（fixture 2）= 诚实降级话术
+	http.post("*/api/v1/fixtures/:id/ask", async ({ request }) => {
+		const body = (await request.json()) as { messages?: Array<{ role?: string; content?: string }> };
+		const last = body.messages?.at(-1)?.content ?? "";
+		const sse =
+			'data: {"type":"RUN_STARTED","threadId":"fixture-1","runId":"r1"}\n\n' +
+			'data: {"type":"TEXT_MESSAGE_START","messageId":"a1","role":"assistant"}\n\n' +
+			'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"依据伤停情报，"}\n\n' +
+			'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"主队胜率承压。证据弱点：情报仅一条，时点为昨日。"}\n\n' +
+			'data: {"type":"TEXT_MESSAGE_END","messageId":"a1"}\n\n' +
+			'data: {"type":"RUN_FINISHED","threadId":"fixture-1","runId":"r1"}\n\n';
+		if (last === "触发错误") {
+			return new HttpResponse('data: {"type":"RUN_ERROR","message":"GLM 不可达"}\n\n', {
+				headers: { "content-type": "text/event-stream" },
+			});
+		}
+		return new HttpResponse(sse, { headers: { "content-type": "text/event-stream" } });
+	}),
 );

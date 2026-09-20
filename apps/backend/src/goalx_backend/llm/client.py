@@ -128,6 +128,16 @@ def _enforce_purpose(purpose: Purpose, level: int) -> None:
         )
 
 
+def resolve_ask_model(conn: sqlite3.Connection, settings: Settings) -> str:
+    """追问入口的熔断检查与型号解析（Purpose.ASK；80% 档不放行，票 08）。"""
+    if not settings.glm_api_key:
+        raise LlmKeyMissing("GLM_API_KEY 未配置（.env）")
+    spend = month_spend_cny(conn)
+    level = breaker_level(spend, settings.glm_monthly_budget_cny)
+    _enforce_purpose(Purpose.ASK, level)
+    return resolve_model(settings, ModelTier.ANALYST, level)
+
+
 def _build_client(settings: Settings, base_url: str) -> OpenAI:
     """构造同步 OpenAI 兼容客户端（SDK 内建 429/5xx 重试）。"""
     return OpenAI(
@@ -257,5 +267,6 @@ __all__ = [
     "estimate_cost_cny",
     "glm_chat",
     "month_spend_cny",
+    "resolve_ask_model",
     "resolve_model",
 ]

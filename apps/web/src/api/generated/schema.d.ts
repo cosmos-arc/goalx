@@ -832,6 +832,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/{fixture_id}/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 追问 analyst(AG-UI 1.0 事件流,票 15)
+         * @description 追问端点：请求体 = AG-UI ``RunAgentInput``。
+         *
+         *     schema 由 ag-ui-protocol 1.0 规范定义，不在本契约内复制；响应 =
+         *     AG-UI 1.0 事件 SSE。prompt 只注入该场已存证情报（回答只引存证
+         *     条目）；无情报场次走诚实降级话术（不调模型，零成本）；每次调用
+         *     按 usage 记 cost_ledger（用途标签 ask）。追问是增量交互面——不落
+         *     任何预测/证据工件。
+         */
+        post: operations["ask_analyst_api_v1_fixtures__fixture_id__ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3646,6 +3672,42 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    ask_analyst_api_v1_fixtures__fixture_id__ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求体非 AG-UI RunAgentInput 或无用户问题 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

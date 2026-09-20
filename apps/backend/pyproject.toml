@@ -3,6 +3,7 @@ name = "goalx-backend"
 requires-python = ">= 3.13"
 version = "0.1.0"
 dependencies = [
+    "ag-ui-protocol>=1.0,<2",
     "fastapi>=0.115,<0.137",
     "granian>=2.0,<3",
     "httpx>=0.28,<1",

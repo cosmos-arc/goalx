@@ -1,15 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { type FixtureEvidence, fetchFixtureEvidence, type IntelItem, type TrackTriple } from "../api/goalx";
 import { TABULAR_NUMS } from "../lib/ui";
+import { AskAnalystPanel } from "./ask-analyst";
 import { EmptyState } from "./empty-state";
 
 /**
  * 票 14 V2 证据链区块：挂 fixture-research 页底部（方案 A，票 06 定案）。
  *
  * 三轨概率对照（ML/LLM/Fused）+ JS 徽章 + 情报时间线（来源/时点徽章）+
- * 复核结论 + 追问入口（票 15 接线）+ 盲评入口（/review 双周三选一）。
+ * 复核结论 + 追问 analyst（票 15 AG-UI 流式）+ 盲评入口（/review）。
  * 全部为存量工件渲染：无数据的轨道/情报诚实显示缺失，不虚构。
  */
 
@@ -95,6 +97,7 @@ function ChainBody({ data }: { data: FixtureEvidence }) {
 	const { tracks, divergence, intels, reviews, caliber } = data;
 	const llmTrack = tracks["llm"];
 	const decided = reviews.find((r) => r.verdict !== null);
+	const [askOpen, setAskOpen] = useState(false);
 	return (
 		<>
 			<p className="mb-3 text-xs text-muted-foreground" data-testid="chain-caliber">
@@ -178,17 +181,18 @@ function ChainBody({ data }: { data: FixtureEvidence }) {
 			<p className="mt-3 flex flex-wrap items-center gap-3 text-xs">
 				<button
 					type="button"
-					disabled
-					className="rounded-md border border-info px-2 py-1 text-info disabled:opacity-40"
-					data-testid="chain-ask-pending"
-					title="随票 15（AG-UI 追问 analyst）上线"
+					className="rounded-md border border-info px-2 py-1 text-info transition-colors hover:bg-info/5"
+					data-testid="chain-ask-toggle"
+					aria-expanded={askOpen}
+					onClick={() => setAskOpen((v) => !v)}
 				>
-					追问 analyst（即将上线）
+					{askOpen ? "收起追问" : "追问 analyst"}
 				</button>
 				<Link to="/review" className="text-info underline-offset-2 hover:underline" data-testid="chain-blind-entry">
 					盲评入口 → 双周匿名二选一（复核页）
 				</Link>
 			</p>
+			{askOpen ? <AskAnalystPanel fixtureId={data.fixture_id} intels={intels} /> : null}
 		</>
 	);
 }
