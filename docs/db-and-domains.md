@@ -655,7 +655,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 | `source` | TEXT | NOT NULL |
 | `coverage_date` | TEXT | NOT NULL |
 | `league_key` | TEXT | NOT NULL，DEFAULT '' |
-| `league_name` | TEXT | — |
 | `match_count` | INTEGER | NOT NULL，DEFAULT 0 |
 | `coverage_status` | TEXT | NOT NULL |
 | `observed_at` | TEXT | NOT NULL |
