@@ -411,3 +411,25 @@ def hist_season_coverage(
         """,  # noqa: S608
         competitions,
     ).fetchall()
+
+
+def understat_training_rows(
+    conn: sqlite3.Connection, league: str, *, through_iso: str
+) -> list[sqlite3.Row]:
+    """
+    某联赛已完场且 npxG 齐备的 understat 行（票 45 blend 训练取数）。
+
+    through_iso：datetime_utc 严格早于该时刻（防前视，调用方传决策时点）。
+    队名键 = 源 title（跨季稳定），供需与 fixture 侧别名解析对齐。
+    """
+    return conn.execute(
+        """
+        SELECT datetime_utc, home_team, away_team, npxg_home, npxg_away
+        FROM understat_matches
+        WHERE league = ? AND is_result = 1
+          AND npxg_home IS NOT NULL AND npxg_away IS NOT NULL
+          AND datetime_utc < ?
+        ORDER BY datetime_utc
+        """,
+        (league, through_iso),
+    ).fetchall()

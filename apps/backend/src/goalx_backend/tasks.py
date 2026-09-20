@@ -127,7 +127,7 @@ def weekly_train(
 
 
 def forecast_daily(business_date: str | None = None) -> dict[str, int]:
-    """每日在售竞彩场次 ML Forecast 生成（幂等，票 27）。"""
+    """每日在售竞彩场次 ML Forecast 生成（幂等，票 27；五大附 xG blend 票 47）。"""
     settings = get_settings()
     resolved = business_date or fx_store.beijing_business_date()
     with task_conn() as conn:
@@ -139,6 +139,8 @@ def forecast_daily(business_date: str | None = None) -> dict[str, int]:
     return {
         "generated": stats.generated,
         "duplicates": stats.duplicates,
+        "xg_blended": stats.xg_blended,
+        "xg_unresolved": stats.xg_unresolved,
         "skipped": len(stats.skipped),
     }
 
