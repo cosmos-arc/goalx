@@ -24,11 +24,11 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery, zucai
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
-from goalx_backend.evaluation.m3_report import m3_protocol_report
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
 from goalx_backend.llm.gate import gate_stats_dict, gate_sweep
+from goalx_backend.llm.m3_report import m3_protocol_report
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
 from goalx_backend.llm.protocol import record_control_events
 from goalx_backend.llm.review import enqueue_post_settle

@@ -6,7 +6,7 @@ import sqlite3
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.results import DrawResultInput, upsert_draw_result
-from goalx_backend.evaluation.m3_report import (
+from goalx_backend.llm.m3_report import (
     TIER_A_MIN_PAIRS,
     intel_quality,
     m3_protocol_report,
