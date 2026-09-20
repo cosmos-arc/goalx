@@ -98,6 +98,9 @@ erDiagram
     divergences {
         INTEGER id PK
     }
+    draw_reconciliation_runs {
+        INTEGER id PK
+    }
     draw_result_revisions {
         INTEGER id PK
     }
@@ -170,10 +173,16 @@ erDiagram
     settlements {
         INTEGER id PK
     }
+    source_coverage {
+        INTEGER id PK
+    }
     team_aliases {
         INTEGER id PK
     }
     teams {
+        INTEGER id PK
+    }
+    uniform_result_observations {
         INTEGER id PK
     }
     backtest_bets }o--|| backtest_runs : run_id
@@ -222,6 +231,7 @@ erDiagram
     settlements }|o--|| bet_slips : slip_id
     settlements }|o--|| bets : bet_id
     team_aliases }o--|| teams : team_id
+    uniform_result_observations }|o--|| fixtures : fixture_id
 <!-- schema-doc:END:er -->
 
 ## data 域（fixtures / results / pool / ingest 支撑）
@@ -271,6 +281,23 @@ erDiagram
 #### `draw_sync_runs` / `pool_sync_runs`
 
 源D 赛果 / 源B 彩池同步的运行日志（fetched/imported/pending_manual 计数），append。
+
+#### `uniform_result_observations`（票 44）
+
+源A uniform 族官方赛果**观测**（并行对账阶段，不进事实源）：append-only，
+UNIQUE(match_id, observed_at) 同跑幂等；poolStatus 迁移（空→Payout/Refund）
+多跑多行留痕。join 键 = match_codes.source_match_id（一跳确定性）。
+
+#### `draw_reconciliation_runs`（票 44）
+
+对账运行日志（参照源 sporttery.cn/openfootball vs 事实：一致/比分不一致/
+void 冲突/缺果计数 + 待人工清单），append。切换官方为事实源的门槛依据。
+
+#### `source_coverage`（票 44，定则 4）
+
+每源每覆盖日"看到了什么"的现态维表（UPSERT，非证据表）——空≠无：
+absent 断言仅当 coverage_status='covered'。coverage_date 语义随源
+（uniform=matchDate、源D=业务日、openfootball=赛季键）。
 
 ### 彩池（data/pool.py）
 
@@ -557,6 +584,83 @@ append-only 触发器：`draw_result_revisions_no_delete`、`draw_result_revisio
 
 append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 <!-- schema-doc:END:table:draw_sync_runs -->
+
+<!-- schema-doc:BEGIN:table:uniform_result_observations -->
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `match_id` | INTEGER | NOT NULL |
+| `match_num_str` | TEXT | NOT NULL |
+| `match_date` | TEXT | NOT NULL |
+| `business_date` | TEXT | — |
+| `fixture_id` | INTEGER | FK→fixtures.id |
+| `league_id` | INTEGER | — |
+| `league_name` | TEXT | — |
+| `result_status` | TEXT | NOT NULL |
+| `pool_status` | TEXT | — |
+| `full_score_raw` | TEXT | — |
+| `half_score_raw` | TEXT | — |
+| `home_goals` | INTEGER | — |
+| `away_goals` | INTEGER | — |
+| `half_home_goals` | INTEGER | — |
+| `half_away_goals` | INTEGER | — |
+| `win_flag` | TEXT | — |
+| `odds_h` | TEXT | — |
+| `odds_d` | TEXT | — |
+| `odds_a` | TEXT | — |
+| `goal_line` | TEXT | — |
+| `betting_single` | INTEGER | — |
+| `void_flag` | INTEGER | NOT NULL，DEFAULT 0 |
+| `void_reason` | TEXT | — |
+| `observed_at` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`fixture_id`)`
+
+唯一键 `UNIQUE(`match_date`)`
+
+唯一键 `UNIQUE(`match_id`, `observed_at`)`
+
+append-only 触发器：`uniform_result_observations_no_delete`、`uniform_result_observations_no_update`
+<!-- schema-doc:END:table:uniform_result_observations -->
+
+<!-- schema-doc:BEGIN:table:draw_reconciliation_runs -->
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `source` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `business_dates` | TEXT | NOT NULL |
+| `compared` | INTEGER | NOT NULL，DEFAULT 0 |
+| `consistent` | INTEGER | NOT NULL，DEFAULT 0 |
+| `score_mismatch` | INTEGER | NOT NULL，DEFAULT 0 |
+| `void_mismatch` | INTEGER | NOT NULL，DEFAULT 0 |
+| `missing_result` | INTEGER | NOT NULL，DEFAULT 0 |
+| `unmatched` | INTEGER | NOT NULL，DEFAULT 0 |
+| `pending_manual` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliation_runs_no_update`
+<!-- schema-doc:END:table:draw_reconciliation_runs -->
+
+<!-- schema-doc:BEGIN:table:source_coverage -->
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `source` | TEXT | NOT NULL |
+| `coverage_date` | TEXT | NOT NULL |
+| `league_key` | TEXT | NOT NULL，DEFAULT '' |
+| `league_name` | TEXT | — |
+| `match_count` | INTEGER | NOT NULL，DEFAULT 0 |
+| `coverage_status` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+| `updated_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`source`, `coverage_date`, `league_key`)`
+<!-- schema-doc:END:table:source_coverage -->
 
 <!-- schema-doc:BEGIN:table:pool_periods -->
 | 列 | 类型 | 约束 |

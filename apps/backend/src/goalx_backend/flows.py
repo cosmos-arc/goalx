@@ -14,6 +14,7 @@ Prefect server 调度（见 README「运行采集」）。
 - forecast_daily_flow：每日在售场次 ML Forecast 生成（票 27）
 - settlement_flow：开奖后结算批跑（每日数次）
 - draw_results_sync_flow：源D 结果页赛果自动同步（票 42）
+- official_reconcile_flow：官方赛果并行对账（票 44，uniform+openfootball）
 """
 
 from __future__ import annotations
@@ -114,6 +115,14 @@ def draw_results_sync_flow() -> dict[str, object]:
     """赛果自动同步（票 42）：源D 结果页；无待出赛果零成本跳过。"""
     stats = tasks.draw_results_sync()
     logger.info("draw sync: {}", stats)
+    return stats
+
+
+@flow(name="official-reconcile", log_prints=True)
+def official_reconcile_flow() -> dict[str, object]:
+    """官方赛果并行对账（票 44）：uniform 官方 + openfootball 双参照源。"""
+    stats = tasks.official_results_reconcile()
+    logger.info("official reconcile: {}", stats)
     return stats
 
 

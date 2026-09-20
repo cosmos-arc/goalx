@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     fd_base_url: str = "https://www.football-data.co.uk/mmz4281"
     # 源D 结果页（票 42 实证：访问限制仅要求浏览器 UA；?e=业务日）
     caiguo_base_url: str = "https://live.500.com/jczq.php"
+    # uniform 族官方赛果（票 44 实测直通：jc 族 403 是端点级，本端点同域同头可用）
+    sporttery_uniform_url: str = "https://webapi.sporttery.cn/gateway/uniform/football/getUniformMatchResultV1.qry"
+    # openfootball/football.json raw（票 44 对账源：CC0 静态文件，无 key 无 WAF）
+    openfootball_base_url: str = (
+        "https://raw.githubusercontent.com/openfootball/football.json/master"
+    )
     # 源B（票 43 代称表）：传统足彩期次/对阵/人气分布（官方销量无源，走 AI 代采）
     zucai_base_url: str = "https://www.okooo.com"
     # football-data.org 免费档（票 09：12 项 standings；免费注册，无 key 时跳过）

@@ -21,7 +21,16 @@ from loguru import logger
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery, zucai
+from goalx_backend.data import reconcile
+from goalx_backend.data.ingest import (
+    caiguo,
+    fdhist,
+    oddsapi,
+    openfootball,
+    sporttery,
+    uniform,
+    zucai,
+)
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
@@ -36,6 +45,7 @@ from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
+from goalx_backend.modelling.team_align import alias_index
 
 
 @contextmanager
@@ -148,6 +158,31 @@ def draw_results_sync() -> dict[str, object]:
     with task_conn() as conn, polite_client() as client:
         stats = caiguo.sync_draw_results(conn, settings, client)
     return caiguo.stats_dict(stats)
+
+
+def official_results_reconcile() -> dict[str, object]:
+    """
+    官方赛果并行对账（票 44）：uniform 观测 → 双参照源对账，不落事实。
+
+    - sporttery.cn uniform 族：官方赛果观测（append-only）+ 对账清单；
+    - openfootball：社区比分对账（仅对账不入管道）。
+    无待出赛果时 uniform 零请求跳过；openfootball 对窗口内场次照常对账。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        uniform_stats, uniform_rec = uniform.sync_uniform_results(
+            conn, settings, client
+        )
+        of_rec = openfootball.reconcile_openfootball(
+            conn, settings, client, alias_index=alias_index(conn)
+        )
+    return {
+        "uniform": {
+            **uniform.stats_dict(uniform_stats),
+            **reconcile.stats_dict(uniform_rec),
+        },
+        "openfootball": reconcile.stats_dict(of_rec),
+    }
 
 
 def pool_snapshot() -> zucai.PoolSyncStats:

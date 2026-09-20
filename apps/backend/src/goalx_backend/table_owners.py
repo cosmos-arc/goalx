@@ -22,6 +22,10 @@ OWNERS: dict[str, set[str]] = {
         "public_shares",
         "pool_matches",
         "pool_sync_runs",
+        # 票 44：官方赛果并行对账 + 覆盖维表（reconcile.py + ingest/uniform.py）
+        "uniform_result_observations",
+        "draw_reconciliation_runs",
+        "source_coverage",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

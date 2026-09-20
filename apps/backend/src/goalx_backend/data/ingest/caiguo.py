@@ -38,6 +38,7 @@ import httpx
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest.results import import_draw_results
+from goalx_backend.data.reconcile import upsert_source_coverage
 from goalx_backend.db import utc_now_iso
 from goalx_backend.models import DrawResultInput
 
@@ -336,6 +337,15 @@ def sync_draw_results(
         stats.pages += 1
         parsed = parse_page(page)
         stats.fetched += len(parsed.finished)
+        # 定则 4（票 44）：源D 每业务日的覆盖现态（页面级，无联赛细分）
+        upsert_source_coverage(
+            conn,
+            source=SOURCE,
+            coverage_date=business_date,
+            match_count=len(parsed.finished) + len(parsed.skipped),
+            coverage_status="covered",
+            observed_at=stats.observed_at,
+        )
         for skip in parsed.skipped:
             stats.pending_manual.append(
                 {
