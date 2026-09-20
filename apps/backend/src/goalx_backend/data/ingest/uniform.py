@@ -12,18 +12,22 @@
 - join 走定则 1 确定性键：match_codes.source_match_id = str(matchId)
   （源A calculator 写入的同一官方 ID，一跳映射；无业务日推导）。
 
-口径守则（票 44，与源D 同构 fail-closed）：
-- 并行对账阶段不改结算事实源（ADR 0001 澄清条款）——本模块只落观测
-  （append-only，UNIQUE(match_id, observed_at) 同跑幂等）与对账清单，不 import；
+口径守则（票 44；2026-09-20 用户裁决直接切换，系统未上线免观察期）：
+- **本模块是结算事实源**（ADR 0001 本意的落地）：终态观测（比分或官方
+  void）→ import_draw_results 落事实；源D 降为对账审计源（caiguo.audit）；
+- 库内已有不同结果（人工先录/旧源导入）→ 不自动冲正，进待人工清单
+  （ADR 0001 澄清条款不变，官方更正走人工通道确认）；
 - 源无逐场官方发布时点，published_at 不伪造；观测时点即 observed_at
   （本批采集起始时刻，与源D 票 42 同口径；多跑一次就多一行——poolStatus
   迁移留痕）；
 - winFlag 与比分不自洽、状态值未知、终态但比分非数字 → 待人工，不比对；
-- 对账读库内最新观测（跨 run 留痕的终态，不依赖单次抓取的完整性）。
+- 同步元信息写 draw_sync_runs（UI 同步面板通道），对账清单写
+  draw_reconciliation_runs；对账读库内最新观测（不依赖单次抓取完整性）。
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -33,7 +37,9 @@ from typing import Any, cast
 import httpx
 
 from goalx_backend.config import Settings
+from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest.caiguo import candidate_business_dates
+from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
@@ -42,6 +48,7 @@ from goalx_backend.data.reconcile import (
     upsert_source_coverage,
 )
 from goalx_backend.db import utc_now_iso
+from goalx_backend.models import DrawResultInput
 
 SOURCE = "sporttery.cn"
 PARSE_VERSION = "uniform_v1"
@@ -164,8 +171,11 @@ class UniformSyncStats:
     source: str = SOURCE
     observed_at: str = ""
     business_dates: list[str] = field(default_factory=list)
+    pages: int = 0
     fetched: int = 0  # 端点返回的场次数（含非终态）
     observed_rows: int = 0  # 本次新落观测行数（同跑幂等重放为 0）
+    imported: int = 0  # 本次新落事实（含同值幂等重放）的场次数
+    unchanged: int = 0  # 与库内已存一致的场次数
     unmatched: int = 0  # 官方有、库内无对应竞彩场次（范围外，不报警）
     rejected: int = 0  # fail-closed 拒因行数（进待人工清单）
 
@@ -444,8 +454,10 @@ def sync_uniform_results(
       推导，空集零请求跳过）；
     - 采集区间按 matchDate 放宽 ±1 天（晚场归属前业务日），join 由
       source_match_id 决定，放宽只多采观测不多比对；
-    - 对账读库内最新观测、只报清单不落事实（人工通道裁决），run 行
-      append-only（空窗口也留一行 compared=0 的运行证据）。
+    - 终态观测（比分或官方 void）→ import 落事实；库内不同结果不冲正，
+      交对账清单（人工通道裁决）；
+    - 同步元信息写 draw_sync_runs（UI 面板），对账 run 行 append-only
+      （空窗口也留一行 compared=0 的运行证据）。
     """
     now_dt = now or datetime.now(UTC)
     observed_at = now_dt.isoformat(timespec="seconds")
@@ -464,6 +476,7 @@ def sync_uniform_results(
         date_to = (date.fromisoformat(max(dates)) + timedelta(days=1)).isoformat()
         raw_rows = fetch_uniform_results(client, settings, date_from, date_to)
         stats.fetched = len(raw_rows)
+        stats.pages = -(-len(raw_rows) // _PAGE_SIZE)
         observations = [parse_uniform_match(raw) for raw in raw_rows]
         for obs in observations:
             obs.fixture_id = _fixture_id_for_match(conn, obs)
@@ -476,10 +489,129 @@ def sync_uniform_results(
         _record_coverage(conn, observations, date_from, date_to, observed_at)
     reconcile_stats.unmatched = stats.unmatched
 
-    refs = _to_references(latest_observations_for_dates(conn, dates), reconcile_stats)
+    # ---- 事实源裁决链（终态观测 → import；不一致不冲正进人工）----
+    latest = latest_observations_for_dates(conn, dates)
+    inputs = _final_inputs(conn, latest, stats)
+    if inputs:
+        stats.imported = import_draw_results(conn, inputs)
+
+    refs = _to_references(latest, reconcile_stats)
     reconcile_draw_results(conn, refs, reconcile_stats)
     record_reconciliation_run(conn, reconcile_stats, parse_version=PARSE_VERSION)
+    _record_sync_run(conn, stats, reconcile_stats.pending_manual)
     return stats, reconcile_stats
+
+
+def _final_inputs(
+    conn: sqlite3.Connection,
+    latest: list[UniformObservation],
+    stats: UniformSyncStats,
+) -> list[DrawResultInput]:
+    """
+    终态观测里可落事实的输入（无库内结果的）；一致的计 unchanged。
+
+    库内不同结果（人工先录/旧源导入）不冲正，返回缺省交对账清单报告。
+    """
+    inputs: list[DrawResultInput] = []
+    for obs in latest:
+        if obs.fixture_id is None or obs.reject_reason is not None:
+            continue
+        if not (obs.final or obs.void):
+            continue
+        stored = rs_store.get_draw_result(conn, obs.fixture_id)
+        if stored is None:
+            inputs.append(_to_input(obs))
+        elif _values_match(stored, obs):
+            stats.unchanged += 1
+    return inputs
+
+
+def _to_input(obs: UniformObservation) -> DrawResultInput:
+    """终态观测 → 落库输入（void 行比分置 0；published_at 不伪造）。"""
+    return DrawResultInput(
+        fixture_id=obs.fixture_id or 0,
+        home_goals=obs.home_goals or 0,
+        away_goals=obs.away_goals or 0,
+        half_home_goals=obs.half_home_goals,
+        half_away_goals=obs.half_away_goals,
+        void=obs.void,
+        void_reason=obs.void_reason,
+        source=SOURCE,
+        published_at=None,
+    )
+
+
+def _values_match(stored: sqlite3.Row, obs: UniformObservation) -> bool:
+    """库内已存结果与官方观测是否一致（void 行只比 void；半场宽让）。"""
+    if bool(stored["void"]) != obs.void:
+        return False
+    if obs.void:
+        return True
+    if int(stored["home_goals"]) != (obs.home_goals or -1):
+        return False
+    if int(stored["away_goals"]) != (obs.away_goals or -1):
+        return False
+    if obs.half_home_goals is None or stored["half_home_goals"] is None:
+        return True
+    return int(stored["half_home_goals"]) == obs.half_home_goals and int(
+        stored["half_away_goals"] or -1
+    ) == (obs.half_away_goals or -2)
+
+
+def _record_sync_run(
+    conn: sqlite3.Connection,
+    stats: UniformSyncStats,
+    pending_manual: list[dict[str, str]],
+) -> int:
+    """写 draw_sync_runs 元信息行（UI 同步面板通道；append-only 最新即状态）。"""
+    cur = conn.execute(
+        """
+        INSERT INTO draw_sync_runs
+(source, observed_at, business_dates, pages, fetched, imported,
+            unchanged, unmatched, pending_manual, parse_version, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            stats.source,
+            stats.observed_at or utc_now_iso(),
+            json.dumps(stats.business_dates, ensure_ascii=False),
+            stats.pages,
+            stats.fetched,
+            stats.imported,
+            stats.unchanged,
+            stats.unmatched,
+            json.dumps(pending_manual, ensure_ascii=False),
+            PARSE_VERSION,
+            utc_now_iso(),
+        ),
+    )
+    conn.commit()
+    if not cur.lastrowid:
+        raise RuntimeError("draw_sync_runs INSERT 未产生 rowid")
+    return int(cur.lastrowid)
+
+
+def latest_sync_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """最近一次同步的元信息（无同步史返回 None）。"""
+    return conn.execute(
+        "SELECT * FROM draw_sync_runs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+
+def pending_result_count(conn: sqlite3.Connection, now: datetime | None = None) -> int:
+    """已开赛、无开奖的竞彩场次数（状态端点的"待出赛果数"）。"""
+    current = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM match_codes mc
+        JOIN fixtures f ON f.id = mc.fixture_id
+        LEFT JOIN draw_results d ON d.fixture_id = f.id
+        WHERE mc.kind = 'jingcai' AND f.kickoff_utc <= ? AND d.id IS NULL
+        """,
+        (current,),
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
 
 
 def stats_dict(stats: UniformSyncStats) -> dict[str, Any]:
@@ -488,8 +620,11 @@ def stats_dict(stats: UniformSyncStats) -> dict[str, Any]:
         "source": stats.source,
         "observed_at": stats.observed_at,
         "business_dates": stats.business_dates,
+        "pages": stats.pages,
         "fetched": stats.fetched,
         "observed_rows": stats.observed_rows,
+        "imported": stats.imported,
+        "unchanged": stats.unchanged,
         "unmatched": stats.unmatched,
         "rejected": stats.rejected,
     }

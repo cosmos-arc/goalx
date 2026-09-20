@@ -280,13 +280,16 @@ erDiagram
 
 #### `draw_sync_runs` / `pool_sync_runs`
 
-源D 赛果 / 源B 彩池同步的运行日志（fetched/imported/pending_manual 计数），append。
+官方 uniform 赛果 / 源B 彩池同步的运行日志（fetched/imported/pending_manual
+计数），append。票 44 切换（2026-09-20）前赛果同步源为源D。
 
 #### `uniform_result_observations`（票 44）
 
-源A uniform 族官方赛果**观测**（并行对账阶段，不进事实源）：append-only，
-UNIQUE(match_id, observed_at) 同跑幂等；poolStatus 迁移（空→Payout/Refund）
-多跑多行留痕。join 键 = match_codes.source_match_id（一跳确定性）。
+源A uniform 族官方赛果**观测**：append-only，UNIQUE(match_id, observed_at)
+同跑幂等；poolStatus 迁移（空→Payout/Refund）多跑多行留痕。join 键 =
+match_codes.source_match_id（一跳确定性）。终态观测（比分或官方 void）经
+ingest/uniform 落 draw_results 事实（2026-09-20 用户裁决切换官方为事实源，
+源D 降审计）。
 
 #### `draw_reconciliation_runs`（票 44）
 

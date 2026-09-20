@@ -34,7 +34,7 @@ from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
-from goalx_backend.data.ingest import openfootball, sporttery, uniform
+from goalx_backend.data.ingest import caiguo, openfootball, sporttery, uniform
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -122,17 +122,17 @@ def _cmd_settle() -> None:
 
 
 def _cmd_sync_draw_results() -> None:
-    """手动跑一次赛果自动同步（与 flow 同一实现，票 42）。"""
+    """手动跑一次赛果自动同步（官方 uniform，与 flow 同一实现；票 44）。"""
     logger.info("draw sync: {}", tasks.draw_results_sync())
 
 
 def _cmd_official_reconcile() -> None:
-    """手动跑一次官方赛果并行对账（票 44）：uniform+openfootball 清单报告。"""
+    """手动跑一次赛果日终审计（票 44）：源D+openfootball 清单报告。"""
     stats = tasks.official_results_reconcile()
     for source, report in stats.items():
         logger.info("reconcile {}: {}", source, report)
     with task_conn() as conn:
-        for source in (uniform.SOURCE, openfootball.SOURCE):
+        for source in (caiguo.SOURCE, uniform.SOURCE, openfootball.SOURCE):
             row = reconcile.latest_reconciliation(conn, source)
             if row is None:
                 continue
@@ -308,10 +308,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ingest-hist", help="导入五大三季历史底座")
     sub.add_parser("audit-ledger", help="只读核查旧账与更正历史")
     sub.add_parser("settle", help="手动结算批跑")
-    sub.add_parser("sync-draw-results", help="手动跑一次赛果自动同步(票 42)")
+    sub.add_parser(
+        "sync-draw-results",
+        help="手动跑一次赛果自动同步(官方源,票 44)",
+    )
     sub.add_parser(
         "official-reconcile",
-        help="官方赛果并行对账+清单报告(票 44)",
+        help="赛果日终审计+清单报告(源D+openfootball,票 44)",
     )
     train = sub.add_parser("train-models", help="训练五大 DC 模型(票 26)")
     train.add_argument(

@@ -887,9 +887,8 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
     - source_coverage（定则 4）：每源每覆盖日"看到了什么"的现态维表
       （UPSERT，非证据表——证据在观测/run 表）。coverage_date 语义随源
       而定（uniform=matchDate、源D=业务日、openfootball=赛季键）；
-      absent 断言仅当 coverage_status='covered' 且采集成功——空≠无
-      （fetched_empty=采集成功无场次；fetch_failed=暂时失败可重试；
-      not_covered=源声明无此覆盖，如 openfootball 无 2026-27 文件）。
+      absent 断言仅当 coverage_status='covered' 且采集成功——空≠无。
+      四态枚举（含 not_covered）由 v15 定型（v14 初版三态，同日扩）。
     """
     conn.execute(
         """
@@ -991,6 +990,49 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v15(conn: sqlite3.Connection) -> None:
+    """
+    v15（票 44 评审修正）：source_coverage 四态——not_covered 与 fetch_failed 分离。
+
+    v14 初版 CHECK 只有 covered/fetched_empty/fetch_failed 三态；同日评审
+    修正把"源声明无此覆盖"（如 openfootball 无 2026-27 文件）单列为
+    not_covered，但 v14 已在本地主库应用（SQLite 不能 ALTER CHECK）——
+    表重建换约束。主库该表为空，重建即建新；新建库走 v14→v15 等价终态。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_coverage_v15 (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            coverage_date TEXT NOT NULL,
+            league_key TEXT NOT NULL DEFAULT '',
+            match_count INTEGER NOT NULL DEFAULT 0,
+            coverage_status TEXT NOT NULL
+                CHECK (
+                    coverage_status IN
+                        ('covered', 'fetched_empty', 'fetch_failed', 'not_covered')
+                ),
+            observed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (source, coverage_date, league_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO source_coverage_v15
+            (source, coverage_date, league_key, match_count, coverage_status,
+             observed_at, created_at, updated_at)
+        SELECT source, coverage_date, league_key, match_count, coverage_status,
+               observed_at, created_at, updated_at
+        FROM source_coverage
+        """
+    )
+    conn.execute("DROP TABLE source_coverage")
+    conn.execute("ALTER TABLE source_coverage_v15 RENAME TO source_coverage")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1006,4 +1048,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (12, _apply_v12),
     (13, _apply_v13),
     (14, _apply_v14),
+    (15, _apply_v15),
 )

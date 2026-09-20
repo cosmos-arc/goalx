@@ -14,10 +14,11 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 节奏（Asia/Shanghai，协议 run-protocol-v1.md §3，启动后不改口径）：
 - daily-capture 10:00/19:00：竞彩→预测→范围内欧赔（2 credits/次）
 - eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过
-- draw-results-sync 18:00-05:59 每 30 分钟 + 08:00 补扫（双 deployment）：源D 结果页
-  （票 42；无待出赛果时零成本跳过；频率待用户追认后如有调整只改 cron）
-- official-reconcile 08:30：官方赛果并行对账（票 44）——uniform 观测 +
-  openfootball 对账，跟在源D 08:00 补扫落事实之后
+- draw-results-sync 18:00-05:59 每 30 分钟 + 08:00 补扫（双 deployment）：
+  官方 uniform 赛果同步（票 44 切换，票 42 时代为源D；无待出赛果时零成本
+  跳过；频率如有调整只改 cron）
+- official-reconcile 08:30：赛果日终审计（票 44）——源D 页面 + openfootball
+  双参照源对账，跟在官方同步 08:00 补扫落事实之后
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
 - pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 

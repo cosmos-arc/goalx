@@ -17,7 +17,7 @@ from goalx_backend.betting.settle import preview_draw_result_change, run_settlem
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
-from goalx_backend.data.ingest import caiguo
+from goalx_backend.data.ingest import uniform
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import DrawResultInput
@@ -343,7 +343,7 @@ async def list_draw_results(
 
 @router.post(
     "/api/v1/draw-sync/run",
-    summary="触发一次赛果自动同步(源D 结果页)",
+    summary="触发一次赛果自动同步(官方 sporttery uniform 源)",
     response_model=DrawSyncStatusView,
     responses={502: {"description": "同步源不可达或返回异常"}},
 )
@@ -351,22 +351,22 @@ async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
     """
     同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。
 
-    完场且口径自洽才落库, 异常场次进待人工清单;
+    官方终态(比分或无效判定)落库, 拒因行进待人工清单;
     与库内不一致不自动冲正(人工兜底通道, ADR 0001)。
     """
     settings: Settings = getattr(request.app.state, "settings", None) or get_settings()
     now = datetime.now(UTC)
     try:
         with polite_client() as client:
-            caiguo.sync_draw_results(db, settings, client, now=now)
+            uniform.sync_uniform_results(db, settings, client, now=now)
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
             status_code=502, detail=f"draw sync source error: {exc}"
         ) from exc
-    row = caiguo.latest_sync_run(db)
+    row = uniform.latest_sync_run(db)
     return DrawSyncStatusView(
         last_run=_run_view(row) if row is not None else None,
-        pending_results=caiguo.pending_result_count(db, now=now),
+        pending_results=uniform.pending_result_count(db, now=now),
     )
 
 
@@ -378,10 +378,10 @@ async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
 async def get_draw_sync_status(db: DbDep) -> DrawSyncStatusView:
     """上次同步元信息与当前待出赛果数; 从未同步时 last_run 为空。"""
     now = datetime.now(UTC)
-    row = caiguo.latest_sync_run(db)
+    row = uniform.latest_sync_run(db)
     return DrawSyncStatusView(
         last_run=_run_view(row) if row is not None else None,
-        pending_results=caiguo.pending_result_count(db, now=now),
+        pending_results=uniform.pending_result_count(db, now=now),
     )
 
 

@@ -13,8 +13,8 @@ Prefect server 调度（见 README「运行采集」）。
 - weekly_train_flow：DC 分池周训练（Tier1 五大，票 26）
 - forecast_daily_flow：每日在售场次 ML Forecast 生成（票 27）
 - settlement_flow：开奖后结算批跑（每日数次）
-- draw_results_sync_flow：源D 结果页赛果自动同步（票 42）
-- official_reconcile_flow：官方赛果并行对账（票 44，uniform+openfootball）
+- draw_results_sync_flow：官方赛果自动同步（票 42 源D 起；票 44 切换 uniform）
+- official_reconcile_flow：赛果日终审计（票 44：源D+openfootball 对账）
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ def settlement_flow() -> dict[str, int]:
 
 @flow(name="draw-results-sync", log_prints=True)
 def draw_results_sync_flow() -> dict[str, object]:
-    """赛果自动同步（票 42）：源D 结果页；无待出赛果零成本跳过。"""
+    """赛果自动同步（票 44 切换后）：官方 uniform；无待出赛果零成本跳过。"""
     stats = tasks.draw_results_sync()
     logger.info("draw sync: {}", stats)
     return stats
@@ -120,7 +120,7 @@ def draw_results_sync_flow() -> dict[str, object]:
 
 @flow(name="official-reconcile", log_prints=True)
 def official_reconcile_flow() -> dict[str, object]:
-    """官方赛果并行对账（票 44）：uniform 官方 + openfootball 双参照源。"""
+    """赛果日终审计（票 44）：源D 页面 + openfootball 双参照源，不落事实。"""
     stats = tasks.official_results_reconcile()
     logger.info("official reconcile: {}", stats)
     return stats

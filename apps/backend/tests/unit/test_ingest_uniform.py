@@ -154,7 +154,7 @@ def test_fetch_paginates_all_rows() -> None:
 # --- 同步链路（join + 观测落库 + 对账 + coverage） ---
 
 
-def test_sync_reconciles_against_stored_results(db) -> None:
+def test_sync_imports_official_finals_and_reports_conflicts(db) -> None:
     fid_payout = _seed(
         db, 2041586, "周日001", "2026-09-20", "2026-09-20T11:00:00+00:00"
     )
@@ -164,7 +164,9 @@ def test_sync_reconciles_against_stored_results(db) -> None:
     fid_refund = _seed(
         db, 2041505, "周三014", "2026-09-16", "2026-09-16T18:00:00+00:00"
     )
-    _seed(db, 2041478, "周一013", "2026-09-14", "2026-09-14T10:00:00+00:00")
+    fid_cancel = _seed(
+        db, 2041478, "周一013", "2026-09-14", "2026-09-14T10:00:00+00:00"
+    )
     fid_close = _seed(db, 2041588, "周日003", "2026-09-20", "2026-09-20T09:00:00+00:00")
     # 周六029 2:2 已由源D 落库 → 一致；周三014 已录比分但官方判无效 → void 冲突
     import_draw_results(
@@ -190,20 +192,30 @@ def test_sync_reconciles_against_stored_results(db) -> None:
     assert sync_stats.fetched == 138
     assert sync_stats.observed_rows == 138
     assert sync_stats.unmatched == 133  # 138 - 5 个已建场次
-    # 对账：2:2 一致；无效场次 vs 已录比分 → void_mismatch；
-    # 周日001/周一013 官方终态但库内无 → missing；周日003 未完场不比
+    # 官方终态落事实：周日001（0:0 比分）+ 周一013（官方取消 → void）
+    assert sync_stats.imported == 2
+    assert sync_stats.unchanged == 1  # 周六029 2:2 已由源D 落库
+    # 对账：导入后一致 3（001/029/013 void）；周三014 官方无效 vs 已录
+    # 比分 → void_mismatch 不冲正；周日003 未完场不比
     assert rec_stats.compared == 4
-    assert rec_stats.consistent == 1
+    assert rec_stats.consistent == 3
     assert rec_stats.void_mismatch == 1
-    assert rec_stats.missing_result == 2
-    reasons = {e["reason"] for e in rec_stats.pending_manual}
-    assert reasons == {
-        "stored_result_vs_reference_void",
-        "reference_final_missing_fact",
-        "reference_void_missing_fact",
+    assert rec_stats.missing_result == 0
+    assert {e["reason"] for e in rec_stats.pending_manual} == {
+        "stored_result_vs_reference_void"
     }
-    # 并行对账不改事实源：库内无新赛果（周日001 仍无记录）
-    assert rs_store.get_draw_result(db, fid_payout) is None
+    row = rs_store.get_draw_result(db, fid_payout)
+    assert row is not None
+    assert (int(row["home_goals"]), int(row["away_goals"])) == (0, 0)
+    assert row["source"] == "sporttery.cn"
+    assert row["published_at"] is None
+    void_row = rs_store.get_draw_result(db, fid_cancel)
+    assert void_row is not None
+    assert bool(void_row["void"]) is True
+    assert void_row["void_reason"] == "官方取消"
+    # 周三014 不自动冲正（人工裁决通道）
+    refund_stored = rs_store.get_draw_result(db, fid_refund)
+    assert int(refund_stored["home_goals"]) == 1
     assert rs_store.get_draw_result(db, fid_close) is None
     # 观测行落库且 void 标记正确
     refund_obs = db.execute(

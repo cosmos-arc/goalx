@@ -1,5 +1,9 @@
 """
-源D 结果页数据获取（票 42）：赛果自动同步源（域名见配置 caiguo_base_url）。
+源D 结果页数据获取：对账审计源（域名见配置 caiguo_base_url）。
+
+票 42 起为赛果自动同步源；票 44 切换后官方 sporttery.cn uniform 族升结算
+事实源（2026-09-20 用户裁决，系统未上线免观察期），本模块不再落库——
+只做第三方对账。
 
 数据源实证（2026-09-18，详见票 42 Answer 的四源对比）：
 - URL 模式：``?e=YYYY-MM-DD`` 业务日参数（入口 301 → 同参数路径，需跟随一次
@@ -11,14 +15,13 @@
   （第二个 red 单元格）+ 胜平负字母（交叉校验用）；
 - 时延：当日晨完场比赛在上午已带比分（页面缓存标记 MISS）。
 
-口径守则（ADR 0001 澄清条款，票 42）：
-- 只导入 status="4"（完场）且比分可解析、胜平负字母自洽的场次；
-- 无效场次/延期/进行中/未赛（status≠4）、比分缺列、字母不自洽 → 不落库，
-  进待人工清单（fail-closed，人工兜底通道不动）；
-- 与库内已存赛果不一致（含人工先录）→ 不自动冲正，进待人工清单；
-- 落库走 import_draw_results（幂等+原子+冲正语义已在），source 用 SOURCE
-  常量标记来源，published_at 置 None（源页面无逐场官方发布时点，不伪造；
-  同步观测时点记 observed_at 于 draw_sync_runs）。
+口径守则（票 44 审计角色）：
+- 只取 status="4"（完场）且比分可解析、胜平负字母自洽的行作对账参照；
+- 页面异常行（比分缺列/字母不自洽/半场越界）→ 待人工清单（页面异常可能
+  藏结果）；未完场行（status≠4）静默跳过——缺果与 void 由官方事实源负责；
+- 与库内赛果不一致 → 对账 mismatch 条目（不冲正，人工裁决）；
+- 审计窗口 = 近 7 天已开赛场次的业务日（含已落果日——对账要覆盖旧事实，
+  与 candidate_business_dates 的"仅待出"语义不同）。
 
 网络层只做一件薄事（带 UA 的 GET + 一次重定向跟随）；解析与匹配是纯函数，
 测试用固定 fixture HTML，不打真实外网。
@@ -26,21 +29,21 @@
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import httpx
 
 from goalx_backend.config import Settings
-from goalx_backend.data import results as rs_store
-from goalx_backend.data.ingest.results import import_draw_results
-from goalx_backend.data.reconcile import upsert_source_coverage
-from goalx_backend.db import utc_now_iso
-from goalx_backend.models import DrawResultInput
+from goalx_backend.data.reconcile import (
+    ReconcileStats,
+    ReferenceResult,
+    reconcile_draw_results,
+    record_reconciliation_run,
+    upsert_source_coverage,
+)
 
 SOURCE = "500.com"
 PARSE_VERSION = "caiguo_live_v1"
@@ -113,19 +116,8 @@ class FetchedPage:
     raw: bytes
 
 
-@dataclass
-class CaiguoSyncStats:
-    """一次同步的统计与待人工清单。"""
-
-    source: str = SOURCE
-    observed_at: str = ""
-    business_dates: list[str] = field(default_factory=list)
-    pages: int = 0
-    fetched: int = 0  # 页面解析出的完场行数
-    imported: int = 0  # 本次新落库（含同值幂等重放）场次数
-    unchanged: int = 0  # 与库内已存完全一致、无需导入的场次数
-    unmatched: int = 0  # 页面有、库内无对应竞彩场次的行数（范围外，不报警）
-    pending_manual: list[dict[str, str]] = field(default_factory=list)
+# 审计窗口：近 7 天已开赛场次的业务日（含已落果日）
+_AUDIT_LOOKBACK_DAYS = 7
 
 
 def _browser_headers() -> dict[str, str]:
@@ -277,66 +269,58 @@ def candidate_business_dates(
     return [str(row["business_date"]) for row in rows]
 
 
-def _to_input(result: ParsedResult, fixture_id: int) -> DrawResultInput:
-    """解析行 → 落库输入（source 标记来源；published_at 源无官方时点置 None）。"""
-    return DrawResultInput(
-        fixture_id=fixture_id,
-        home_goals=result.home_goals,
-        away_goals=result.away_goals,
-        half_home_goals=result.half_home_goals,
-        half_away_goals=result.half_away_goals,
-        void=False,
-        void_reason=None,
-        source=SOURCE,
-        published_at=None,
-    )
+def recent_business_dates(
+    conn: sqlite3.Connection,
+    now: datetime | None = None,
+    days: int = _AUDIT_LOOKBACK_DAYS,
+) -> list[str]:
+    """近 N 天已开赛竞彩场次的业务日集合（审计窗口：含已落果日）。"""
+    current = now or datetime.now(UTC)
+    floor = (current - timedelta(days=days)).isoformat(timespec="seconds")
+    rows = conn.execute(
+        """
+        SELECT DISTINCT mc.business_date
+        FROM match_codes mc
+        JOIN fixtures f ON f.id = mc.fixture_id
+        WHERE mc.kind = 'jingcai'
+          AND f.kickoff_utc <= ?
+          AND f.kickoff_utc >= ?
+        ORDER BY mc.business_date
+        """,
+        (current.isoformat(timespec="seconds"), floor),
+    ).fetchall()
+    return [str(row["business_date"]) for row in rows]
 
 
-def _int_or_none(value: object) -> int | None:
-    """把行值列还原为 int/None（非 int/str 视为空）。"""
-    if isinstance(value, (int, str)):
-        return int(value)
-    return None
-
-
-def _values_match(existing: sqlite3.Row, incoming: DrawResultInput) -> bool:
-    """库内已存结果与新值是否逐字段一致（不含 source/published_at 追踪列）。"""
-    return (
-        int(existing["home_goals"]) == incoming.home_goals
-        and int(existing["away_goals"]) == incoming.away_goals
-        and _int_or_none(existing["half_home_goals"]) == incoming.half_home_goals
-        and _int_or_none(existing["half_away_goals"]) == incoming.half_away_goals
-        and bool(existing["void"]) == incoming.void
-    )
-
-
-def sync_draw_results(
+def audit_draw_results(
     conn: sqlite3.Connection,
     settings: Settings,
     client: httpx.Client,
     *,
     business_dates: list[str] | None = None,
     now: datetime | None = None,
-) -> CaiguoSyncStats:
+) -> ReconcileStats:
     """
-    同步入口：拉取候选业务日页面 → 解析 → 匹配 → import_draw_results。
+    源D 审计入口：拉取窗口业务日页面 → 解析 → 匹配 → 对账（不落库）。
 
-    - business_dates 缺省取 candidate_business_dates（空集零请求跳过）；
-    - 与库内不一致的完场行不自动冲正，进待人工清单（ADR 0001）；
-    - 成功后写 draw_sync_runs 元信息行（来源/时点/场次数/待人工清单）。
+    - business_dates 缺省取 recent_business_dates（近 7 天含已落果日；
+      需零请求跳过语义时由调用方先查空）；
+    - 完场行匹配竞彩场次后作参照，与 draw_results 事实比对：不一致 →
+      mismatch 条目（人工裁决）；库内缺失 → missing 条目（官方侧漏时可见）；
+    - 页面异常行进待人工清单；未完场行静默跳过（事实源职责在官方）。
     """
     now_dt = now or datetime.now(UTC)
-    stats = CaiguoSyncStats(observed_at=now_dt.isoformat(timespec="seconds"))
+    observed_at = now_dt.isoformat(timespec="seconds")
     dates = business_dates
     if dates is None:
-        dates = candidate_business_dates(conn, now=now)
-    stats.business_dates = list(dates)
-    inputs: list[DrawResultInput] = []
+        dates = recent_business_dates(conn, now=now_dt)
+    stats = ReconcileStats(
+        source=SOURCE, observed_at=observed_at, business_dates=list(dates)
+    )
+    refs: list[ReferenceResult] = []
     for business_date in dates:
         page = fetch_jczq_page(client, settings, business_date)
-        stats.pages += 1
         parsed = parse_page(page)
-        stats.fetched += len(parsed.finished)
         # 定则 4（票 44）：源D 每业务日的覆盖现态（页面级，无联赛细分）
         upsert_source_coverage(
             conn,
@@ -344,105 +328,33 @@ def sync_draw_results(
             coverage_date=business_date,
             match_count=len(parsed.finished) + len(parsed.skipped),
             coverage_status="covered",
-            observed_at=stats.observed_at,
+            observed_at=observed_at,
         )
         for skip in parsed.skipped:
-            stats.pending_manual.append(
-                {
-                    "business_date": business_date,
-                    "code": skip.code,
-                    "reason": skip.reason,
-                }
-            )
+            if skip.reason != "not_finished":
+                stats.pending_manual.append(
+                    {
+                        "business_date": business_date,
+                        "code": skip.code,
+                        "reason": f"page_{skip.reason}",
+                    }
+                )
         for result in parsed.finished:
             fixture_id = _fixture_id_for_code(conn, business_date, result.code)
             if fixture_id is None:
                 stats.unmatched += 1
                 continue
-            existing = rs_store.get_draw_result(conn, fixture_id)
-            if existing is not None:
-                incoming = _to_input(result, fixture_id)
-                if _values_match(existing, incoming):
-                    stats.unchanged += 1
-                    continue
-                # 已存结果与源不一致：不自动冲正（人工裁决通道）
-                stats.pending_manual.append(
-                    {
-                        "business_date": business_date,
-                        "code": result.code,
-                        "reason": "stored_differs",
-                    }
+            refs.append(
+                ReferenceResult(
+                    fixture_id=fixture_id,
+                    business_date=business_date,
+                    code=result.code,
+                    home_goals=result.home_goals,
+                    away_goals=result.away_goals,
+                    half_home_goals=result.half_home_goals,
+                    half_away_goals=result.half_away_goals,
                 )
-                continue
-            inputs.append(_to_input(result, fixture_id))
-    if inputs:
-        stats.imported = import_draw_results(conn, inputs)
-    record_sync_run(conn, stats)
+            )
+    reconcile_draw_results(conn, refs, stats)
+    record_reconciliation_run(conn, stats, parse_version=PARSE_VERSION)
     return stats
-
-
-def record_sync_run(conn: sqlite3.Connection, stats: CaiguoSyncStats) -> int:
-    """写一次同步的元信息行（append-only 语义，最新行即状态）。"""
-    cur = conn.execute(
-        """
-        INSERT INTO draw_sync_runs
-(source, observed_at, business_dates, pages, fetched, imported,
-            unchanged, unmatched, pending_manual, parse_version, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            stats.source,
-            stats.observed_at or utc_now_iso(),
-            json.dumps(stats.business_dates, ensure_ascii=False),
-            stats.pages,
-            stats.fetched,
-            stats.imported,
-            stats.unchanged,
-            stats.unmatched,
-            json.dumps(stats.pending_manual, ensure_ascii=False),
-            PARSE_VERSION,
-            utc_now_iso(),
-        ),
-    )
-    conn.commit()
-    if not cur.lastrowid:
-        raise RuntimeError("draw_sync_runs INSERT 未产生 rowid")
-    return int(cur.lastrowid)
-
-
-def latest_sync_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
-    """最近一次同步的元信息（无同步史返回 None）。"""
-    return conn.execute(
-        "SELECT * FROM draw_sync_runs ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-
-
-def pending_result_count(conn: sqlite3.Connection, now: datetime | None = None) -> int:
-    """已开赛、无开奖的竞彩场次数（状态端点的"待出赛果数"）。"""
-    current = (now or datetime.now(UTC)).isoformat(timespec="seconds")
-    row = conn.execute(
-        """
-        SELECT COUNT(*) AS n
-        FROM match_codes mc
-        JOIN fixtures f ON f.id = mc.fixture_id
-        LEFT JOIN draw_results d ON d.fixture_id = f.id
-        WHERE mc.kind = 'jingcai' AND f.kickoff_utc <= ? AND d.id IS NULL
-        """,
-        (current,),
-    ).fetchone()
-    return int(row["n"]) if row is not None else 0
-
-
-def stats_dict(stats: CaiguoSyncStats) -> dict[str, Any]:
-    """统计 → 可 JSON 化的 dict（flow 返回值/日志用）。"""
-    return {
-        "source": stats.source,
-        "observed_at": stats.observed_at,
-        "business_dates": stats.business_dates,
-        "pages": stats.pages,
-        "fetched": stats.fetched,
-        "imported": stats.imported,
-        "unchanged": stats.unchanged,
-        "unmatched": stats.unmatched,
-        "pending_manual": len(stats.pending_manual),
-    }
