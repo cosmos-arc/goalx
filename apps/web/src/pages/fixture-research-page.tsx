@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createBet, fetchBankroll, fetchFixtureResearch } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
+import { EvidenceChainSection } from "../components/evidence-chain";
 import { GlossaryTerm } from "../components/glossary-term";
 import {
 	EligibilityBadge,
@@ -444,29 +445,8 @@ export function FixtureResearchPage() {
 							</div>
 						</section>
 
-						{/* 基本面与 AI 研判：留位标注（EmptyState not-available，随 M3 到来） */}
-						<div className="grid gap-4 lg:grid-cols-2">
-							<section aria-labelledby="research-fundamentals-heading" data-testid="research-fundamentals">
-								<h3 id="research-fundamentals-heading" className="sr-only">
-									基本面
-								</h3>
-								<EmptyState
-									variant="not-available"
-									message="基本面研究尚未接入。"
-									hint="伤停/阵型/赛程密度等基本面包块随 M3 数据线到来——当前不做空白或误导。"
-								/>
-							</section>
-							<section aria-labelledby="research-ai-heading" data-testid="research-ai">
-								<h3 id="research-ai-heading" className="sr-only">
-									AI 研判
-								</h3>
-								<EmptyState
-									variant="not-available"
-									message="AI 研判尚未接入。"
-									hint="模型×市场对照的证据总结随 M3 LLM 线到来——落地前以本页数字为准。"
-								/>
-							</section>
-						</div>
+						{/* 证据链（票 14 V2：三轨对照+JS 徽章+情报时间线+复核结论+追问占位+盲评入口） */}
+						<EvidenceChainSection fixtureId={fixtureId} />
 					</div>
 				) : null}
 			</div>

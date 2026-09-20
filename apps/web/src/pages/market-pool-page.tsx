@@ -15,6 +15,7 @@ import {
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
+import { EvidenceCardSection } from "../components/evidence-card";
 import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
 import { type AdviceLeg, StakeAdviceNote } from "../components/stake-advice";
@@ -769,10 +770,22 @@ export function MarketPoolPage() {
 					</section>
 				) : null}
 
-				{/* 留位：AI 证据总结（not-available，随 M3） */}
-				<section aria-label="随 M3 上线" className="mb-8 grid gap-3" data-testid="pool-coming-soon">
-					<EmptyState variant="not-available" message="AI 证据总结（为何这样研判）" hint="随 M3 LLM 线上线。" />
-				</section>
+				{/* AI 证据总结（票 14 V1 证据卡转正：存量工件渲染 + 诚实降级） */}
+				{periods.length > 0 ? (
+					<section
+						aria-labelledby="pool-evidence-heading"
+						className="mb-8 rounded-lg border border-border bg-card p-4"
+						data-testid="pool-evidence"
+					>
+						<h2 id="pool-evidence-heading" className="mb-2 text-sm font-medium">
+							AI 证据总结{" "}
+							<span className="font-normal text-muted-foreground">
+								为何这样研判——情报/概率证据（advisory，不改注策）
+							</span>
+						</h2>
+						{activePeriod ? <EvidenceCardSection periodNo={activePeriod} /> : null}
+					</section>
+				) : null}
 
 				{/* 提交：纸面池票（pool-slips 接线，票 43）；真金不呈现 */}
 				<section aria-labelledby="pool-submit-heading" className="rounded-lg border border-border bg-card p-4">

@@ -10,6 +10,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from goalx_backend.api import bets as bets_api
+from goalx_backend.api import evidence as evidence_api
 from goalx_backend.api import fixtures as fixtures_api
 from goalx_backend.api import markets as markets_api
 from goalx_backend.api import pool as pool_api
@@ -74,6 +75,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "name": "validation",
                 "description": "回测 run/指标与纸面三条件进度(验证页)。",
             },
+            {
+                "name": "evidence",
+                "description": "LLM 线证据面：证据卡/证据链/复核队列/盲评(M3, 票 14)。",
+            },
         ],
     )
     app.state.settings = resolved
@@ -108,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pool_api.router)
     app.include_router(results_api.router)
     app.include_router(validation_api.router)
+    app.include_router(evidence_api.router)
     return app
 
 

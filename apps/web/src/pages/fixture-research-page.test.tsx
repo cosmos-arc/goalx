@@ -108,16 +108,83 @@ test("renders the research view: books table with deviation highlight, consensus
 	expect(within(model).getByText("客胜 -33.4%")).toHaveClass("text-loss");
 	expect(model).toHaveTextContent("dc-demo");
 
-	// 基本面与 AI 研判：not-available 留位（"随 M3 到来"），不空白不误导
-	const fundamentals = screen.getByTestId("research-fundamentals");
-	expect(within(fundamentals).getByTestId("empty-state")).toHaveAttribute("data-variant", "not-available");
-	expect(fundamentals).toHaveTextContent("随 M3");
-	const ai = screen.getByTestId("research-ai");
-	expect(within(ai).getByTestId("empty-state")).toHaveAttribute("data-variant", "not-available");
-	expect(ai).toHaveTextContent("随 M3");
+	// 证据链（票 14 V2）：三轨对照 + JS 徽章 + 情报时间线 + 复核/追问/盲评入口
+	// （evidence 是独立请求，findBy 等 query 落定）
+	const chain = await screen.findByTestId("research-chain");
+	expect(chain).toHaveTextContent("证据链");
+	expect(within(chain).getByTestId("chain-track-ml")).toHaveTextContent("ML 量化");
+	expect(within(chain).getByTestId("chain-track-llm")).toHaveTextContent("复核");
+	expect(within(chain).getByTestId("chain-track-fused")).toHaveTextContent("48.0%");
+	expect(within(chain).getByTestId("chain-js")).toHaveTextContent("JS(ML,LLM)=0.072 → 已入复核");
+	expect(within(chain).getAllByTestId("chain-intel")).toHaveLength(2);
+	expect(within(chain).getByTestId("chain-rationale")).toHaveTextContent("analyst 复核");
+	expect(within(chain).getByTestId("chain-verdict")).toHaveTextContent("未裁决");
+	expect(within(chain).getByTestId("chain-ask-pending")).toBeDisabled();
+	expect(within(chain).getByTestId("chain-blind-entry")).toHaveAttribute("href", "/review");
 
 	// 返回场次链接常显
 	expect(screen.getByRole("navigation", { name: "返回" })).toHaveTextContent("返回场次");
+});
+
+test("evidence chain degrades honestly when the evidence endpoint is missing (票 14)", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/:id/evidence", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
+	);
+	await renderAt("/fixtures/1");
+
+	const chain = await screen.findByTestId("research-chain");
+	const empty = await within(chain).findByTestId("empty-state");
+	expect(empty).toHaveAttribute("data-variant", "not-available");
+	expect(empty).toHaveTextContent("证据链暂不可用");
+});
+
+test("evidence chain renders sparse data honestly: missing tracks, no intels, decided verdict", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/:id/evidence", () =>
+			HttpResponse.json({
+				fixture_id: 1,
+				generated_at: new Date().toISOString(),
+				caliber: "证据链 = 已存证工件渲染。",
+				tracks: {
+					ml: {
+						track: "ml",
+						h: 0.53,
+						d: 0.24,
+						a: 0.23,
+						issued_at: new Date().toISOString(),
+						model_version: "dc-demo",
+						rationale: null,
+						analyst: false,
+					},
+					llm: null,
+					fused: null,
+				},
+				divergence: { js: null, routed: false },
+				intels: [],
+				reviews: [
+					{
+						route: "post_settle",
+						status: "done",
+						verdict: "key_contribution",
+						js_value: null,
+						created_at: new Date().toISOString(),
+						decided_at: new Date().toISOString(),
+					},
+				],
+			}),
+		),
+	);
+	await renderAt("/fixtures/1");
+
+	const chain = await screen.findByTestId("research-chain");
+	// LLM/Fused 缺轨 → "无产出"（不虚构）；ML 照常渲染
+	await waitFor(() => expect(within(chain).getByTestId("chain-track-llm")).toHaveTextContent("无产出"));
+	expect(within(chain).getByTestId("chain-track-fused")).toHaveTextContent("无产出");
+	expect(within(chain).getByTestId("chain-track-ml")).toHaveTextContent("53.0%");
+	// 无分歧读数 + 复核结论（已裁决） + 无情报诚实空态
+	expect(within(chain).getByTestId("chain-js")).toHaveTextContent("无分歧读数");
+	expect(within(chain).getByTestId("chain-verdict")).toHaveTextContent("情报有关键贡献");
+	expect(within(chain).getByTestId("chain-intels-empty")).toHaveTextContent("不装懂");
 });
 
 test("picks into the basket and creates a suggestion in place", async () => {

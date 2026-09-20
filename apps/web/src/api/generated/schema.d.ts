@@ -689,6 +689,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/validation/m3-protocol": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * M3 评测协议报告(三轨参考列+两档冻结阈值)
+         * @description 三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。
+         *
+         *     （票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格
+         *     三条件只读 ML 轨（票 04 冻结）。
+         */
+        get: operations["get_m3_protocol_api_v1_validation_m3_protocol_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/backtest/baseline-quality": {
         parameters: {
             query?: never;
@@ -703,6 +726,106 @@ export interface paths {
         get: operations["get_baseline_quality_api_v1_backtest_baseline_quality_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pool/periods/{period_no}/evidence-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 彩池期次证据卡汇总(存量渲染,票 14)
+         * @description 一期 14 场的证据卡数据（情报/概率/分歧/状态一次取齐）。
+         */
+        get: operations["get_pool_evidence_summary_api_v1_pool_periods__period_no__evidence_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fixtures/{fixture_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 场次证据链(三轨对照+情报+复核,票 14)
+         * @description 一场的完整证据链（存量工件只读；无数据轨为 None 不虚构）。
+         */
+        get: operations["get_fixture_evidence_api_v1_fixtures__fixture_id__evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/review/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 复核队列(open 项,票 13 闭环人工面)
+         * @description Open 状态复核项（赛前路由 + 赛后一对一错）按入队时点升序。
+         */
+        get: operations["get_review_queue_api_v1_review_queue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/review/items/{item_id}/verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交复核结论(三分类,open→done)
+         * @description 结论三分类落库（不改任何预测工件）。
+         */
+        post: operations["submit_review_verdict_api_v1_review_items__item_id__verdict_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/blind-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交盲评(双周匿名二选一,幂等)
+         * @description 同周期同场次重复提交被吸收（recorded=false 语义化返回）。
+         */
+        post: operations["submit_blind_review_api_v1_blind_reviews_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -943,6 +1066,23 @@ export interface components {
             ev_snapshot?: components["schemas"]["BetEvSnapshotView"] | null;
         };
         /**
+         * BlindReviewPayload
+         * @description 盲评提交（双周匿名二选一，参考列）。
+         */
+        BlindReviewPayload: {
+            /** Cycle */
+            cycle: string;
+            /** Fixture Id */
+            fixture_id: number;
+            /**
+             * Choice
+             * @enum {string}
+             */
+            choice: "ml" | "llm";
+            /** Note */
+            note?: string | null;
+        };
+        /**
          * BookQuoteView
          * @description 研究页一行：某欧赔 book 的最新三向报价。
          *
@@ -1112,6 +1252,19 @@ export interface components {
             note?: string | null;
         };
         /**
+         * DivergenceView
+         * @description ML×LLM 分歧读数：JS 散度 + 是否已路由复核（pre_match 项存在）。
+         */
+        DivergenceView: {
+            /** Js */
+            js?: number | null;
+            /**
+             * Routed
+             * @default false
+             */
+            routed: boolean;
+        };
+        /**
          * DrawResultChangeView
          * @description 预览里一条结果变化。
          */
@@ -1257,6 +1410,76 @@ export interface components {
          * @enum {string}
          */
         Environment: "development" | "testing" | "production";
+        /**
+         * EvidenceMatchView
+         * @description 彩池证据卡一行（一场）。
+         *
+         *     state 语义（LLM 证据线）：analyst_done=analyst 已复核；scout_done=scout
+         *     已出概率；no_forecast=有情报但无 LLM 概率产出（scout 未跑/解析失败，
+         *     宁缺毋假）；no_intel=无情报无产出——诚实降级，前端只展示官方份额。
+         */
+        EvidenceMatchView: {
+            /** Match Seq */
+            match_seq: number;
+            /** Fixture Id */
+            fixture_id?: number | null;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** League */
+            league: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            forecast?: components["schemas"]["TrackTripleView"] | null;
+            /**
+             * Intel Count
+             * @default 0
+             */
+            intel_count: number;
+            /** Intels */
+            intels?: components["schemas"]["IntelItemView"][];
+            divergence?: components["schemas"]["DivergenceView"];
+            /** State */
+            state: string;
+        };
+        /**
+         * EvidenceSummaryView
+         * @description 期次证据卡汇总（一 fetch 渲染整期，V1 组件消费）。
+         */
+        EvidenceSummaryView: {
+            /** Period No */
+            period_no: string;
+            /** Market Code */
+            market_code: string;
+            /** Generated At */
+            generated_at: string;
+            /** Caliber */
+            caliber: string;
+            /** Matches */
+            matches: components["schemas"]["EvidenceMatchView"][];
+        };
+        /**
+         * FixtureEvidenceView
+         * @description 场次证据链（V2 区块消费）：三轨对照 + 情报时间线 + 复核状态。
+         */
+        FixtureEvidenceView: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Generated At */
+            generated_at: string;
+            /** Caliber */
+            caliber: string;
+            /** Tracks */
+            tracks: {
+                [key: string]: components["schemas"]["TrackTripleView"] | null;
+            };
+            divergence: components["schemas"]["DivergenceView"];
+            /** Intels */
+            intels: components["schemas"]["IntelItemView"][];
+            /** Reviews */
+            reviews: components["schemas"]["ReviewItemView"][];
+        };
         /**
          * FixtureResearchView
          * @description 单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。
@@ -1433,6 +1656,20 @@ export interface components {
         ImportResultView: {
             /** Imported */
             imported: number;
+        };
+        /**
+         * IntelItemView
+         * @description 一条已存证情报（来源/时点随条目——徽章展示口径）。
+         */
+        IntelItemView: {
+            /** Kind */
+            kind: string;
+            /** Text */
+            text: string;
+            /** Source */
+            source: string;
+            /** Collected At */
+            collected_at: string;
         };
         /**
          * LegPayload
@@ -1695,6 +1932,58 @@ export interface components {
             period_count: number;
         };
         /**
+         * ReviewItemView
+         * @description 一场的复核项（赛前 JS 路由 / 赛后一对一错，双路可并存）。
+         */
+        ReviewItemView: {
+            /** Route */
+            route: string;
+            /** Status */
+            status: string;
+            /** Verdict */
+            verdict?: string | null;
+            /** Js Value */
+            js_value?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Decided At */
+            decided_at?: string | null;
+        };
+        /**
+         * ReviewQueueItemView
+         * @description 复核队列一行（含对阵信息，免前端二次取数）。
+         */
+        ReviewQueueItemView: {
+            /** Id */
+            id: number;
+            /** Fixture Id */
+            fixture_id: number;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Competition */
+            competition: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Route */
+            route: string;
+            /** Js Value */
+            js_value: number | null;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * ReviewQueueView
+         * @description 待复核清单。
+         */
+        ReviewQueueView: {
+            /** Items */
+            items: components["schemas"]["ReviewQueueItemView"][];
+        };
+        /**
          * SelectionTriple
          * @description 主/平/客三元组（赔率、概率或 EV）。
          */
@@ -1897,6 +2186,31 @@ export interface components {
             flags?: string[];
             had_quote?: components["schemas"]["HadQuoteStatus"] | null;
         };
+        /**
+         * TrackTripleView
+         * @description 一条轨道预测的三项与发出时点（llm 轨带 rationale/analyst 标记）。
+         */
+        TrackTripleView: {
+            /** Track */
+            track: string;
+            /** H */
+            h: number;
+            /** D */
+            d: number;
+            /** A */
+            a: number;
+            /** Issued At */
+            issued_at: string;
+            /** Model Version */
+            model_version: string;
+            /** Rationale */
+            rationale?: string | null;
+            /**
+             * Analyst
+             * @default false
+             */
+            analyst: boolean;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1934,6 +2248,19 @@ export interface components {
                 [key: string]: unknown;
             };
             latest_run?: components["schemas"]["BacktestRunView"] | null;
+        };
+        /**
+         * VerdictPayload
+         * @description 复核结论提交（三分类只进评测集，票 05 冻结）。
+         */
+        VerdictPayload: {
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "key_contribution" | "irrelevant" | "misleading";
+            /** Note */
+            note?: string | null;
         };
         /**
          * YieldPoint
@@ -3101,6 +3428,28 @@ export interface operations {
             };
         };
     };
+    get_m3_protocol_api_v1_validation_m3_protocol_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     get_baseline_quality_api_v1_backtest_baseline_quality_get: {
         parameters: {
             query?: never;
@@ -3119,6 +3468,183 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_pool_evidence_summary_api_v1_pool_periods__period_no__evidence_summary_get: {
+        parameters: {
+            query?: {
+                market_code?: string;
+            };
+            header?: never;
+            path: {
+                period_no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceSummaryView"];
+                };
+            };
+            /** @description 期次不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fixture_evidence_api_v1_fixtures__fixture_id__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fixture_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixtureEvidenceView"];
+                };
+            };
+            /** @description fixture 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_review_queue_api_v1_review_queue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQueueView"];
+                };
+            };
+        };
+    };
+    submit_review_verdict_api_v1_review_items__item_id__verdict_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerdictPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description 复核项不存在或已裁决 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_blind_review_api_v1_blind_reviews_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlindReviewPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

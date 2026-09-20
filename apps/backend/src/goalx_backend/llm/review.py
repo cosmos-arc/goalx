@@ -132,6 +132,16 @@ def open_reviews(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def review_items_for_fixture(
+    conn: sqlite3.Connection, fixture_id: int
+) -> list[sqlite3.Row]:
+    """一场的全部复核项（open+done，创建时点升序——证据面读数用）。"""
+    return conn.execute(
+        "SELECT * FROM review_items WHERE fixture_id = ? ORDER BY created_at, id",
+        (fixture_id,),
+    ).fetchall()
+
+
 def verdict_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """已完成复核的结论三分类计数（评测报告读取入口）。"""
     rows = conn.execute(

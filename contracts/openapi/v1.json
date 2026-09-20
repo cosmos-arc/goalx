@@ -1523,6 +1523,30 @@
         }
       }
     },
+    "/api/v1/validation/m3-protocol": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "M3 评测协议报告(三轨参考列+两档冻结阈值)",
+        "description": "三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。\n\n（票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格\n三条件只读 ML 轨（票 04 冻结）。",
+        "operationId": "get_m3_protocol_api_v1_validation_m3_protocol_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get M3 Protocol Api V1 Validation M3 Protocol Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backtest/baseline-quality": {
       "get": {
         "tags": [
@@ -1540,6 +1564,236 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Get Baseline Quality Api V1 Backtest Baseline Quality Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pool/periods/{period_no}/evidence-summary": {
+      "get": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "彩池期次证据卡汇总(存量渲染,票 14)",
+        "description": "一期 14 场的证据卡数据（情报/概率/分歧/状态一次取齐）。",
+        "operationId": "get_pool_evidence_summary_api_v1_pool_periods__period_no__evidence_summary_get",
+        "parameters": [
+          {
+            "name": "period_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Period No"
+            }
+          },
+          {
+            "name": "market_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ttt14",
+              "title": "Market Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceSummaryView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "期次不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixtures/{fixture_id}/evidence": {
+      "get": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "场次证据链(三轨对照+情报+复核,票 14)",
+        "description": "一场的完整证据链（存量工件只读；无数据轨为 None 不虚构）。",
+        "operationId": "get_fixture_evidence_api_v1_fixtures__fixture_id__evidence_get",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixtureEvidenceView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/review/queue": {
+      "get": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "复核队列(open 项,票 13 闭环人工面)",
+        "description": "Open 状态复核项（赛前路由 + 赛后一对一错）按入队时点升序。",
+        "operationId": "get_review_queue_api_v1_review_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQueueView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/review/items/{item_id}/verdict": {
+      "post": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "提交复核结论(三分类,open→done)",
+        "description": "结论三分类落库（不改任何预测工件）。",
+        "operationId": "submit_review_verdict_api_v1_review_items__item_id__verdict_post",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Submit Review Verdict Api V1 Review Items  Item Id  Verdict Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "复核项不存在或已裁决"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/blind-reviews": {
+      "post": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "提交盲评(双周匿名二选一,幂等)",
+        "description": "同周期同场次重复提交被吸收（recorded=false 语义化返回）。",
+        "operationId": "submit_blind_review_api_v1_blind_reviews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlindReviewPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "type": "object",
+                  "title": "Response Submit Blind Review Api V1 Blind Reviews Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2236,6 +2490,46 @@
         "title": "BetView",
         "description": "一注的复盘视图。"
       },
+      "BlindReviewPayload": {
+        "properties": {
+          "cycle": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Cycle"
+          },
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "choice": {
+            "type": "string",
+            "enum": [
+              "ml",
+              "llm"
+            ],
+            "title": "Choice"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cycle",
+          "fixture_id",
+          "choice"
+        ],
+        "title": "BlindReviewPayload",
+        "description": "盲评提交（双周匿名二选一，参考列）。"
+      },
       "BookQuoteView": {
         "properties": {
           "book": {
@@ -2604,6 +2898,29 @@
         ],
         "title": "DepositPayload",
         "description": "一笔入金输入。"
+      },
+      "DivergenceView": {
+        "properties": {
+          "js": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Js"
+          },
+          "routed": {
+            "type": "boolean",
+            "title": "Routed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "DivergenceView",
+        "description": "ML×LLM 分歧读数：JS 散度 + 是否已路由复核（pre_match 项存在）。"
       },
       "DrawResultChangeView": {
         "properties": {
@@ -2979,6 +3296,177 @@
         ],
         "title": "Environment",
         "description": "Deployment environments the backend understands."
+      },
+      "EvidenceMatchView": {
+        "properties": {
+          "match_seq": {
+            "type": "integer",
+            "title": "Match Seq"
+          },
+          "fixture_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fixture Id"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "league": {
+            "type": "string",
+            "title": "League"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "forecast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackTripleView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intel_count": {
+            "type": "integer",
+            "title": "Intel Count",
+            "default": 0
+          },
+          "intels": {
+            "items": {
+              "$ref": "#/components/schemas/IntelItemView"
+            },
+            "type": "array",
+            "title": "Intels"
+          },
+          "divergence": {
+            "$ref": "#/components/schemas/DivergenceView"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_seq",
+          "home_team",
+          "away_team",
+          "league",
+          "kickoff_utc",
+          "state"
+        ],
+        "title": "EvidenceMatchView",
+        "description": "彩池证据卡一行（一场）。\n\nstate 语义（LLM 证据线）：analyst_done=analyst 已复核；scout_done=scout\n已出概率；no_forecast=有情报但无 LLM 概率产出（scout 未跑/解析失败，\n宁缺毋假）；no_intel=无情报无产出——诚实降级，前端只展示官方份额。"
+      },
+      "EvidenceSummaryView": {
+        "properties": {
+          "period_no": {
+            "type": "string",
+            "title": "Period No"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceMatchView"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_no",
+          "market_code",
+          "generated_at",
+          "caliber",
+          "matches"
+        ],
+        "title": "EvidenceSummaryView",
+        "description": "期次证据卡汇总（一 fetch 渲染整期，V1 组件消费）。"
+      },
+      "FixtureEvidenceView": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          },
+          "tracks": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TrackTripleView"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Tracks"
+          },
+          "divergence": {
+            "$ref": "#/components/schemas/DivergenceView"
+          },
+          "intels": {
+            "items": {
+              "$ref": "#/components/schemas/IntelItemView"
+            },
+            "type": "array",
+            "title": "Intels"
+          },
+          "reviews": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewItemView"
+            },
+            "type": "array",
+            "title": "Reviews"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "generated_at",
+          "caliber",
+          "tracks",
+          "divergence",
+          "intels",
+          "reviews"
+        ],
+        "title": "FixtureEvidenceView",
+        "description": "场次证据链（V2 区块消费）：三轨对照 + 情报时间线 + 复核状态。"
       },
       "FixtureResearchView": {
         "properties": {
@@ -3504,6 +3992,35 @@
         ],
         "title": "ImportResultView",
         "description": "导入统计。"
+      },
+      "IntelItemView": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "collected_at": {
+            "type": "string",
+            "title": "Collected At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "text",
+          "source",
+          "collected_at"
+        ],
+        "title": "IntelItemView",
+        "description": "一条已存证情报（来源/时点随条目——徽章展示口径）。"
       },
       "LegPayload": {
         "properties": {
@@ -4233,6 +4750,146 @@
         "title": "PoolSyncStatusView",
         "description": "彩池同步状态（触发后/查询）。"
       },
+      "ReviewItemView": {
+        "properties": {
+          "route": {
+            "type": "string",
+            "title": "Route"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "js_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Js Value"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "route",
+          "status",
+          "created_at"
+        ],
+        "title": "ReviewItemView",
+        "description": "一场的复核项（赛前 JS 路由 / 赛后一对一错，双路可并存）。"
+      },
+      "ReviewQueueItemView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "competition": {
+            "type": "string",
+            "title": "Competition"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route"
+          },
+          "js_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Js Value"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fixture_id",
+          "home_team",
+          "away_team",
+          "competition",
+          "kickoff_utc",
+          "route",
+          "js_value",
+          "status",
+          "created_at"
+        ],
+        "title": "ReviewQueueItemView",
+        "description": "复核队列一行（含对阵信息，免前端二次取数）。"
+      },
+      "ReviewQueueView": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewQueueItemView"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ReviewQueueView",
+        "description": "待复核清单。"
+      },
       "SelectionTriple": {
         "properties": {
           "h": {
@@ -4733,6 +5390,61 @@
         "title": "TodayFixtureView",
         "description": "场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。"
       },
+      "TrackTripleView": {
+        "properties": {
+          "track": {
+            "type": "string",
+            "title": "Track"
+          },
+          "h": {
+            "type": "number",
+            "title": "H"
+          },
+          "d": {
+            "type": "number",
+            "title": "D"
+          },
+          "a": {
+            "type": "number",
+            "title": "A"
+          },
+          "issued_at": {
+            "type": "string",
+            "title": "Issued At"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "analyst": {
+            "type": "boolean",
+            "title": "Analyst",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "track",
+          "h",
+          "d",
+          "a",
+          "issued_at",
+          "model_version"
+        ],
+        "title": "TrackTripleView",
+        "description": "一条轨道预测的三项与发出时点（llm 轨带 rationale/analyst 标记）。"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -4838,6 +5550,36 @@
         "title": "ValidationProgressView",
         "description": "验证页数据：三条件进度 + mode 隔离计数/收益 + CLV + 前瞻评分。"
       },
+      "VerdictPayload": {
+        "properties": {
+          "classification": {
+            "type": "string",
+            "enum": [
+              "key_contribution",
+              "irrelevant",
+              "misleading"
+            ],
+            "title": "Classification"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "classification"
+        ],
+        "title": "VerdictPayload",
+        "description": "复核结论提交（三分类只进评测集，票 05 冻结）。"
+      },
       "YieldPoint": {
         "properties": {
           "index": {
@@ -4898,6 +5640,10 @@
     {
       "name": "validation",
       "description": "回测 run/指标与纸面三条件进度(验证页)。"
+    },
+    {
+      "name": "evidence",
+      "description": "LLM 线证据面：证据卡/证据链/复核队列/盲评(M3, 票 14)。"
     }
   ]
 }

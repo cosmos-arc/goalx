@@ -1142,3 +1142,178 @@ handlers.push(
 		),
 	),
 );
+
+// --- 票 14：证据面（证据卡/证据链/复核/盲评） ---
+// 场 1 = analyst 已复核全链路（fused+情报+JS+已路由）；场 2 = scout 已跑；
+// 场 6 = 无情报无产出（诚实降级可断言样本）；其余场 = 未桥接降级同款。
+export const evidenceSummaryFixture = {
+	period_no: "26999",
+	market_code: "ttt14",
+	generated_at: minutesAgoIso(2),
+	caliber:
+		"证据卡 = 已存证工件渲染：情报条目带来源与采集时点；概率 = 融合线（fused，未生成时退 LLM 轨 scout/analyst 产出）；无情报场次不出概率，仅展示官方份额（不装懂）。",
+	matches: [
+		{
+			match_seq: 1,
+			fixture_id: 1,
+			home_team: "阿森纳",
+			away_team: "切尔西",
+			league: "英超",
+			kickoff_utc: hoursFromNow(2.5),
+			forecast: {
+				track: "fused",
+				h: 0.48,
+				d: 0.25,
+				a: 0.27,
+				issued_at: minutesAgoIso(40),
+				model_version: "leap:w=0.5",
+				rationale: null,
+				analyst: false,
+			},
+			intel_count: 2,
+			intels: [
+				{
+					kind: "form",
+					text: "阿森纳（Arsenal）近6轮 WWDWLD（进9失6）",
+					source: "fdhist:E0",
+					collected_at: minutesAgoIso(180),
+				},
+				{
+					kind: "formation",
+					text: "萨卡（腿筋）缺阵；厄德高在复出名单",
+					source: "okooo formation",
+					collected_at: minutesAgoIso(120),
+				},
+			],
+			divergence: { js: 0.072, routed: true },
+			state: "analyst_done",
+		},
+		{
+			match_seq: 2,
+			fixture_id: 2,
+			home_team: "利物浦",
+			away_team: "曼城",
+			league: "英超",
+			kickoff_utc: hoursFromNow(3),
+			forecast: {
+				track: "llm",
+				h: 0.36,
+				d: 0.28,
+				a: 0.36,
+				issued_at: minutesAgoIso(55),
+				model_version: "glm:glm-5.3-flash",
+				rationale: "双强对位平局权重上调",
+				analyst: false,
+			},
+			intel_count: 1,
+			intels: [
+				{
+					kind: "h2h",
+					text: "近6次同联赛交锋：利物浦 3 胜 2 平 1 负",
+					source: "fdhist:E0",
+					collected_at: minutesAgoIso(180),
+				},
+			],
+			divergence: { js: 0.014, routed: false },
+			state: "scout_done",
+		},
+		{
+			match_seq: 6,
+			fixture_id: null,
+			home_team: "加的夫城",
+			away_team: "诺维奇",
+			league: "英冠",
+			kickoff_utc: hoursFromNow(5),
+			forecast: null,
+			intel_count: 0,
+			intels: [],
+			divergence: { js: null, routed: false },
+			state: "no_intel",
+		},
+	],
+} as const;
+
+export const fixtureEvidenceFixture = {
+	fixture_id: 1,
+	generated_at: minutesAgoIso(2),
+	caliber: "证据链 = 已存证工件渲染（三轨对照/情报时间线/复核状态）。",
+	tracks: {
+		ml: {
+			track: "ml",
+			h: 0.53,
+			d: 0.24,
+			a: 0.23,
+			issued_at: minutesAgoIso(240),
+			model_version: "dc-demo",
+			rationale: null,
+			analyst: false,
+		},
+		llm: {
+			track: "llm",
+			h: 0.45,
+			d: 0.25,
+			a: 0.3,
+			issued_at: minutesAgoIso(20),
+			model_version: "glm:glm-5.3",
+			rationale: "萨卡缺阵削弱主队胜率，analyst 复核上调负概率",
+			analyst: true,
+		},
+		fused: {
+			track: "fused",
+			h: 0.48,
+			d: 0.25,
+			a: 0.27,
+			issued_at: minutesAgoIso(15),
+			model_version: "leap:w=0.5",
+			rationale: null,
+			analyst: false,
+		},
+	},
+	divergence: { js: 0.072, routed: true },
+	intels: evidenceSummaryFixture.matches[0].intels,
+	reviews: [
+		{
+			route: "pre_match",
+			status: "open",
+			verdict: null,
+			js_value: 0.072,
+			created_at: minutesAgoIso(30),
+			decided_at: null,
+		},
+	],
+} as const;
+
+export const reviewQueueFixture = {
+	items: [
+		{
+			id: 7,
+			fixture_id: 1,
+			home_team: "阿森纳",
+			away_team: "切尔西",
+			competition: "英超",
+			kickoff_utc: hoursFromNow(2.5),
+			route: "pre_match",
+			js_value: 0.072,
+			status: "open",
+			created_at: minutesAgoIso(30),
+		},
+	],
+} as const;
+
+handlers.push(
+	http.get("*/api/v1/pool/periods/:periodNo/evidence-summary", ({ params }) => {
+		if (params["periodNo"] !== "26999") {
+			return HttpResponse.json({ detail: "period not found" }, { status: 404 });
+		}
+		return HttpResponse.json(evidenceSummaryFixture);
+	}),
+	http.get("*/api/v1/fixtures/:id/evidence", ({ params }) => {
+		if (Number(params["id"]) !== 1) {
+			return HttpResponse.json({ detail: "fixture not found" }, { status: 404 });
+		}
+		return HttpResponse.json(fixtureEvidenceFixture);
+	}),
+	http.get("*/api/v1/review/queue", () => HttpResponse.json(reviewQueueFixture)),
+	http.post("*/api/v1/review/items/:itemId/verdict", () => HttpResponse.json({ recorded: true })),
+	http.post("*/api/v1/blind-reviews", () => HttpResponse.json({ recorded: true })),
+);
