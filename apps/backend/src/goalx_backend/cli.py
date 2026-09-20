@@ -29,6 +29,7 @@ import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import httpx
 from loguru import logger
 
 from goalx_backend import tasks
@@ -37,13 +38,14 @@ from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs_store
-from goalx_backend.data.ingest import caiguo, openfootball, sporttery, uniform
+from goalx_backend.data.ingest import caiguo, fdhist, openfootball, sporttery, uniform
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
+from goalx_backend.evaluation.corpus import completeness_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
@@ -270,6 +272,25 @@ def _cmd_xg_compare(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_corpus_report(args: argparse.Namespace) -> None:
+    """十年语料报表（票 46）：完整性 + 可选 openfootball 交叉验证。"""
+    seasons = tuple(args.seasons) if args.seasons else fdhist.SEASONS
+    with task_conn() as conn:
+        report: dict[str, object] = {
+            "completeness": completeness_report(
+                conn, competitions=fdhist.FD_COMPETITIONS, seasons=seasons
+            )
+        }
+        if args.cross_check:
+            with httpx.Client() as client:
+                report["cross_check"] = openfootball.cross_check_dict(
+                    openfootball.cross_check_fdhist(
+                        conn, get_settings(), client, seasons=seasons
+                    )
+                )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_pool_sync() -> None:
     """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
     stats = tasks.pool_snapshot()
@@ -421,6 +442,15 @@ def build_parser() -> argparse.ArgumentParser:
     xgcmp.add_argument(
         "--shrink-k", nargs="*", default=["6"], help="收缩先验 k 值列表(默认 6)"
     )
+    corpus = sub.add_parser(
+        "corpus-report", help="十年语料报表(票 46;完整性+可选交叉验证)"
+    )
+    corpus.add_argument("--seasons", nargs="*", help="fd 季键(默认 1617..2627)")
+    corpus.add_argument(
+        "--cross-check",
+        action="store_true",
+        help="附 openfootball 比分对 fdhist 交叉验证(拉重叠联赛赛季文件)",
+    )
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -452,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         "pool-sync": _cmd_pool_sync,
         "understat-sync": lambda: _cmd_understat_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
+        "corpus-report": lambda: _cmd_corpus_report(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()
