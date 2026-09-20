@@ -6,52 +6,12 @@ import re
 import tokenize
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "goalx_backend"
-INFRA = {"db.py", "migrations.py"}  # schema_migrations/DDL 归 infra，不受限
+from goalx_backend.table_owners import OWNERS
 
-OWNERS: dict[str, set[str]] = {
-    "data": {
-        "fixtures",
-        "teams",
-        "competitions",
-        "match_codes",
-        "odds_snapshots",
-        "sale_statuses",
-        "quote_observations",
-        "draw_results",
-        "draw_result_revisions",
-        "draw_sync_runs",
-        "hist_matches",
-        "cost_ledger",
-        # 票 43：彩池域表归 data/pool.py
-        "pool_periods",
-        "pool_states",
-        "public_shares",
-        "pool_matches",
-        "pool_sync_runs",
-    },
-    "modelling": {"forecasts", "team_aliases"},
-    "evaluation": {
-        "backtest_runs",
-        "backtest_predictions",
-        "backtest_bets",
-        "backtest_metrics",
-        "clv_records",
-        "haircut_calibrations",
-    },
-    "betting": {
-        "bets",
-        "bet_legs",
-        "bet_slips",
-        "combinations",
-        "pool_picks",
-        "settlements",
-        "settlement_revisions",
-        "bankroll_events",
-    },
-    # 票 09/11：LLM 线域（M3）——divergences 脚手架表移交 llm
-    "llm": {"intel_observations", "divergences", "review_items", "blind_reviews"},
-}
+SRC = Path(__file__).resolve().parents[2] / "src" / "goalx_backend"
+# schema_migrations/DDL 归 infra；export_schema_doc 读 sqlite_master 系统目录
+# （schema 工具本职，同 migrations 豁免）
+INFRA = {"db.py", "migrations.py", "export_schema_doc.py"}
 TABLE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 # 仅匹配大写动词：仓库 SQL 关键字全大写，避开 "Insert or update a..." 类 docstring
 SQL_START = re.compile(
