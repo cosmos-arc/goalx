@@ -355,3 +355,38 @@ def cost_summary(
         params = (since_utc,)
     sql += " GROUP BY category ORDER BY category"
     return conn.execute(sql, params).fetchall()
+
+
+# --- Understat xG 特征读取（票 45；表归 data 域，ingest 写 / 各层读经本模块）---
+
+# fd 历史底座代码 → understat slug（票面覆盖=五大；俄超 rfpl 按需追加）
+UNDERSTAT_LEAGUES: dict[str, str] = {
+    "E0": "epl",
+    "SP1": "la_liga",
+    "I1": "serie_a",
+    "D1": "bundesliga",
+    "F1": "ligue_1",
+}
+UNDERSTAT_DEFAULT_LEAGUES: tuple[str, ...] = tuple(UNDERSTAT_LEAGUES.values())
+
+
+def understat_compare_rows(
+    conn: sqlite3.Connection, league: str, seasons: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """某联赛多季场次行，按开球时刻排序（对比语料读取；season 过滤在内存）。"""
+    wanted = set(seasons)
+    return [
+        row
+        for row in conn.execute(
+            """
+            SELECT match_id, season, datetime_utc, home_team_id, away_team_id,
+                   goals_home, goals_away, npxg_home, npxg_away,
+                   forecast_w, forecast_d, forecast_l
+            FROM understat_matches
+            WHERE league = ?
+            ORDER BY datetime_utc
+            """,
+            (league,),
+        ).fetchall()
+        if str(row["season"]) in wanted
+    ]

@@ -34,20 +34,12 @@ from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data.reconcile import upsert_source_coverage
+from goalx_backend.data.results import UNDERSTAT_DEFAULT_LEAGUES as DEFAULT_LEAGUES
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling.team_align import NameIndex
 
 SOURCE = "understat"
 PARSE_VERSION = "understat_v1"
-# fd 历史底座代码 → understat slug（票面覆盖=五大；俄超 rfpl 按需追加）
-LEAGUES: dict[str, str] = {
-    "E0": "epl",
-    "SP1": "la_liga",
-    "I1": "serie_a",
-    "D1": "bundesliga",
-    "F1": "ligue_1",
-}
-DEFAULT_LEAGUES: tuple[str, ...] = tuple(LEAGUES.values())
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "

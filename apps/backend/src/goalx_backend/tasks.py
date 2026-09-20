@@ -22,6 +22,7 @@ from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
+from goalx_backend.data import results as rs
 from goalx_backend.data.ingest import (
     caiguo,
     fdhist,
@@ -201,7 +202,7 @@ def understat_sync(
             client,
             alias=alias_index(conn),
             seasons=seasons,
-            leagues=leagues or understat.DEFAULT_LEAGUES,
+            leagues=leagues or rs.UNDERSTAT_DEFAULT_LEAGUES,
         )
     return understat.stats_dict(stats)
 

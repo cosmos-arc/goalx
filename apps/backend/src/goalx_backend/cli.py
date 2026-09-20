@@ -36,13 +36,8 @@ from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
-from goalx_backend.data.ingest import (
-    caiguo,
-    openfootball,
-    sporttery,
-    understat,
-    uniform,
-)
+from goalx_backend.data import results as rs_store
+from goalx_backend.data.ingest import caiguo, openfootball, sporttery, uniform
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -267,7 +262,7 @@ def _cmd_xg_compare(args: argparse.Namespace) -> None:
     with task_conn() as conn:
         report = run_xg_comparison(
             conn,
-            leagues=tuple(args.leagues) or understat.DEFAULT_LEAGUES,
+            leagues=tuple(args.leagues) or rs_store.UNDERSTAT_DEFAULT_LEAGUES,
             seasons=tuple(args.seasons),
             train_seasons=args.train_seasons,
             shrink_k=tuple(float(k) for k in args.shrink_k),

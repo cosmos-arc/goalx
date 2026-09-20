@@ -22,7 +22,7 @@ from typing import Any
 
 from loguru import logger
 
-from goalx_backend.data.ingest import understat
+from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.modelling.dc_model import DCArtifact, TrainingRow, fit_dc_model
 from goalx_backend.modelling.xg_dc import XGRow, fit_xg_dc, shrink_dc_params
@@ -72,7 +72,7 @@ def load_compare_matches(
 ) -> list[CompareMatch]:
     """understat_matches → 对比语料（SQL 归 data/ingest/understat.compare_rows）。"""
     matches: list[CompareMatch] = []
-    for row in understat.compare_rows(conn, league, seasons):
+    for row in rs_store.understat_compare_rows(conn, league, seasons):
         raw = (row["forecast_w"], row["forecast_d"], row["forecast_l"])
         forecast = raw if all(v is not None for v in raw) else None
         matches.append(
@@ -365,7 +365,7 @@ def _summarize(
 def run_xg_comparison(
     conn: sqlite3.Connection,
     *,
-    leagues: tuple[str, ...] = understat.DEFAULT_LEAGUES,
+    leagues: tuple[str, ...] = rs_store.UNDERSTAT_DEFAULT_LEAGUES,
     seasons: tuple[str, ...],
     train_seasons: int = 3,
     half_life_days: float = 365.0,
