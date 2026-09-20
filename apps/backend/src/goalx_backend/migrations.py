@@ -992,6 +992,93 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v15(conn: sqlite3.Connection) -> None:
+    """
+    v15（票 45）：Understat xG 特征层（data 域，SQL 归 data/ingest/understat.py）。
+
+    - understat_matches：一个 understat 场次一行的特征现态表（按源 match_id
+      UPSERT，非证据表——证据在 sync run 行与 coverage）。三时间口径（定则 2）：
+      event_time=datetime_utc（开球）、published_at=源不提供（无列，不伪造）、
+      observed_at=本机收到该状态的时间（first_seen_at 保留首次观测）。
+      防前视红线（定则 2）：prior_* 列为本季**开球日严格早于本场**的已完场
+      累计 npxG/npxGA——getLeagueData 赛后滚动更新，同日场次互不可见
+      （同日错峰早场的最终 npxG 不得泄入晚场，保守按日截断）。
+      fixture_id 为竞彩场次确定性 join（开球日 ±1 + 双方队名解析唯一命中才落，
+      否则 NULL，禁模糊合并）。
+    - understat_sync_runs：一次同步一行（append-only）：拉取的联赛×赛季、
+      计数与 join 计数。最新行即"上次同步"状态。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS understat_matches (
+            id INTEGER PRIMARY KEY,
+            match_id TEXT NOT NULL UNIQUE,
+            league TEXT NOT NULL,
+            season TEXT NOT NULL,
+            datetime_utc TEXT NOT NULL,
+            home_team_id TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team_id TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            is_result INTEGER NOT NULL DEFAULT 0,
+            goals_home INTEGER,
+            goals_away INTEGER,
+            xg_home REAL,
+            xg_away REAL,
+            npxg_home REAL,
+            npxg_away REAL,
+            prior_npxg_home REAL,
+            prior_npxga_home REAL,
+            prior_matches_home INTEGER,
+            prior_npxg_away REAL,
+            prior_npxga_away REAL,
+            prior_matches_away INTEGER,
+            forecast_w REAL,
+            forecast_d REAL,
+            forecast_l REAL,
+            fixture_id INTEGER REFERENCES fixtures(id),
+            first_seen_at TEXT NOT NULL,
+            observed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_understat_matches_lookup
+            ON understat_matches(league, season, datetime_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS understat_sync_runs (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            seasons TEXT NOT NULL,
+            matches INTEGER NOT NULL,
+            results INTEGER NOT NULL,
+            joined INTEGER NOT NULL,
+            unmatched INTEGER NOT NULL,
+            failed INTEGER NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_understat_sync_runs_time
+            ON understat_sync_runs(observed_at)
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER understat_sync_runs_no_{operation.lower()}
+            BEFORE {operation} ON understat_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'understat_sync_runs is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1007,4 +1094,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (12, _apply_v12),
     (13, _apply_v13),
     (14, _apply_v14),
+    (15, _apply_v15),
 )

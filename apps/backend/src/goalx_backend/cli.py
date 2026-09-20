@@ -17,6 +17,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli forecast [--date YYYY-MM-DD]
     uv run python -m goalx_backend.cli align-report
     uv run python -m goalx_backend.cli pool-sync
+    uv run python -m goalx_backend.cli understat-sync [--seasons 2021 2022 ...]
+    uv run python -m goalx_backend.cli xg-compare --seasons 2022 2023 2024 2025 2026
 """
 
 from __future__ import annotations
@@ -34,13 +36,20 @@ from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
-from goalx_backend.data.ingest import caiguo, openfootball, sporttery, uniform
+from goalx_backend.data.ingest import (
+    caiguo,
+    openfootball,
+    sporttery,
+    understat,
+    uniform,
+)
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
+from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.tasks import task_conn
@@ -246,6 +255,26 @@ def _cmd_clv_reconcile() -> None:
         logger.info("report: {}", clv_mod.clv_report(conn))
 
 
+def _cmd_understat_sync(args: argparse.Namespace) -> None:
+    """Understat xG 同步（票 45）：默认当前季；--seasons 2021 2022 … 回填历史。"""
+    seasons = tuple(args.seasons) if args.seasons else None
+    leagues = tuple(args.leagues) or None
+    logger.info("understat sync: {}", tasks.understat_sync(seasons, leagues=leagues))
+
+
+def _cmd_xg_compare(args: argparse.Namespace) -> None:
+    """XG 融合实证对比（票 45）：报告打 stdout（语料须先 understat-sync 回填）。"""
+    with task_conn() as conn:
+        report = run_xg_comparison(
+            conn,
+            leagues=tuple(args.leagues) or understat.DEFAULT_LEAGUES,
+            seasons=tuple(args.seasons),
+            train_seasons=args.train_seasons,
+            shrink_k=tuple(float(k) for k in args.shrink_k),
+        )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_pool_sync() -> None:
     """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
     stats = tasks.pool_snapshot()
@@ -372,6 +401,31 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
     sub.add_parser("pool-sync", help="手动拉一次彩池期次/对阵/人气分布(票 43)")
+    understat = sub.add_parser(
+        "understat-sync", help="Understat xG 特征同步(票 45;默认当前季)"
+    )
+    understat.add_argument(
+        "--seasons", nargs="*", help="回填赛季起始年(如 2021 2022 …,默认当前季)"
+    )
+    understat.add_argument(
+        "--leagues",
+        nargs="*",
+        default=[],
+        help="understat slug(默认五大;俄超按需传 rfpl)",
+    )
+    xgcmp = sub.add_parser(
+        "xg-compare", help="xG 融合实证对比报告(票 45;语料先 understat-sync)"
+    )
+    xgcmp.add_argument("--seasons", nargs="+", required=True, help="目标赛季起始年")
+    xgcmp.add_argument(
+        "--leagues", nargs="*", default=[], help="understat slug(默认五大)"
+    )
+    xgcmp.add_argument(
+        "--train-seasons", type=int, default=3, help="训练窗赛季数(默认 3)"
+    )
+    xgcmp.add_argument(
+        "--shrink-k", nargs="*", default=["6"], help="收缩先验 k 值列表(默认 6)"
+    )
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -401,6 +455,8 @@ def main(argv: list[str] | None = None) -> int:
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-sync": _cmd_pool_sync,
+        "understat-sync": lambda: _cmd_understat_sync(args),
+        "xg-compare": lambda: _cmd_xg_compare(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

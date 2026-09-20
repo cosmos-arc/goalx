@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     openfootball_base_url: str = (
         "https://raw.githubusercontent.com/openfootball/football.json/master"
     )
+    # Understat xG（票 45）：robots.txt 全站 Disallow——个人研究低频使用
+    # （默认每日 1 首页 + 5 联赛文件 = 6 请求 ≤10 上限，见 schedules）
+    understat_base_url: str = "https://understat.com"
     # 源B（票 43 代称表）：传统足彩期次/对阵/人气分布（官方销量无源，走 AI 代采）
     zucai_base_url: str = "https://www.okooo.com"
     # football-data.org 免费档（票 09：12 项 standings；免费注册，无 key 时跳过）
