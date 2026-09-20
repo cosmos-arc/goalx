@@ -16,7 +16,8 @@
 - 并行对账阶段不改结算事实源（ADR 0001 澄清条款）——本模块只落观测
   （append-only，UNIQUE(match_id, observed_at) 同跑幂等）与对账清单，不 import；
 - 源无逐场官方发布时点，published_at 不伪造；观测时点即 observed_at
-  （本机收到响应的时间，多跑一次就多一行——poolStatus 迁移留痕）；
+  （本批采集起始时刻，与源D 票 42 同口径；多跑一次就多一行——poolStatus
+  迁移留痕）；
 - winFlag 与比分不自洽、状态值未知、终态但比分非数字 → 待人工，不比对；
 - 对账读库内最新观测（跨 run 留痕的终态，不依赖单次抓取的完整性）。
 """
@@ -457,8 +458,11 @@ def sync_uniform_results(
     )
 
     if dates:
-        # matchDate 区间：业务日集合放宽 ±1（解析侧 join 决定归属）
-        raw_rows = fetch_uniform_results(client, settings, min(dates), max(dates))
+        # matchDate 区间：业务日集合放宽 ±1（晚场 matchDate=业务日+1 归属前
+        # 业务日；join 由 source_match_id 决定，放宽只多采观测不多比对）
+        date_from = (date.fromisoformat(min(dates)) - timedelta(days=1)).isoformat()
+        date_to = (date.fromisoformat(max(dates)) + timedelta(days=1)).isoformat()
+        raw_rows = fetch_uniform_results(client, settings, date_from, date_to)
         stats.fetched = len(raw_rows)
         observations = [parse_uniform_match(raw) for raw in raw_rows]
         for obs in observations:
@@ -469,11 +473,12 @@ def sync_uniform_results(
         stats.rejected = sum(
             1 for o in observations if o.fixture_id is not None and o.reject_reason
         )
-        _record_coverage(conn, observations, min(dates), max(dates), observed_at)
+        _record_coverage(conn, observations, date_from, date_to, observed_at)
+    reconcile_stats.unmatched = stats.unmatched
 
     refs = _to_references(latest_observations_for_dates(conn, dates), reconcile_stats)
     reconcile_draw_results(conn, refs, reconcile_stats)
-    record_reconciliation_run(conn, reconcile_stats)
+    record_reconciliation_run(conn, reconcile_stats, parse_version=PARSE_VERSION)
     return stats, reconcile_stats
 
 

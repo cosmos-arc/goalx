@@ -887,7 +887,9 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
     - source_coverage（定则 4）：每源每覆盖日"看到了什么"的现态维表
       （UPSERT，非证据表——证据在观测/run 表）。coverage_date 语义随源
       而定（uniform=matchDate、源D=业务日、openfootball=赛季键）；
-      absent 断言仅当 coverage_status='covered' 且采集成功——空≠无。
+      absent 断言仅当 coverage_status='covered' 且采集成功——空≠无
+      （fetched_empty=采集成功无场次；fetch_failed=暂时失败可重试；
+      not_covered=源声明无此覆盖，如 openfootball 无 2026-27 文件）。
     """
     conn.execute(
         """
@@ -976,7 +978,10 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
             league_name TEXT,
             match_count INTEGER NOT NULL DEFAULT 0,
             coverage_status TEXT NOT NULL
-                CHECK (coverage_status IN ('covered', 'fetched_empty', 'fetch_failed')),
+                CHECK (
+                    coverage_status IN
+                        ('covered', 'fetched_empty', 'fetch_failed', 'not_covered')
+                ),
             observed_at TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,

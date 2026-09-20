@@ -34,7 +34,7 @@ from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
-from goalx_backend.data.ingest import sporttery
+from goalx_backend.data.ingest import openfootball, sporttery, uniform
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -132,7 +132,7 @@ def _cmd_official_reconcile() -> None:
     for source, report in stats.items():
         logger.info("reconcile {}: {}", source, report)
     with task_conn() as conn:
-        for source in ("sporttery.cn", "openfootball"):
+        for source in (uniform.SOURCE, openfootball.SOURCE):
             row = reconcile.latest_reconciliation(conn, source)
             if row is None:
                 continue

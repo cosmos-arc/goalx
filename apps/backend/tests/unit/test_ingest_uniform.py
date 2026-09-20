@@ -261,6 +261,30 @@ def test_sync_records_coverage_per_day_and_league(db) -> None:
     assert by_date["2026-09-12"]["coverage_status"] == "fetched_empty"
 
 
+def test_sync_widens_match_date_range_and_propagates_unmatched(db) -> None:
+    # 采集区间按 matchDate 放宽 ±1（晚场归属前业务日）；unmatched 传播到对账 run 行
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["from"] = str(request.url.params.get("matchBeginDate"))
+        seen["to"] = str(request.url.params.get("matchEndDate"))
+        value = dict(PAYLOAD["value"], matchResult=ROWS[:1], pages=1)
+        return httpx.Response(
+            200, json={"success": True, "errorCode": "0", "value": value}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        _, rec_stats = uniform.sync_uniform_results(
+            db, _settings(), client, business_dates=["2026-09-20"], now=NOW
+        )
+    assert seen == {"from": "2026-09-19", "to": "2026-09-21"}
+    row = db.execute(
+        "SELECT unmatched, parse_version FROM draw_reconciliation_runs ORDER BY id DESC"
+    ).fetchone()
+    assert int(row["unmatched"]) == rec_stats.unmatched == 1
+    assert row["parse_version"] == "uniform_v1"
+
+
 def test_sync_zero_cost_skip_still_records_run(db) -> None:
     # 无候选业务日 → 不发请求，仍留 compared=0 的对账运行证据
     def handler(request: httpx.Request) -> httpx.Response:

@@ -148,7 +148,12 @@ def reconcile_draw_results(
     return stats
 
 
-def record_reconciliation_run(conn: sqlite3.Connection, stats: ReconcileStats) -> int:
+def record_reconciliation_run(
+    conn: sqlite3.Connection,
+    stats: ReconcileStats,
+    *,
+    parse_version: str = "reconcile_v1",
+) -> int:
     """写一次对账的元信息行（append-only 语义，最新行即状态）。"""
     cur = conn.execute(
         """
@@ -169,7 +174,7 @@ def record_reconciliation_run(conn: sqlite3.Connection, stats: ReconcileStats) -
             stats.missing_result,
             stats.unmatched,
             json.dumps(stats.pending_manual, ensure_ascii=False),
-            "reconcile_v1",
+            parse_version,
             utc_now_iso(),
         ),
     )

@@ -175,8 +175,7 @@ def reconcile_openfootball(
     - 对账只报清单不落事实；run 行 append-only。
     """
     now_dt = now or datetime.now(UTC)
-    observed_at = now_dt.isoformat(timespec="seconds")
-    now_iso = now_dt.isoformat(timespec="seconds")
+    now_iso = observed_at = now_dt.isoformat(timespec="seconds")
     floor = (now_dt - timedelta(days=_LOOKBACK_DAYS)).isoformat(timespec="seconds")
     stats = ReconcileStats(source=SOURCE, observed_at=observed_at)
 
@@ -209,7 +208,7 @@ def reconcile_openfootball(
                 source=SOURCE,
                 coverage_date=season,
                 match_count=len(matches) if matches else 0,
-                coverage_status="covered" if matches is not None else "fetch_failed",
+                coverage_status=("covered" if matches is not None else "not_covered"),
                 observed_at=observed_at,
                 league_key=file_name,
             )
@@ -258,5 +257,5 @@ def reconcile_openfootball(
 
     reconcile_draw_results(conn, refs, stats)
     stats.business_dates = sorted(set(stats.business_dates))
-    record_reconciliation_run(conn, stats)
+    record_reconciliation_run(conn, stats, parse_version=PARSE_VERSION)
     return stats

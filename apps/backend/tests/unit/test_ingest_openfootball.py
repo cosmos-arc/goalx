@@ -224,7 +224,7 @@ def test_reconcile_unmapped_league_and_404_coverage(db) -> None:
     row = db.execute(
         "SELECT coverage_status FROM source_coverage WHERE source = 'openfootball'"
     ).fetchone()
-    assert row["coverage_status"] == "fetch_failed"
+    assert row["coverage_status"] == "not_covered"
 
 
 def test_reconcile_empty_window_records_run(db) -> None:
