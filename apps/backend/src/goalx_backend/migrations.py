@@ -852,6 +852,28 @@ def _apply_v12(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v13(conn: sqlite3.Connection) -> None:
+    """
+    v13（票 13）：盲评记录 blind_reviews（llm 域）。
+
+    双周匿名二选一（ML 摘要 vs 证据卡）结果落评测集——参考列，
+    不作任何档证明支柱（票 05 冻结）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS blind_reviews (
+            id INTEGER PRIMARY KEY,
+            cycle TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            choice TEXT NOT NULL CHECK (choice IN ('ml', 'llm')),
+            note TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE (cycle, fixture_id)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -865,4 +887,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (10, _apply_v10),
     (11, _apply_v11),
     (12, _apply_v12),
+    (13, _apply_v13),
 )

@@ -73,7 +73,7 @@ def _log2(x: float) -> float:
 
 
 def latest_triple(
-    conn: sqlite3.Connection, fixture_id: int, track: str
+    conn: sqlite3.Connection, fixture_id: int, track: str, *, as_of: str | None = None
 ) -> tuple[float, float, float] | None:
     """
     最新一项轨道预测的三项。
@@ -82,7 +82,7 @@ def latest_triple(
     llm 轨 payload 直接携带 h/d/a（票 10 三项定案）。无预测/坏 payload
     返回 None。
     """
-    row = latest_forecast_asof(conn, fixture_id, utc_now_iso(), track=track)
+    row = latest_forecast_asof(conn, fixture_id, as_of or utc_now_iso(), track=track)
     if row is None:
         return None
     payload = json.loads(str(row["payload"]))
@@ -194,8 +194,8 @@ def analyst_review(
         return PARSE_FAILED, None
     moment = now or utc_now_iso()
     intels = intel_for_fixture(conn, fixture_id)
-    ml = latest_triple(conn, fixture_id, "ml") or (0.0, 0.0, 0.0)
-    scout = latest_triple(conn, fixture_id, "llm") or (0.0, 0.0, 0.0)
+    ml = latest_triple(conn, fixture_id, "ml", as_of=moment) or (0.0, 0.0, 0.0)
+    scout = latest_triple(conn, fixture_id, "llm", as_of=moment) or (0.0, 0.0, 0.0)
     with atomic(conn):
         result = glm_chat(
             conn,
@@ -258,8 +258,8 @@ def gate_sweep(
         }
     )
     for fixture_id in fixture_ids:
-        ml = latest_triple(conn, fixture_id, "ml")
-        scout = latest_triple(conn, fixture_id, "llm")
+        ml = latest_triple(conn, fixture_id, "ml", as_of=moment)
+        scout = latest_triple(conn, fixture_id, "llm", as_of=moment)
         if ml is None or scout is None:
             continue
         stats.pairs += 1
@@ -274,6 +274,8 @@ def gate_sweep(
             stats.routed += 1
             with atomic(conn):
                 _enqueue_review(conn, fixture_id, js, moment)
+            if not settings.m3_analyst_enabled:
+                continue  # 证伪开关：只入队不复核（票 13）
             purpose = (
                 Purpose.POOL
                 if _is_pool_fixture(conn, fixture_id, moment)

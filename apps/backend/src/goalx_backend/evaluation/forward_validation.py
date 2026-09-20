@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from goalx_backend.data import quote_evidence
 from goalx_backend.data import results as rs_store
@@ -102,7 +102,7 @@ def build_forward_samples(
             counts["no_forecast"] += 1
             continue
         payload = json.loads(str(frozen["payload"]))
-        had = payload.get("had_probs") or _had_from_matrix_payload(payload)
+        had = _had_from_payload(payload)
         baseline = market_baseline_asof(conn, fixture_id, str(frozen["issued_at"]))
         if had is None or baseline is None:
             counts["no_market_baseline"] += 1
@@ -125,11 +125,26 @@ def build_forward_samples(
     return samples, counts
 
 
-def _had_from_matrix_payload(payload: dict[str, Any]) -> dict[str, float] | None:
-    """老 payload 无 had_probs 键时从矩阵重推（视图口径，不落库）。"""
-    if "matrix" not in payload:
-        return None
-    return forecast_matrix_from_payload(payload).had()
+def _had_from_payload(payload: dict[str, Any]) -> dict[str, float] | None:
+    """
+    Payload → had 三项（视图口径，不落库）。
+
+    三种形态：had_probs（老）、比分矩阵（ml 轨，ADR 0006）、裸 h/d/a
+    （llm/fused 轨，票 10/12）。
+    """
+    raw = cast(dict[str, object] | None, payload.get("had_probs"))
+    if raw is not None and all(
+        isinstance(raw.get(s), (int, float)) for s in SELECTIONS
+    ):
+        return {s: float(raw[s]) for s in SELECTIONS}  # type: ignore[arg-type]
+    if "matrix" in payload:
+        return forecast_matrix_from_payload(payload).had()
+    if all(k in payload for k in ("h", "d", "a")):
+        try:
+            return {s: float(payload[s]) for s in SELECTIONS}
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def forward_skill_report(

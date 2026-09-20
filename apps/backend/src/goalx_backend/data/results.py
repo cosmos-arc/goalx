@@ -308,6 +308,22 @@ WHERE category =
     return float(row["used"])
 
 
+def category_note_count(
+    conn: sqlite3.Connection, category: str, note: str, since_utc: str
+) -> int:
+    """某类别某 note 自时点起的行数（M3 控制事件去重入口）。"""
+    row = conn.execute(
+        """
+            SELECT COUNT(*) AS n FROM cost_ledger
+            WHERE category = ? AND note = ? AND occurred_at >= ?
+        """,
+        (category, note, since_utc),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("category_note_count 查询失败")
+    return int(row["n"])
+
+
 def category_spend_cny(
     conn: sqlite3.Connection, category: str, since_utc: str
 ) -> float:

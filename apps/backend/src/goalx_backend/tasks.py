@@ -28,7 +28,10 @@ from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
 from goalx_backend.llm.gate import gate_stats_dict, gate_sweep
+from goalx_backend.llm.m3_report import m3_protocol_report
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
+from goalx_backend.llm.protocol import record_control_events
+from goalx_backend.llm.review import enqueue_post_settle
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
@@ -175,3 +178,17 @@ def scout_line() -> dict[str, object]:
         gate = gate_stats_dict(gate_sweep(conn, settings))
         fused = fusion_stats_dict(fusion_sweep(conn, settings))
     return {**scout, "gate": gate, "fusion": fused}
+
+
+def m3_evaluation() -> dict[str, object]:
+    """M3 评测协议（票 13）：三列报告 + 赛后复核入队 + 控制事件。"""
+    with task_conn() as conn:
+        report = m3_protocol_report(conn)
+        review = enqueue_post_settle(conn)
+        record_control_events(conn, get_settings())
+    return {
+        "tier_a": report["tier_a"]["verdict"],
+        "tier_b": report["tier_b"]["verdict"],
+        "paired": report["paired_fused_vs_ml"]["pairs"],
+        "post_settle_enqueued": review.enqueued,
+    }

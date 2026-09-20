@@ -73,3 +73,20 @@ def intel_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> list[sqlite3
         """,
         (fixture_id,),
     ).fetchall()
+
+
+def intel_summary_by_fixture(
+    conn: sqlite3.Connection, fixture_ids: list[int]
+) -> dict[int, list[tuple[str, str]]]:
+    """多场次的 (source, collected_at) 列表（评测报告情报质量列用）。"""
+    out: dict[int, list[tuple[str, str]]] = {}
+    for fixture_id in fixture_ids:
+        rows = conn.execute(
+            """
+            SELECT source, collected_at FROM intel_observations
+            WHERE fixture_id = ?
+            """,
+            (fixture_id,),
+        ).fetchall()
+        out[fixture_id] = [(str(r["source"]), str(r["collected_at"])) for r in rows]
+    return out
