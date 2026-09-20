@@ -33,6 +33,7 @@ from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats
 from goalx_backend.llm.protocol import record_control_events
 from goalx_backend.llm.review import enqueue_post_settle
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
+from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
 
@@ -157,7 +158,11 @@ def pool_snapshot() -> zucai.PoolSyncStats:
 
 
 def intel_collection() -> dict[str, object]:
-    """情报采集（票 09）：内部推导 + qiumibao 伤停（幂等；伤停面故障不阻塞推导）。"""
+    """
+    情报采集（票 09）：内部推导 + 澳客伤停 + 新浪伤停。
+
+    幂等；单一源故障不阻塞其余。
+    """
     with task_conn() as conn:
         stats = collect_pool_intel(conn)
     injury: dict[str, object] = {}
@@ -165,9 +170,16 @@ def intel_collection() -> dict[str, object]:
         with task_conn() as conn, httpx.Client() as client:
             injury = injury_stats_dict(collect_injury_intel(conn, client))
     except httpx.HTTPError as exc:
-        logger.warning("qiumibao 伤停采集整体失败（推导情报不受影响）: {}", exc)
+        logger.warning("澳客伤停采集整体失败（推导情报不受影响）: {}", exc)
         injury = {"error": str(exc)}
-    return {**intel_stats_dict(stats), "injury": injury}
+    sina: dict[str, object] = {}
+    try:
+        with task_conn() as conn, httpx.Client() as client:
+            sina = sina_stats_dict(collect_sina_injury_intel(conn, client))
+    except httpx.HTTPError as exc:
+        logger.warning("新浪伤停采集整体失败（其余情报不受影响）: {}", exc)
+        sina = {"error": str(exc)}
+    return {**intel_stats_dict(stats), "injury": injury, "sina": sina}
 
 
 def scout_line() -> dict[str, object]:
