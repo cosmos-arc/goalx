@@ -821,6 +821,37 @@ def _apply_v11(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS match_intels")
 
 
+def _apply_v12(conn: sqlite3.Connection) -> None:
+    """
+    v12（票 11）：复核队列 review_items（llm 域）。
+
+    赛前（gate JS>0.06 Tier1）与赛后（结算一对一错，票 13）双路入队；
+    结论三分类（情报关键贡献/无关/误导）只进评测集，不改预测工件
+    （票 05 冻结）。UNIQUE(fixture_id, route) 幂等入队。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS review_items (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            route TEXT NOT NULL CHECK (route IN ('pre_match', 'post_settle')),
+            js_value REAL,
+            status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+            verdict TEXT
+                CHECK (verdict IN ('key_contribution', 'irrelevant', 'misleading')
+                       OR verdict IS NULL),
+            note TEXT,
+            created_at TEXT NOT NULL,
+            decided_at TEXT,
+            UNIQUE (fixture_id, route)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_review_open ON review_items(status, route)"
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -833,4 +864,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (9, _apply_v9),
     (10, _apply_v10),
     (11, _apply_v11),
+    (12, _apply_v12),
 )

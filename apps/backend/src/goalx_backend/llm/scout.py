@@ -100,7 +100,7 @@ def _build_messages(
     ]
 
 
-def _parse_probs(content: str) -> tuple[float, float, float, str] | None:
+def parse_probs(content: str) -> tuple[float, float, float, str] | None:
     """模型输出 → (h, d, a, rationale)；结构坏/越界返回 None。"""
     for candidate in [content, *_JSON_RE.findall(content)]:
         try:
@@ -164,7 +164,7 @@ def scout_fixture(
             max_tokens=_MAX_TOKENS,
             temperature=_TEMPERATURE,
         )
-        parsed = _parse_probs(result.content)
+        parsed = parse_probs(result.content)
         if parsed is None:
             logger.warning(
                 "scout 输出不可解析 fixture={}: {}", fixture_id, result.content[:80]
