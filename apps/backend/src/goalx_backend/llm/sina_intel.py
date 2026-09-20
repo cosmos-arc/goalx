@@ -25,6 +25,7 @@ from typing import cast
 import httpx
 from loguru import logger
 
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.llm.store import IntelDraft, insert_intel_observation
 
@@ -162,17 +163,8 @@ def parse_on_sell(payload: dict[str, object]) -> list[dict[str, str]]:
 
 
 def _match_no_fixture_id(conn: sqlite3.Connection, match_no: str) -> int | None:
-    """竞彩编号（周日002）→ fixture_id（match_codes 一跳）。"""
-    row = conn.execute(
-        """
-        SELECT mc.fixture_id, mc.business_date
-        FROM match_codes mc
-        WHERE mc.kind = 'jingcai' AND mc.code = ?
-        ORDER BY mc.id DESC LIMIT 1
-        """,
-        (match_no,),
-    ).fetchone()
-    return int(row["fixture_id"]) if row else None
+    """竞彩编号（周日002）→ fixture_id（fixtures 仓储一跳，ADR-0008）。"""
+    return fx_store.fixture_id_for_match_code(conn, match_no)
 
 
 def _side_text(label: str, players: list[SinaPlayer]) -> str:
