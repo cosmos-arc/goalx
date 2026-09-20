@@ -111,6 +111,14 @@ tasks:
     cmds:
       - uv run --no-sync pytest apps/backend/tests/contract -q --no-cov {{.CLI_ARGS}}
 
+  schema-doc-export:
+    desc: Regenerate schema doc blocks in docs/db-and-domains.md from migrations
+    preconditions:
+      - sh: 'test -f "{{.VENV_PYTHON}}"'
+        msg: Python environment is missing; run task python-install explicitly.
+    cmds:
+      - uv run --no-sync python -m goalx_backend.export_schema_doc {{.CLI_ARGS}}
+
   check-contract:
     desc: Contract freshness, lint, codegen drift and conformance
     cmds:
