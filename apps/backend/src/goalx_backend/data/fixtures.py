@@ -596,6 +596,19 @@ def kickoffs_for_fixtures(
     return {int(row["id"]): str(row["kickoff_utc"]) for row in rows}
 
 
+def fixture_id_for_match_code(conn: sqlite3.Connection, code: str) -> int | None:
+    """竞彩编号（周日002）→ 最新 fixture_id（无该编号 None；票 09 新浪源映射）。"""
+    row = conn.execute(
+        """
+        SELECT fixture_id FROM match_codes
+        WHERE kind = 'jingcai' AND code = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (code,),
+    ).fetchone()
+    return int(row["fixture_id"]) if row else None
+
+
 def fixture_team_info(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None:
     """Fixture → 主客队 id/名称与联赛标识（票 09 情报采集桥接用）。"""
     return conn.execute(
