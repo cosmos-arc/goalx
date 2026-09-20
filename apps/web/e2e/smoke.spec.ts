@@ -83,9 +83,7 @@ test("legacy /today path redirects to the fixtures page", async ({ page }) => {
 });
 
 test("stub pages say what they are and when they arrive", async ({ page }) => {
-	// 票 18：/glossary 已换为真实词典页——见下方词典 smoke 与 axe 循环
-	await page.goto("/review");
-	await expect(page.getByTestId("empty-state")).toContainText("M3");
+	// 票 14：/review 已换为真实复核页（queue/盲评）——stub 只剩 /settings
 	await page.goto("/settings");
 	await expect(page.getByTestId("empty-state")).toContainText("M4");
 });
@@ -150,6 +148,35 @@ test("fixture research page renders books or degrades honestly", async ({ page }
 	});
 });
 
+// 票 14 验收：证据面的诚实降级 e2e 断言——研究页数据路径下证据链区块必须出现；
+// 旧后端/不可达时整页降级空状态（明说原因，不装数据），证据链不渲染也算通过
+test("evidence chain renders on the research page or the page degrades honestly", async ({ page }) => {
+	await page.goto("/fixtures/1");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 场次研究" })).toBeVisible();
+	const pageData = page.getByTestId("research-page");
+	await expect(pageData.or(page.getByTestId("empty-state")).first()).toBeVisible({ timeout: 20_000 });
+	if (await pageData.isVisible()) {
+		// 新后端数据路径：证据链区块（三轨对照/情报时间线/复核结论）不空缺
+		await expect(page.getByTestId("research-chain")).toBeVisible({ timeout: 20_000 });
+	}
+});
+
+// 票 14：复核页点亮——队列（行/空态/降级三态其一）+ 盲评区块常驻
+test("review page renders queue and blind review or degrades honestly", async ({ page }) => {
+	await page.goto("/review");
+
+	await expect(page.getByRole("heading", { name: "GoalX · 复核" })).toBeVisible();
+	await expect(page.getByTestId("review-caliber")).toContainText("只进评测集");
+	await expect(
+		page
+			.getByTestId("review-queue-row")
+			.first()
+			.or(page.getByTestId("review-queue-empty"))
+			.or(page.getByTestId("empty-state")),
+	).toBeVisible({ timeout: 20_000 });
+});
+
 // 票 wb-03：玩法页数据路径（推荐流/组合卡）或空态（组合无正 EV 机会是诚实结果）
 // 或后端不可用降级——三者都算通过；组合空窗时推荐流照常渲染
 test("had market page renders the feed and combo or degrades honestly", async ({ page }) => {
@@ -204,9 +231,9 @@ test("pool market page renders real periods or degrades honestly", async ({ page
 		// 提交：纸面池票（不足 9 场时 disabled + 说明）
 		const submit = page.getByTestId("pool-submit");
 		await expect(submit).toContainText("任9");
+		// 票 14：AI 证据总结转正为证据卡区块（卡片/加载/降级三态其一，不空缺）
+		await expect(page.getByTestId("pool-evidence")).toBeVisible({ timeout: 20_000 });
 	}
-	// 留位 not-available（票 pool-v2/02 起生成器已上线，余两块）与后端可用性无关
-	await expect(page.getByTestId("pool-coming-soon").getByTestId("empty-state")).toHaveCount(1);
 });
 
 // 票 wb-05：进球玩法页数据路径（推荐流/组合卡）或空态/降级都算通过

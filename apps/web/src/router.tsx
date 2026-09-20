@@ -10,6 +10,7 @@ import { MarketGoalsPage } from "./pages/market-goals-page";
 import { MarketHadPage } from "./pages/market-had-page";
 import { MarketPoolPage } from "./pages/market-pool-page";
 import { OverviewPage } from "./pages/overview-page";
+import { ReviewPage } from "./pages/review-page";
 import { StubPage } from "./pages/stub-page";
 import { ValidationPage } from "./pages/validation-page";
 
@@ -91,13 +92,8 @@ const glossaryRoute = createRoute({
 const reviewRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/review",
-	component: () => (
-		<StubPage
-			title="复核"
-			message="复核页用于赛后复盘与 LLM 情报的双线对照审阅。"
-			hint="随 M3（LLM 线 + 双线融合）上线。"
-		/>
-	),
+	// 票 14：复核页点亮（复核队列 + 结论三分类 + 盲评二选一）
+	component: ReviewPage,
 });
 const betsRoute = createRoute({
 	getParentRoute: () => rootRoute,

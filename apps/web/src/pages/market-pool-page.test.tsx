@@ -178,15 +178,115 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	expect(captured.picks?.[0]).toEqual({ match_seq: 1, selection_code: "3" });
 });
 
-test("coming-soon blocks stay as reserved placeholders", async () => {
+test("evidence cards render states with honest degradation (票 14 V1)", async () => {
 	await renderAt("/markets/pool");
 	await screen.findByTestId("pool-slot-1");
 
-	const coming = screen.getByTestId("pool-coming-soon");
-	const blocks = within(coming).getAllByTestId("empty-state");
-	expect(blocks).toHaveLength(1);
-	expect(blocks[0]).toHaveTextContent("AI 证据总结");
-	expect(blocks[0]).toHaveAttribute("data-variant", "not-available");
+	const section = screen.getByTestId("pool-evidence");
+	expect(within(section).getByTestId("pool-evidence-caliber")).toHaveTextContent("不装懂");
+	// 场 1：analyst 已复核 → 融合线概率 + 2 条情报 + JS 徽章
+	const card1 = within(section).getByTestId("evidence-card-1");
+	expect(card1).toHaveAttribute("data-state", "analyst_done");
+	expect(card1).toHaveTextContent("胜 48% / 平 25% / 负 27%");
+	await userEvent.click(within(card1).getByRole("button"));
+	const detail1 = within(section).getByTestId("evidence-detail-1");
+	expect(within(detail1).getAllByTestId("evidence-intel")).toHaveLength(2);
+	expect(within(detail1).getByText(/JS 0.072/)).toHaveTextContent("已入复核");
+	expect(within(detail1).getByTestId("evidence-state-1")).toHaveTextContent("analyst 已复核");
+	// 场 6：无情报无产出 → 诚实降级（不出概率，仅官方份额）
+	const card6 = within(section).getByTestId("evidence-card-6");
+	expect(card6).toHaveAttribute("data-state", "no_intel");
+	expect(card6).toHaveTextContent("概率 —（仅官方份额）");
+	await userEvent.click(within(card6).getByRole("button"));
+	expect(within(section).getByTestId("evidence-degraded-6")).toHaveTextContent("不装懂");
+	expect(within(section).getByTestId("evidence-state-6")).toHaveTextContent("无情报无产出");
+});
+
+test("evidence cards cover scout state and no_forecast degradation (票 14 V1)", async () => {
+	server.use(
+		http.get("*/api/v1/pool/periods/:periodNo/evidence-summary", () =>
+			HttpResponse.json({
+				period_no: "26999",
+				market_code: "ttt14",
+				generated_at: new Date().toISOString(),
+				caliber: "证据卡 = 已存证工件渲染。",
+				matches: [
+					{
+						match_seq: 2,
+						fixture_id: 2,
+						home_team: "利物浦",
+						away_team: "曼城",
+						league: "英超",
+						kickoff_utc: new Date().toISOString(),
+						forecast: {
+							track: "llm",
+							h: 0.36,
+							d: 0.28,
+							a: 0.36,
+							issued_at: new Date().toISOString(),
+							model_version: "glm:glm-5.3-flash",
+							rationale: "双强对位平局权重上调",
+							analyst: false,
+						},
+						intel_count: 1,
+						intels: [
+							{
+								kind: "h2h",
+								text: "近6次交锋主 3 胜",
+								source: "fdhist:E0",
+								collected_at: new Date().toISOString(),
+							},
+						],
+						divergence: { js: 0.014, routed: false },
+						state: "scout_done",
+					},
+					{
+						match_seq: 3,
+						fixture_id: 3,
+						home_team: "维拉",
+						away_team: "热刺",
+						league: "英超",
+						kickoff_utc: new Date().toISOString(),
+						forecast: null,
+						intel_count: 2,
+						intels: [],
+						divergence: { js: null, routed: false },
+						state: "no_forecast",
+					},
+				],
+			}),
+		),
+	);
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	const section = screen.getByTestId("pool-evidence");
+	// scout 状态：LLM 轨概率 + 未路由 JS + 研判依据
+	const card2 = within(section).getByTestId("evidence-card-2");
+	expect(card2).toHaveAttribute("data-state", "scout_done");
+	await userEvent.click(within(card2).getByRole("button"));
+	expect(within(section).getByTestId("evidence-state-2")).toHaveTextContent("scout 已出概率");
+	expect(within(section).getByText(/JS 0.014/)).toHaveTextContent("未路由");
+	expect(within(section).getByTestId("evidence-detail-2")).toHaveTextContent("研判依据：双强对位");
+	// no_forecast：有情报无产出 → 宁缺毋假降级文案
+	const card3 = within(section).getByTestId("evidence-card-3");
+	await userEvent.click(within(card3).getByRole("button"));
+	expect(within(section).getByTestId("evidence-degraded-3")).toHaveTextContent("宁缺毋假");
+});
+
+test("evidence card section degrades honestly when the endpoint is missing (票 14 V1)", async () => {
+	server.use(
+		http.get("*/api/v1/pool/periods/:periodNo/evidence-summary", () =>
+			HttpResponse.json({ detail: "not found" }, { status: 404 }),
+		),
+	);
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	const section = screen.getByTestId("pool-evidence");
+	const empty = await within(section).findByTestId("empty-state");
+	expect(empty).toHaveAttribute("data-variant", "not-available");
+	expect(empty).toHaveTextContent("证据卡暂不可用");
 });
 
 test("target reverse builds a plan and adopting applies picks", async () => {
@@ -295,10 +395,10 @@ test("backend-unavailable degrades honestly with dashed slots", async () => {
 		expect(found).toHaveLength(1);
 		return found[0] as HTMLElement;
 	});
-	// 重试动作接 refetch（点击不炸）；无期次时槽位区不渲染、留位块照常
+	// 重试动作接 refetch（点击不炸）；无期次时槽位区与证据卡区块都不渲染
 	await userEvent.click(within(degraded).getByRole("button", { name: "重试" }));
 	expect(screen.queryByTestId("pool-slots")).toBeNull();
-	expect(within(screen.getByTestId("pool-coming-soon")).getAllByTestId("empty-state")).toHaveLength(1);
+	expect(screen.queryByTestId("pool-evidence")).toBeNull();
 });
 
 test("empty period list degrades to an honest no-data state", async () => {

@@ -265,3 +265,52 @@ export type PoolSlipCreateInput = Schemas["PoolSlipCreate"];
 export function createPoolSlip(payload: PoolSlipCreateInput): Promise<Slip> {
 	return unwrap(client.POST("/api/v1/pool-slips", { body: payload }));
 }
+
+// --- 票 14：证据面（证据卡/证据链/复核/盲评） ---
+
+export type EvidenceSummary = Schemas["EvidenceSummaryView"];
+export type EvidenceMatch = Schemas["EvidenceMatchView"];
+export type TrackTriple = Schemas["TrackTripleView"];
+export type IntelItem = Schemas["IntelItemView"];
+export type FixtureEvidence = Schemas["FixtureEvidenceView"];
+export type ReviewItem = Schemas["ReviewItemView"];
+export type ReviewQueueItem = Schemas["ReviewQueueItemView"];
+export type VerdictInput = Schemas["VerdictPayload"];
+export type BlindReviewInput = Schemas["BlindReviewPayload"];
+
+/** 彩池期次证据卡汇总（V1 证据卡一 fetch 渲染整期）。 */
+export function fetchPoolEvidenceSummary(periodNo: string, marketCode?: string): Promise<EvidenceSummary> {
+	return unwrap(
+		client.GET("/api/v1/pool/periods/{period_no}/evidence-summary", {
+			params: {
+				path: { period_no: periodNo },
+				query: { ...(marketCode === undefined ? {} : { market_code: marketCode }) },
+			},
+		}),
+	);
+}
+
+/** 场次证据链（三轨对照 + 情报时间线 + 复核状态）。 */
+export function fetchFixtureEvidence(fixtureId: number): Promise<FixtureEvidence> {
+	return unwrap(client.GET("/api/v1/fixtures/{fixture_id}/evidence", { params: { path: { fixture_id: fixtureId } } }));
+}
+
+/** 复核队列（open 项 + 对阵信息）。 */
+export function fetchReviewQueue(): Promise<Schemas["ReviewQueueView"]> {
+	return unwrap(client.GET("/api/v1/review/queue"));
+}
+
+/** 提交复核结论（三分类只进评测集；已裁决/不存在 404）。 */
+export function submitReviewVerdict(itemId: number, payload: VerdictInput): Promise<{ recorded: boolean }> {
+	return unwrap(
+		client.POST("/api/v1/review/items/{item_id}/verdict", {
+			params: { path: { item_id: itemId } },
+			body: payload,
+		}),
+	) as Promise<{ recorded: boolean }>;
+}
+
+/** 提交盲评（双周匿名二选一；同周期同场次幂等吸收）。 */
+export function submitBlindReview(payload: BlindReviewInput): Promise<{ recorded: boolean }> {
+	return unwrap(client.POST("/api/v1/blind-reviews", { body: payload })) as Promise<{ recorded: boolean }>;
+}

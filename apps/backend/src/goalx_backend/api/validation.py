@@ -18,6 +18,7 @@ from goalx_backend.evaluation.validation import (
     validation_progress,
 )
 from goalx_backend.evaluation.validation import list_backtest_runs as list_runs
+from goalx_backend.llm import m3_report
 
 router = APIRouter(tags=["validation"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -78,6 +79,21 @@ async def get_validation_progress(
 async def get_forward_skill(db: DbDep) -> dict[str, Any]:
     """冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。"""
     return fwd.forward_skill_report(db)
+
+
+@router.get(
+    "/api/v1/validation/m3-protocol",
+    summary="M3 评测协议报告(三轨参考列+两档冻结阈值)",
+    response_model=dict[str, Any],
+)
+async def get_m3_protocol(db: DbDep) -> dict[str, Any]:
+    """
+    三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。
+
+    （票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格
+    三条件只读 ML 轨（票 04 冻结）。
+    """
+    return m3_report.m3_protocol_report(db)
 
 
 @router.get(

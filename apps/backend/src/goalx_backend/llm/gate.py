@@ -98,6 +98,21 @@ def latest_triple(
         return None
 
 
+def latest_divergence(
+    conn: sqlite3.Connection, fixture_id: int, *, as_of: str | None = None
+) -> float | None:
+    """该场最新一次 ML×LLM JS 散度（证据面读数；无记录 None）。"""
+    row = conn.execute(
+        """
+        SELECT value FROM divergences
+        WHERE fixture_id = ? AND metric = ? AND (? IS NULL OR computed_at <= ?)
+        ORDER BY computed_at DESC, id DESC LIMIT 1
+        """,
+        (fixture_id, _METRIC, as_of, as_of),
+    ).fetchone()
+    return float(row["value"]) if row else None
+
+
 def _record_divergence(
     conn: sqlite3.Connection, fixture_id: int, value: float, moment: str
 ) -> None:

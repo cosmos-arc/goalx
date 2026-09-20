@@ -14,14 +14,7 @@ async function renderAt(path: string) {
 	);
 }
 
-test("reserved pages say what they are and when they arrive, not dead ends", async () => {
-	await renderAt("/review");
-	expect(await screen.findByRole("heading", { name: "GoalX · 复核" })).toBeInTheDocument();
-	const state = screen.getByTestId("empty-state");
-	expect(state).toHaveAttribute("data-variant", "not-available");
-	expect(state).toHaveTextContent("赛后复盘");
-	expect(state).toHaveTextContent("M3");
-});
+// 票 14：/review 已换真实复核页——占位断言下线，见 review-page.test.tsx。
 
 test("settings placeholder names its scope and milestone", async () => {
 	await renderAt("/settings");
