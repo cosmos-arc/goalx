@@ -72,7 +72,7 @@ def _log2(x: float) -> float:
     return math.log2(x)
 
 
-def _latest_triple(
+def latest_triple(
     conn: sqlite3.Connection, fixture_id: int, track: str
 ) -> tuple[float, float, float] | None:
     """
@@ -194,8 +194,8 @@ def analyst_review(
         return PARSE_FAILED, None
     moment = now or utc_now_iso()
     intels = intel_for_fixture(conn, fixture_id)
-    ml = _latest_triple(conn, fixture_id, "ml") or (0.0, 0.0, 0.0)
-    scout = _latest_triple(conn, fixture_id, "llm") or (0.0, 0.0, 0.0)
+    ml = latest_triple(conn, fixture_id, "ml") or (0.0, 0.0, 0.0)
+    scout = latest_triple(conn, fixture_id, "llm") or (0.0, 0.0, 0.0)
     with atomic(conn):
         result = glm_chat(
             conn,
@@ -258,8 +258,8 @@ def gate_sweep(
         }
     )
     for fixture_id in fixture_ids:
-        ml = _latest_triple(conn, fixture_id, "ml")
-        scout = _latest_triple(conn, fixture_id, "llm")
+        ml = latest_triple(conn, fixture_id, "ml")
+        scout = latest_triple(conn, fixture_id, "llm")
         if ml is None or scout is None:
             continue
         stats.pairs += 1

@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     glm_analyst_model: str = "glm-5.3"
     glm_fallback_model: str = "glm-4.7-flash"
     glm_monthly_budget_cny: float = 360.0  # $50 硬上限（票 02）
+    fusion_ml_weight: float = 0.5  # LEAP log-pool 的 ML 权重（票 12）
     glm_request_timeout: float = 90.0
 
     @property
