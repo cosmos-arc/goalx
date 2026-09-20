@@ -1,9 +1,9 @@
 """
 DrawResult 导入接口（票 23）：官方开奖是系统唯一事实源（ADR 0001）。
 
-M1 的导入通道：API 手工/半自动导入（结构化 payload）。
-sporttery getMatchResultV1.qry 网关当前被拒（研究 01 实测），
-500.com 彩果页解析留待后续接入——本模块即其落库接口。
+三个上游共用本落库接口：API 手工导入（M1 起）、官方 uniform 自动同步
+（票 44 切换后事实源，data/ingest/uniform）、更正冲正（betting 域经
+validate_correction_targets 复用同一原子语义）。
 """
 
 from __future__ import annotations

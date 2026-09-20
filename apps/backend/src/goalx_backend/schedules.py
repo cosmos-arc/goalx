@@ -80,7 +80,7 @@ def main() -> None:
             schedule=Schedule(cron="0 8 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # 官方赛果并行对账（票 44）：跟在 08:00 源D 补扫之后半小时——事实先落、
+    # 赛果日终审计（票 44）：跟在 08:00 官方补扫之后半小时——事实先落、
     # 参照源再比对；uniform 无待出赛果零请求，openfootball 对窗口内场次照跑
     official_reconcile = cast(
         RunnerDeployment,

@@ -1,5 +1,7 @@
 """
-源A uniform 族官方赛果采集与并行对账（票 44）。
+源A uniform 族官方赛果采集：结算事实源（票 44）。
+
+2026-09-20 用户裁决直接切换（系统未上线免观察期），源D 降审计源。
 
 端点实证（2026-09-20 票 44 第一步深探；research/17 §五）：
 - ``GET {sporttery_uniform_url}?matchPage=1&matchBeginDate=&matchEndDate=
@@ -38,11 +40,11 @@ import httpx
 
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
-from goalx_backend.data.ingest.caiguo import candidate_business_dates
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
+    add_manual,
     reconcile_draw_results,
     record_reconciliation_run,
     upsert_source_coverage,
@@ -55,6 +57,8 @@ PARSE_VERSION = "uniform_v1"
 # 分页护栏：候选窗口至多 8 天、每日 ~40 场、pageSize 30 → 正常 ≤ 12 页
 _MAX_PAGES = 30
 _PAGE_SIZE = 30
+# 近因窗口：候选业务日只回看 7 天（更久的缺果场走人工，不无限重试）
+_PENDING_LOOKBACK_DAYS = 7
 _HAD_LETTER = {"h": "H", "d": "D", "a": "A"}
 _SCORE_RE = re.compile(r"^\s*(\d+)\s*:\s*(\d+)\s*$")
 
@@ -178,6 +182,36 @@ class UniformSyncStats:
     unchanged: int = 0  # 与库内已存一致的场次数
     unmatched: int = 0  # 官方有、库内无对应竞彩场次（范围外，不报警）
     rejected: int = 0  # fail-closed 拒因行数（进待人工清单）
+
+
+def candidate_business_dates(
+    conn: sqlite3.Connection, now: datetime | None = None
+) -> list[str]:
+    """
+    待出赛果场次的业务日集合（调度零成本跳过的依据）。
+
+    已开赛（kickoff <= now）、无开奖、近 7 天内的竞彩场次所在业务日；
+    空集 = 无待出赛果，本次同步可以完全不发请求。
+    """
+    current = now or datetime.now(UTC)
+    floor = (current - timedelta(days=_PENDING_LOOKBACK_DAYS)).isoformat(
+        timespec="seconds"
+    )
+    rows = conn.execute(
+        """
+        SELECT DISTINCT mc.business_date
+        FROM match_codes mc
+        JOIN fixtures f ON f.id = mc.fixture_id
+        LEFT JOIN draw_results d ON d.fixture_id = f.id
+        WHERE mc.kind = 'jingcai'
+          AND f.kickoff_utc <= ?
+          AND f.kickoff_utc >= ?
+          AND d.id IS NULL
+        ORDER BY mc.business_date
+        """,
+        (current.isoformat(timespec="seconds"), floor),
+    ).fetchall()
+    return [str(row["business_date"]) for row in rows]
 
 
 def _headers() -> dict[str, str]:
@@ -371,13 +405,7 @@ def _to_references(
             continue
         reject = obs.reject_reason
         if reject is not None:
-            stats.pending_manual.append(
-                {
-                    "business_date": obs.business_date,
-                    "code": obs.match_num_str,
-                    "reason": reject,
-                }
-            )
+            add_manual(stats, obs.business_date, obs.match_num_str, reject)
             continue
         if not (obs.final or obs.void):
             continue
@@ -450,8 +478,8 @@ def sync_uniform_results(
     """
     同步入口：拉取 → 解析 → join → 观测落库 → coverage 登记 → 对账。
 
-    - business_dates 缺省取 caiguo.candidate_business_dates（与源D 同一候选
-      推导，空集零请求跳过）；
+    - business_dates 缺省取 candidate_business_dates（待出推导，
+      空集零请求跳过）；
     - 采集区间按 matchDate 放宽 ±1 天（晚场归属前业务日），join 由
       source_match_id 决定，放宽只多采观测不多比对；
     - 终态观测（比分或官方 void）→ import 落事实；库内不同结果不冲正，

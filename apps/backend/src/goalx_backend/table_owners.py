@@ -22,7 +22,7 @@ OWNERS: dict[str, set[str]] = {
         "public_shares",
         "pool_matches",
         "pool_sync_runs",
-        # 票 44：官方赛果并行对账 + 覆盖维表（reconcile.py + ingest/uniform.py）
+        # 票 44：官方赛果事实源观测 + 对账 + 覆盖维表（reconcile/uniform）
         "uniform_result_observations",
         "draw_reconciliation_runs",
         "source_coverage",

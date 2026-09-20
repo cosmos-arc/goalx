@@ -56,13 +56,17 @@ class ReconcileStats:
     pending_manual: list[dict[str, str]] = field(default_factory=list)
 
 
-def _manual(
-    stats: ReconcileStats, ref: ReferenceResult, reason: str, detail: str = ""
+def add_manual(
+    stats: ReconcileStats,
+    business_date: str,
+    code: str,
+    reason: str,
+    detail: str = "",
 ) -> None:
     """进待人工清单（business_date/code/reason 定位，detail 附两侧值）。"""
     entry: dict[str, str] = {
-        "business_date": ref.business_date,
-        "code": ref.code,
+        "business_date": business_date,
+        "code": code,
         "reason": reason,
     }
     if detail:
@@ -92,14 +96,19 @@ def reconcile_draw_results(
             stats.compared += 1
             if stored is None:
                 stats.missing_result += 1
-                _manual(
-                    stats, ref, "reference_void_missing_fact", ref.void_reason or "void"
+                add_manual(
+                    stats,
+                    ref.business_date,
+                    ref.code,
+                    "reference_void_missing_fact",
+                    ref.void_reason or "void",
                 )
             elif not bool(stored["void"]):
                 stats.void_mismatch += 1
-                _manual(
+                add_manual(
                     stats,
-                    ref,
+                    ref.business_date,
+                    ref.code,
                     "stored_result_vs_reference_void",
                     f"stored {stored_score} vs void({ref.void_reason})",
                 )
@@ -112,19 +121,30 @@ def reconcile_draw_results(
         ref_score = f"{ref.home_goals}:{ref.away_goals}"
         if stored is None:
             stats.missing_result += 1
-            _manual(stats, ref, "reference_final_missing_fact", ref_score)
+            add_manual(
+                stats,
+                ref.business_date,
+                ref.code,
+                "reference_final_missing_fact",
+                ref_score,
+            )
         elif bool(stored["void"]):
             stats.void_mismatch += 1
-            _manual(
+            add_manual(
                 stats,
-                ref,
+                ref.business_date,
+                ref.code,
                 "stored_void_vs_reference_result",
                 f"stored void({stored['void_reason']}) vs {ref_score}",
             )
         elif stored_score != ref_score:
             stats.score_mismatch += 1
-            _manual(
-                stats, ref, "score_mismatch", f"stored {stored_score} vs {ref_score}"
+            add_manual(
+                stats,
+                ref.business_date,
+                ref.code,
+                "score_mismatch",
+                f"stored {stored_score} vs {ref_score}",
             )
         elif (
             ref.half_home_goals is not None
@@ -140,8 +160,12 @@ def reconcile_draw_results(
             stats.score_mismatch += 1
             stored_half = f"{stored['half_home_goals']}:{stored['half_away_goals']}"
             ref_half = f"{ref.half_home_goals}:{ref.half_away_goals}"
-            _manual(
-                stats, ref, "half_score_mismatch", f"stored {stored_half} vs {ref_half}"
+            add_manual(
+                stats,
+                ref.business_date,
+                ref.code,
+                "half_score_mismatch",
+                f"stored {stored_half} vs {ref_half}",
             )
         else:
             stats.consistent += 1

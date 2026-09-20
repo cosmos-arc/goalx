@@ -21,7 +21,7 @@
   藏结果）；未完场行（status≠4）静默跳过——缺果与 void 由官方事实源负责；
 - 与库内赛果不一致 → 对账 mismatch 条目（不冲正，人工裁决）；
 - 审计窗口 = 近 7 天已开赛场次的业务日（含已落果日——对账要覆盖旧事实，
-  与 candidate_business_dates 的"仅待出"语义不同）。
+  与官方同步的"仅待出"候选推导（uniform.candidate_business_dates）语义不同）。
 
 网络层只做一件薄事（带 UA 的 GET + 一次重定向跟随）；解析与匹配是纯函数，
 测试用固定 fixture HTML，不打真实外网。
@@ -40,6 +40,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
+    add_manual,
     reconcile_draw_results,
     record_reconciliation_run,
     upsert_source_coverage,
@@ -51,8 +52,6 @@ PARSE_VERSION = "caiguo_live_v1"
 FINISHED_STATUS = "4"
 # 胜平负字母（had 口径）→ (主胜 needed, 客胜 needed) 的判定字母表
 _HAD_LETTER = {"胜": "h", "平": "d", "负": "a"}
-# 近因窗口：候选业务日只回看 7 天（更久的缺果场走人工，不无限重试）
-_PENDING_LOOKBACK_DAYS = 7
 # 跟随重定向上限（实证：入口 301 → /?e= 一次即到目标页）
 _MAX_REDIRECT_HOPS = 3
 
@@ -239,36 +238,6 @@ def _fixture_id_for_code(
     return int(row["fixture_id"]) if row is not None else None
 
 
-def candidate_business_dates(
-    conn: sqlite3.Connection, now: datetime | None = None
-) -> list[str]:
-    """
-    待出赛果场次的业务日集合（调度零成本跳过的依据）。
-
-    已开赛（kickoff <= now）、无开奖、近 7 天内的竞彩场次所在业务日；
-    空集 = 无待出赛果，本次同步可以完全不发请求。
-    """
-    current = now or datetime.now(UTC)
-    floor = (current - timedelta(days=_PENDING_LOOKBACK_DAYS)).isoformat(
-        timespec="seconds"
-    )
-    rows = conn.execute(
-        """
-        SELECT DISTINCT mc.business_date
-        FROM match_codes mc
-        JOIN fixtures f ON f.id = mc.fixture_id
-        LEFT JOIN draw_results d ON d.fixture_id = f.id
-        WHERE mc.kind = 'jingcai'
-          AND f.kickoff_utc <= ?
-          AND f.kickoff_utc >= ?
-          AND d.id IS NULL
-        ORDER BY mc.business_date
-        """,
-        (current.isoformat(timespec="seconds"), floor),
-    ).fetchall()
-    return [str(row["business_date"]) for row in rows]
-
-
 def recent_business_dates(
     conn: sqlite3.Connection,
     now: datetime | None = None,
@@ -332,13 +301,7 @@ def audit_draw_results(
         )
         for skip in parsed.skipped:
             if skip.reason != "not_finished":
-                stats.pending_manual.append(
-                    {
-                        "business_date": business_date,
-                        "code": skip.code,
-                        "reason": f"page_{skip.reason}",
-                    }
-                )
+                add_manual(stats, business_date, skip.code, f"page_{skip.reason}")
         for result in parsed.finished:
             fixture_id = _fixture_id_for_code(conn, business_date, result.code)
             if fixture_id is None:

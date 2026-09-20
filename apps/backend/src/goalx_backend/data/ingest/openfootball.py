@@ -31,6 +31,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
+    add_manual,
     reconcile_draw_results,
     record_reconciliation_run,
     upsert_source_coverage,
@@ -232,13 +233,12 @@ def reconcile_openfootball(
             stats.unmatched += 1
             continue
         if len(candidates) > 1:
-            stats.pending_manual.append(
-                {
-                    "business_date": str(row["business_date"]),
-                    "code": str(row["code"]),
-                    "reason": "openfootball_ambiguous_match",
-                    "detail": f"{len(candidates)} 条同对阵同窗口候选",
-                }
+            add_manual(
+                stats,
+                str(row["business_date"]),
+                str(row["code"]),
+                "openfootball_ambiguous_match",
+                f"{len(candidates)} 条同对阵同窗口候选",
             )
             continue
         match = candidates[0]
