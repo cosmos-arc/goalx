@@ -138,14 +138,16 @@ def daily_capture_flow() -> dict[str, object]:
 def daily_wrap_flow() -> dict[str, object]:
     """日终收尾（票 37）：结算批跑 + CLV 对账 + 只读账务核查。"""
     settlement = settlement_flow()
+    m3 = tasks.m3_evaluation()
     with tasks.task_conn() as conn:
         clv_stats: dict[str, Any] = asdict(clv_mod.reconcile_clv(conn))
         findings = len(audit_ledger(conn)["manual_review"])
     logger.info(
-        "daily wrap: settlement={}, clv={}, audit_findings={}",
+        "daily wrap: settlement={}, clv={}, audit_findings={}, m3={}",
         settlement,
         clv_stats,
         findings,
+        m3,
     )
     return {"settlement": settlement, "clv": clv_stats, "audit_findings": findings}
 

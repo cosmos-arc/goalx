@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     glm_fallback_model: str = "glm-4.7-flash"
     glm_monthly_budget_cny: float = 360.0  # $50 硬上限（票 02）
     fusion_ml_weight: float = 0.5  # LEAP log-pool 的 ML 权重（票 12）
+    # M3 证伪开关（票 13：证伪=停 analyst/停 fused，scout 与存证保留）
+    m3_analyst_enabled: bool = True
+    m3_fusion_enabled: bool = True
     glm_request_timeout: float = 90.0
 
     @property

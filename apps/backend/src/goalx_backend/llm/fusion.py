@@ -73,8 +73,8 @@ def fuse_fixture(
     返回 (inserted/known/skipped, 新行 id)；无任一源返回 (skipped, None)。
     """
     moment = now or utc_now_iso()
-    ml = latest_triple(conn, fixture_id, "ml")
-    llm = latest_triple(conn, fixture_id, "llm")
+    ml = latest_triple(conn, fixture_id, "ml", as_of=moment)
+    llm = latest_triple(conn, fixture_id, "llm", as_of=moment)
     if ml is None or llm is None:
         return "skipped", None
     ml_id = _latest_forecast_id(conn, fixture_id, "ml", moment)
@@ -110,6 +110,8 @@ def fusion_sweep(
 ) -> FusionStats:
     """全量双轨齐备场次融合（源更新 → hash 变 → 自然再融合）。"""
     stats = FusionStats()
+    if not settings.m3_fusion_enabled:
+        return stats  # 证伪开关：fused 停止生成（票 13；scout 与存证保留）
     ml_fixtures = {int(r["fixture_id"]) for r in forecasts_for_track(conn, "ml")}
     fixture_ids = sorted(
         {

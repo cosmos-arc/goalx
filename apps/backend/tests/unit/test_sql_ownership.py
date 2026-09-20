@@ -50,7 +50,7 @@ OWNERS: dict[str, set[str]] = {
         "bankroll_events",
     },
     # 票 09/11：LLM 线域（M3）——divergences 脚手架表移交 llm
-    "llm": {"intel_observations", "divergences", "review_items"},
+    "llm": {"intel_observations", "divergences", "review_items", "blind_reviews"},
 }
 TABLE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 # 仅匹配大写动词：仓库 SQL 关键字全大写，避开 "Insert or update a..." 类 docstring
