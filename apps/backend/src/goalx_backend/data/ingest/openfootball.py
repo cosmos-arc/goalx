@@ -20,7 +20,7 @@ fixture（双方命中即唯一化）；无候选/多候选不硬配（多候选
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
@@ -36,7 +36,7 @@ from goalx_backend.data.reconcile import (
     record_reconciliation_run,
     upsert_source_coverage,
 )
-from goalx_backend.modelling.team_align import NameIndex
+from goalx_backend.modelling.team_align import NameIndex, normalize_team_name
 
 SOURCE = "openfootball"
 PARSE_VERSION = "openfootball_v1"
@@ -259,3 +259,153 @@ def reconcile_openfootball(
     stats.business_dates = sorted(set(stats.business_dates))
     record_reconciliation_run(conn, stats, parse_version=PARSE_VERSION)
     return stats
+
+
+# --- 票 46：openfootball 比分对 fdhist 语料交叉验证（重叠联赛，一次性报表） ---
+
+# fd 代码 → football.json 文件名（fd 有语料且 openfootball 有赛季文件的联赛）
+FD_OF_LEAGUE_FILES: dict[str, str] = {
+    "E0": "en.1",
+    "E1": "en.2",
+    "D1": "de.1",
+    "I1": "it.1",
+    "SP1": "es.1",
+    "F1": "fr.1",
+    "N1": "nl.1",
+    "P1": "pt.1",
+}
+
+
+def of_season_key(fd_season: str) -> str:
+    """Fd 季键 "2526" → openfootball 季键 "2025-26"。"""
+    return f"20{fd_season[:2]}-{fd_season[2:]}"
+
+
+@dataclass
+class SeasonCrossCheck:
+    """一个联赛×赛季的交叉验证结果。"""
+
+    competition: str
+    season: str
+    compared: int = 0
+    consistent: int = 0
+    openfootball_only: int = 0
+    fdhist_only: int = 0
+    not_available: bool = False  # openfootball 无该季文件（404）
+    score_mismatches: list[dict[str, str]] = field(default_factory=list)
+
+
+def cross_check_fdhist(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    seasons: tuple[str, ...],
+    leagues: dict[str, str] | None = None,
+    mismatch_limit: int = 5,
+) -> dict[str, dict[str, SeasonCrossCheck]]:
+    """
+    Openfootball 已回填比分 vs hist_matches 逐场比对（重叠联赛×赛季）。
+
+    join 走规范化队名 + 比赛日 ±1（fd/openfootball 比赛日偶有跨日差）；
+    未配对行计 of/fd 单侧缺口（回填滞后与覆盖差属常态，只报清单不报警）；
+    404 = not_available（openfootball 无该季文件，如 en.2 早期季）。
+    """
+    league_map = leagues if leagues is not None else FD_OF_LEAGUE_FILES
+    report: dict[str, dict[str, SeasonCrossCheck]] = {}
+    for competition, file_name in league_map.items():
+        report[competition] = {}
+        for fd_season in seasons:
+            entry = SeasonCrossCheck(competition=competition, season=fd_season)
+            report[competition][fd_season] = entry
+            doc = fetch_season(client, settings, of_season_key(fd_season), file_name)
+            if doc is None:
+                entry.not_available = True
+                continue
+            of_matches = parse_season(doc)
+            hist_rows = rs_hist_rows(conn, competition, fd_season)
+            _compare_season(of_matches, hist_rows, entry, mismatch_limit)
+    return report
+
+
+def rs_hist_rows(
+    conn: sqlite3.Connection, competition: str, season: str
+) -> list[sqlite3.Row]:
+    """该联赛该季的 hist 行（比分 + 队名；SQL 归 data 域本文件）。"""
+    return conn.execute(
+        """
+        SELECT match_date, home_team, away_team, fthg, ftag
+        FROM hist_matches
+        WHERE competition = ? AND season = ?
+        ORDER BY match_date
+        """,
+        (competition, season),
+    ).fetchall()
+
+
+def _compare_season(
+    of_matches: list[OfMatch],
+    hist_rows: list[sqlite3.Row],
+    entry: SeasonCrossCheck,
+    mismatch_limit: int,
+) -> None:
+    """纯比对：规范化队名 + 日期 ±1 配对，比分严格比较。"""
+    index: dict[tuple[str, str, str], tuple[int, int]] = {}
+    for row in hist_rows:
+        key = (
+            normalize_team_name(str(row["home_team"])),
+            normalize_team_name(str(row["away_team"])),
+            str(row["match_date"]),
+        )
+        index[key] = (int(row["fthg"]), int(row["ftag"]))
+    matched_hist = 0
+    for m in of_matches:
+        home = normalize_team_name(m.team1)
+        away = normalize_team_name(m.team2)
+        day = date.fromisoformat(m.match_date)
+        hit: tuple[int, int] | None = None
+        for delta in (0, -1, 1):  # 同日优先，跨日差兜底
+            hit = index.get((home, away, (day + timedelta(days=delta)).isoformat()))
+            if hit is not None:
+                break
+        if hit is None:
+            entry.openfootball_only += 1
+            continue
+        matched_hist += 1
+        entry.compared += 1
+        if hit == m.ft:
+            entry.consistent += 1
+        elif len(entry.score_mismatches) < mismatch_limit:
+            entry.score_mismatches.append(
+                {
+                    "date": m.match_date,
+                    "fixture": f"{m.team1} v {m.team2}",
+                    "openfootball": f"{m.ft[0]}:{m.ft[1]}",
+                    "fdhist": f"{hit[0]}:{hit[1]}",
+                }
+            )
+    entry.fdhist_only = len(hist_rows) - matched_hist
+
+
+def cross_check_dict(
+    report: dict[str, dict[str, SeasonCrossCheck]],
+) -> dict[str, dict[str, dict[str, object]]]:
+    """交叉验证报告 → 可 JSON 化 dict（CLI/日志用）。"""
+    return {
+        comp: {
+            season: {
+                "compared": entry.compared,
+                "consistent": entry.consistent,
+                "openfootball_only": entry.openfootball_only,
+                "fdhist_only": entry.fdhist_only,
+                "not_available": entry.not_available,
+                **(
+                    {"score_mismatches": entry.score_mismatches}
+                    if entry.score_mismatches
+                    else {}
+                ),
+            }
+            for season, entry in seasons.items()
+        }
+        for comp, seasons in report.items()
+    }

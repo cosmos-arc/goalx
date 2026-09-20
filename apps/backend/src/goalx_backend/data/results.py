@@ -390,3 +390,24 @@ def understat_compare_rows(
         ).fetchall()
         if str(row["season"]) in wanted
     ]
+
+
+def hist_season_coverage(
+    conn: sqlite3.Connection, competitions: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """逐联赛×赛季语料量与收盘赔率缺口（票 46 完整性报表的取数层）。"""
+    comp_ph = ", ".join("?" for _ in competitions)
+    return conn.execute(
+        f"""
+        SELECT competition, season, COUNT(*) AS rows,
+               SUM(psc_home IS NULL OR psc_draw IS NULL OR psc_away IS NULL)
+                   AS psc_missing,
+               SUM(avgc_home IS NULL OR avgc_draw IS NULL OR avgc_away IS NULL)
+                   AS avgc_missing
+        FROM hist_matches
+        WHERE competition IN ({comp_ph})
+        GROUP BY competition, season
+        ORDER BY competition, season
+        """,  # noqa: S608
+        competitions,
+    ).fetchall()

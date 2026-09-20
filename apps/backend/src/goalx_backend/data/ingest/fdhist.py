@@ -1,8 +1,13 @@
 """
-football-data.co.uk 历史导入（票 21）：五大 2023-26 三季回测底座。
+football-data.co.uk 历史导入（票 21 起底座；票 46 扩联赛 + 十年窗）。
 
 列口径（ADR 0007）：FTR 赛果；PSC*（Pinnacle 收盘）为公允基准，
 AvgC*（市场均值收盘）兜底。日期格式 dd/mm/YY 或 dd/mm/YYYY，utf-8-sig。
+
+覆盖实测（2026-09-20，票 46）：五大+N1 全季可得；扩联赛 E1 英冠/P1 葡超/
+T1 土超/B1 比甲/SC0 苏超均含 PSC 收盘列（2526 季 200 实测）。美职/巴甲/
+墨超/日职不在 fd.co.uk 标准季目录（404）——竞彩混编的美洲/日职场次收盘
+基准仍缺口（结构限制，语料用途记 docs/票 46 Answer）。
 """
 
 from __future__ import annotations
@@ -21,11 +26,36 @@ from loguru import logger
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 
-# 联赛 fd 代码：五大 + N1 荷甲（模型线票 26 起覆盖六联赛，底座同步导入）
-FD_COMPETITIONS: tuple[str, ...] = ("E0", "D1", "SP1", "I1", "F1", "N1")
-# 回测范围三季（ADR 0007）+ 两个暖机赛季（票 28 walk-forward 训练窗需要
-# 更早历史；回测引擎只在 backtest seasons 内模拟下注，训练可用全部行）
-SEASONS: tuple[str, ...] = ("2122", "2223", "2324", "2425", "2526", "2627")
+# 五大 + N1 荷甲（票 26 模型线）+ 票 46 扩联赛（竞彩混编频率排序：
+# 英冠/葡超/土超/比甲/苏超——清单待人追认，增删只动本元组）
+FD_COMPETITIONS: tuple[str, ...] = (
+    "E0",
+    "D1",
+    "SP1",
+    "I1",
+    "F1",
+    "N1",
+    "E1",
+    "P1",
+    "T1",
+    "B1",
+    "SC0",
+)
+# 十年窗（票 46）：2016/17 起 + 当季；早期季新联赛可能缺文件（404 跳过
+# 计数，failed_files 可查）。每季初维护惯例不变：新赛季加一年
+SEASONS: tuple[str, ...] = (
+    "1617",
+    "1718",
+    "1819",
+    "1920",
+    "2021",
+    "2122",
+    "2223",
+    "2324",
+    "2425",
+    "2526",
+    "2627",
+)
 
 
 @dataclass
