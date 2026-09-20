@@ -1137,14 +1137,41 @@ FIXTURE_PAGE_0916 = (
 
 
 def _sync_transport(status: int = 200) -> httpx.MockTransport:
-    """固定响应的同步源传输层：200 给 2026-09-16 彩果页，其它状态码用于故障注入。"""
+    """官方 uniform 同步源传输层：200 给 2026-09-16 赛果页，其它状态码故障注入。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if "jczq.php" in request.url.path:
-            return httpx.Response(301, headers={"Location": "/?e=2026-09-16"})
         if status != 200:
             return httpx.Response(status, text="boom")
-        return httpx.Response(200, content=FIXTURE_PAGE_0916.encode("gb18030"))
+        rows = [
+            {
+                "matchId": 99001,
+                "matchNumStr": "周三001",
+                "matchDate": "2026-09-16",
+                "leagueName": "亚运会男足",
+                "leagueId": 83,
+                "matchResultStatus": "2",
+                "poolStatus": "Payout",
+                "sectionsNo999": "2:1",
+                "sectionsNo1": "1:1",
+                "winFlag": "H",
+            },
+            {
+                "matchId": 99002,
+                "matchNumStr": "周三014",
+                "matchDate": "2026-09-16",
+                "leagueName": "亚运会男足",
+                "leagueId": 83,
+                "matchResultStatus": "1",
+                "poolStatus": "Close",
+                "sectionsNo999": "",
+                "sectionsNo1": "",
+                "winFlag": "",
+            },
+        ]
+        value = {"matchResult": rows, "pages": 1, "total": 2}
+        return httpx.Response(
+            200, json={"success": True, "errorCode": "0", "value": value}
+        )
 
     return httpx.MockTransport(handler)
 
@@ -1174,6 +1201,7 @@ def _seed_pending_result_fixture(db_path: Path) -> None:
             kind="jingcai",
             business_date="2026-09-16",
             code="周三001",
+            source_match_id="99001",
         ),
     )
     conn.commit()
@@ -1205,18 +1233,14 @@ def test_draw_sync_run_imports_pending_and_reports_status(
         assert run.status_code == 200
         body = run.json()
         assert body["pending_results"] == 0
-        assert body["last_run"]["source"] == "500.com"
+        assert body["last_run"]["source"] == "sporttery.cn"
         assert body["last_run"]["imported"] == 1
         assert body["last_run"]["business_dates"] == ["2026-09-16"]
-        # 完场推迟的场次进待人工清单（fail-closed）
-        assert {
-            "business_date": "2026-09-16",
-            "code": "周三014",
-            "reason": "not_finished",
-        } in body["last_run"]["pending_manual"]
+        # 未完场行由官方同步静默跳过（缺果待下次拍；拒因才进清单）
+        assert body["last_run"]["pending_manual"] == []
 
         listing = client.get("/api/v1/draw-results")
-        assert listing.json()[0]["source"] == "500.com"
+        assert listing.json()[0]["source"] == "sporttery.cn"
         assert (listing.json()[0]["home_goals"], listing.json()[0]["away_goals"]) == (
             2,
             1,

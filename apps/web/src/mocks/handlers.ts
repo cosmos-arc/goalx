@@ -461,7 +461,7 @@ export const drawResultsFixture = [
 /** 票 42：赛果同步状态 mock——上次同步带待人工清单（not_finished/stored_differs）。 */
 export const drawSyncFixture = {
 	last_run: {
-		source: "500.com",
+		source: "sporttery.cn",
 		observed_at: "2026-09-18T05:30:00+00:00",
 		business_dates: ["2026-09-16"],
 		pages: 1,

@@ -298,7 +298,7 @@ test("sync panel shows last run, manual list and triggers sync; pending fixtures
 	// 票 42 点亮态：上次同步（时点/来源/计数）+ 待出数 + 待人工清单
 	const status = await screen.findByTestId("sync-status");
 	await waitFor(() => expect(status).toHaveTextContent("上次同步"));
-	expect(status).toHaveTextContent("来源 500.com");
+	expect(status).toHaveTextContent("来源 sporttery.cn");
 	expect(status).toHaveTextContent("新 12 / 一致 3");
 	expect(status).toHaveTextContent("待出 2 场");
 	const manual = await screen.findByTestId("sync-pending-manual");
@@ -318,7 +318,7 @@ test("sync panel shows last run, manual list and triggers sync; pending fixtures
 	// 主动触发：成功消息带来源与计数（刷新后状态仍可查）
 	await user.click(screen.getByTestId("sync-trigger"));
 	expect(await screen.findByTestId("bets-message")).toHaveTextContent(
-		"同步完成：新落库 12 场、一致 3 场、待人工 2 场（来源 500.com）",
+		"同步完成：新落库 12 场、一致 3 场、待人工 2 场（来源 sporttery.cn）",
 	);
 });
 

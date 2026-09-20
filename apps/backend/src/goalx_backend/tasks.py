@@ -21,7 +21,16 @@ from loguru import logger
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.ingest import caiguo, fdhist, oddsapi, sporttery, zucai
+from goalx_backend.data import reconcile
+from goalx_backend.data.ingest import (
+    caiguo,
+    fdhist,
+    oddsapi,
+    openfootball,
+    sporttery,
+    uniform,
+    zucai,
+)
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
@@ -36,6 +45,7 @@ from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
+from goalx_backend.modelling.team_align import alias_index
 
 
 @contextmanager
@@ -139,15 +149,36 @@ def settlement_sweep() -> dict[str, int]:
 
 def draw_results_sync() -> dict[str, object]:
     """
-    赛果自动同步（票 42）：源D 结果页 → import_draw_results。
+    赛果自动同步（票 44 切换后为官方 uniform 源，终态落事实）。
 
-    候选业务日由库内待出赛果推导；无待出赛果时不发任何请求（零成本
-    跳过，与 eu-odds-closing 同模式）。
+    票 42 时代为源D 页面导入；候选业务日由库内待出赛果推导，
+    无待出赛果时不发任何请求（零成本跳过，与 eu-odds-closing 同模式）。
+    源D 降为审计源（official_results_reconcile）。
     """
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
-        stats = caiguo.sync_draw_results(conn, settings, client)
-    return caiguo.stats_dict(stats)
+        stats, _rec = uniform.sync_uniform_results(conn, settings, client)
+    return uniform.stats_dict(stats)
+
+
+def official_results_reconcile() -> dict[str, object]:
+    """
+    赛果日终审计（票 44）：源D 页面对账 + openfootball 比分对账，不落事实。
+
+    官方 uniform 同步（draw-results-sync）负责落库；本任务只交叉核对：
+    源D 审计窗口为近 7 天已开赛场次（含已落果日），openfootball 为窗口内
+    已映射联赛。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        caiguo_rec = caiguo.audit_draw_results(conn, settings, client)
+        of_rec = openfootball.reconcile_openfootball(
+            conn, settings, client, alias_index=alias_index(conn)
+        )
+    return {
+        "caiguo": reconcile.stats_dict(caiguo_rec),
+        "openfootball": reconcile.stats_dict(of_rec),
+    }
 
 
 def pool_snapshot() -> zucai.PoolSyncStats:

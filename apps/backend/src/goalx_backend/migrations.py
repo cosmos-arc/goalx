@@ -874,6 +874,124 @@ def _apply_v13(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v14(conn: sqlite3.Connection) -> None:
+    """
+    v14（票 44）：官方赛果事实源观测 + 对账 + 覆盖维表（data 域，ADR-0008）。
+
+    - uniform_result_observations：源A uniform 族赛果观测（append-only +
+      UNIQUE(match_id, observed_at) 幂等）。观测是事实导入的依据与证据；
+      同 match 多次观测自然留痕（poolStatus 空 → Payout 的状态迁移）。
+      2026-09-20 用户裁决直接切换：官方终态观测经 ingest/uniform 落
+      draw_results 事实（源D 降审计源）。
+    - draw_reconciliation_runs：每次对账一行（append-only）：参照源
+      （sporttery.cn / openfootball）vs draw_results 的一致率与待人工清单。
+    - source_coverage（定则 4）：每源每覆盖日"看到了什么"的现态维表
+      （UPSERT，非证据表——证据在观测/run 表）。coverage_date 语义随源
+      而定（uniform=matchDate、源D=业务日、openfootball=赛季键）；
+      absent 断言仅当 coverage_status='covered' 且采集成功——空≠无
+      （fetched_empty=采集成功无场次；fetch_failed=暂时失败可重试；
+      not_covered=源声明无此覆盖，如 openfootball 无 2026-27 文件）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS uniform_result_observations (
+            id INTEGER PRIMARY KEY,
+            match_id INTEGER NOT NULL,
+            match_num_str TEXT NOT NULL,
+            match_date TEXT NOT NULL,
+            business_date TEXT,
+            fixture_id INTEGER REFERENCES fixtures(id),
+            league_id INTEGER,
+            league_name TEXT,
+            result_status TEXT NOT NULL,
+            pool_status TEXT,
+            full_score_raw TEXT,
+            half_score_raw TEXT,
+            home_goals INTEGER,
+            away_goals INTEGER,
+            half_home_goals INTEGER,
+            half_away_goals INTEGER,
+            win_flag TEXT,
+            odds_h TEXT,
+            odds_d TEXT,
+            odds_a TEXT,
+            goal_line TEXT,
+            betting_single INTEGER,
+            void_flag INTEGER NOT NULL DEFAULT 0,
+            void_reason TEXT,
+            observed_at TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (match_id, observed_at)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_uniform_obs_fixture
+            ON uniform_result_observations(fixture_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_uniform_obs_match_date
+            ON uniform_result_observations(match_date)
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER uniform_result_observations_no_{operation.lower()}
+            BEFORE {operation} ON uniform_result_observations
+            BEGIN SELECT RAISE(ABORT, 'uniform_result_observations is append-only'); END
+        """)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS draw_reconciliation_runs (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            business_dates TEXT NOT NULL,
+            compared INTEGER NOT NULL DEFAULT 0,
+            consistent INTEGER NOT NULL DEFAULT 0,
+            score_mismatch INTEGER NOT NULL DEFAULT 0,
+            void_mismatch INTEGER NOT NULL DEFAULT 0,
+            missing_result INTEGER NOT NULL DEFAULT 0,
+            unmatched INTEGER NOT NULL DEFAULT 0,
+            pending_manual TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER draw_reconciliation_runs_no_{operation.lower()}
+            BEFORE {operation} ON draw_reconciliation_runs
+            BEGIN SELECT RAISE(ABORT, 'draw_reconciliation_runs is append-only'); END
+        """)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_coverage (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            coverage_date TEXT NOT NULL,
+            league_key TEXT NOT NULL DEFAULT '',
+            league_name TEXT,
+            match_count INTEGER NOT NULL DEFAULT 0,
+            coverage_status TEXT NOT NULL
+                CHECK (
+                    coverage_status IN
+                        ('covered', 'fetched_empty', 'fetch_failed', 'not_covered')
+                ),
+            observed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (source, coverage_date, league_key)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -888,4 +1006,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (11, _apply_v11),
     (12, _apply_v12),
     (13, _apply_v13),
+    (14, _apply_v14),
 )

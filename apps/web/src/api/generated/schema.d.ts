@@ -490,10 +490,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 触发一次赛果自动同步(源D 结果页)
+         * 触发一次赛果自动同步(官方 sporttery uniform 源)
          * @description 同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。
          *
-         *     完场且口径自洽才落库, 异常场次进待人工清单;
+         *     官方终态(比分或无效判定)落库, 拒因行进待人工清单;
          *     与库内不一致不自动冲正(人工兜底通道, ADR 0001)。
          */
         post: operations["run_draw_sync_api_v1_draw_sync_run_post"];
