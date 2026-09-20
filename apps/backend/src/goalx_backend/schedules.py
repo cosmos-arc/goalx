@@ -19,6 +19,8 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   跳过；频率如有调整只改 cron）
 - official-reconcile 08:30：赛果日终审计（票 44）——源D 页面 + openfootball
   双参照源对账，跟在官方同步 08:00 补扫落事实之后
+- understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
+  （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
 - pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 
@@ -43,6 +45,7 @@ from goalx_backend.flows import (
     official_reconcile_flow,
     pool_snapshot_flow,
     scout_line_flow,
+    understat_sync_flow,
 )
 
 
@@ -89,6 +92,15 @@ def main() -> None:
             schedule=Schedule(cron="30 8 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
+    # 累计）；09:20 赶在 daily-capture 10:00 前，当日预测决策时点最新鲜
+    understat = cast(
+        RunnerDeployment,
+        understat_sync_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="20 9 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
@@ -127,6 +139,7 @@ def main() -> None:
         draw_sync,
         draw_sync_sweep,
         official_reconcile,
+        understat,
         wrap,
         pool,
         intel,

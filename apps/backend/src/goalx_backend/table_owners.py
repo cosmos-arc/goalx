@@ -26,6 +26,9 @@ OWNERS: dict[str, set[str]] = {
         "uniform_result_observations",
         "draw_reconciliation_runs",
         "source_coverage",
+        # 票 45：Understat xG 特征层（ingest/understat.py）
+        "understat_matches",
+        "understat_sync_runs",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

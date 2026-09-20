@@ -22,12 +22,14 @@ from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
+from goalx_backend.data import results as rs
 from goalx_backend.data.ingest import (
     caiguo,
     fdhist,
     oddsapi,
     openfootball,
     sporttery,
+    understat,
     uniform,
     zucai,
 )
@@ -179,6 +181,30 @@ def official_results_reconcile() -> dict[str, object]:
         "caiguo": reconcile.stats_dict(caiguo_rec),
         "openfootball": reconcile.stats_dict(of_rec),
     }
+
+
+def understat_sync(
+    seasons: tuple[str, ...] | None = None,
+    *,
+    leagues: tuple[str, ...] | None = None,
+) -> dict[str, object]:
+    """
+    Understat xG 特征同步（票 45）。
+
+    默认五大当前季（6 请求/日 ≤10 上限）；seasons 显式传入即回填历史
+    赛季（一次性，不进调度）；leagues 缺省五大（俄超 rfpl 按需）。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        stats = understat.sync_understat(
+            conn,
+            settings,
+            client,
+            alias=alias_index(conn),
+            seasons=seasons,
+            leagues=leagues or rs.UNDERSTAT_DEFAULT_LEAGUES,
+        )
+    return understat.stats_dict(stats)
 
 
 def pool_snapshot() -> zucai.PoolSyncStats:

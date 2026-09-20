@@ -182,6 +182,12 @@ erDiagram
     teams {
         INTEGER id PK
     }
+    understat_matches {
+        INTEGER id PK
+    }
+    understat_sync_runs {
+        INTEGER id PK
+    }
     uniform_result_observations {
         INTEGER id PK
     }
@@ -231,6 +237,7 @@ erDiagram
     settlements }|o--|| bet_slips : slip_id
     settlements }|o--|| bets : bet_id
     team_aliases }o--|| teams : team_id
+    understat_matches }|o--|| fixtures : fixture_id
     uniform_result_observations }|o--|| fixtures : fixture_id
 <!-- schema-doc:END:er -->
 
@@ -300,7 +307,20 @@ void 冲突/缺果计数 + 待人工清单），append。切换官方为事实�
 
 每源每覆盖日"看到了什么"的现态维表（UPSERT，非证据表）——空≠无：
 absent 断言仅当 coverage_status='covered'。coverage_date 语义随源
-（uniform=matchDate、源D=业务日、openfootball=赛季键）。
+（uniform=matchDate、源D=业务日、openfootball=赛季键、understat=起始年）。
+
+#### `understat_matches`（票 45）
+
+Understat 五大联赛逐场 xG 特征现态表（按源 match_id UPSERT）：逐场
+xG/xGA（含点球）与 npxG/npxGA（去点球）、本季**开球日严格早于本场**的
+prior_* 累计（防前视红线，同日场次互不可见）、源自带 forecast{w,d,l}
+对标基准（仅已赛场次携带）。三时间：datetime_utc=event_time、
+observed_at/first_seen_at=本机观测、源不提供发布时间（无列，不伪造）。
+fixture_id 为竞彩确定性 join（±1 日 + 双队名解析唯一命中，否则 NULL）。
+
+#### `understat_sync_runs`（票 45）
+
+xG 特征同步运行日志（逐联赛×赛季计数与 join 计数），append。
 
 ### 彩池（data/pool.py）
 
@@ -430,8 +450,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 | `joined_at` | TEXT | — |
 
 唯一键 `UNIQUE(`competition_id`, `kickoff_utc`, `home_team_id`, `away_team_id`)`
-
-唯一键 `UNIQUE(`kickoff_utc`)`
 <!-- schema-doc:END:table:fixtures -->
 
 <!-- schema-doc:BEGIN:table:match_codes -->
@@ -444,8 +462,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 | `code` | TEXT | NOT NULL |
 | `source_match_id` | TEXT | — |
 | `is_single` | INTEGER | — |
-
-唯一键 `UNIQUE(`fixture_id`)`
 
 唯一键 `UNIQUE(`kind`, `business_date`, `code`)`
 <!-- schema-doc:END:table:match_codes -->
@@ -490,10 +506,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 唯一键 `UNIQUE(`fixture_id`, `market_code`, `selection_code`, `source`, `captured_at`, `odds`)`
 
-唯一键 `UNIQUE(`fixture_id`, `market_code`, `source`, `captured_at`)`
-
-唯一键 `UNIQUE(`observation_id`)`
-
 append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 <!-- schema-doc:END:table:odds_snapshots -->
 
@@ -513,8 +525,6 @@ append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 | `summary` | TEXT | — |
 | `created_at` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`source`, `observed_at`)`
-
 append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_update`
 <!-- schema-doc:END:table:quote_observations -->
 
@@ -530,8 +540,6 @@ append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_
 | `source_updated_at` | TEXT | — |
 | `observation_id` | INTEGER | FK→quote_observations.id |
 | `created_at` | TEXT | NOT NULL |
-
-唯一键 `UNIQUE(`fixture_id`, `market_code`, `observed_at`)`
 
 append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 <!-- schema-doc:END:table:sale_statuses -->
@@ -583,8 +591,6 @@ append-only 触发器：`draw_result_revisions_no_delete`、`draw_result_revisio
 | `parse_version` | TEXT | NOT NULL |
 | `created_at` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`observed_at`)`
-
 append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 <!-- schema-doc:END:table:draw_sync_runs -->
 
@@ -618,10 +624,6 @@ append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 | `observed_at` | TEXT | NOT NULL |
 | `parse_version` | TEXT | NOT NULL |
 | `created_at` | TEXT | NOT NULL |
-
-唯一键 `UNIQUE(`fixture_id`)`
-
-唯一键 `UNIQUE(`match_date`)`
 
 唯一键 `UNIQUE(`match_id`, `observed_at`)`
 
@@ -665,6 +667,59 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 唯一键 `UNIQUE(`source`, `coverage_date`, `league_key`)`
 <!-- schema-doc:END:table:source_coverage -->
 
+<!-- schema-doc:BEGIN:table:understat_matches -->
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `match_id` | TEXT | NOT NULL |
+| `league` | TEXT | NOT NULL |
+| `season` | TEXT | NOT NULL |
+| `datetime_utc` | TEXT | NOT NULL |
+| `home_team_id` | TEXT | NOT NULL |
+| `home_team` | TEXT | NOT NULL |
+| `away_team_id` | TEXT | NOT NULL |
+| `away_team` | TEXT | NOT NULL |
+| `is_result` | INTEGER | NOT NULL，DEFAULT 0 |
+| `goals_home` | INTEGER | — |
+| `goals_away` | INTEGER | — |
+| `xg_home` | REAL | — |
+| `xg_away` | REAL | — |
+| `npxg_home` | REAL | — |
+| `npxg_away` | REAL | — |
+| `prior_npxg_home` | REAL | — |
+| `prior_npxga_home` | REAL | — |
+| `prior_matches_home` | INTEGER | — |
+| `prior_npxg_away` | REAL | — |
+| `prior_npxga_away` | REAL | — |
+| `prior_matches_away` | INTEGER | — |
+| `forecast_w` | REAL | — |
+| `forecast_d` | REAL | — |
+| `forecast_l` | REAL | — |
+| `fixture_id` | INTEGER | FK→fixtures.id |
+| `first_seen_at` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`match_id`)`
+<!-- schema-doc:END:table:understat_matches -->
+
+<!-- schema-doc:BEGIN:table:understat_sync_runs -->
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `source` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `seasons` | TEXT | NOT NULL |
+| `matches` | INTEGER | NOT NULL |
+| `results` | INTEGER | NOT NULL |
+| `joined` | INTEGER | NOT NULL |
+| `unmatched` | INTEGER | NOT NULL |
+| `failed` | INTEGER | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_no_update`
+<!-- schema-doc:END:table:understat_sync_runs -->
+
 <!-- schema-doc:BEGIN:table:pool_periods -->
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
@@ -690,8 +745,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 | `euro_odds_h` | REAL | — |
 | `euro_odds_d` | REAL | — |
 | `euro_odds_a` | REAL | — |
-
-唯一键 `UNIQUE(`pool_period_id`)`
 
 唯一键 `UNIQUE(`pool_period_id`, `match_seq`)`
 <!-- schema-doc:END:table:pool_matches -->
@@ -735,8 +788,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 | `missing_shares` | INTEGER | NOT NULL |
 | `parse_version` | TEXT | NOT NULL |
 | `created_at` | TEXT | NOT NULL |
-
-唯一键 `UNIQUE(`observed_at`)`
 
 append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:pool_sync_runs -->
@@ -816,8 +867,6 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 | `raw_hash` | TEXT | NOT NULL |
 | `created_at` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`fixture_id`)`
-
 唯一键 `UNIQUE(`fixture_id`, `collector`, `raw_hash`)`
 
 append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_update`
@@ -848,8 +897,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `decided_at` | TEXT | — |
 
 唯一键 `UNIQUE(`fixture_id`, `route`)`
-
-唯一键 `UNIQUE(`status`, `route`)`
 <!-- schema-doc:END:table:review_items -->
 
 <!-- schema-doc:BEGIN:table:blind_reviews -->
@@ -1032,8 +1079,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `payout` | REAL | NOT NULL |
 | `profit` | REAL | NOT NULL |
 | `detail` | TEXT | — |
-
-唯一键 `UNIQUE(`run_id`)`
 <!-- schema-doc:END:table:backtest_bets -->
 
 <!-- schema-doc:BEGIN:table:backtest_metrics -->

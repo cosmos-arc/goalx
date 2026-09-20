@@ -13,9 +13,9 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    # v7..v14 = 票 40/41/42/43/09/11/13/44
-    assert db.migrate(conn) == 14
-    assert db.migrate(conn) == 14  # 重跑幂等
+    # v7..v15 = 票 40/41/42/43/09/11/13/44/45
+    assert db.migrate(conn) == 15
+    assert db.migrate(conn) == 15  # 重跑幂等
 
     tables = {
         row["name"]
@@ -33,6 +33,9 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
         # v10（票 43）：彩池期次对阵与同步元信息
         "pool_matches",
         "pool_sync_runs",
+        # v15（票 45）：Understat xG 特征层
+        "understat_matches",
+        "understat_sync_runs",
     } <= tables
     snapshot_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(odds_snapshots)")
@@ -172,7 +175,7 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 14
+    assert db.migrate(conn) == 15
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before

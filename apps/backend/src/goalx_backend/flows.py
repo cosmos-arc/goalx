@@ -15,6 +15,7 @@ Prefect server 调度（见 README「运行采集」）。
 - settlement_flow：开奖后结算批跑（每日数次）
 - draw_results_sync_flow：官方赛果自动同步（票 42 源D 起；票 44 切换 uniform）
 - official_reconcile_flow：赛果日终审计（票 44：源D+openfootball 对账）
+- understat_sync_flow：Understat xG 特征同步（票 45：每日 6 请求 ≤10 上限）
 """
 
 from __future__ import annotations
@@ -123,6 +124,14 @@ def official_reconcile_flow() -> dict[str, object]:
     """赛果日终审计（票 44）：源D 页面 + openfootball 双参照源，不落事实。"""
     stats = tasks.official_results_reconcile()
     logger.info("official reconcile: {}", stats)
+    return stats
+
+
+@flow(name="understat-sync", log_prints=True)
+def understat_sync_flow() -> dict[str, object]:
+    """Understat xG 特征同步（票 45）：五大当前季，幂等。"""
+    stats = tasks.understat_sync()
+    logger.info("understat sync: {}", stats)
     return stats
 
 

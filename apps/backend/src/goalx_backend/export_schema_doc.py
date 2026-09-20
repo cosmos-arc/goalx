@@ -51,10 +51,12 @@ def _fks(conn: sqlite3.Connection, table: str) -> dict[str, str]:
 
 
 def _uniques(conn: sqlite3.Connection, table: str) -> list[str]:
-    """唯一键列表（'(`a`,`b`)' 形式；自动 rowid 索引跳过）。"""
+    """唯一键列表（'(`a`,`b`)' 形式；自动 rowid 索引与非唯一索引跳过）。"""
     keys: list[str] = []
     for idx in conn.execute(f'PRAGMA index_list("{table}")').fetchall():
-        if not str(idx[3]):  # origin 为空 = sqlite_autoindex 的 PK
+        # idx = (seq, name, unique, origin, partial)：origin 空=PK 自动索引；
+        # unique=0 = 普通索引（曾误标"唯一键"，票 45 评审修正）
+        if not str(idx[3]) or not int(idx[2]):
             continue
         cols = [
             str(r[2]) for r in conn.execute(f'PRAGMA index_info("{idx[1]}")').fetchall()
