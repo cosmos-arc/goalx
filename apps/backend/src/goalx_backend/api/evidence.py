@@ -13,13 +13,17 @@ import json
 import sqlite3
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from ag_ui.core import RunAgentInput
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, ValidationError
 
 from goalx_backend.api.deps import get_db
+from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.db import utc_now_iso
+from goalx_backend.llm.ask import ask_analyst_events, extract_question
 from goalx_backend.llm.gate import latest_divergence
 from goalx_backend.llm.review import (
     open_reviews,
@@ -398,3 +402,45 @@ async def submit_blind_review(
     )
     db.commit()
     return {"recorded": recorded}
+
+
+@router.post(
+    "/api/v1/fixtures/{fixture_id}/ask",
+    summary="追问 analyst(AG-UI 1.0 事件流,票 15)",
+    responses={
+        404: {"description": "fixture 不存在"},
+        422: {"description": "请求体非 AG-UI RunAgentInput 或无用户问题"},
+    },
+)
+async def ask_analyst(fixture_id: int, request: Request, db: DbDep) -> Response:
+    """
+    追问端点：请求体 = AG-UI ``RunAgentInput``。
+
+    schema 由 ag-ui-protocol 1.0 规范定义，不在本契约内复制；响应 =
+    AG-UI 1.0 事件 SSE。prompt 只注入该场已存证情报（回答只引存证
+    条目）；无情报场次走诚实降级话术（不调模型，零成本）；每次调用
+    按 usage 记 cost_ledger（用途标签 ask）。追问是增量交互面——不落
+    任何预测/证据工件。
+    """
+    if fx_store.get_fixture(db, fixture_id) is None:
+        raise HTTPException(status_code=404, detail="fixture not found")
+    try:
+        payload = RunAgentInput.model_validate(await request.json())
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"invalid AG-UI RunAgentInput: {exc}"
+        ) from exc
+    question = extract_question(payload.messages)
+    if not question:
+        raise HTTPException(status_code=422, detail="messages 中无用户问题")
+    settings: Settings = getattr(request.app.state, "settings", None) or get_settings()
+    return StreamingResponse(
+        ask_analyst_events(
+            db,
+            settings,
+            fixture_id,
+            question,
+            thread_id=payload.thread_id or f"fixture-{fixture_id}",
+        ),
+        media_type="text/event-stream",
+    )

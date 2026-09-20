@@ -1800,6 +1800,43 @@
           }
         }
       }
+    },
+    "/api/v1/fixtures/{fixture_id}/ask": {
+      "post": {
+        "tags": [
+          "evidence"
+        ],
+        "summary": "追问 analyst(AG-UI 1.0 事件流,票 15)",
+        "description": "追问端点：请求体 = AG-UI ``RunAgentInput``。\n\nschema 由 ag-ui-protocol 1.0 规范定义，不在本契约内复制；响应 =\nAG-UI 1.0 事件 SSE。prompt 只注入该场已存证情报（回答只引存证\n条目）；无情报场次走诚实降级话术（不调模型，零成本）；每次调用\n按 usage 记 cost_ledger（用途标签 ask）。追问是增量交互面——不落\n任何预测/证据工件。",
+        "operationId": "ask_analyst_api_v1_fixtures__fixture_id__ask_post",
+        "parameters": [
+          {
+            "name": "fixture_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Fixture Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "fixture 不存在"
+          },
+          "422": {
+            "description": "请求体非 AG-UI RunAgentInput 或无用户问题"
+          }
+        }
+      }
     }
   },
   "components": {

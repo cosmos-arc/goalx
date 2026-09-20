@@ -119,7 +119,10 @@ test("renders the research view: books table with deviation highlight, consensus
 	expect(within(chain).getAllByTestId("chain-intel")).toHaveLength(2);
 	expect(within(chain).getByTestId("chain-rationale")).toHaveTextContent("analyst 复核");
 	expect(within(chain).getByTestId("chain-verdict")).toHaveTextContent("未裁决");
-	expect(within(chain).getByTestId("chain-ask-pending")).toBeDisabled();
+	// 追问入口（票 15）：可展开追问面板
+	const askToggle = within(chain).getByTestId("chain-ask-toggle");
+	expect(askToggle).toBeEnabled();
+	expect(within(chain).queryByTestId("ask-panel")).toBeNull();
 	expect(within(chain).getByTestId("chain-blind-entry")).toHaveAttribute("href", "/review");
 
 	// 返回场次链接常显
@@ -291,4 +294,35 @@ test("fixtures list links into the research page", async () => {
 	// 一级导航"场次"在研究页保持激活（前缀归属）
 	const primary = within(screen.getByRole("navigation", { name: "主导航" }));
 	expect(primary.getByRole("link", { name: "场次" })).toHaveAttribute("aria-current", "page");
+});
+
+test("ask panel streams the AG-UI answer and shows citation badges (票 15)", async () => {
+	const user = userEvent.setup();
+	await renderAt("/fixtures/1");
+	const chain = await screen.findByTestId("research-chain");
+	await user.click(await within(chain).findByTestId("chain-ask-toggle"));
+
+	const panel = await within(chain).findByTestId("ask-panel");
+	await user.type(within(panel).getByTestId("ask-input"), "主队能赢吗？");
+	await user.click(within(panel).getByTestId("ask-submit"));
+
+	// mock SSE 事件序列 → 助手消息流式呈现
+	const answer = await within(panel).findByTestId("ask-msg-assistant");
+	await waitFor(() => expect(answer).toHaveTextContent("主队胜率承压"));
+	expect(answer).toHaveTextContent("证据弱点：情报仅一条");
+	// 结束后引用徽章（来源 + 时点）
+	expect(within(panel).getByTestId("ask-citations")).toHaveTextContent("okooo formation");
+});
+
+test("ask panel surfaces RUN_ERROR honestly (票 15)", async () => {
+	const user = userEvent.setup();
+	await renderAt("/fixtures/1");
+	const chain = await screen.findByTestId("research-chain");
+	await user.click(await within(chain).findByTestId("chain-ask-toggle"));
+
+	const panel = await within(chain).findByTestId("ask-panel");
+	await user.type(within(panel).getByTestId("ask-input"), "触发错误");
+	await user.click(within(panel).getByTestId("ask-submit"));
+
+	expect(await within(panel).findByTestId("ask-error")).toHaveTextContent("GLM 不可达");
 });
