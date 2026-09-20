@@ -26,6 +26,7 @@ from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
+from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
 from goalx_backend.llm.gate import gate_stats_dict, gate_sweep
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
@@ -172,4 +173,5 @@ def scout_line() -> dict[str, object]:
     with task_conn() as conn:
         scout = scout_stats_dict(scout_sweep(conn, settings))
         gate = gate_stats_dict(gate_sweep(conn, settings))
-    return {**scout, "gate": gate}
+        fused = fusion_stats_dict(fusion_sweep(conn, settings))
+    return {**scout, "gate": gate, "fusion": fused}
