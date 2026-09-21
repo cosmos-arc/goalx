@@ -344,3 +344,25 @@ export function EligibleCard({
 		</article>
 	);
 }
+
+/** 陈旧时长文案（票 48 只读信号）：分/时/天就地换算。 */
+function stalenessText(minutes: number): string {
+	if (minutes < 60) return `${minutes} 分钟`;
+	if (minutes < 24 * 60) {
+		const hours = Math.floor(minutes / 60);
+		const rest = minutes % 60;
+		return rest > 0 ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+	}
+	return `${Math.floor(minutes / (24 * 60))} 天`;
+}
+
+/** sharp 参考漂移文案：带符号百分比（正=该向概率上行）；|pct|<0.05 归零。 */
+function driftText(drift: number): string {
+	const pct = drift * 100;
+	if (Math.abs(pct) < 0.05) return "0.0%";
+	return `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}
+
+function staleSelectionLabel(selection: string): string {
+	return SELECTION_LABELS[selection] ?? selection;
+}
