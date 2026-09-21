@@ -22,6 +22,7 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   跳过；频率如有调整只改 cron）
 - official-reconcile 08:30：赛果日终审计（票 44）——源D 页面 + openfootball
   双参照源对账，跟在官方同步 08:00 补扫落事实之后
+- srcb-collect 10:40/22:40（票 49 采集先行）：源B变化时序低频回溯式攒语料
 - understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
@@ -49,6 +50,7 @@ from goalx_backend.flows import (
     official_reconcile_flow,
     pool_snapshot_flow,
     scout_line_flow,
+    srcb_collect_flow,
     understat_sync_flow,
 )
 
@@ -105,6 +107,15 @@ def main() -> None:
             schedule=Schedule(cron="*/5 * * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 源B变化时序（票 49 采集先行）：每日两拍回溯式（赶在 daily-capture 后，
+    # 彩池期次已同步出新场次 mid）；36h 未开赛窗 × 17 pid，0.5s 限速
+    srcb_collect_deploy = cast(
+        RunnerDeployment,
+        srcb_collect_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
     # 累计）；09:20 赶在 daily-capture 10:00 前，当日预测决策时点最新鲜
     understat = cast(
@@ -154,6 +165,7 @@ def main() -> None:
         official_reconcile,
         understat,
         anchor_dense,
+        srcb_collect_deploy,
         wrap,
         pool,
         intel,

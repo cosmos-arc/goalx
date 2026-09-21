@@ -38,6 +38,7 @@
 | `source_coverage` | 覆盖现态维表（票 44，定则 4） | 空≠无：absent 断言仅当 covered；coverage_date 语义随源（uniform=matchDate、源D=业务日、openfootball=赛季键、understat=起始年） | upsert |
 | `understat_matches` | xG 特征现态（票 45） | 逐场 xG/xGA+npxG/npxGA；prior_*=本季开球日严格早于本场的累计（防前视红线，同日互不可见）；forecast{w,d,l} 仅已赛场次；fixture_id=±1 日+双队名唯一命中 | upsert by match_id |
 | `understat_sync_runs` | xG 同步日志 | 逐联赛×赛季计数；results_missing_npxg 金丝雀 | append |
+| `srcb_change_rows` / `srcb_change_runs` | 源B欧指变化时序语料（票 49 采集先行） | 行=mid×pid×三向十进制+距开赛分钟（UNIQUE 幂等，行不可变）；无 fixture_id（mid↔身份绑定属消费侧，数值交叉验证后落）；17 核心 pid 每日两拍回溯式 | append-only |
 | `pool_periods` / `pool_matches` | 彩池期次与对阵 | euro_odds_*=期次页三向欧指兜底；source_match_id=澳客场次 id | append+幂等 |
 | `pool_states` / `public_shares` | 销量/滚存 + 公众份额 | 官方公布 upsert 最新；源B 人气 append（meta 带注数量级） | upsert / append |
 | `pool_sync_runs` | 彩池同步日志 | 期次/对阵/份额计数 | append |
@@ -224,6 +225,12 @@ erDiagram
         INTEGER id PK
     }
     source_coverage {
+        INTEGER id PK
+    }
+    srcb_change_rows {
+        INTEGER id PK
+    }
+    srcb_change_runs {
         INTEGER id PK
     }
     team_aliases {
@@ -600,6 +607,45 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 
 append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_no_update`
 <!-- schema-doc:END:table:understat_sync_runs -->
+
+<!-- schema-doc:BEGIN:table:srcb_change_rows -->
+#### `srcb_change_rows`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `mid` | TEXT | NOT NULL |
+| `pid` | TEXT | NOT NULL |
+| `odds_h` | REAL | NOT NULL |
+| `odds_d` | REAL | NOT NULL |
+| `odds_a` | REAL | NOT NULL |
+| `minutes_before` | INTEGER | NOT NULL |
+| `time_label` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `first_seen_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`mid`, `pid`, `minutes_before`, `odds_h`, `odds_d`, `odds_a`)`
+<!-- schema-doc:END:table:srcb_change_rows -->
+
+<!-- schema-doc:BEGIN:table:srcb_change_runs -->
+#### `srcb_change_runs`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `observed_at` | TEXT | NOT NULL |
+| `mids` | TEXT | NOT NULL |
+| `pids` | TEXT | NOT NULL |
+| `requests` | INTEGER | NOT NULL |
+| `rows_added` | INTEGER | NOT NULL |
+| `rows_absorbed` | INTEGER | NOT NULL |
+| `failed` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+append-only 触发器：`srcb_change_runs_no_delete`、`srcb_change_runs_no_update`
+<!-- schema-doc:END:table:srcb_change_runs -->
+
 <!-- schema-doc:BEGIN:table:pool_periods -->
 #### `pool_periods`
 

@@ -1107,6 +1107,63 @@ def _apply_v17(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v18(conn: sqlite3.Connection) -> None:
+    """
+    v18（票 49 采集先行）：源B欧指变化时序——append-only 语料表。
+
+    - srcb_change_rows：一变化行（mid×pid×三向十进制价 + 距开赛分钟 +
+      源页 time 标签）。UNIQUE(mid,pid,minutes_before,三向) 幂等——回溯式
+      重复拉取吸收旧值、新变化自然追加；无 fixture_id（mid↔fixture 身份
+      绑定属消费侧，须数值交叉验证钉死后才落，票 49 后半程）。
+    - srcb_change_runs：一次采集一行（append-only），请求/新增/吸收/失败。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srcb_change_rows (
+            id INTEGER PRIMARY KEY,
+            mid TEXT NOT NULL,
+            pid TEXT NOT NULL,
+            odds_h REAL NOT NULL CHECK (odds_h > 1),
+            odds_d REAL NOT NULL CHECK (odds_d > 1),
+            odds_a REAL NOT NULL CHECK (odds_a > 1),
+            minutes_before INTEGER NOT NULL CHECK (minutes_before >= 0),
+            time_label TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            UNIQUE (mid, pid, minutes_before, odds_h, odds_d, odds_a)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_srcb_change_rows_lookup
+            ON srcb_change_rows(mid, pid, minutes_before)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srcb_change_runs (
+            id INTEGER PRIMARY KEY,
+            observed_at TEXT NOT NULL,
+            mids TEXT NOT NULL,
+            pids TEXT NOT NULL,
+            requests INTEGER NOT NULL,
+            rows_added INTEGER NOT NULL,
+            rows_absorbed INTEGER NOT NULL,
+            failed TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER srcb_change_runs_no_{operation.lower()}
+            BEFORE {operation} ON srcb_change_runs
+            BEGIN SELECT RAISE(ABORT, 'srcb_change_runs is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1125,4 +1182,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (15, _apply_v15),
     (16, _apply_v16),
     (17, _apply_v17),
+    (18, _apply_v18),
 )

@@ -31,6 +31,7 @@ from goalx_backend.data.ingest import (
     openfootball,
     propline,
     sporttery,
+    srcb,
     understat,
     uniform,
     zucai,
@@ -256,6 +257,31 @@ def _isolated_anchor_pull(
     except (oddsapi.CreditBudgetExceeded, httpx.HTTPError) as exc:
         logger.warning("anchor pull {} failed (leg degraded): {}", anchor, exc)
         return oddsapi.OddsIngestStats()
+
+
+def srcb_collect() -> dict[str, object]:
+    """
+    源B变化时序采集（票 49 采集先行，2026-09-21 用户裁决）。
+
+    低频回溯式：未开赛彩池场次（36h 窗）× 17 核心 pid，每日两拍；连续
+    拉取并集自然积累完整路径。只攒语料不接消费端——mid↔fixture 身份
+    绑定与交叉验证属票 49 后半程。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        upcoming = srcb.upcoming_pool_mids(
+            conn, now_utc=datetime.now(UTC).isoformat(timespec="seconds")
+        )
+        stats = srcb.collect_srcb_changes(
+            conn, settings, client, mids=[m["mid"] for m in upcoming]
+        )
+    return {
+        "mids": len(stats.mids),
+        "requests": stats.requests,
+        "rows_added": stats.rows_added,
+        "rows_absorbed": stats.rows_absorbed,
+        "failed": len(stats.failed),
+    }
 
 
 def settlement_sweep() -> dict[str, int]:
