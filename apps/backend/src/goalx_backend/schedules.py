@@ -13,7 +13,10 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 
 节奏（Asia/Shanghai，协议 run-protocol-v1.md §3，启动后不改口径）：
 - daily-capture 10:00/19:00：竞彩→预测→范围内欧赔（2 credits/次）
-- eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过
+- eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过（票 47 起兼作
+  双锚采样的兜底拍）
+- odds-anchor-dense 每 5 分钟（票 47）：停售决策锚 + 开球评估锚，零候选
+  零请求
 - draw-results-sync 18:00-05:59 每 30 分钟 + 08:00 补扫（双 deployment）：
   官方 uniform 赛果同步（票 44 切换，票 42 时代为源D；无待出赛果时零成本
   跳过；频率如有调整只改 cron）
@@ -42,6 +45,7 @@ from goalx_backend.flows import (
     draw_results_sync_flow,
     eu_odds_closing_flow,
     intel_collect_flow,
+    odds_anchor_dense_flow,
     official_reconcile_flow,
     pool_snapshot_flow,
     scout_line_flow,
@@ -50,7 +54,7 @@ from goalx_backend.flows import (
 
 
 def main() -> None:
-    """单进程服务协议 v1 的八个定时 deployment。"""
+    """单进程服务协议 v1 的全部定时 deployment（随票累加）。"""
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -90,6 +94,15 @@ def main() -> None:
         official_reconcile_flow.to_deployment(
             name="protocol-v1",
             schedule=Schedule(cron="30 8 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    # 双锚临场采样（票 47 修正设计）：*/5 拍，两锚零候选零请求；停售探测
+    # 候选 = 开球 ≤3h 或北京 ≥19 点的次日内场次（凌晨场前夜墙钟停售形态）
+    anchor_dense = cast(
+        RunnerDeployment,
+        odds_anchor_dense_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="*/5 * * * *", timezone="Asia/Shanghai"),
         ),
     )
     # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
@@ -140,6 +153,7 @@ def main() -> None:
         draw_sync_sweep,
         official_reconcile,
         understat,
+        anchor_dense,
         wrap,
         pool,
         intel,

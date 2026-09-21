@@ -492,3 +492,157 @@ def test_reprocess_fails_closed_on_hash_mismatch(db, tmp_path) -> None:
     (tmp_path / str(obs["raw_ref"])).write_bytes(gzip.compress(b"tampered"))
     with pytest.raises(ValueError, match="hash mismatch"):
         sporttery.reprocess_observations(db, tmp_path)
+
+
+# --- 票 47：停售加密探测（决策锚触发器） ---
+
+EMPTY_PAYDAY = {"errorCode": "0", "value": {"matchInfoList": []}}
+
+
+def _seed_joined_sample(db, tmp_path) -> int:
+    """入库 SAMPLE 场次（on_sale，固定早期时钟保时间线单调）并完成欧赔 join。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            handler=lambda _: httpx.Response(200, json=SAMPLE)
+        )
+    )
+    sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 10, 0, tzinfo=UTC),
+    )
+    row = fx_store.find_fixture_by_source_match(db, "jingcai", "2041430")
+    assert row is not None
+    fx_store.set_odds_api_join(
+        db, int(row["id"]), "evt-2041430", "soccer_netherlands_eredivisie", "manual"
+    )
+    return int(row["id"])
+
+
+def _probe_client(payload: dict, calls: list[str]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, json=payload)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_probe_no_candidates_makes_no_request(db, tmp_path) -> None:
+    calls: list[str] = []
+    probe = sporttery.probe_sale_stops(
+        db, Settings(), _probe_client(SAMPLE, calls), raw_root=tmp_path
+    )
+    assert probe.candidates == 0
+    assert probe.stopped == []
+    assert calls == []
+
+
+def test_probe_disappearance_marks_stopped_once(db, tmp_path) -> None:
+    fixture_id = _seed_joined_sample(db, tmp_path)
+    now = datetime(2026, 9, 12, 16, 30, tzinfo=UTC)  # SAMPLE 开球前 90 分钟
+    calls: list[str] = []
+    probe = sporttery.probe_sale_stops(
+        db, Settings(), _probe_client(EMPTY_PAYDAY, calls), raw_root=tmp_path, now=now
+    )
+    assert probe.candidates == 1
+    assert [int(r["id"]) for r in probe.stopped] == [fixture_id]
+    assert calls  # 全链路采集发生
+    latest = db.execute(
+        "SELECT sale_state, observed_at FROM sale_statuses WHERE fixture_id = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (fixture_id,),
+    ).fetchone()
+    assert latest["sale_state"] == "stopped"
+    assert latest["observed_at"] == "2026-09-12T16:30:00+00:00"
+    # 幂等：已 stopped 后不再是候选 → 零请求
+    calls2: list[str] = []
+    again = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(EMPTY_PAYDAY, calls2),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 16, 40, tzinfo=UTC),
+    )
+    assert again.candidates == 0
+    assert again.stopped == []
+    assert calls2 == []
+
+
+def test_probe_explicit_sell_status_stopped(db, tmp_path) -> None:
+    _seed_joined_sample(db, tmp_path)
+    stopped_payload = json.loads(json.dumps(SAMPLE))
+    stopped_payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
+    now = datetime(2026, 9, 12, 17, 0, tzinfo=UTC)
+    probe = sporttery.probe_sale_stops(
+        db, Settings(), _probe_client(stopped_payload, []), raw_root=tmp_path, now=now
+    )
+    assert len(probe.stopped) == 1
+
+
+def test_probe_on_sale_no_anchor(db, tmp_path) -> None:
+    _seed_joined_sample(db, tmp_path)
+    now = datetime(2026, 9, 12, 16, 30, tzinfo=UTC)
+    probe = sporttery.probe_sale_stops(
+        db, Settings(), _probe_client(SAMPLE, []), raw_root=tmp_path, now=now
+    )
+    assert probe.candidates == 1
+    assert probe.stopped == []
+
+
+def test_probe_unknown_state_not_marked_stopped(db, tmp_path) -> None:
+    """从未观测在售（unknown）的场次消失不冒充停售迁移（评审修正）。"""
+    # 直接种子：有 fixture/join/match_code 但无 sale_statuses（unknown 态）
+    competition = fx_store.upsert_competition(
+        db, "荷甲", odds_api_sport_key="soccer_netherlands_eredivisie"
+    )
+    home = fx_store.upsert_team(db, "主队U")
+    away = fx_store.upsert_team(db, "客队U")
+    fixture_id = fx_store.upsert_fixture(
+        db, competition, "2026-09-12T18:00:00+00:00", home, away
+    )
+    from goalx_backend.models import MatchCodeInput
+
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture_id,
+            kind="jingcai",
+            business_date="2026-09-12",
+            code="周六0U",
+            source_match_id="2041430",
+        ),
+    )
+    fx_store.set_odds_api_join(
+        db, fixture_id, "evt-u", "soccer_netherlands_eredivisie", "manual"
+    )
+    db.commit()
+    now = datetime(2026, 9, 12, 16, 30, tzinfo=UTC)
+    probe = sporttery.probe_sale_stops(
+        db, Settings(), _probe_client(EMPTY_PAYDAY, []), raw_root=tmp_path, now=now
+    )
+    assert probe.candidates >= 1
+    assert probe.stopped == []
+    assert db.execute("SELECT COUNT(*) AS n FROM sale_statuses").fetchone()["n"] == 0
+
+
+def test_probe_window_two_regimes(db, tmp_path) -> None:
+    """候选两形态：临场 ≤3h 恒探测；北京 ≥19 点探测 16h 内（凌晨场前夜墙钟）。"""
+    _seed_joined_sample(db, tmp_path)  # 开球 2026-09-12T18:00Z
+    cases = (
+        (datetime(2026, 9, 12, 16, 30, tzinfo=UTC), SAMPLE, 1),  # 临场 90 分 → 候选
+        (datetime(2026, 9, 12, 12, 0, tzinfo=UTC), SAMPLE, 1),  # 北京 20 点、−6h → 候选
+        (
+            datetime(2026, 9, 12, 2, 0, tzinfo=UTC),
+            EMPTY_PAYDAY,
+            0,
+        ),  # 北京 10 点 → 非候选
+    )
+    results = [
+        sporttery.probe_sale_stops(
+            db, Settings(), _probe_client(payload, []), raw_root=tmp_path, now=now
+        ).candidates
+        for now, payload, _ in cases
+    ]
+    assert results == [want for _, _, want in cases]

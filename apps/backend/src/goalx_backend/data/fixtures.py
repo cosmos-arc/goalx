@@ -627,3 +627,30 @@ def fixture_team_info(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row 
         """,
         (fixture_id,),
     ).fetchone()
+
+
+def sale_stop_probe_candidates(
+    conn: sqlite3.Connection, now_utc: str, horizon_utc: str
+) -> list[sqlite3.Row]:
+    """
+    停售探测候选（票 47 双锚）：已 join、未来开球、最新销售态非 stopped。
+
+    粗筛交给 SQL（kickoff ∈ (now, horizon]）；「临场 3h 内 或 北京 ≥19 点
+    的次日内场次」细分在调用方（探测两形态：晚间场临场停售 / 凌晨场前夜
+    墙钟停售）。返回行带 latest_state 供调用方过滤。
+    """
+    return conn.execute(
+        """
+        SELECT f.id, f.kickoff_utc, f.odds_api_event_id, f.odds_api_sport_key,
+               COALESCE(
+                   (SELECT ss.sale_state FROM sale_statuses ss
+                    WHERE ss.fixture_id = f.id
+                    ORDER BY ss.observed_at DESC, ss.id DESC LIMIT 1),
+                   'unknown') AS latest_state
+        FROM fixtures f
+        WHERE f.odds_api_event_id IS NOT NULL AND f.odds_api_sport_key IS NOT NULL
+          AND f.kickoff_utc > ? AND f.kickoff_utc <= ?
+        ORDER BY f.kickoff_utc
+        """,
+        (now_utc, horizon_utc),
+    ).fetchall()
