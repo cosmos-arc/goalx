@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     understat_base_url: str = "https://understat.com"
     # 源B（票 43 代称表）：传统足彩期次/对阵/人气分布（官方销量无源，走 AI 代采）
     zucai_base_url: str = "https://www.okooo.com"
+    # 源B 移动端（票 49 采集先行）：欧指变化时序（三步预热 Referer 链）
+    srcb_mobile_base: str = "https://m.okooo.com"
     # football-data.org 免费档（票 09：12 项 standings；免费注册，无 key 时跳过）
     fdorg_base_url: str = "https://api.football-data.org"
     fdorg_api_key: str = Field(

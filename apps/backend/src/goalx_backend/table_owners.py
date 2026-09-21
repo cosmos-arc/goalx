@@ -29,6 +29,9 @@ OWNERS: dict[str, set[str]] = {
         # 票 45：Understat xG 特征层（ingest/understat.py）
         "understat_matches",
         "understat_sync_runs",
+        # 票 49 采集先行：源B欧指变化时序（ingest/srcb.py）
+        "srcb_change_rows",
+        "srcb_change_runs",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

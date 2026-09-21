@@ -154,6 +154,14 @@ def pool_snapshot_flow() -> dict[str, object]:
     return stats_dict(stats)
 
 
+@flow(name="srcb-collect", log_prints=True)
+def srcb_collect_flow() -> dict[str, object]:
+    """源B变化时序采集（票 49 采集先行）：低频回溯式攒语料。"""
+    stats = tasks.srcb_collect()
+    logger.info("srcb collect: {}", stats)
+    return stats
+
+
 @flow(name="propline-snapshot", log_prints=True)
 def propline_snapshot_flow() -> dict[str, object]:
     """PropLine 互备采集（票 50）：与欧赔快照双跑；降级零统计不炸整跑。"""
