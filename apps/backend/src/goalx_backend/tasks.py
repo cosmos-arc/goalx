@@ -14,12 +14,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import httpx
 from loguru import logger
 
 from goalx_backend.betting.settle import run_settlement
-from goalx_backend.config import get_settings
+from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs
@@ -143,6 +144,92 @@ def forecast_daily(business_date: str | None = None) -> dict[str, int]:
         "xg_unresolved": stats.xg_unresolved,
         "skipped": len(stats.skipped),
     }
+
+
+def odds_anchor_dense() -> dict[str, object]:
+    """
+    双锚临场采样（票 47 修正设计，2026-09-21 用户裁决锚=竞彩停售）。
+
+    评估锚：开球前 5 分钟桶内的已 join 场次定向拉取（meta anchor=kickoff，
+    CLV 收盘基准收紧）；决策锚：停售探测检出 on_sale→stopped 迁移后立即
+    拉取（meta anchor=sale_stop，决策时点公允线，票 48 陈盘信号的数据
+    供给）。两锚零候选零请求；失败不重试（30 分钟 closing 循环兜底）。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        now = datetime.now(UTC)
+        # 探测先行（零 credit）：kickoff 锚腿异常不阻断停售检测与状态时间线
+        probe = sporttery.probe_sale_stops(
+            conn, settings, client, raw_root=settings.observations_dir
+        )
+        bucket_start, bucket_end = oddsapi.kickoff_bucket_bounds(now)
+        kickoff_targets = [
+            (str(row["odds_api_event_id"]), str(row["odds_api_sport_key"]))
+            for row in fx_store.joined_fixtures_in_window(
+                conn, bucket_start, bucket_end
+            )
+        ]
+        stop_targets = [
+            (str(row["odds_api_event_id"]), str(row["odds_api_sport_key"]))
+            for row in probe.stopped
+        ]
+        kickoff = _isolated_anchor_pull(
+            conn,
+            settings,
+            client,
+            anchor=oddsapi.ANCHOR_KICKOFF,
+            targets=kickoff_targets,
+        )
+        sale_stop = _isolated_anchor_pull(
+            conn,
+            settings,
+            client,
+            anchor=oddsapi.ANCHOR_SALE_STOP,
+            targets=stop_targets,
+        )
+    return {
+        "kickoff_anchor": {
+            "events": kickoff.events,
+            "credits": kickoff.credits_used,
+        },
+        "sale_stop_probe": {
+            "candidates": probe.candidates,
+            "stopped": len(probe.stopped),
+        },
+        "sale_stop_anchor": {
+            "events": sale_stop.events,
+            "credits": sale_stop.credits_used,
+        },
+    }
+
+
+def _isolated_anchor_pull(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    anchor: str,
+    targets: list[tuple[str, str]],
+) -> oddsapi.OddsIngestStats:
+    """
+    单腿锚拉取（票 47）：异常降级为零统计不炸整跑（本拍放弃，下拍兜底）。
+
+    已知残留：停售迁移已被消费而锚拉取失败时，该场决策锚缺失（30 分钟
+    closing 循环只兜底开球前 35 分钟内的场次）——传输层 3 次重试后仍
+    失败属罕见，接受并留痕日志。
+    """
+    try:
+        return oddsapi.fetch_anchor_snapshots(
+            conn,
+            settings,
+            client,
+            anchor=anchor,
+            targets=targets,
+            raw_root=settings.observations_dir,
+        )
+    except (oddsapi.CreditBudgetExceeded, httpx.HTTPError) as exc:
+        logger.warning("anchor pull {} failed (leg degraded): {}", anchor, exc)
+        return oddsapi.OddsIngestStats()
 
 
 def settlement_sweep() -> dict[str, int]:

@@ -6,8 +6,11 @@ flows 共用（票 35 证据契约因此不可能再漂移）；deployment 由�
 Prefect server 调度（见 README「运行采集」）。
 
 - jingcai_snapshot_flow：竞彩全玩法快照（销售期高频，如每 30 分钟）
-- eu_odds_snapshot_flow：欧赔快照 + join + credit 记账（均匀轮询；
-  kickoff −30/−10/−1min 窗口加密在部署侧以更细 cron 间隔实现，见 README）
+- eu_odds_snapshot_flow：欧赔快照 + join + credit 记账（均匀轮询）
+- odds_anchor_dense_flow：双锚临场定向采样（票 47 修正设计）——决策锚=
+  停售迁移检出后立即拉取（meta anchor=sale_stop）、评估锚=开球前 5 分钟
+  桶拉取（meta anchor=kickoff）；替代本文件早先"−30/−10/−1 加密"的愿望
+  描述（从未实现过，现已按竞彩停售墙钟实况落地）
 - eu_odds_closing_flow：收盘窗口快照（票 32/35）
 - fd_history_import_flow：历史底座一次性导入（幂等可重跑）
 - weekly_train_flow：DC 分池周训练（Tier1 五大，票 26）
@@ -124,6 +127,14 @@ def official_reconcile_flow() -> dict[str, object]:
     """赛果日终审计（票 44）：源D 页面 + openfootball 双参照源，不落事实。"""
     stats = tasks.official_results_reconcile()
     logger.info("official reconcile: {}", stats)
+    return stats
+
+
+@flow(name="odds-anchor-dense", log_prints=True)
+def odds_anchor_dense_flow() -> dict[str, object]:
+    """双锚临场采样（票 47）：*/5 拍，零候选零请求；30 分钟 closing 循环兜底。"""
+    stats = tasks.odds_anchor_dense()
+    logger.info("odds anchor dense: {}", stats)
     return stats
 
 

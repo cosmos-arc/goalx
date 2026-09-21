@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from goalx_backend.config import Settings
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import oddsapi, sporttery
 
@@ -474,3 +477,82 @@ def test_closing_window_runs_when_joined_fixture_upcoming(db) -> None:
         db, settings, client, now=datetime(2026, 9, 12, 17, 40, tzinfo=UTC)
     )
     assert stats.credits_used == 1
+
+
+# --- 票 47：双锚定向拉取（eventIds 批量 + meta 锚标） ---
+
+
+def test_fetch_anchor_snapshots_empty_targets_zero_cost(db) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("空目标不应发请求")
+
+    stats = oddsapi.fetch_anchor_snapshots(
+        db,
+        Settings(odds_api_key="k"),
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        anchor=oddsapi.ANCHOR_KICKOFF,
+        targets=[],
+    )
+    assert stats.credits_used == 0
+    assert stats.events == 0
+
+
+def test_fetch_anchor_snapshots_batches_and_stamps(db) -> None:
+    seed_jingcai(db)
+    fx_store.set_odds_api_join(db, 1, "abc123", "soccer_epl", "manual")
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if "soccer_epl" in request.url.path:
+            assert "eventIds=abc123" in str(request.url)
+            return httpx.Response(200, json=EVENTS)
+        return httpx.Response(200, json=[])
+
+    stats = oddsapi.fetch_anchor_snapshots(
+        db,
+        Settings(odds_api_key="k"),
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        anchor=oddsapi.ANCHOR_SALE_STOP,
+        targets=[
+            ("abc123", "soccer_epl"),
+            ("abc123", "soccer_epl"),  # 同 sport 去重
+            ("zzz999", "soccer_spain_la_liga"),
+        ],
+    )
+    # 每 sport 一个请求（eventIds 批量不另计费）→ 2 credits
+    assert stats.credits_used == 2
+    assert len([u for u in seen if "/odds" in u]) == 2
+    # 快照 purpose=closing 且带锚标
+    rows = db.execute(
+        "SELECT DISTINCT purpose, meta FROM odds_snapshots"
+        " WHERE source LIKE 'odds_api:%'"
+    ).fetchall()
+    assert rows
+    for row in rows:
+        assert row["purpose"] == "closing"
+        assert json.loads(row["meta"]) == {"anchor": "sale_stop"}
+    # credit 台账 note 可审计（锚+事件定向）
+    notes = [
+        str(r["note"])
+        for r in db.execute(
+            "SELECT note FROM cost_ledger WHERE category='odds_api_credit'"
+        ).fetchall()
+    ]
+    assert any("abc123" in n for n in notes)
+    assert any("anchor=sale_stop" in n for n in notes)
+
+
+def test_kickoff_bucket_bounds_grid_aligned() -> None:
+    """桶界对齐 5 分钟网格且抖动不变；整点开球属上一桶（秒粒度半开）。"""
+    from datetime import UTC, datetime
+
+    for moment in (
+        datetime(2026, 9, 12, 18, 57, 3, tzinfo=UTC),  # 桶内抖动
+        datetime(2026, 9, 12, 18, 59, 58, tzinfo=UTC),  # 桶尾抖动
+    ):
+        start, end = oddsapi.kickoff_bucket_bounds(moment)
+        assert (start, end) == (
+            "2026-09-12T18:55:01+00:00",
+            "2026-09-12T19:00:00+00:00",
+        )

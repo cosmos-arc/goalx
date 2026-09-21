@@ -289,12 +289,15 @@ def store_events(
     events: list[ParsedEvent],
     *,
     purpose: SnapshotPurpose = SnapshotPurpose.LIVE_CAPTURE,
+    meta: dict[str, str] | None = None,
 ) -> OddsIngestStats:
     """
     欧赔快照 append-only 入库（只写已 join 的 fixture）+ 事件英文名回填别名。
 
     captured_at = 源 last_update（未知时 = observed_at，此时仅观察用途）；
     报价未变的重复观测被唯一键吸收，观测证据保留在 quote_observations。
+    meta 随行盖戳（票 47 锚标注：anchor=sale_stop/kickoff）——同 pull 内
+    事件同锚；重复行被吸收时旧行 meta 不回填。
     """
     stats = OddsIngestStats(events=len(events))
     by_event = {event.event_id: event for event in events}
@@ -325,6 +328,7 @@ def store_events(
                         source_updated_at=event.last_update_utc,
                         observation_id=event.observation_id,
                         purpose=purpose,
+                        meta=meta,
                     ),
                 )
                 if snapshot_id is None:
@@ -345,13 +349,21 @@ def _fetch_sport_odds(  # noqa: PLR0913 — 采集上下文逐项传参，聚合
     raw_root: Path | None,
     now: datetime,
     extra_params: dict[str, str] | None = None,
+    anchor_note: str | None = None,
 ) -> list[ParsedEvent]:
     """
     拉一个 sport 的 h2h 报价：预留 credit → 请求（失败退回）→ 证据 → 解析。
 
-    每个 /odds 请求恰好消耗 1 credit（1 market × 1 region）。
+    每个 /odds 请求恰好消耗 1 credit（1 market × 1 region）；eventIds
+    批量不另计费（票 47 锚拉取的省钱路径）。anchor_note 把锚语义写进
+    credit 台账与观测摘要——快照被唯一键吸收时锚触发仍有可审计痕迹。
     """
-    reserve_credits(conn, settings, len(markets), f"sport={sport_key}")
+    note = f"sport={sport_key}"
+    if extra_params is not None and "eventIds" in extra_params:
+        note += f" {extra_params['eventIds'][:60]}"
+    if anchor_note:
+        note = f"anchor={anchor_note} {note}"
+    reserve_credits(conn, settings, len(markets), note)
     try:
         params = {
             "apiKey": settings.odds_api_key,
@@ -390,7 +402,8 @@ def _fetch_sport_odds(  # noqa: PLR0913 — 采集上下文逐项传参，聚合
             raw_sha256=sha,
             raw_ref=raw_ref,
             summary=f"events={len(raw_events)}"
-            + (f" remaining={remaining}" if remaining else ""),
+            + (f" remaining={remaining}" if remaining else "")
+            + (f" anchor={anchor_note}" if anchor_note else ""),
         ),
     )
     return parse_events(
@@ -607,3 +620,83 @@ def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinRe
             report.tier1_joined += 1
     conn.commit()
     return report
+
+
+# --- 票 47 双锚定向拉取（eventIds 批量，1 credit/sport/请求） ---
+
+ANCHOR_SALE_STOP = "sale_stop"  # 决策锚：竞彩停售迁移检出后立即拉取
+ANCHOR_KICKOFF = "kickoff"  # 评估锚：临场（开球前）拉取，供 CLV 收盘基准收紧
+KICKOFF_BUCKET_MINUTES = 5  # 评估锚桶宽 = 调度拍频（*/5）
+
+
+def kickoff_bucket_bounds(now: datetime) -> tuple[str, str]:
+    """
+    评估锚桶 [slot+1s, slot+5min]（slot=now 向下对齐 5 分钟网格）。
+
+    桶界对齐 cron 网格而非进程启动时刻——运行抖动不再在相邻桶间生缝；
+    左界 +1 秒实现秒粒度半开（slot:00 整点开球属上一桶，0-5 分钟内仍
+    被拉取；跨桶不重火——重火会重复计 credit）。
+    """
+    slot = now.replace(second=0, microsecond=0) - timedelta(
+        minutes=now.minute % KICKOFF_BUCKET_MINUTES
+    )
+    start = (slot + timedelta(seconds=1)).isoformat(timespec="seconds")
+    end = (slot + timedelta(minutes=KICKOFF_BUCKET_MINUTES)).isoformat(
+        timespec="seconds"
+    )
+    return start, end
+
+
+def fetch_anchor_snapshots(  # noqa: PLR0913 — 采集上下文逐项传参（_fetch_sport_odds 同先例）
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    anchor: str,
+    targets: list[tuple[str, str]],  # (event_id, sport_key)
+    markets: tuple[str, ...] = ("h2h",),
+    raw_root: Path | None = None,
+    now: datetime | None = None,
+) -> OddsIngestStats:
+    """
+    锚定向拉取（票 47 修正设计）：按 sport_key 分组、eventIds 批量。
+
+    purpose=closing、快照 meta 盖 anchor 戳（消费侧按锚区分决策/评估口径）；
+    与常规采集共享 reserve_credits 月护栏（fail-closed）。锚语义由调用方
+    保证只触发一次（停售迁移一次性 / 开球桶一次性），本函数不查重——
+    重复调用的快照被唯一键吸收、credit 照记（调用方自律）。
+    """
+    _assert_allowed_markets(markets)
+    if not targets:
+        return OddsIngestStats(events=0, credits_used=0)
+    moment = now or datetime.now(UTC)
+    check_credit_budget(conn, settings)
+    by_sport: dict[str, list[str]] = {}
+    for event_id, sport_key in targets:
+        by_sport.setdefault(sport_key, []).append(event_id)
+    stats = OddsIngestStats(credits_used=len(by_sport) * len(markets))
+    for sport_key, event_ids in sorted(by_sport.items()):
+        unique = sorted(set(event_ids))
+        events = _fetch_sport_odds(
+            conn,
+            settings,
+            client,
+            sport_key,
+            markets=markets,
+            raw_root=raw_root,
+            now=moment,
+            extra_params={"eventIds": ",".join(unique)},
+            anchor_note=anchor,
+        )
+        stats.events += len(events)
+        # 逐 sport 即时入库：后续 sport 失败不丢已付费且已到手的事件
+        stored = store_events(
+            conn,
+            events,
+            purpose=SnapshotPurpose.CLOSING,
+            meta={"anchor": anchor},
+        )
+        stats.snapshots += stored.snapshots
+        stats.duplicate_snapshots += stored.duplicate_snapshots
+    conn.commit()
+    return stats

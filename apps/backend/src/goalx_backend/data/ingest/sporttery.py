@@ -477,20 +477,15 @@ def store_matches(
     return stats
 
 
-def capture_jingcai(
+def _capture_pipeline(
     conn: sqlite3.Connection,
     settings: Settings,
     client: httpx.Client,
     *,
-    raw_root: Path | None = None,
-    now: datetime | None = None,
-) -> IngestStats:
-    """
-    采集入口（票 35 证据链）：fetch → 原始证据 → 观测行 → 解析入库。
-
-    observed_at 用本机收到响应的时间（测试传固定时钟）；原始响应 gzip
-    落盘（raw_root 可空=只记哈希）。
-    """
+    raw_root: Path | None,
+    now: datetime | None,
+) -> tuple[IngestStats, list[ParsedMatch], int]:
+    """Fetch → 原始证据 → 观测行 → 解析入库（capture_jingcai/探测共用）。"""
     observed = (now or datetime.now(UTC)).isoformat(timespec="seconds")
     fetched = fetch_calculator(settings, client)
     matches = parse_matches(fetched.payload)
@@ -512,9 +507,138 @@ def capture_jingcai(
             summary=f"matches={len(matches)}",
         ),
     )
-    return store_matches(
+    stats = store_matches(
         conn, matches, observed_at=observed, observation_id=observation_id
     )
+    return stats, matches, observation_id
+
+
+def capture_jingcai(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    raw_root: Path | None = None,
+    now: datetime | None = None,
+) -> IngestStats:
+    """
+    采集入口（票 35 证据链）：fetch → 原始证据 → 观测行 → 解析入库。
+
+    observed_at 用本机收到响应的时间（测试传固定时钟）；原始响应 gzip
+    落盘（raw_root 可空=只记哈希）。
+    """
+    stats, _matches, _obs_id = _capture_pipeline(
+        conn, settings, client, raw_root=raw_root, now=now
+    )
+    return stats
+
+
+# 停售探测两形态（票 47 设计修正）：晚间场临场停售（开球前几十分钟）与
+# 凌晨场前夜墙钟停售（北京 ~22-24 点统一停售，距开球 3-12h+）。
+_PROBE_SOON_MINUTES = 180  # 开球前 3h 内恒探测
+_PROBE_EVENING_HOUR = 19  # 北京 ≥19 点起，探测次日内（凌晨场）停售迁移
+_PROBE_HORIZON_MINUTES = 16 * 60  # 粗筛上限（北京 19 点覆盖到次日上午开球）
+
+
+@dataclass
+class SaleStopProbe:
+    """一次停售探测的结果（票 47 决策锚触发器）。"""
+
+    candidates: int = 0
+    stopped: list[sqlite3.Row] = field(default_factory=list)  # 本轮检出停售的候选行
+    observation_id: int | None = None
+    captured: IngestStats | None = None
+
+
+def probe_sale_stops(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    raw_root: Path | None = None,
+    now: datetime | None = None,
+) -> SaleStopProbe:
+    """
+    停售加密探测（票 47 双锚之决策锚）。
+
+    候选 = 已 join、未 stopped、「开球 ≤3h 或 北京 ≥19 点的 16h 内场次」。
+
+    无候选零请求（探测载体不空耗）；有候选走全链路采集（证据/快照/销售
+    状态幂等吸收），随后判定停售迁移：payload 显式 sellStatus=1（store_matches
+    已落 stopped 行）或**从在售列表消失**（本函数补显式 stopped 行——端点
+    只列在售场次，消失即停售；不补行则迁移时刻不可重建）。返回检出停售的
+    候选行（含 odds_api_event_id/sport_key，供决策锚定向拉取）。
+    """
+    moment = now or datetime.now(UTC)
+    now_iso = moment.isoformat(timespec="seconds")
+    horizon = (moment + timedelta(minutes=_PROBE_HORIZON_MINUTES)).isoformat(
+        timespec="seconds"
+    )
+    rows = fx_store.sale_stop_probe_candidates(conn, now_iso, horizon)
+    soon = timedelta(minutes=_PROBE_SOON_MINUTES)
+    candidates = [
+        row
+        for row in rows
+        if str(row["latest_state"]) != "stopped"
+        and (
+            datetime.fromisoformat(str(row["kickoff_utc"])) - moment <= soon
+            or moment.astimezone(CST).hour >= _PROBE_EVENING_HOUR
+        )
+    ]
+    probe = SaleStopProbe(candidates=len(candidates))
+    if not candidates:
+        return probe
+    stats, matches, observation_id = _capture_pipeline(
+        conn, settings, client, raw_root=raw_root, now=moment
+    )
+    probe.captured = stats
+    probe.observation_id = observation_id
+    listed = {m.source_match_id for m in matches}
+    code_by_fixture = {
+        int(code_row["fixture_id"]): str(code_row["source_match_id"])
+        for code_row in conn.execute(
+            """
+            SELECT fixture_id, source_match_id FROM match_codes
+            WHERE kind = 'jingcai' AND source_match_id IS NOT NULL
+            """
+        ).fetchall()
+    }
+    for row in candidates:
+        fixture_id = int(row["id"])
+        latest = conn.execute(
+            """
+            SELECT sale_state FROM sale_statuses WHERE fixture_id = ?
+            ORDER BY observed_at DESC, id DESC LIMIT 1
+            """,
+            (fixture_id,),
+        ).fetchone()
+        if latest is not None and str(latest["sale_state"]) == "stopped":
+            probe.stopped.append(row)  # payload 显式停售（store_matches 已落行）
+            continue
+        source_match_id = code_by_fixture.get(fixture_id)
+        if (
+            source_match_id is not None
+            and source_match_id not in listed
+            # 消失判停售仅对确证 on_sale 的场次：unknown（从未观测在售，
+            # 如手工 join）可能只是不在当期列表，不冒充迁移时刻
+            and str(row["latest_state"]) == "on_sale"
+            and latest is not None
+            and str(latest["sale_state"]) == "on_sale"
+        ):
+            # 从在售列表消失 = 停售；补显式行保迁移时刻（append-only）
+            _append_sale_status_once(
+                conn,
+                SaleStatusInput(
+                    fixture_id=fixture_id,
+                    market_code=None,
+                    sale_state="stopped",
+                    observed_at=now_iso,
+                    observation_id=observation_id,
+                ),
+            )
+            conn.commit()
+            probe.stopped.append(row)
+    return probe
 
 
 def reprocess_observations(conn: sqlite3.Connection, raw_root: Path) -> ReprocessStats:
