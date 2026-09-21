@@ -336,6 +336,8 @@ erDiagram
 | `odds_api_sport_key` | TEXT | — |
 | `join_method` | TEXT | — |
 | `joined_at` | TEXT | — |
+| `propline_event_id` | TEXT | — |
+| `propline_sport_key` | TEXT | — |
 
 唯一键 `UNIQUE(`competition_id`, `kickoff_utc`, `home_team_id`, `away_team_id`)`
 <!-- schema-doc:END:table:fixtures -->

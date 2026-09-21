@@ -269,3 +269,28 @@ def record_odds_api_alias(conn: sqlite3.Connection, team_id: int, alias: str) ->
         """,
         (team_id, alias),
     )
+
+
+def record_propline_alias(conn: sqlite3.Connection, team_id: int, alias: str) -> None:
+    """Join 命中时回填一条 PropLine 侧英文名（幂等；源标签区分 provenance，票 50）。"""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+        VALUES (?, 'propline', ?)
+        """,
+        (team_id, alias),
+    )
+
+
+def english_aliases_for_team(conn: sqlite3.Connection, team_id: int) -> set[str]:
+    """该队已知英文名（odds_api + propline 并集，join 交叉核对用，票 50）。"""
+    return {
+        str(row["alias"])
+        for row in conn.execute(
+            """
+            SELECT alias FROM team_aliases
+            WHERE team_id = ? AND source IN ('odds_api', 'propline')
+            """,
+            (team_id,),
+        )
+    }

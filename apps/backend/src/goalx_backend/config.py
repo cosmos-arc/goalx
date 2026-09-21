@@ -87,6 +87,18 @@ class Settings(BaseSettings):
     # 冻结采集范围（票 37 运行协议）：逗号分隔 sport key；空=动态发现全部足球
     odds_api_sport_scope: str | None = None
 
+    # --- PropLine 免费层（票 50 互备源）：按请求数/天计费，非 credit ---
+    propline_base_url: str = "https://api.prop-line.com/v1"
+    propline_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOALX_PROPLINE_API_KEY", "PROPLINE_API_KEY"),
+    )
+    propline_daily_request_budget: int = 900  # 免费层 1000，留 10% 余量（404 也记 1）
+    # X-Daily-Remaining 低于此值停止后续 sport（省出安全边际，票 50）
+    propline_remaining_floor: int = 20
+    # 冻结采集范围：逗号分隔 sport key；空=取库内 competitions 的 sport key
+    propline_sport_scope: str | None = None
+
     # --- GLM 线（票 08：Coding Plan key 实测定案） ---
     glm_api_key: str = Field(
         default="", validation_alias=AliasChoices("GOALX_GLM_API_KEY", "GLM_API_KEY")
