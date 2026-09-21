@@ -743,6 +743,9 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 | `avgc_home` | REAL | — |
 | `avgc_draw` | REAL | — |
 | `avgc_away` | REAL | — |
+| `psh_home` | REAL | — |
+| `psh_draw` | REAL | — |
+| `psh_away` | REAL | — |
 
 唯一键 `UNIQUE(`competition`, `season`, `match_date`, `home_team`, `away_team`)`
 <!-- schema-doc:END:table:hist_matches -->

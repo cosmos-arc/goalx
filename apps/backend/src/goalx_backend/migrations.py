@@ -1164,6 +1164,17 @@ def _apply_v18(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v19(conn: sqlite3.Connection) -> None:
+    """
+    v19（票 46 增补裁决补落）：hist_matches 增 Pinnacle 早期价 PSH/PSD/PSA。
+
+    与收盘 PSC 同书同口径，开→收漂移（research/18）与彩池复验"消失速度"
+    镜的数据面。追加列不改既有行（重导幂等回填）。
+    """
+    for column in ("psh_home", "psh_draw", "psh_away"):
+        conn.execute(f"ALTER TABLE hist_matches ADD COLUMN {column} REAL")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1183,4 +1194,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (16, _apply_v16),
     (17, _apply_v17),
     (18, _apply_v18),
+    (19, _apply_v19),
 )

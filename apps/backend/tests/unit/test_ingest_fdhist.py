@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 
 from goalx_backend.config import Settings
@@ -9,13 +11,17 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import fdhist
 
 CSV_TEXT = (
-    "\ufeffDiv,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,PSCH,PSCD,PSCA,AvgCH,AvgCD,AvgCA\n"
+    "\ufeffDiv,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,"
+    "PSH,PSD,PSA,PSCH,PSCD,PSCA,AvgCH,AvgCD,AvgCA\n"
 )
 CSV_ROWS = (
-    "E0,16/08/2024,Man United,Fulham,1,0,H,2.05,3.60,4.10,2.10,3.50,4.00\n"
-    "E0,17/08/2024,Chelsea,Man City,0,2,A,, ,,4.50,4.00,1.75\n"
-    "E0,18/08/24,Liverpool,Ipswich,2,1,H,1.50,4.80,6.50,1.55,4.50,6.00\n"
-    "E0,19/08/2024,,,,,,, ,,,,\n"
+    "E0,16/08/2024,Man United,Fulham,1,0,H,"
+    "2.00,3.70,4.30,2.05,3.60,4.10,2.10,3.50,4.00\n"
+    "E0,17/08/2024,Chelsea,Man City,0,2,A,"
+    "2.20,3.90,3.20,, ,,4.50,4.00,1.75\n"
+    "E0,18/08/24,Liverpool,Ipswich,2,1,H,"
+    "1.52,4.90,6.80,1.50,4.80,6.50,1.55,4.50,6.00\n"
+    "E0,19/08/2024,,,,,,, ,,,,,,\n"
 )
 
 
@@ -27,8 +33,10 @@ def test_parse_csv_cleans_and_maps_columns() -> None:
     assert first["match_date"] == "2024-08-16"
     assert first["ftr"] == "H"
     assert first["psc_home"] == 2.05
+    assert first["psh_home"] == 2.00  # Pinnacle 早期列（v19/票 46 增补裁决）
     second = rows[1]
-    assert second["psc_home"] is None  # Pinnacle 缺失
+    assert second["psc_home"] is None  # Pinnacle 收盘缺失
+    assert second["psh_away"] == 3.20  # 早期列独立可缺（此处有）
     assert second["avgc_away"] == 1.75  # AvgC 兜底列在
     third = rows[2]
     assert third["match_date"] == "2024-08-18"  # dd/mm/YY 两位年
@@ -57,6 +65,42 @@ def test_import_history_idempotent(db) -> None:
     )
     assert second.rows == 3  # 幂等重跑（upsert 不翻倍）
     assert rs_store.hist_match_stats(db)["total"] == 3
+
+
+def test_reimport_updates_psh_on_conflict(db) -> None:
+    """重导（源侧列变化）刷新 PSH 早期列——v19 追加列的回填路径。"""
+
+    def fetch_with(psh: str) -> Callable[[str], str]:
+        def fetch(url: str) -> str:
+            row = (
+                "E0,16/08/2024,Man United,Fulham,1,0,H,"
+                f"{psh},3.70,4.30,2.05,3.60,4.10,2.10,3.50,4.00\n"
+            )
+            return CSV_TEXT + row
+
+        return fetch
+
+    fdhist.import_history(
+        db,
+        Settings(),
+        None,
+        competitions=("E0",),
+        seasons=("2425",),
+        fetch=fetch_with("2.00"),
+    )
+    fdhist.import_history(
+        db,
+        Settings(),
+        None,
+        competitions=("E0",),
+        seasons=("2425",),
+        fetch=fetch_with("1.90"),
+    )
+    row = db.execute(
+        "SELECT psh_home, psc_home FROM hist_matches WHERE home_team = 'Man United'"
+    ).fetchone()
+    assert row["psh_home"] == 1.90  # 冲突更新覆盖早期列
+    assert row["psc_home"] == 2.05  # 其余列不受影响
 
 
 def test_import_history_full_matrix_urls(db) -> None:
