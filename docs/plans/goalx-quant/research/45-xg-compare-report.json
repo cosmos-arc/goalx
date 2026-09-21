@@ -1,0 +1,206 @@
+{
+  "params": {
+    "leagues": [
+      "epl",
+      "la_liga",
+      "serie_a",
+      "bundesliga",
+      "ligue_1"
+    ],
+    "seasons": [
+      "2022",
+      "2023",
+      "2024",
+      "2025",
+      "2026"
+    ],
+    "train_seasons": 3,
+    "half_life_days": 365.0,
+    "shrink_k": [
+      6.0,
+      10.0
+    ],
+    "bucket_edges": [
+      "wk1_4",
+      "wk5_8",
+      "wk9p"
+    ]
+  },
+  "overall": {
+    "blend_goal_xg": {
+      "n": 7284,
+      "rps": 0.20041213139111214,
+      "log_loss": 0.9865826255499767,
+      "rps_delta_vs_goal_dc": -0.0011653969495509407,
+      "paired_n": 7284
+    },
+    "goal_dc": {
+      "n": 7284,
+      "rps": 0.2015775283406631,
+      "log_loss": 0.9918719358858443
+    },
+    "shrink_k10": {
+      "n": 7284,
+      "rps": 0.1999520327393183,
+      "log_loss": 0.9863270767061088,
+      "rps_delta_vs_goal_dc": -0.0016254956013447882,
+      "paired_n": 7284
+    },
+    "shrink_k6": {
+      "n": 7284,
+      "rps": 0.20046778573647667,
+      "log_loss": 0.987862326153053,
+      "rps_delta_vs_goal_dc": -0.001109742604186429,
+      "paired_n": 7284
+    },
+    "understat_forecast": {
+      "n": 7313,
+      "rps": 0.16564566347258308,
+      "log_loss": 0.8696590200444698,
+      "rps_delta_vs_goal_dc": -0.03585276533338687,
+      "paired_n": 7284
+    },
+    "xg_dc": {
+      "n": 7284,
+      "rps": 0.20136506931010148,
+      "log_loss": 0.9894834742766209,
+      "rps_delta_vs_goal_dc": -0.000212459030561593,
+      "paired_n": 7284
+    }
+  },
+  "by_bucket": {
+    "wk1_4": {
+      "blend_goal_xg": {
+        "n": 933,
+        "rps": 0.1960916354145839,
+        "log_loss": 0.9830689433539316,
+        "rps_delta_vs_goal_dc": -0.0013857334033109832,
+        "paired_n": 933
+      },
+      "goal_dc": {
+        "n": 933,
+        "rps": 0.19747736881789488,
+        "log_loss": 0.994100185812705
+      },
+      "shrink_k10": {
+        "n": 933,
+        "rps": 0.19806678510896217,
+        "log_loss": 0.9918888394195469,
+        "rps_delta_vs_goal_dc": 0.000589416291067299,
+        "paired_n": 933
+      },
+      "shrink_k6": {
+        "n": 933,
+        "rps": 0.19938346231058857,
+        "log_loss": 0.9947505397779438,
+        "rps_delta_vs_goal_dc": 0.0019060934926936827,
+        "paired_n": 933
+      },
+      "understat_forecast": {
+        "n": 962,
+        "rps": 0.1575210038773389,
+        "log_loss": 0.8406688386524535,
+        "rps_delta_vs_goal_dc": -0.03959136399474376,
+        "paired_n": 933
+      },
+      "xg_dc": {
+        "n": 933,
+        "rps": 0.19782793220726572,
+        "log_loss": 0.9877185529849825,
+        "rps_delta_vs_goal_dc": 0.00035056338937084717,
+        "paired_n": 933
+      }
+    },
+    "wk5_8": {
+      "blend_goal_xg": {
+        "n": 878,
+        "rps": 0.19482215522560314,
+        "log_loss": 0.9750388139097385,
+        "rps_delta_vs_goal_dc": -0.0016075384962603364,
+        "paired_n": 878
+      },
+      "goal_dc": {
+        "n": 878,
+        "rps": 0.19642969372186345,
+        "log_loss": 0.9864989990729337
+      },
+      "shrink_k10": {
+        "n": 878,
+        "rps": 0.1960392525974394,
+        "log_loss": 0.9804286173840775,
+        "rps_delta_vs_goal_dc": -0.0003904411244240846,
+        "paired_n": 878
+      },
+      "shrink_k6": {
+        "n": 878,
+        "rps": 0.19722955672169115,
+        "log_loss": 0.9835955047615882,
+        "rps_delta_vs_goal_dc": 0.0007998629998277007,
+        "paired_n": 878
+      },
+      "understat_forecast": {
+        "n": 878,
+        "rps": 0.15979216982346242,
+        "log_loss": 0.8512941703201806,
+        "rps_delta_vs_goal_dc": -0.036637523898401046,
+        "paired_n": 878
+      },
+      "xg_dc": {
+        "n": 878,
+        "rps": 0.195681644148168,
+        "log_loss": 0.9768716901050634,
+        "rps_delta_vs_goal_dc": -0.0007480495736954491,
+        "paired_n": 878
+      }
+    },
+    "wk9p": {
+      "blend_goal_xg": {
+        "n": 5473,
+        "rps": 0.2020454260776493,
+        "log_loss": 0.9890335175852479,
+        "rps_delta_vs_goal_dc": -0.0010569054112047013,
+        "paired_n": 5473
+      },
+      "goal_dc": {
+        "n": 5473,
+        "rps": 0.203102331488854,
+        "log_loss": 0.9923540263919607
+      },
+      "shrink_k10": {
+        "n": 5473,
+        "rps": 0.2009011204432635,
+        "log_loss": 0.9863251988828137,
+        "rps_delta_vs_goal_dc": -0.002201211045590514,
+        "paired_n": 5473
+      },
+      "shrink_k6": {
+        "n": 5473,
+        "rps": 0.20117212318053576,
+        "log_loss": 0.9873725702366787,
+        "rps_delta_vs_goal_dc": -0.001930208308318267,
+        "paired_n": 5473
+      },
+      "understat_forecast": {
+        "n": 5473,
+        "rps": 0.168012791182167,
+        "log_loss": 0.8777008421816971,
+        "rps_delta_vs_goal_dc": -0.035089540306687,
+        "paired_n": 5473
+      },
+      "xg_dc": {
+        "n": 5473,
+        "rps": 0.20287981372982075,
+        "log_loss": 0.9918075777057688,
+        "rps_delta_vs_goal_dc": -0.00022251775903326136,
+        "paired_n": 5473
+      }
+    }
+  },
+  "skipped": {
+    "no_team_goal_dc": 29,
+    "no_team_xg_dc": 29,
+    "no_team_blend_goal_xg": 29,
+    "no_team_shrink_k6": 29,
+    "no_team_shrink_k10": 29
+  }
+}
