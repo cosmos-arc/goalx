@@ -1090,6 +1090,23 @@ def _apply_v16(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS ev_assessments")
 
 
+def _apply_v17(conn: sqlite3.Connection) -> None:
+    """
+    v17（票 50）：fixtures 加 PropLine join 列——第二欧赔源的独立映射。
+
+    PropLine event id 与 The Odds API 不同命名空间，互备/交叉验证要求
+    两列各自独立可空（一场竞彩可同时 join 两个源）。
+    """
+    conn.execute("ALTER TABLE fixtures ADD COLUMN propline_event_id TEXT")
+    conn.execute("ALTER TABLE fixtures ADD COLUMN propline_sport_key TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fixtures_propline_event
+        ON fixtures(propline_event_id)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1107,4 +1124,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (14, _apply_v14),
     (15, _apply_v15),
     (16, _apply_v16),
+    (17, _apply_v17),
 )
