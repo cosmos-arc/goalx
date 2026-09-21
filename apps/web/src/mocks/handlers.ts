@@ -57,6 +57,14 @@ export const todayFixture = [
 			jc_source_updated_at: minutesAgoIso(8),
 			eu_books: 2,
 		},
+		stale_line: {
+			as_of: minutesAgoIso(1),
+			jc_last_move: minutesAgoIso(8),
+			minutes_since_move: 8,
+			drift: 0.081,
+			drift_selection: "a",
+			sharp_ref: "pinnacle",
+		},
 	},
 	{
 		fixture_id: 2,

@@ -2118,6 +2118,24 @@ export interface components {
          */
         StakeTier: "flat" | "quarter_kelly" | "ev_non_positive" | "unfunded";
         /**
+         * StaleLineView
+         * @description 陈盘信号（票 48 纯派生只读）：距上次调盘时长 + sharp 参考漂移。
+         */
+        StaleLineView: {
+            /** As Of */
+            as_of: string;
+            /** Jc Last Move */
+            jc_last_move: string;
+            /** Minutes Since Move */
+            minutes_since_move: number;
+            /** Drift */
+            drift?: number | null;
+            /** Drift Selection */
+            drift_selection?: string | null;
+            /** Sharp Ref */
+            sharp_ref?: string | null;
+        };
+        /**
          * StatusResponse
          * @description Machine-readable service identity.
          */
@@ -2211,6 +2229,7 @@ export interface components {
             /** Flags */
             flags?: string[];
             had_quote?: components["schemas"]["HadQuoteStatus"] | null;
+            stale_line?: components["schemas"]["StaleLineView"] | null;
         };
         /**
          * TrackTripleView
