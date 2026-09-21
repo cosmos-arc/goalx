@@ -413,6 +413,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 *以下各表全列由导出器生成（marker 块内勿手改）：*
 
 <!-- schema-doc:BEGIN:table:teams -->
+#### `teams`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -423,6 +425,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:teams -->
 
 <!-- schema-doc:BEGIN:table:competitions -->
+#### `competitions`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -436,6 +440,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:competitions -->
 
 <!-- schema-doc:BEGIN:table:fixtures -->
+#### `fixtures`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -453,6 +459,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:fixtures -->
 
 <!-- schema-doc:BEGIN:table:match_codes -->
+#### `match_codes`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -467,6 +475,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:match_codes -->
 
 <!-- schema-doc:BEGIN:table:markets -->
+#### `markets`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `code` | TEXT | PK |
@@ -477,6 +487,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:markets -->
 
 <!-- schema-doc:BEGIN:table:selections -->
+#### `selections`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -488,6 +500,8 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 <!-- schema-doc:END:table:selections -->
 
 <!-- schema-doc:BEGIN:table:odds_snapshots -->
+#### `odds_snapshots`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -510,6 +524,8 @@ append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 <!-- schema-doc:END:table:odds_snapshots -->
 
 <!-- schema-doc:BEGIN:table:quote_observations -->
+#### `quote_observations`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -529,6 +545,8 @@ append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_
 <!-- schema-doc:END:table:quote_observations -->
 
 <!-- schema-doc:BEGIN:table:sale_statuses -->
+#### `sale_statuses`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -545,6 +563,8 @@ append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 <!-- schema-doc:END:table:sale_statuses -->
 
 <!-- schema-doc:BEGIN:table:draw_results -->
+#### `draw_results`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -563,6 +583,8 @@ append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 <!-- schema-doc:END:table:draw_results -->
 
 <!-- schema-doc:BEGIN:table:draw_result_revisions -->
+#### `draw_result_revisions`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -576,6 +598,8 @@ append-only 触发器：`draw_result_revisions_no_delete`、`draw_result_revisio
 <!-- schema-doc:END:table:draw_result_revisions -->
 
 <!-- schema-doc:BEGIN:table:draw_sync_runs -->
+#### `draw_sync_runs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -595,6 +619,8 @@ append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 <!-- schema-doc:END:table:draw_sync_runs -->
 
 <!-- schema-doc:BEGIN:table:uniform_result_observations -->
+#### `uniform_result_observations`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -631,6 +657,8 @@ append-only 触发器：`uniform_result_observations_no_delete`、`uniform_resul
 <!-- schema-doc:END:table:uniform_result_observations -->
 
 <!-- schema-doc:BEGIN:table:draw_reconciliation_runs -->
+#### `draw_reconciliation_runs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -651,6 +679,8 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 <!-- schema-doc:END:table:draw_reconciliation_runs -->
 
 <!-- schema-doc:BEGIN:table:source_coverage -->
+#### `source_coverage`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -668,6 +698,8 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 <!-- schema-doc:END:table:source_coverage -->
 
 <!-- schema-doc:BEGIN:table:understat_matches -->
+#### `understat_matches`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -703,6 +735,8 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 <!-- schema-doc:END:table:understat_matches -->
 
 <!-- schema-doc:BEGIN:table:understat_sync_runs -->
+#### `understat_sync_runs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -721,6 +755,8 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 <!-- schema-doc:END:table:understat_sync_runs -->
 
 <!-- schema-doc:BEGIN:table:pool_periods -->
+#### `pool_periods`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -732,6 +768,8 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 <!-- schema-doc:END:table:pool_periods -->
 
 <!-- schema-doc:BEGIN:table:pool_matches -->
+#### `pool_matches`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -750,6 +788,8 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 <!-- schema-doc:END:table:pool_matches -->
 
 <!-- schema-doc:BEGIN:table:pool_states -->
+#### `pool_states`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `pool_period_id` | INTEGER | PK，FK→pool_periods.id |
@@ -760,6 +800,8 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 <!-- schema-doc:END:table:pool_states -->
 
 <!-- schema-doc:BEGIN:table:public_shares -->
+#### `public_shares`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -776,6 +818,8 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 <!-- schema-doc:END:table:public_shares -->
 
 <!-- schema-doc:BEGIN:table:pool_sync_runs -->
+#### `pool_sync_runs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -793,6 +837,8 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:pool_sync_runs -->
 
 <!-- schema-doc:BEGIN:table:hist_matches -->
+#### `hist_matches`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -815,6 +861,8 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:hist_matches -->
 
 <!-- schema-doc:BEGIN:table:cost_ledger -->
+#### `cost_ledger`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -827,6 +875,8 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:cost_ledger -->
 
 <!-- schema-doc:BEGIN:table:forecasts -->
+#### `forecasts`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -843,6 +893,8 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 <!-- schema-doc:END:table:forecasts -->
 
 <!-- schema-doc:BEGIN:table:team_aliases -->
+#### `team_aliases`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -854,6 +906,8 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 <!-- schema-doc:END:table:team_aliases -->
 
 <!-- schema-doc:BEGIN:table:intel_observations -->
+#### `intel_observations`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -873,6 +927,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:intel_observations -->
 
 <!-- schema-doc:BEGIN:table:divergences -->
+#### `divergences`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -884,6 +940,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:divergences -->
 
 <!-- schema-doc:BEGIN:table:review_items -->
+#### `review_items`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -900,6 +958,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:review_items -->
 
 <!-- schema-doc:BEGIN:table:blind_reviews -->
+#### `blind_reviews`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -913,6 +973,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:blind_reviews -->
 
 <!-- schema-doc:BEGIN:table:bets -->
+#### `bets`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -936,6 +998,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:bets -->
 
 <!-- schema-doc:BEGIN:table:bet_legs -->
+#### `bet_legs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -950,6 +1014,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:bet_legs -->
 
 <!-- schema-doc:BEGIN:table:bet_slips -->
+#### `bet_slips`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -962,6 +1028,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:bet_slips -->
 
 <!-- schema-doc:BEGIN:table:combinations -->
+#### `combinations`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -976,6 +1044,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:combinations -->
 
 <!-- schema-doc:BEGIN:table:pool_picks -->
+#### `pool_picks`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -988,6 +1058,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:pool_picks -->
 
 <!-- schema-doc:BEGIN:table:settlements -->
+#### `settlements`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1006,6 +1078,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 <!-- schema-doc:END:table:settlements -->
 
 <!-- schema-doc:BEGIN:table:settlement_revisions -->
+#### `settlement_revisions`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1019,6 +1093,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:settlement_revisions -->
 
 <!-- schema-doc:BEGIN:table:bankroll_events -->
+#### `bankroll_events`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1032,6 +1108,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:bankroll_events -->
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->
+#### `backtest_runs`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1044,6 +1122,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:backtest_runs -->
 
 <!-- schema-doc:BEGIN:table:backtest_predictions -->
+#### `backtest_predictions`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1064,6 +1144,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:backtest_predictions -->
 
 <!-- schema-doc:BEGIN:table:backtest_bets -->
+#### `backtest_bets`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1082,6 +1164,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:backtest_bets -->
 
 <!-- schema-doc:BEGIN:table:backtest_metrics -->
+#### `backtest_metrics`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1093,6 +1177,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:backtest_metrics -->
 
 <!-- schema-doc:BEGIN:table:clv_records -->
+#### `clv_records`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1112,6 +1198,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:clv_records -->
 
 <!-- schema-doc:BEGIN:table:haircut_calibrations -->
+#### `haircut_calibrations`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
@@ -1129,6 +1217,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 <!-- schema-doc:END:table:haircut_calibrations -->
 
 <!-- schema-doc:BEGIN:table:ev_assessments -->
+#### `ev_assessments`
+
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | INTEGER | PK |
