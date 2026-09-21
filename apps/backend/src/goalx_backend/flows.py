@@ -154,13 +154,37 @@ def pool_snapshot_flow() -> dict[str, object]:
     return stats_dict(stats)
 
 
+@flow(name="propline-snapshot", log_prints=True)
+def propline_snapshot_flow() -> dict[str, object]:
+    """PropLine 互备采集（票 50）：与欧赔快照双跑；降级零统计不炸整跑。"""
+    stats = tasks.propline_snapshot()
+    logger.info("propline snapshot: {}", stats)
+    return stats
+
+
 @flow(name="daily-capture", log_prints=True)
 def daily_capture_flow() -> dict[str, object]:
-    """销售日两拍采集（票 37 协议 v1）：竞彩→预测→范围内欧赔，顺序固定。"""
+    """
+    销售日两拍采集（票 37 协议 v1）：竞彩→预测→范围内欧赔，顺序固定。
+
+    PropLine 互备拍（票 50，2026-09-21 互备裁决）尾随欧赔——源故障/
+    预算触顶只降级自身，不连坐主线三步。
+    """
     jingcai = jingcai_snapshot_flow()
     forecast = forecast_daily_flow()
     eu = eu_odds_snapshot_flow()
-    return {"jingcai": jingcai, "forecast": forecast, "eu": eu}
+    propline_stats: dict[str, object] = {}
+    try:
+        propline_stats = propline_snapshot_flow()
+    except Exception as exc:
+        logger.warning("propline mutual-run degraded: {}", exc)
+        propline_stats = {"error": str(exc)}
+    return {
+        "jingcai": jingcai,
+        "forecast": forecast,
+        "eu": eu,
+        "propline": propline_stats,
+    }
 
 
 @flow(name="daily-wrap", log_prints=True)

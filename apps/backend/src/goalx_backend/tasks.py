@@ -29,6 +29,7 @@ from goalx_backend.data.ingest import (
     fdhist,
     oddsapi,
     openfootball,
+    propline,
     sporttery,
     understat,
     uniform,
@@ -91,6 +92,31 @@ def eu_odds_closing(window_minutes: int = 35) -> oddsapi.OddsIngestStats:
             window_minutes=window_minutes,
             raw_root=settings.observations_dir,
         )
+
+
+def propline_snapshot() -> dict[str, object]:
+    """
+    PropLine 互备采集（票 50，2026-09-21 用户裁决先互备观察）。
+
+    与 The Odds API 并行双跑（daily-capture 两拍），快照写
+    propline:<book> 命名空间——互备期消费端（共识/CLV/陈盘信号）保持
+    只读 odds_api:%，防 Pinnacle 双聚合器双计；join 写
+    fixtures.propline_event_id（v17），与 oa join 互不侵占。
+    源故障/预算触顶降级为零统计，不连坐 daily-capture 其余步骤。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        stats = propline.fetch_and_store_odds(
+            conn, settings, client, raw_root=settings.observations_dir
+        )
+    return {
+        "events": stats.ingest.events,
+        "snapshots": stats.ingest.snapshots,
+        "requests_used": stats.requests_used,
+        "daily_remaining": stats.daily_remaining,
+        "unavailable_sports": stats.unavailable_sports,
+        "unmatched": stats.unmatched,
+    }
 
 
 def fd_history_import() -> fdhist.HistImportStats:
