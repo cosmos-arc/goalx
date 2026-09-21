@@ -1,58 +1,107 @@
 # 数据库与领域模型
 
-> 面向"下一个不了解库的会话"：表结构全列、领域实体映射、表间关系一页建立心智模型。
-> 术语定义以根目录 [CONTEXT.md](../CONTEXT.md) 为单一事实源，本文不重复定义，只补"落在哪张表、归哪个包、什么生命周期"。
+> 面向"下一个不了解库的会话"：一页建立表结构、领域归属与生命周期的完整心智模型。
+> 术语定义以根目录 [CONTEXT.md](../CONTEXT.md) 为单一事实源，本文不重复定义。
 >
-> **生成块**：`<!-- schema-doc:BEGIN/END -->` 标记内的内容（全列表格/ER 图/唯一键/触发器）由
-> `task schema-doc-export` 从迁移后的 schema 生成，**不要手改**——改了会被
-> `test_schema_doc.py` 断言红叉。迁移加列/加表后：重跑导出 + 在对应域章节补注解。
-> 表的写权限归归属包（ADR-0008，`table_owners.py` 登记，执法测试见 `test_sql_ownership.py`）。
+> - **生成块**：`<!-- schema-doc:BEGIN/END -->` 标记内（全列表格/ER 图）由 `task schema-doc-export` 从真库生成，**勿手改**（`test_schema_doc.py` 断言漂移）。迁移加列/加表后：重跑导出 + 在速览表补一行。
+> - **写权限**：表 SQL 只允许出现在归属包（ADR-0008，`table_owners.py` 登记，执法测试 `test_sql_ownership.py`）。
 
-## 实体 ↔ 表 映射矩阵
+## 目录
 
-生命周期口径：**append** = 只增不改；**append+幂等** = 只增 + 唯一键吸收重复；**upsert** = 最新值覆盖；**种子** = migrations 播种基本不动。
+| 节 | 内容 |
+| --- | --- |
+| [1. 表速览](#t1) | 45 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
+| [2. 硬不变量](#t2) | append-only 触发器 / 防前视红线 / 事实源层级等全局铁律 |
+| [3. 表间关系（ER）](#t3) | 主键与外键边总览（Mermaid） |
+| [4. 全列明细](#t4) | 按域分组的生成块（teams → ev_assessments） |
 
-| CONTEXT.md 实体 | 表 | 归属包 | 生命周期 |
+<a id="t1"></a>
+## 1. 表速览
+
+生命周期口径：**append** = 只增不改；**幂等** = 唯一键吸收重复；**upsert** = 最新值覆盖；**种子** = migrations 播种。
+
+### data 域（fixtures / results / pool / ingest）
+
+| 表 | 用途 | 关键口径 | 生命周期 |
 | --- | --- | --- | --- |
-| Competition | `competitions` | data | append |
-| Fixture | `fixtures` | data | append（映射列可 upsert） |
-| MatchCode | `match_codes` | data | append+幂等 (kind,business_date,code) |
-| Market / Selection | `markets` / `selections` | infra 种子 | 种子 |
-| OddsSnapshot | `odds_snapshots` | data | append+幂等，触发器禁改删 |
-| （报价证据） | `quote_observations` | data | append+幂等 raw_sha256 |
-| （销售状态） | `sale_statuses` | data | append |
-| PoolPeriod | `pool_periods` | data(pool) | append+幂等 |
-| PoolState | `pool_states` | data(pool) | upsert（最新公布） |
-| PublicShare | `public_shares` | data(pool) | append |
-| （池对阵） | `pool_matches` | data(pool) | append+幂等 |
-| Forecast | `forecasts` | modelling | append+幂等 (fixture,track,content_hash) |
-| （历史底座） | `hist_matches` | data | append+幂等 |
-| IntelObservation | `intel_observations` | llm | append+幂等，触发器禁改删 |
-| Divergence | `divergences` | llm | append |
-| （复核队列） | `review_items` | llm | append+幂等，open→done |
-| （盲评） | `blind_reviews` | llm | append+幂等 (cycle,fixture) |
-| Bet | `bets` | betting | append，状态机推进 |
-| BetLeg | `bet_legs` | betting | append |
-| BetSlip | `bet_slips` | betting | append |
-| Combination | `combinations` | betting | append（票提交物化） |
-| （池票选场） | `pool_picks` | betting | append |
-| Settlement | `settlements` | betting | append+幂等 |
-| （结算更正） | `settlement_revisions` | betting | append |
-| Bankroll(BankrollEvent) | `bankroll_events` | betting | append |
-| DrawResult | `draw_results` | data(results) | upsert 可更正 |
-| （开奖更正） | `draw_result_revisions` | data(results) | append |
-| （同步运行） | `draw_sync_runs` / `pool_sync_runs` | data | append |
-| CostLedger | `cost_ledger` | data(results) | append |
-| （回测） | `backtest_runs/-predictions/-bets/-metrics` | evaluation | append |
-| （CLV） | `clv_records` | evaluation | append+幂等 |
-| （折价校准） | `haircut_calibrations` | evaluation | append |
-| EVAssessment | `ev_assessments` | （脚手架，未投产） | — |
+| `teams` / `competitions` | 队伍与赛事典 | canonical_name 唯一；tier=tier1/tier2 投入分层；odds_api_sport_key=欧赔 join 键 | append |
+| `fixtures` | 场次主表（UTC） | odds_api_event_id/join_method/joined_at 记欧赔映射（auto/manual）；stage 杯赛阶段预留 | append（映射列 upsert） |
+| `match_codes` | 官方销售编号 | 竞彩"周六001"/池期次场号；business_date=北京业务日；source_match_id=源站场次 id（一跳确定性键） | append+幂等 (kind,business_date,code) |
+| `odds_snapshots` | 报价快照 | source（sporttery / odds_api:<book>）、purpose（live_capture/closing）、observation_id→存证 | append+幂等，触发器禁改删 |
+| `quote_observations` | 原始报价观测存证（票 35） | endpoint+parse_version+raw_sha256；两次捕获可共用一次观测 | append-only |
+| `sale_statuses` | 销售状态/单固资格时序 | 竞彩快照解析；observation_id 关联 | append |
+| `draw_results` | 开奖**唯一事实源** | upsert 可更正（必须走 revision 留痕）；void 标记在此 | upsert+revision |
+| `draw_result_revisions` | 开奖更正留痕 | previous/replacement/reason 全存 JSON | append |
+| `draw_sync_runs` | 官方赛果同步日志 | uniform 源（票 44 切换；此前源D）；pending_manual 待人工清单 | append |
+| `uniform_result_observations` | 官方赛果**观测**（票 44） | UNIQUE(match_id,observed_at)；poolStatus 迁移多跑留痕；join 键=match_codes.source_match_id；终态观测落 draw_results | append-only |
+| `draw_reconciliation_runs` | 对账运行日志（票 44） | 参照源（源D/openfootball）vs 事实：一致/比分不一致/void 冲突/缺果 + 待人工清单 | append |
+| `source_coverage` | 覆盖现态维表（票 44，定则 4） | 空≠无：absent 断言仅当 covered；coverage_date 语义随源（uniform=matchDate、源D=业务日、openfootball=赛季键、understat=起始年） | upsert |
+| `understat_matches` | xG 特征现态（票 45） | 逐场 xG/xGA+npxG/npxGA；prior_*=本季开球日严格早于本场的累计（防前视红线，同日互不可见）；forecast{w,d,l} 仅已赛场次；fixture_id=±1 日+双队名唯一命中 | upsert by match_id |
+| `understat_sync_runs` | xG 同步日志 | 逐联赛×赛季计数；results_missing_npxg 金丝雀 | append |
+| `pool_periods` / `pool_matches` | 彩池期次与对阵 | euro_odds_*=期次页三向欧指兜底；source_match_id=澳客场次 id | append+幂等 |
+| `pool_states` / `public_shares` | 销量/滚存 + 公众份额 | 官方公布 upsert 最新；源B 人气 append（meta 带注数量级） | upsert / append |
+| `pool_sync_runs` | 彩池同步日志 | 期次/对阵/份额计数 | append |
+| `hist_matches` | fd.co.uk 历史底座 | 五大+N1+扩五联（票 46）含 PSC/AvgC 收盘价——DC 训练与回测分母 | append+幂等 |
+| `cost_ledger` | 成本台账 | category+note 是口径维度（llm_call 的 note=model/surface/purpose） | append |
 
-无表实体：MarketGroup（口径约定，无存储）、MatchIntel（票 09 废弃，由 IntelObservation 承接）、EvidenceSummary（视图态，渲染时组装）、DecisionKey（betting 包函数口径）、ClosingLine（odds_snapshots.purpose='closing' 切片）。
+### modelling 域
 
-## 表间关系总览（ER）
+| 表 | 用途 | 关键口径 | 生命周期 |
+| --- | --- | --- | --- |
+| `forecasts` | 三轨预测 | track=ml/llm/fused；ml 轨含 xG blend（票 47，model_version dc-xgblend- 前缀溯源）；**ml 轨是真钱资格唯一口径（票 04 冻结），任何轨不可覆写** | append+幂等 (fixture,content_hash) |
+| `team_aliases` | 队名别名对齐 | 竞彩名↔训练域↔odds_api 名；source=odds_api/manual | append+幂等 |
 
-只画主键与外键边；全列细节见下文各表。可空 FK 用 `}o`（零或多），非空 `}|`（一或多）。
+### llm 域（M3）
+
+| 表 | 用途 | 关键口径 | 生命周期 |
+| --- | --- | --- | --- |
+| `intel_observations` | 情报存证 | UNIQUE(fixture,collector,raw_hash) 幂等——双源同情报各自成行互校验；触发器禁改删 | append-only |
+| `divergences` | ML×LLM JS 散度日志 | metric=js_had_ml_llm，重复计算自然累积 | append |
+| `review_items` | 复核队列 | route=pre_match（gate JS>0.06 Tier1）/post_settle（赛后一对一错）；结论三分类只进评测集（票 05 冻结） | append+幂等，open→done |
+| `blind_reviews` | 盲评双周匿名二选一 | choice=ml/llm | append+幂等 (cycle,fixture) |
+
+### betting 域
+
+| 表 | 用途 | 关键口径 | 生命周期 |
+| --- | --- | --- | --- |
+| `bets` | 注单 | mode=paper/live；market_kind=fixed/pool；snap_prob_*/snap_ev_*=锁注时点快照（票 41 防泄漏）；状态机 open→won/lost/void/partial | append |
+| `bet_slips` / `bet_legs` / `combinations` / `pool_picks` | 票/腿/复式物化/池票选场 | 腿引用锁定 OddsSnapshot；combinations=任9 笛卡尔积落行 | append |
+| `settlements` / `settlement_revisions` | 结算与更正留痕 | 单关返本、串关无效腿按 1 继续 | append / append |
+| `bankroll_events` | 资金事件 | balance_after 链式核对；**只真金记录进 Bankroll** | append |
+
+### evaluation 域
+
+| 表 | 用途 | 关键口径 | 生命周期 |
+| --- | --- | --- | --- |
+| `backtest_runs` / `-predictions` / `-bets` / `-metrics` | 回测四件套 | run（label/params/summary）、prediction（had/fair+model_fingerprint）、bet（kelly/EV）、metric（scope 分层） | append |
+| `clv_records` | CLV 对账 | taken_odds vs close_prob；close_basis 分层（pinnacle 主锚/betfair 辅/consensus 兜底） | append+幂等 |
+| `haircut_calibrations` | EV 折价校准 | scope×market 分位 haircut；method_version 随行 | append |
+
+### infra / 脚手架
+
+| 表 | 用途 | 关键口径 | 生命周期 |
+| --- | --- | --- | --- |
+| `markets` / `selections` | 玩法与选项字典 | migrations 播种，业务表 FK 引用；无归属包写 | 种子 |
+| `ev_assessments` | 票 03 预留脚手架 | 无业务代码写入；EV 实际口径在视图与 betting 包函数 | — |
+
+无表实体（口径约定，不落库）：MarketGroup、MatchIntel（票 09 废弃，由 IntelObservation 承接）、EvidenceSummary（视图态）、DecisionKey（betting 包函数口径）、ClosingLine（odds_snapshots.purpose='closing' 切片）。
+
+<a id="t2"></a>
+## 2. 硬不变量
+
+| # | 不变量 | 落点 |
+| --- | --- | --- |
+| 1 | append-only 铁证（触发器禁 UPDATE/DELETE） | odds_snapshots、forecasts、quote_observations、sale_statuses、intel_observations、draw_result_revisions、settlement_revisions、draw_sync_runs、pool_sync_runs、uniform_result_observations、draw_reconciliation_runs、understat_sync_runs |
+| 2 | 三时间口径（event/published/observed，不伪造） | odds_snapshots.observed_at/source_updated_at；understat_matches 无 published 列（源不提供） |
+| 3 | 防前视红线 | understat_matches.prior_* 只累计开球日严格早于本场的完场；Forecast as-of 读取（票 41） |
+| 4 | 事实源层级 | draw_results 唯一事实源（官方 uniform 终态导入）；源D/openfootball 仅审计对账，不落事实 |
+| 5 | 空≠无（定则 4） | source_coverage 四态 covered/fetched_empty/fetch_failed/not_covered |
+| 6 | 预测资格冻结 | ml 轨=真钱唯一口径（票 04）；前瞻评分=赛前最新 Forecast（票 34），模型迭代经 model_version 溯源 |
+
+<a id="t3"></a>
+## 3. 表间关系（ER）
+
+只画主键与外键边；全列细节见[第 4 节](#t4)。可空 FK 用 `}o`（零或多），非空 `}|`（一或多）。
 
 <!-- schema-doc:BEGIN:er -->
 ```mermaid
@@ -242,177 +291,12 @@ erDiagram
     uniform_result_observations }o--|| fixtures : fixture_id
 ```
 <!-- schema-doc:END:er -->
+<a id="t4"></a>
+## 4. 全列明细（按域分组，生成块）
 
-## data 域（fixtures / results / pool / ingest 支撑）
+*以下各表全列由导出器生成（marker 块内勿手改）。*
 
-### 赛程与市场骨架
-
-#### `teams` / `competitions`
-
-队伍与赛事典：canonical_name 唯一语义；competitions.tier = tier1/tier2 投入分层（Tier1 主动、Tier2 被覆盖），odds_api_sport_key 是欧赔源 join 键。
-
-#### `fixtures`
-
-场次主表，UTC 记时。odds_api_event_id/join_method/joined_at 记欧赔事件映射（auto/manual）；stage 预留杯赛阶段（analyst 复核触发依据之一）。
-
-#### `match_codes`
-
-官方销售编号（竞彩"周六001"/胜负彩期次场号），business_date = 北京业务日。source_match_id 承载源站场次 id（澳客 formation 零映射靠它）。 UNIQUE(kind, business_date, code) 幂等入库。
-
-#### `markets` / `selections`（infra 种子）
-
-玩法（had/hhad/crs/ttg/…）与选项字典，migrations 播种；业务表 FK 引用保证口径一致，无归属包写它们。
-
-### 报价与销售证据
-
-#### `odds_snapshots`
-
-报价快照 append-only：source（sporttery=竞彩、odds_api:<book>=欧赔）、purpose（live_capture/closing）。observation_id 指向原始观测存证。**触发器禁 UPDATE/DELETE**——CLV 与回测的分母铁证。
-
-#### `quote_observations`
-
-原始报价观测（证据层，票 35）：endpoint+parse_version+raw_sha256 存证，两次捕获共用一次观测。append-only。
-
-#### `sale_statuses`
-
-销售状态/单固资格时序（竞彩快照解析），append。
-
-### 开奖与结算事实
-
-#### `draw_results`
-
-开奖**唯一事实源**：upsert 可更正（更正必须走 revision 留痕）。void 场次标记在此。
-
-#### `draw_result_revisions`
-
-开奖更正留痕（previous/replacement/reason 全存 JSON），append。
-
-#### `draw_sync_runs` / `pool_sync_runs`
-
-官方 uniform 赛果 / 源B 彩池同步的运行日志（fetched/imported/pending_manual
-计数），append。票 44 切换（2026-09-20）前赛果同步源为源D。
-
-#### `uniform_result_observations`（票 44）
-
-源A uniform 族官方赛果**观测**：append-only，UNIQUE(match_id, observed_at)
-同跑幂等；poolStatus 迁移（空→Payout/Refund）多跑多行留痕。join 键 =
-match_codes.source_match_id（一跳确定性）。终态观测（比分或官方 void）经
-ingest/uniform 落 draw_results 事实（2026-09-20 用户裁决切换官方为事实源，
-源D 降审计）。
-
-#### `draw_reconciliation_runs`（票 44）
-
-对账运行日志（参照源 sporttery.cn/openfootball vs 事实：一致/比分不一致/
-void 冲突/缺果计数 + 待人工清单），append。切换官方为事实源的门槛依据。
-
-#### `source_coverage`（票 44，定则 4）
-
-每源每覆盖日"看到了什么"的现态维表（UPSERT，非证据表）——空≠无：
-absent 断言仅当 coverage_status='covered'。coverage_date 语义随源
-（uniform=matchDate、源D=业务日、openfootball=赛季键、understat=起始年）。
-
-#### `understat_matches`（票 45）
-
-Understat 五大联赛逐场 xG 特征现态表（按源 match_id UPSERT）：逐场
-xG/xGA（含点球）与 npxG/npxGA（去点球）、本季**开球日严格早于本场**的
-prior_* 累计（防前视红线，同日场次互不可见）、源自带 forecast{w,d,l}
-对标基准（仅已赛场次携带）。三时间：datetime_utc=event_time、
-observed_at/first_seen_at=本机观测、源不提供发布时间（无列，不伪造）。
-fixture_id 为竞彩确定性 join（±1 日 + 双队名解析唯一命中，否则 NULL）。
-
-#### `understat_sync_runs`（票 45）
-
-xG 特征同步运行日志（逐联赛×赛季计数与 join 计数），append。
-
-### 彩池（data/pool.py）
-
-#### `pool_periods` / `pool_matches`
-
-胜负彩/任9 期次与对阵。pool_matches.euro_odds_* 是期次页三向欧指（概率兜底口径）；source_match_id = 澳客场次 id（伤停直爬零映射）。
-
-#### `pool_states` / `public_shares`
-
-销量/滚存（官方公布，upsert 最新）；公众份额快照（源B 人气，append，meta 带注数等量级参考）。
-
-### 历史底座与成本
-
-#### `hist_matches`
-
-football-data.co.uk 历史比赛（五大+N1，含 PSC/AvgC 收盘价）——DC 训练与回测分母。append+幂等导入。
-
-#### `cost_ledger`
-
-系统成本台账（数据源 credit、LLM 折算金额），append；category+note 是口径维度（如 llm_call 的 note=model/surface/purpose）。
-
-## modelling 域
-
-#### `forecasts`
-
-三轨预测 append-only：track = ml（DC 比分矩阵 payload）/ llm（scout/analyst 三项+rationale，analyst 行带 revision_of）/ fused（log-pool，payload 引用双源 id）。同 (fixture, content_hash) 幂等吸收。**ml 轨是真钱资格唯一口径（票 04 冻结），任何轨不可覆写。**
-
-#### `team_aliases`
-
-队名别名（竞彩名 ↔ 训练域名 ↔ odds_api 名对齐），append。
-
-## llm 域（M3）
-
-#### `intel_observations`
-
-情报存证 append-only：kind/form/h2h/伤停、collector 三源（internal-fdhist / okooo-formation / sina-injury）。UNIQUE(fixture_id, collector, raw_hash) 幂等——双源同情报各自成行（互校验）。**触发器禁改删。**
-
-#### `divergences`
-
-ML×LLM JS 散度日志（metric=js_had_ml_llm），append（重复计算自然累积）。
-
-#### `review_items`
-
-复核队列：route=pre_match（gate JS>0.06 Tier1）/post_settle（赛后一对一错）；UNIQUE(fixture_id, route)。结论三分类只进评测集，不改预测工件（票 05 冻结）。
-
-#### `blind_reviews`
-
-盲评双周匿名二选一（choice=ml/llm），UNIQUE(cycle, fixture_id) 幂等。
-
-## betting 域
-
-#### `bets`
-
-注单（mode=paper/live 隔离；market_kind=fixed/pool）。snap_prob_*/snap_ev_* 是锁注时点概率快照（票 41，防时间泄漏）。状态机 open→won/lost/void/partial。
-
-#### `bet_legs` / `bet_slips` / `combinations` / `pool_picks`
-
-腿（引用锁定 OddsSnapshot）/ 票 / 复式组合物化（任9 笛卡尔积落行）/ 池票选场。
-
-#### `settlements` / `settlement_revisions`
-
-结算记录（单关返本、串关无效腿按 1 继续）与更正留痕。
-
-#### `bankroll_events`
-
-资金事件 append-only（出入金/结算兑付），balance_after 链式核对；**只真金记录进 Bankroll**。
-
-## evaluation 域
-
-#### `backtest_runs` / `backtest_predictions` / `backtest_bets` / `backtest_metrics`
-
-回测工件四件套：run（label/params/summary）、prediction（含 had/fair 概率与 model_fingerprint）、bet（含 kelly/EV）、metric（scope=overall/联赛/赛季）。append。
-
-#### `clv_records`
-
-CLV 对账：taken_odds vs close_prob（pinnacle 主锚/betfair 辅/consensus 兜底，close_basis 分层）。append+幂等。
-
-#### `haircut_calibrations`
-
-EV 折价校准（按 scope/market 的 haircut 分位数）。
-
-## infra / 脚手架
-
-#### `ev_assessments`
-
-票 03 预留脚手架，无业务代码写入；EVAssessment 实际口径在视图与 betting 包函数。
-
----
-
-*以下各表全列由导出器生成（marker 块内勿手改）：*
+### data 域
 
 <!-- schema-doc:BEGIN:table:teams -->
 #### `teams`
@@ -425,7 +309,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 唯一键 `UNIQUE(`canonical_name`)`
 <!-- schema-doc:END:table:teams -->
-
 <!-- schema-doc:BEGIN:table:competitions -->
 #### `competitions`
 
@@ -440,7 +323,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 唯一键 `UNIQUE(`name`)`
 <!-- schema-doc:END:table:competitions -->
-
 <!-- schema-doc:BEGIN:table:fixtures -->
 #### `fixtures`
 
@@ -459,7 +341,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 唯一键 `UNIQUE(`competition_id`, `kickoff_utc`, `home_team_id`, `away_team_id`)`
 <!-- schema-doc:END:table:fixtures -->
-
 <!-- schema-doc:BEGIN:table:match_codes -->
 #### `match_codes`
 
@@ -475,32 +356,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 唯一键 `UNIQUE(`kind`, `business_date`, `code`)`
 <!-- schema-doc:END:table:match_codes -->
-
-<!-- schema-doc:BEGIN:table:markets -->
-#### `markets`
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `code` | TEXT | PK |
-| `name` | TEXT | NOT NULL |
-| `kind` | TEXT | NOT NULL |
-
-唯一键 `UNIQUE(`code`)`
-<!-- schema-doc:END:table:markets -->
-
-<!-- schema-doc:BEGIN:table:selections -->
-#### `selections`
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `id` | INTEGER | PK |
-| `market_code` | TEXT | NOT NULL，FK→markets.code |
-| `code` | TEXT | NOT NULL |
-| `label` | TEXT | NOT NULL |
-
-唯一键 `UNIQUE(`market_code`, `code`)`
-<!-- schema-doc:END:table:selections -->
-
 <!-- schema-doc:BEGIN:table:odds_snapshots -->
 #### `odds_snapshots`
 
@@ -524,7 +379,6 @@ EV 折价校准（按 scope/market 的 haircut 分位数）。
 
 append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 <!-- schema-doc:END:table:odds_snapshots -->
-
 <!-- schema-doc:BEGIN:table:quote_observations -->
 #### `quote_observations`
 
@@ -545,7 +399,6 @@ append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 
 append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_update`
 <!-- schema-doc:END:table:quote_observations -->
-
 <!-- schema-doc:BEGIN:table:sale_statuses -->
 #### `sale_statuses`
 
@@ -563,7 +416,6 @@ append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_
 
 append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 <!-- schema-doc:END:table:sale_statuses -->
-
 <!-- schema-doc:BEGIN:table:draw_results -->
 #### `draw_results`
 
@@ -583,7 +435,6 @@ append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 
 唯一键 `UNIQUE(`fixture_id`)`
 <!-- schema-doc:END:table:draw_results -->
-
 <!-- schema-doc:BEGIN:table:draw_result_revisions -->
 #### `draw_result_revisions`
 
@@ -598,7 +449,6 @@ append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 
 append-only 触发器：`draw_result_revisions_no_delete`、`draw_result_revisions_no_update`
 <!-- schema-doc:END:table:draw_result_revisions -->
-
 <!-- schema-doc:BEGIN:table:draw_sync_runs -->
 #### `draw_sync_runs`
 
@@ -619,7 +469,6 @@ append-only 触发器：`draw_result_revisions_no_delete`、`draw_result_revisio
 
 append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 <!-- schema-doc:END:table:draw_sync_runs -->
-
 <!-- schema-doc:BEGIN:table:uniform_result_observations -->
 #### `uniform_result_observations`
 
@@ -657,7 +506,6 @@ append-only 触发器：`draw_sync_runs_no_delete`、`draw_sync_runs_no_update`
 
 append-only 触发器：`uniform_result_observations_no_delete`、`uniform_result_observations_no_update`
 <!-- schema-doc:END:table:uniform_result_observations -->
-
 <!-- schema-doc:BEGIN:table:draw_reconciliation_runs -->
 #### `draw_reconciliation_runs`
 
@@ -679,7 +527,6 @@ append-only 触发器：`uniform_result_observations_no_delete`、`uniform_resul
 
 append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliation_runs_no_update`
 <!-- schema-doc:END:table:draw_reconciliation_runs -->
-
 <!-- schema-doc:BEGIN:table:source_coverage -->
 #### `source_coverage`
 
@@ -698,7 +545,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 
 唯一键 `UNIQUE(`source`, `coverage_date`, `league_key`)`
 <!-- schema-doc:END:table:source_coverage -->
-
 <!-- schema-doc:BEGIN:table:understat_matches -->
 #### `understat_matches`
 
@@ -735,7 +581,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 
 唯一键 `UNIQUE(`match_id`)`
 <!-- schema-doc:END:table:understat_matches -->
-
 <!-- schema-doc:BEGIN:table:understat_sync_runs -->
 #### `understat_sync_runs`
 
@@ -755,7 +600,6 @@ append-only 触发器：`draw_reconciliation_runs_no_delete`、`draw_reconciliat
 
 append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_no_update`
 <!-- schema-doc:END:table:understat_sync_runs -->
-
 <!-- schema-doc:BEGIN:table:pool_periods -->
 #### `pool_periods`
 
@@ -768,7 +612,6 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 
 唯一键 `UNIQUE(`market_code`, `period_no`)`
 <!-- schema-doc:END:table:pool_periods -->
-
 <!-- schema-doc:BEGIN:table:pool_matches -->
 #### `pool_matches`
 
@@ -788,7 +631,6 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 
 唯一键 `UNIQUE(`pool_period_id`, `match_seq`)`
 <!-- schema-doc:END:table:pool_matches -->
-
 <!-- schema-doc:BEGIN:table:pool_states -->
 #### `pool_states`
 
@@ -800,7 +642,6 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 | `prize_tiers` | TEXT | — |
 | `published_at` | TEXT | — |
 <!-- schema-doc:END:table:pool_states -->
-
 <!-- schema-doc:BEGIN:table:public_shares -->
 #### `public_shares`
 
@@ -818,7 +659,6 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 
 唯一键 `UNIQUE(`pool_period_id`, `match_seq`, `selection_code`, `origin`, `source`, `captured_at`)`
 <!-- schema-doc:END:table:public_shares -->
-
 <!-- schema-doc:BEGIN:table:pool_sync_runs -->
 #### `pool_sync_runs`
 
@@ -837,7 +677,6 @@ append-only 触发器：`understat_sync_runs_no_delete`、`understat_sync_runs_n
 
 append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:pool_sync_runs -->
-
 <!-- schema-doc:BEGIN:table:hist_matches -->
 #### `hist_matches`
 
@@ -861,7 +700,6 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 
 唯一键 `UNIQUE(`competition`, `season`, `match_date`, `home_team`, `away_team`)`
 <!-- schema-doc:END:table:hist_matches -->
-
 <!-- schema-doc:BEGIN:table:cost_ledger -->
 #### `cost_ledger`
 
@@ -875,6 +713,7 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 | `note` | TEXT | — |
 | `meta` | TEXT | — |
 <!-- schema-doc:END:table:cost_ledger -->
+### modelling 域
 
 <!-- schema-doc:BEGIN:table:forecasts -->
 #### `forecasts`
@@ -893,7 +732,6 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 
 append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 <!-- schema-doc:END:table:forecasts -->
-
 <!-- schema-doc:BEGIN:table:team_aliases -->
 #### `team_aliases`
 
@@ -906,6 +744,7 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 
 唯一键 `UNIQUE(`source`, `alias`)`
 <!-- schema-doc:END:table:team_aliases -->
+### llm 域
 
 <!-- schema-doc:BEGIN:table:intel_observations -->
 #### `intel_observations`
@@ -927,7 +766,6 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 
 append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_update`
 <!-- schema-doc:END:table:intel_observations -->
-
 <!-- schema-doc:BEGIN:table:divergences -->
 #### `divergences`
 
@@ -940,7 +778,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `value` | REAL | NOT NULL |
 | `computed_at` | TEXT | NOT NULL |
 <!-- schema-doc:END:table:divergences -->
-
 <!-- schema-doc:BEGIN:table:review_items -->
 #### `review_items`
 
@@ -958,7 +795,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 唯一键 `UNIQUE(`fixture_id`, `route`)`
 <!-- schema-doc:END:table:review_items -->
-
 <!-- schema-doc:BEGIN:table:blind_reviews -->
 #### `blind_reviews`
 
@@ -973,6 +809,7 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 唯一键 `UNIQUE(`cycle`, `fixture_id`)`
 <!-- schema-doc:END:table:blind_reviews -->
+### betting 域
 
 <!-- schema-doc:BEGIN:table:bets -->
 #### `bets`
@@ -998,7 +835,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `snap_ev_consensus` | REAL | — |
 | `snap_ev_model` | REAL | — |
 <!-- schema-doc:END:table:bets -->
-
 <!-- schema-doc:BEGIN:table:bet_legs -->
 #### `bet_legs`
 
@@ -1014,7 +850,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `meta` | TEXT | — |
 | `actual_odds` | REAL | — |
 <!-- schema-doc:END:table:bet_legs -->
-
 <!-- schema-doc:BEGIN:table:bet_slips -->
 #### `bet_slips`
 
@@ -1028,7 +863,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `note` | TEXT | — |
 | `created_at` | TEXT | NOT NULL |
 <!-- schema-doc:END:table:bet_slips -->
-
 <!-- schema-doc:BEGIN:table:combinations -->
 #### `combinations`
 
@@ -1044,7 +878,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 唯一键 `UNIQUE(`slip_id`, `seq`)`
 <!-- schema-doc:END:table:combinations -->
-
 <!-- schema-doc:BEGIN:table:pool_picks -->
 #### `pool_picks`
 
@@ -1058,7 +891,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 唯一键 `UNIQUE(`slip_id`, `match_seq`, `selection_code`)`
 <!-- schema-doc:END:table:pool_picks -->
-
 <!-- schema-doc:BEGIN:table:settlements -->
 #### `settlements`
 
@@ -1078,7 +910,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 唯一键 `UNIQUE(`slip_id`)`
 <!-- schema-doc:END:table:settlements -->
-
 <!-- schema-doc:BEGIN:table:settlement_revisions -->
 #### `settlement_revisions`
 
@@ -1093,7 +924,6 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 
 append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions_no_update`
 <!-- schema-doc:END:table:settlement_revisions -->
-
 <!-- schema-doc:BEGIN:table:bankroll_events -->
 #### `bankroll_events`
 
@@ -1108,6 +938,7 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `slip_id` | INTEGER | FK→bet_slips.id |
 | `note` | TEXT | — |
 <!-- schema-doc:END:table:bankroll_events -->
+### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->
 #### `backtest_runs`
@@ -1122,7 +953,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `finished_at` | TEXT | — |
 | `summary` | TEXT | — |
 <!-- schema-doc:END:table:backtest_runs -->
-
 <!-- schema-doc:BEGIN:table:backtest_predictions -->
 #### `backtest_predictions`
 
@@ -1144,7 +974,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`run_id`, `hist_match_id`)`
 <!-- schema-doc:END:table:backtest_predictions -->
-
 <!-- schema-doc:BEGIN:table:backtest_bets -->
 #### `backtest_bets`
 
@@ -1164,7 +993,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `profit` | REAL | NOT NULL |
 | `detail` | TEXT | — |
 <!-- schema-doc:END:table:backtest_bets -->
-
 <!-- schema-doc:BEGIN:table:backtest_metrics -->
 #### `backtest_metrics`
 
@@ -1177,7 +1005,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`run_id`, `scope`)`
 <!-- schema-doc:END:table:backtest_metrics -->
-
 <!-- schema-doc:BEGIN:table:clv_records -->
 #### `clv_records`
 
@@ -1198,7 +1025,6 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`bet_id`, `fixture_id`)`
 <!-- schema-doc:END:table:clv_records -->
-
 <!-- schema-doc:BEGIN:table:haircut_calibrations -->
 #### `haircut_calibrations`
 
@@ -1217,7 +1043,31 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`scope`, `market_code`)`
 <!-- schema-doc:END:table:haircut_calibrations -->
+### infra / 脚手架
 
+<!-- schema-doc:BEGIN:table:markets -->
+#### `markets`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `code` | TEXT | PK |
+| `name` | TEXT | NOT NULL |
+| `kind` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`code`)`
+<!-- schema-doc:END:table:markets -->
+<!-- schema-doc:BEGIN:table:selections -->
+#### `selections`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `market_code` | TEXT | NOT NULL，FK→markets.code |
+| `code` | TEXT | NOT NULL |
+| `label` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`market_code`, `code`)`
+<!-- schema-doc:END:table:selections -->
 <!-- schema-doc:BEGIN:table:ev_assessments -->
 #### `ev_assessments`
 
