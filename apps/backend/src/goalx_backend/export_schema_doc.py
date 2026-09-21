@@ -74,9 +74,9 @@ def _triggers(conn: sqlite3.Connection, table: str) -> list[str]:
 
 
 def render_table_block(conn: sqlite3.Connection, table: str) -> str:
-    """一张表的生成块正文：全列表格 + 唯一键/触发器行。"""
+    """一张表的生成块正文：表名标题 + 全列表格 + 唯一键/触发器行。"""
     fks = _fks(conn, table)
-    lines = ["| 列 | 类型 | 约束 |", "| --- | --- | --- |"]
+    lines = [f"#### `{table}`", "", "| 列 | 类型 | 约束 |", "| --- | --- | --- |"]
     for col in _columns(conn, table):
         name, ctype = str(col[1]), str(col[2]).upper()
         flags: list[str] = []
