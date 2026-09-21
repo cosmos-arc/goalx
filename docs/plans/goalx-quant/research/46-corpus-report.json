@@ -1,0 +1,1295 @@
+{
+  "completeness": {
+    "seasons": [
+      "1617",
+      "1718",
+      "1819",
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425",
+      "2526",
+      "2627"
+    ],
+    "total_rows": 38460,
+    "per_competition": {
+      "E0": {
+        "1617": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1718": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1819": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1920": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 380,
+          "psc_missing": 170,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 40,
+          "psc_missing": 40,
+          "avgc_missing": 0
+        }
+      },
+      "D1": {
+        "1617": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1718": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1819": {
+          "rows": 306,
+          "psc_missing": 1,
+          "avgc_missing": 306
+        },
+        "1920": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 306,
+          "psc_missing": 157,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 27,
+          "psc_missing": 27,
+          "avgc_missing": 0
+        }
+      },
+      "SP1": {
+        "1617": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1718": {
+          "rows": 380,
+          "psc_missing": 1,
+          "avgc_missing": 380
+        },
+        "1819": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1920": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 380,
+          "psc_missing": 192,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 59,
+          "psc_missing": 59,
+          "avgc_missing": 0
+        }
+      },
+      "I1": {
+        "1617": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1718": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1819": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1920": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 380,
+          "psc_missing": 182,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 40,
+          "psc_missing": 40,
+          "avgc_missing": 0
+        }
+      },
+      "F1": {
+        "1617": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1718": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1819": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 380
+        },
+        "1920": {
+          "rows": 279,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 306,
+          "psc_missing": 153,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 36,
+          "psc_missing": 36,
+          "avgc_missing": 0
+        }
+      },
+      "N1": {
+        "1617": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1718": {
+          "rows": 306,
+          "psc_missing": 3,
+          "avgc_missing": 306
+        },
+        "1819": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1920": {
+          "rows": 232,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 306,
+          "psc_missing": 164,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 54,
+          "psc_missing": 54,
+          "avgc_missing": 0
+        }
+      },
+      "E1": {
+        "1617": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 552
+        },
+        "1718": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 552
+        },
+        "1819": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 552
+        },
+        "1920": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 552,
+          "psc_missing": 2,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 552,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 552,
+          "psc_missing": 281,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 83,
+          "psc_missing": 83,
+          "avgc_missing": 0
+        }
+      },
+      "P1": {
+        "1617": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1718": {
+          "rows": 306,
+          "psc_missing": 2,
+          "avgc_missing": 306
+        },
+        "1819": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1920": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 306,
+          "psc_missing": 1,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 306,
+          "psc_missing": 153,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 53,
+          "psc_missing": 53,
+          "avgc_missing": 0
+        }
+      },
+      "T1": {
+        "1617": {
+          "rows": 306,
+          "psc_missing": 1,
+          "avgc_missing": 306
+        },
+        "1718": {
+          "rows": 306,
+          "psc_missing": 3,
+          "avgc_missing": 306
+        },
+        "1819": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 306
+        },
+        "1920": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 420,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 380,
+          "psc_missing": 1,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 342,
+          "psc_missing": 29,
+          "avgc_missing": 29
+        },
+        "2324": {
+          "rows": 380,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 342,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 306,
+          "psc_missing": 171,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 45,
+          "psc_missing": 45,
+          "avgc_missing": 0
+        }
+      },
+      "B1": {
+        "1617": {
+          "rows": 240,
+          "psc_missing": 0,
+          "avgc_missing": 240
+        },
+        "1718": {
+          "rows": 240,
+          "psc_missing": 1,
+          "avgc_missing": 240
+        },
+        "1819": {
+          "rows": 240,
+          "psc_missing": 0,
+          "avgc_missing": 240
+        },
+        "1920": {
+          "rows": 232,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 306,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 312,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 312,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 311,
+          "psc_missing": 215,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 54,
+          "psc_missing": 54,
+          "avgc_missing": 0
+        }
+      },
+      "SC0": {
+        "1617": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 228
+        },
+        "1718": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 228
+        },
+        "1819": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 228
+        },
+        "1920": {
+          "rows": 179,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2021": {
+          "rows": 228,
+          "psc_missing": 1,
+          "avgc_missing": 0
+        },
+        "2122": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2223": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2324": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2425": {
+          "rows": 228,
+          "psc_missing": 0,
+          "avgc_missing": 0
+        },
+        "2526": {
+          "rows": 228,
+          "psc_missing": 173,
+          "avgc_missing": 0
+        },
+        "2627": {
+          "rows": 36,
+          "psc_missing": 36,
+          "avgc_missing": 0
+        }
+      }
+    }
+  },
+  "cross_check": {
+    "E0": {
+      "1617": {
+        "compared": 182,
+        "consistent": 182,
+        "openfootball_only": 198,
+        "fdhist_only": 198,
+        "not_available": false
+      },
+      "1718": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "1819": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 131,
+        "consistent": 131,
+        "openfootball_only": 249,
+        "fdhist_only": 249,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 182,
+        "consistent": 182,
+        "openfootball_only": 198,
+        "fdhist_only": 198,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 182,
+        "consistent": 182,
+        "openfootball_only": 198,
+        "fdhist_only": 198,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 17,
+        "consistent": 17,
+        "openfootball_only": 23,
+        "fdhist_only": 23,
+        "not_available": false
+      }
+    },
+    "E1": {
+      "1617": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1718": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1819": {
+        "compared": 72,
+        "consistent": 72,
+        "openfootball_only": 480,
+        "fdhist_only": 480,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 61,
+        "consistent": 61,
+        "openfootball_only": 491,
+        "fdhist_only": 491,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 462,
+        "fdhist_only": 462,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 447,
+        "fdhist_only": 442,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 467,
+        "fdhist_only": 462,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 42,
+        "consistent": 42,
+        "openfootball_only": 515,
+        "fdhist_only": 510,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 72,
+        "consistent": 72,
+        "openfootball_only": 485,
+        "fdhist_only": 480,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 72,
+        "consistent": 72,
+        "openfootball_only": 485,
+        "fdhist_only": 480,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 13,
+        "consistent": 13,
+        "openfootball_only": 70,
+        "fdhist_only": 70,
+        "not_available": false
+      }
+    },
+    "D1": {
+      "1617": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "1718": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "1819": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 196,
+        "fdhist_only": 196,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 216,
+        "fdhist_only": 216,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 13,
+        "consistent": 13,
+        "openfootball_only": 14,
+        "fdhist_only": 14,
+        "not_available": false
+      }
+    },
+    "I1": {
+      "1617": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "1718": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 290,
+        "fdhist_only": 290,
+        "not_available": false
+      },
+      "1819": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 290,
+        "fdhist_only": 290,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 290,
+        "fdhist_only": 290,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 56,
+        "consistent": 56,
+        "openfootball_only": 324,
+        "fdhist_only": 324,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 290,
+        "fdhist_only": 290,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 270,
+        "fdhist_only": 270,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 270,
+        "fdhist_only": 270,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 127,
+        "consistent": 127,
+        "openfootball_only": 243,
+        "fdhist_only": 253,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 270,
+        "fdhist_only": 270,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 11,
+        "consistent": 11,
+        "openfootball_only": 29,
+        "fdhist_only": 29,
+        "not_available": false
+      }
+    },
+    "SP1": {
+      "1617": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "1718": {
+        "compared": 182,
+        "consistent": 182,
+        "openfootball_only": 198,
+        "fdhist_only": 198,
+        "not_available": false
+      },
+      "1819": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 224,
+        "fdhist_only": 224,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 270,
+        "fdhist_only": 270,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 270,
+        "fdhist_only": 270,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 248,
+        "fdhist_only": 248,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 89,
+        "consistent": 89,
+        "openfootball_only": 281,
+        "fdhist_only": 291,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 290,
+        "fdhist_only": 290,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 10,
+        "consistent": 10,
+        "openfootball_only": 49,
+        "fdhist_only": 49,
+        "not_available": false
+      }
+    },
+    "F1": {
+      "1617": {
+        "compared": 56,
+        "consistent": 56,
+        "openfootball_only": 324,
+        "fdhist_only": 324,
+        "not_available": false
+      },
+      "1718": {
+        "compared": 42,
+        "consistent": 42,
+        "openfootball_only": 338,
+        "fdhist_only": 338,
+        "not_available": false
+      },
+      "1819": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 350,
+        "fdhist_only": 350,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 249,
+        "fdhist_only": 249,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 350,
+        "fdhist_only": 350,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 350,
+        "fdhist_only": 350,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 350,
+        "fdhist_only": 350,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 42,
+        "consistent": 42,
+        "openfootball_only": 264,
+        "fdhist_only": 264,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 30,
+        "consistent": 30,
+        "openfootball_only": 276,
+        "fdhist_only": 276,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 55,
+        "consistent": 55,
+        "openfootball_only": 250,
+        "fdhist_only": 251,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 3,
+        "consistent": 3,
+        "openfootball_only": 33,
+        "fdhist_only": 33,
+        "not_available": false
+      }
+    },
+    "N1": {
+      "1617": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1718": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1819": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 118,
+        "consistent": 118,
+        "openfootball_only": 114,
+        "fdhist_only": 114,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 156,
+        "consistent": 156,
+        "openfootball_only": 150,
+        "fdhist_only": 150,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 181,
+        "consistent": 181,
+        "openfootball_only": 125,
+        "fdhist_only": 125,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 56,
+        "consistent": 56,
+        "openfootball_only": 250,
+        "fdhist_only": 250,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 72,
+        "consistent": 72,
+        "openfootball_only": 234,
+        "fdhist_only": 234,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 89,
+        "consistent": 89,
+        "openfootball_only": 216,
+        "fdhist_only": 217,
+        "not_available": false
+      },
+      "2627": {
+        "compared": 11,
+        "consistent": 11,
+        "openfootball_only": 43,
+        "fdhist_only": 43,
+        "not_available": false
+      }
+    },
+    "P1": {
+      "1617": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1718": {
+        "compared": 0,
+        "consistent": 0,
+        "openfootball_only": 0,
+        "fdhist_only": 0,
+        "not_available": true
+      },
+      "1819": {
+        "compared": 90,
+        "consistent": 90,
+        "openfootball_only": 216,
+        "fdhist_only": 216,
+        "not_available": false
+      },
+      "1920": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 196,
+        "fdhist_only": 196,
+        "not_available": false
+      },
+      "2021": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "2122": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 196,
+        "fdhist_only": 196,
+        "not_available": false
+      },
+      "2223": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 196,
+        "fdhist_only": 196,
+        "not_available": false
+      },
+      "2324": {
+        "compared": 110,
+        "consistent": 110,
+        "openfootball_only": 196,
+        "fdhist_only": 196,
+        "not_available": false
+      },
+      "2425": {
+        "compared": 132,
+        "consistent": 132,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false
+      },
+      "2526": {
+        "compared": 132,
+        "consistent": 130,
+        "openfootball_only": 174,
+        "fdhist_only": 174,
+        "not_available": false,
+        "score_mismatches": [
+          {
+            "date": "2026-05-16",
+            "fixture": "Moreirense FC v AVS",
+            "openfootball": "0:1",
+            "fdhist": "0:0"
+          },
+          {
+            "date": "2026-05-16",
+            "fixture": "Casa Pia AC v Rio Ave FC",
+            "openfootball": "2:1",
+            "fdhist": "1:1"
+          }
+        ]
+      },
+      "2627": {
+        "compared": 19,
+        "consistent": 19,
+        "openfootball_only": 34,
+        "fdhist_only": 34,
+        "not_available": false
+      }
+    }
+  }
+}
