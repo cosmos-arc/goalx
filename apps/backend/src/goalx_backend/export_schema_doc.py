@@ -118,7 +118,9 @@ def render_er_block(conn: sqlite3.Connection) -> str:
     for table in tables:
         cols = {str(c[1]): c[3] for c in _columns(conn, table)}
         for col, ref in _fks(conn, table).items():
-            card = "}o" if cols.get(col) else "}|o"
+            # Mermaid 左基数仅两字符：非空 FK=一或多 }|，可空=零或多 }o
+            # （}|o 三字符非法——围栏修好后暴露的解析错误，2026-09-21）
+            card = "}|" if cols.get(col) else "}o"
             lines.append(f"    {table} {card}--|| {ref.split('.')[0]} : {col}")
     lines.append("```")
     return "\n".join(lines) + "\n"
