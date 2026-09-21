@@ -1,0 +1,607 @@
+task: [fmt-check] uv run --no-sync ruff format --check .
+63 files already formatted
+task: [lint] uv run --no-sync ruff check .
+All checks passed!
+task: [type] uv run --no-sync basedpyright
+0 errors, 0 warnings, 0 notes
+task: [test] uv run --no-sync pytest --cov=goalx_backend --cov-report=term-missing --cov-report=xml
+============================= test session starts ==============================
+platform darwin -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- /Users/chevy/Desktop/code/goalx/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/chevy/Desktop/code/goalx
+configfile: pyproject.toml
+testpaths: apps/backend/tests
+plugins: mock-3.15.1, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, asyncio-1.4.0, typeguard-4.6.0, anyio-4.15.1, respx-0.23.1, hypothesis-6.168.0, inline-snapshot-0.35.4
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+created: 8/8 workers
+8 workers [179 items]
+
+scheduling tests via LoadFileScheduling
+
+apps/backend/tests/unit/test_betting_lifecycle.py::test_two_leg_void_keeps_remaining_result[2-3.6]
+apps/backend/tests/unit/test_score_matrix.py::test_matrix_sums_to_one_and_poisson_marginals
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_discover_sport_keys_filters
+apps/backend/tests/unit/test_settlement.py::test_judge_leg_markets
+apps/backend/tests/unit/test_evaluation.py::test_rps_matches_penaltyblog
+apps/backend/tests/unit/test_api.py::test_today_view_shape
+apps/backend/tests/unit/test_store_fixtures.py::test_upsert_fixture_idempotent
+apps/backend/tests/unit/test_backtest.py::test_match_week_grouping
+[gw4] [  0%] PASSED apps/backend/tests/unit/test_evaluation.py::test_rps_matches_penaltyblog
+apps/backend/tests/unit/test_evaluation.py::test_brier_matches_penaltyblog
+[gw1] [  1%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_two_leg_void_keeps_remaining_result[2-3.6]
+apps/backend/tests/unit/test_betting_lifecycle.py::test_two_leg_void_keeps_remaining_result[0-0]
+[gw4] [  1%] PASSED apps/backend/tests/unit/test_evaluation.py::test_brier_matches_penaltyblog
+apps/backend/tests/unit/test_evaluation.py::test_log_loss_bounds
+[gw4] [  2%] PASSED apps/backend/tests/unit/test_evaluation.py::test_log_loss_bounds
+[gw0] [  2%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_matrix_sums_to_one_and_poisson_marginals
+apps/backend/tests/unit/test_score_matrix.py::test_hand_computed_independent_poisson
+[gw3] [  3%] PASSED apps/backend/tests/unit/test_backtest.py::test_match_week_grouping
+[gw2] [  3%] PASSED apps/backend/tests/unit/test_settlement.py::test_judge_leg_markets
+apps/backend/tests/unit/test_settlement.py::test_judge_leg_hhad_goal_line
+[gw0] [  4%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_hand_computed_independent_poisson
+apps/backend/tests/unit/test_score_matrix.py::test_dc_rho_adjusts_low_scores_only
+[gw1] [  5%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_two_leg_void_keeps_remaining_result[0-0]
+apps/backend/tests/unit/test_betting_lifecycle.py::test_unpurchased_live_never_receives_money
+[gw2] [  5%] PASSED apps/backend/tests/unit/test_settlement.py::test_judge_leg_hhad_goal_line
+apps/backend/tests/unit/test_settlement.py::test_judge_leg_requires_half_score_for_hafu
+apps/backend/tests/unit/test_backtest.py::test_assert_no_lookahead_trips_on_leak
+apps/backend/tests/unit/test_evaluation.py::test_ece_perfect_and_miscalibrated
+[gw6] [  6%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_discover_sport_keys_filters
+[gw3] [  6%] PASSED apps/backend/tests/unit/test_backtest.py::test_assert_no_lookahead_trips_on_leak
+apps/backend/tests/unit/test_backtest.py::test_fair_probs_psc_preferred_avgc_fallback
+[gw0] [  7%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_dc_rho_adjusts_low_scores_only
+apps/backend/tests/unit/test_score_matrix.py::test_matches_penaltyblog_predict
+[gw2] [  7%] PASSED apps/backend/tests/unit/test_settlement.py::test_judge_leg_requires_half_score_for_hafu
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_parse_events_maps_home_away_draw
+[gw6] [  8%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_parse_events_maps_home_away_draw
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_fixtures_time_window
+[gw6] [  8%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_fixtures_time_window
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_no_event_in_window_reports_gap
+[gw1] [  9%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_unpurchased_live_never_receives_money
+apps/backend/tests/unit/test_betting_lifecycle.py::test_purchase_cannot_debit_twice[True]
+[gw3] [ 10%] PASSED apps/backend/tests/unit/test_backtest.py::test_fair_probs_psc_preferred_avgc_fallback
+apps/backend/tests/unit/test_backtest.py::test_simulated_jc_odds_haircut
+[gw3] [ 10%] PASSED apps/backend/tests/unit/test_backtest.py::test_simulated_jc_odds_haircut
+apps/backend/tests/unit/test_backtest.py::test_market_implied_matrix_recovers_had
+apps/backend/tests/unit/test_settlement.py::test_single_win_loss_open
+[gw2] [ 11%] PASSED apps/backend/tests/unit/test_settlement.py::test_single_win_loss_open
+apps/backend/tests/unit/test_settlement.py::test_single_void_refunds
+[gw2] [ 11%] PASSED apps/backend/tests/unit/test_settlement.py::test_single_void_refunds
+apps/backend/tests/unit/test_settlement.py::test_parlay_all_hit_multiplies_odds
+[gw2] [ 12%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_all_hit_multiplies_odds
+apps/backend/tests/unit/test_settlement.py::test_parlay_miss_loses
+[gw2] [ 12%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_miss_loses
+apps/backend/tests/unit/test_settlement.py::test_parlay_void_leg_counts_odds_one
+[gw2] [ 13%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_void_leg_counts_odds_one
+apps/backend/tests/unit/test_settlement.py::test_two_leg_parlay_one_void_keeps_remaining_odds
+[gw2] [ 13%] PASSED apps/backend/tests/unit/test_settlement.py::test_two_leg_parlay_one_void_keeps_remaining_odds
+apps/backend/tests/unit/test_settlement.py::test_parlay_two_void_legs_full_refund
+[gw2] [ 14%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_two_void_legs_full_refund
+apps/backend/tests/unit/test_settlement.py::test_parlay_partial_void_miss_loses
+[gw2] [ 15%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_partial_void_miss_loses
+apps/backend/tests/unit/test_settlement.py::test_parlay_awaiting_any_result_is_open
+[gw2] [ 15%] PASSED apps/backend/tests/unit/test_settlement.py::test_parlay_awaiting_any_result_is_open
+apps/backend/tests/unit/test_settlement.py::test_pool_combination_judgement
+[gw2] [ 16%] PASSED apps/backend/tests/unit/test_settlement.py::test_pool_combination_judgement
+[gw6] [ 16%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_no_event_in_window_reports_gap
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_credit_budget_guard
+[gw6] [ 17%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_credit_budget_guard
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_credit_monthly_guard
+[gw6] [ 17%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_credit_monthly_guard
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_month_and_day_start_utc
+[gw0] [ 18%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_matches_penaltyblog_predict
+apps/backend/tests/unit/test_score_matrix.py::test_matrix_rejects_runaway_rho
+[gw0] [ 18%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_matrix_rejects_runaway_rho
+apps/backend/tests/unit/test_score_matrix.py::test_had_hhad_ttg_views_sum_to_one
+[gw0] [ 19%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_had_hhad_ttg_views_sum_to_one
+apps/backend/tests/unit/test_score_matrix.py::test_hhad_goal_line_hand_example
+[gw0] [ 20%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_hhad_goal_line_hand_example
+apps/backend/tests/unit/test_score_matrix.py::test_crs_view_grid_and_other_buckets
+[gw0] [ 20%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_crs_view_grid_and_other_buckets
+apps/backend/tests/unit/test_score_matrix.py::test_ttg_seven_plus_bucket_merges_tail
+[gw0] [ 21%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_ttg_seven_plus_bucket_merges_tail
+apps/backend/tests/unit/test_score_matrix.py::test_hafu_view_sums_to_one_and_marginals_consistent
+apps/backend/tests/unit/test_settlement.py::test_detail_payload_serializes
+[gw2] [ 21%] PASSED apps/backend/tests/unit/test_settlement.py::test_detail_payload_serializes
+[gw1] [ 22%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_purchase_cannot_debit_twice[True]
+apps/backend/tests/unit/test_betting_lifecycle.py::test_purchase_cannot_debit_twice[False]
+[gw1] [ 22%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_purchase_cannot_debit_twice[False]
+apps/backend/tests/unit/test_betting_lifecycle.py::test_result_correction_reverses_money_once
+[gw1] [ 23%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_result_correction_reverses_money_once
+apps/backend/tests/unit/test_betting_lifecycle.py::test_loss_to_win_correction_and_audit[paper]
+[gw7] [ 24%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_upsert_fixture_idempotent
+apps/backend/tests/unit/test_store_fixtures.py::test_team_alias_roundtrip
+[gw7] [ 24%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_team_alias_roundtrip
+apps/backend/tests/unit/test_store_fixtures.py::test_match_code_and_source_lookup
+[gw7] [ 25%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_match_code_and_source_lookup
+apps/backend/tests/unit/test_store_fixtures.py::test_snapshot_append_only_and_dedupe
+[gw7] [ 25%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_snapshot_append_only_and_dedupe
+apps/backend/tests/unit/test_store_fixtures.py::test_snapshot_persisted_meta
+[gw7] [ 26%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_snapshot_persisted_meta
+apps/backend/tests/unit/test_store_fixtures.py::test_eu_book_odds_latest_per_book
+[gw7] [ 26%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_eu_book_odds_latest_per_book
+apps/backend/tests/unit/test_store_fixtures.py::test_fixtures_for_business_date
+[gw7] [ 27%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_fixtures_for_business_date
+apps/backend/tests/unit/test_store_fixtures.py::test_odds_api_join_persisted
+[gw7] [ 27%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_odds_api_join_persisted
+[gw6] [ 28%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_month_and_day_start_utc
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_fetch_and_store_end_to_end
+apps/backend/tests/unit/test_app.py::test_healthz_reports_ok
+[gw1] [ 29%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_loss_to_win_correction_and_audit[paper]
+apps/backend/tests/unit/test_betting_lifecycle.py::test_loss_to_win_correction_and_audit[live]
+apps/backend/tests/unit/test_store_fixtures.py::test_pending_jingcai_fixtures
+[gw3] [ 29%] PASSED apps/backend/tests/unit/test_backtest.py::test_market_implied_matrix_recovers_had
+apps/backend/tests/unit/test_backtest.py::test_pick_hhad_line_balances_sides
+[gw4] [ 30%] PASSED apps/backend/tests/unit/test_evaluation.py::test_ece_perfect_and_miscalibrated
+apps/backend/tests/unit/test_evaluation.py::test_skill_score_direction
+[gw1] [ 30%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_loss_to_win_correction_and_audit[live]
+[gw4] [ 31%] PASSED apps/backend/tests/unit/test_evaluation.py::test_skill_score_direction
+apps/backend/tests/unit/test_evaluation.py::test_diebold_mariano_significance
+apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_without_reason_rolls_back_batch
+[gw4] [ 31%] PASSED apps/backend/tests/unit/test_evaluation.py::test_diebold_mariano_significance
+apps/backend/tests/unit/test_evaluation.py::test_flat_stake_stats
+[gw7] [ 32%] PASSED apps/backend/tests/unit/test_store_fixtures.py::test_pending_jingcai_fixtures
+[gw6] [ 32%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_fetch_and_store_end_to_end
+[gw4] [ 33%] PASSED apps/backend/tests/unit/test_evaluation.py::test_flat_stake_stats
+apps/backend/tests/unit/test_evaluation.py::test_evaluate_predictions_structure
+apps/backend/tests/unit/test_dc_model.py::test_fit_produces_sane_artifact
+apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_ambiguous_not_persisted
+[gw0] [ 34%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_hafu_view_sums_to_one_and_marginals_consistent
+apps/backend/tests/unit/test_score_matrix.py::test_hafu_hand_example_symmetric
+[gw4] [ 34%] PASSED apps/backend/tests/unit/test_evaluation.py::test_evaluate_predictions_structure
+[gw1] [ 35%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_without_reason_rolls_back_batch
+[gw6] [ 35%] PASSED apps/backend/tests/unit/test_ingest_oddsapi.py::test_join_ambiguous_not_persisted
+apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[purchase]
+apps/backend/tests/unit/test_evaluation.py::test_compute_run_metrics_stratified
+apps/backend/tests/unit/test_services.py::test_build_today_view
+[gw6] [ 36%] PASSED apps/backend/tests/unit/test_services.py::test_build_today_view
+apps/backend/tests/unit/test_services.py::test_create_bet_rejects_same_fixture_parlay
+[gw1] [ 36%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[purchase]
+[gw0] [ 37%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_hafu_hand_example_symmetric
+apps/backend/tests/unit/test_score_matrix.py::test_pool_margins_reuse_views
+apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[settlement]
+[gw2] [ 37%] PASSED apps/backend/tests/unit/test_app.py::test_healthz_reports_ok
+apps/backend/tests/unit/test_app.py::test_readyz_reports_ready
+[gw6] [ 38%] PASSED apps/backend/tests/unit/test_services.py::test_create_bet_rejects_same_fixture_parlay
+apps/backend/tests/unit/test_services.py::test_paper_full_loop
+[gw5] [ 39%] PASSED apps/backend/tests/unit/test_api.py::test_today_view_shape
+[gw7] [ 39%] PASSED apps/backend/tests/unit/test_dc_model.py::test_fit_produces_sane_artifact
+[gw1] [ 40%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[settlement]
+apps/backend/tests/unit/test_dc_model.py::test_predict_from_artifact_matches_direct_fit
+apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[correction]
+[gw0] [ 40%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_pool_margins_reuse_views
+apps/backend/tests/unit/test_score_matrix.py::test_combination_probability_multiplies_independently
+apps/backend/tests/unit/test_api.py::test_today_defaults_to_beijing_date
+[gw0] [ 41%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_combination_probability_multiplies_independently
+apps/backend/tests/unit/test_score_matrix.py::test_combination_probability_from_matrices
+[gw0] [ 41%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_combination_probability_from_matrices
+apps/backend/tests/unit/test_score_matrix.py::test_matrix_rejects_nonpositive_lambdas
+[gw6] [ 42%] PASSED apps/backend/tests/unit/test_services.py::test_paper_full_loop
+[gw0] [ 43%] PASSED apps/backend/tests/unit/test_score_matrix.py::test_matrix_rejects_nonpositive_lambdas
+apps/backend/tests/unit/test_clv.py::test_closing_prob_requires_closing_purpose
+apps/backend/tests/unit/test_services.py::test_live_bankroll_flow
+[gw3] [ 43%] PASSED apps/backend/tests/unit/test_backtest.py::test_pick_hhad_line_balances_sides
+apps/backend/tests/unit/test_backtest.py::test_kelly_stake_cap_and_threshold
+[gw0] [ 44%] PASSED apps/backend/tests/unit/test_clv.py::test_closing_prob_requires_closing_purpose
+apps/backend/tests/unit/test_clv.py::test_closing_snapshot_window_guard
+[gw2] [ 44%] PASSED apps/backend/tests/unit/test_app.py::test_readyz_reports_ready
+[gw0] [ 45%] PASSED apps/backend/tests/unit/test_clv.py::test_closing_snapshot_window_guard
+[gw1] [ 45%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_ledger_write_failure_rolls_back_operation[correction]
+apps/backend/tests/unit/test_clv.py::test_reconcile_clv_and_report
+[gw6] [ 46%] PASSED apps/backend/tests/unit/test_services.py::test_live_bankroll_flow
+apps/backend/tests/unit/test_services.py::test_settlement_with_void_fixture
+[gw3] [ 46%] PASSED apps/backend/tests/unit/test_backtest.py::test_kelly_stake_cap_and_threshold
+apps/backend/tests/unit/test_app.py::test_status_reports_service_identity
+[gw0] [ 47%] PASSED apps/backend/tests/unit/test_clv.py::test_reconcile_clv_and_report
+apps/backend/tests/unit/test_clv.py::test_reconcile_skips_open_bets_and_unmapped
+apps/backend/tests/unit/test_backtest.py::test_candidates_had_only_respect_price_bounds
+[gw3] [ 48%] PASSED apps/backend/tests/unit/test_backtest.py::test_candidates_had_only_respect_price_bounds
+apps/backend/tests/unit/test_backtest.py::test_run_backtest_end_to_end
+[gw6] [ 48%] PASSED apps/backend/tests/unit/test_services.py::test_settlement_with_void_fixture
+apps/backend/tests/unit/test_services.py::test_pool_slip_settlement_flow
+[gw0] [ 49%] PASSED apps/backend/tests/unit/test_clv.py::test_reconcile_skips_open_bets_and_unmapped
+apps/backend/tests/unit/test_clv.py::test_regression_slope_positive_when_clv_predicts_profit
+[gw6] [ 49%] PASSED apps/backend/tests/unit/test_services.py::test_pool_slip_settlement_flow
+apps/backend/tests/unit/test_betting_lifecycle.py::test_invalid_purchase_batch_and_bet_creation_are_atomic
+apps/backend/tests/unit/test_services.py::test_record_purchase_errors
+[gw0] [ 50%] PASSED apps/backend/tests/unit/test_clv.py::test_regression_slope_positive_when_clv_predicts_profit
+apps/backend/tests/unit/test_clv.py::test_unpurchased_counterfactual_is_excluded_even_with_legacy_clv
+[gw0] [ 50%] PASSED apps/backend/tests/unit/test_clv.py::test_unpurchased_counterfactual_is_excluded_even_with_legacy_clv
+apps/backend/tests/unit/test_forecast.py::test_content_hash_stable_and_sensitive
+[gw0] [ 51%] PASSED apps/backend/tests/unit/test_forecast.py::test_content_hash_stable_and_sensitive
+apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_end_to_end
+[gw1] [ 51%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_invalid_purchase_batch_and_bet_creation_are_atomic
+apps/backend/tests/unit/test_betting_lifecycle.py::test_concurrent_purchase_has_one_winner
+[gw5] [ 52%] PASSED apps/backend/tests/unit/test_api.py::test_today_defaults_to_beijing_date
+apps/backend/tests/unit/test_api.py::test_fixture_odds_history_and_404
+[gw2] [ 53%] PASSED apps/backend/tests/unit/test_app.py::test_status_reports_service_identity
+[gw7] [ 53%] PASSED apps/backend/tests/unit/test_dc_model.py::test_predict_from_artifact_matches_direct_fit
+[gw6] [ 54%] PASSED apps/backend/tests/unit/test_services.py::test_record_purchase_errors
+apps/backend/tests/unit/test_app.py::test_responses_use_json_content_type
+apps/backend/tests/unit/test_services.py::test_live_won_bet_records_payout_event
+apps/backend/tests/unit/test_dc_model.py::test_artifact_json_roundtrip_predicts_identically
+[gw1] [ 54%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_concurrent_purchase_has_one_winner
+apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_can_reopen_then_finalize_without_double_payment
+[gw6] [ 55%] PASSED apps/backend/tests/unit/test_services.py::test_live_won_bet_records_payout_event
+apps/backend/tests/unit/test_odds_math.py::test_normalized_implied_sums_to_one
+[gw1] [ 55%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_can_reopen_then_finalize_without_double_payment
+[gw6] [ 56%] PASSED apps/backend/tests/unit/test_odds_math.py::test_normalized_implied_sums_to_one
+apps/backend/tests/unit/test_odds_math.py::test_shin_fair_odds_returns_uniform
+apps/backend/tests/unit/test_betting_lifecycle.py::test_legacy_anomalies_are_reported_without_repair
+[gw6] [ 56%] PASSED apps/backend/tests/unit/test_odds_math.py::test_shin_fair_odds_returns_uniform
+apps/backend/tests/unit/test_odds_math.py::test_shin_devig_sums_to_one_and_favors_favorite
+[gw6] [ 57%] PASSED apps/backend/tests/unit/test_odds_math.py::test_shin_devig_sums_to_one_and_favors_favorite
+apps/backend/tests/unit/test_odds_math.py::test_shin_no_overround_falls_back
+[gw6] [ 58%] PASSED apps/backend/tests/unit/test_odds_math.py::test_shin_no_overround_falls_back
+apps/backend/tests/unit/test_odds_math.py::test_consensus_odds_averages_books
+[gw6] [ 58%] PASSED apps/backend/tests/unit/test_odds_math.py::test_consensus_odds_averages_books
+apps/backend/tests/unit/test_odds_math.py::test_expected_value
+[gw1] [ 59%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_legacy_anomalies_are_reported_without_repair
+apps/backend/tests/unit/test_betting_lifecycle.py::test_nested_rollback_preserves_callers_uncommitted_work
+[gw6] [ 59%] PASSED apps/backend/tests/unit/test_odds_math.py::test_expected_value
+apps/backend/tests/unit/test_store_betting.py::test_create_bet_with_legs_and_list
+[gw6] [ 60%] PASSED apps/backend/tests/unit/test_store_betting.py::test_create_bet_with_legs_and_list
+apps/backend/tests/unit/test_store_betting.py::test_list_bets_filter_mode_and_open
+[gw6] [ 60%] PASSED apps/backend/tests/unit/test_store_betting.py::test_list_bets_filter_mode_and_open
+apps/backend/tests/unit/test_store_betting.py::test_settlement_updates_bet_and_upserts
+[gw2] [ 61%] PASSED apps/backend/tests/unit/test_app.py::test_responses_use_json_content_type
+[gw1] [ 62%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_nested_rollback_preserves_callers_uncommitted_work
+[gw6] [ 62%] PASSED apps/backend/tests/unit/test_store_betting.py::test_settlement_updates_bet_and_upserts
+apps/backend/tests/unit/test_store_betting.py::test_slip_attach_and_mark_purchased
+apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_does_not_silently_repair_legacy_rule_errors
+[gw6] [ 63%] PASSED apps/backend/tests/unit/test_store_betting.py::test_slip_attach_and_mark_purchased
+apps/backend/tests/unit/test_store_betting.py::test_materialize_combinations
+apps/backend/tests/unit/test_app.py::test_production_environment_is_detected_via_env
+[gw2] [ 63%] PASSED apps/backend/tests/unit/test_app.py::test_production_environment_is_detected_via_env
+[gw6] [ 64%] PASSED apps/backend/tests/unit/test_store_betting.py::test_materialize_combinations
+apps/backend/tests/unit/test_app.py::test_default_environment_is_development
+[gw1] [ 64%] PASSED apps/backend/tests/unit/test_betting_lifecycle.py::test_correction_does_not_silently_repair_legacy_rule_errors
+[gw7] [ 65%] PASSED apps/backend/tests/unit/test_dc_model.py::test_artifact_json_roundtrip_predicts_identically
+apps/backend/tests/unit/test_db.py::test_migrate_applies_v1_and_is_idempotent
+apps/backend/tests/unit/test_dc_model.py::test_bootstrap_deterministic_and_content_addressed
+[gw2] [ 65%] PASSED apps/backend/tests/unit/test_app.py::test_default_environment_is_development
+[gw5] [ 66%] PASSED apps/backend/tests/unit/test_api.py::test_fixture_odds_history_and_404
+apps/backend/tests/unit/test_app.py::test_export_contract_writes_openapi_document
+[gw1] [ 67%] PASSED apps/backend/tests/unit/test_db.py::test_migrate_applies_v1_and_is_idempotent
+apps/backend/tests/unit/test_db.py::test_connect_sets_pragmas
+apps/backend/tests/unit/test_api.py::test_bet_create_list_and_same_fixture_rejected
+apps/backend/tests/unit/test_store_betting.py::test_bankroll_events
+[gw1] [ 67%] PASSED apps/backend/tests/unit/test_db.py::test_connect_sets_pragmas
+apps/backend/tests/unit/test_db.py::test_connect_readonly
+[gw6] [ 68%] PASSED apps/backend/tests/unit/test_store_betting.py::test_bankroll_events
+apps/backend/tests/unit/test_ingest_sporttery.py::test_parse_matches_full_shape
+[gw6] [ 68%] PASSED apps/backend/tests/unit/test_ingest_sporttery.py::test_parse_matches_full_shape
+[gw1] [ 69%] PASSED apps/backend/tests/unit/test_db.py::test_connect_readonly
+apps/backend/tests/unit/test_db.py::test_append_only_triggers_block_mutation
+apps/backend/tests/unit/test_ingest_sporttery.py::test_parse_market_selections
+[gw6] [ 69%] PASSED apps/backend/tests/unit/test_ingest_sporttery.py::test_parse_market_selections
+apps/backend/tests/unit/test_ingest_sporttery.py::test_store_matches_idempotent
+[gw1] [ 70%] PASSED apps/backend/tests/unit/test_db.py::test_append_only_triggers_block_mutation
+apps/backend/tests/unit/test_db.py::test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly
+[gw6] [ 70%] PASSED apps/backend/tests/unit/test_ingest_sporttery.py::test_store_matches_idempotent
+apps/backend/tests/unit/test_ingest_sporttery.py::test_fetch_uses_referer_and_retries_payload
+[gw6] [ 71%] PASSED apps/backend/tests/unit/test_ingest_sporttery.py::test_fetch_uses_referer_and_retries_payload
+[gw1] [ 72%] PASSED apps/backend/tests/unit/test_db.py::test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly
+apps/backend/tests/unit/test_haircut.py::test_build_samples_pairs_jc_with_consensus
+apps/backend/tests/unit/test_ingest_sporttery.py::test_fetch_raises_on_error_code
+[gw1] [ 72%] PASSED apps/backend/tests/unit/test_haircut.py::test_build_samples_pairs_jc_with_consensus
+apps/backend/tests/unit/test_haircut.py::test_calibrate_insufficient_samples_falls_back
+[gw6] [ 73%] PASSED apps/backend/tests/unit/test_ingest_sporttery.py::test_fetch_raises_on_error_code
+apps/backend/tests/unit/test_store_results.py::test_draw_result_upsert
+[gw6] [ 73%] PASSED apps/backend/tests/unit/test_store_results.py::test_draw_result_upsert
+[gw1] [ 74%] PASSED apps/backend/tests/unit/test_haircut.py::test_calibrate_insufficient_samples_falls_back
+apps/backend/tests/unit/test_store_results.py::test_draw_results_bulk
+apps/backend/tests/unit/test_haircut.py::test_calibrate_median_and_reproducibility
+[gw6] [ 74%] PASSED apps/backend/tests/unit/test_store_results.py::test_draw_results_bulk
+apps/backend/tests/unit/test_store_results.py::test_hist_upsert_idempotent
+[gw5] [ 75%] PASSED apps/backend/tests/unit/test_api.py::test_bet_create_list_and_same_fixture_rejected
+[gw6] [ 75%] PASSED apps/backend/tests/unit/test_store_results.py::test_hist_upsert_idempotent
+apps/backend/tests/unit/test_api.py::test_slip_record_purchase_flow
+apps/backend/tests/unit/test_store_results.py::test_cost_ledger_credit_usage
+[gw6] [ 76%] PASSED apps/backend/tests/unit/test_store_results.py::test_cost_ledger_credit_usage
+apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+[gw1] [ 77%] PASSED apps/backend/tests/unit/test_haircut.py::test_calibrate_median_and_reproducibility
+apps/backend/tests/unit/test_haircut.py::test_calibrated_haircut_feeds_backtest_params
+[gw1] [ 77%] PASSED apps/backend/tests/unit/test_haircut.py::test_calibrated_haircut_feeds_backtest_params
+apps/backend/tests/unit/test_ingest_fdhist.py::test_parse_csv_cleans_and_maps_columns
+[gw1] [ 78%] PASSED apps/backend/tests/unit/test_ingest_fdhist.py::test_parse_csv_cleans_and_maps_columns
+apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_idempotent
+[gw5] [ 78%] PASSED apps/backend/tests/unit/test_api.py::test_slip_record_purchase_flow
+[gw2] [ 79%] PASSED apps/backend/tests/unit/test_app.py::test_export_contract_writes_openapi_document
+apps/backend/tests/unit/test_app.py::test_create_app_accepts_explicit_settings
+apps/backend/tests/unit/test_api.py::test_draw_results_import_and_settlement_loop
+[gw2] [ 79%] PASSED apps/backend/tests/unit/test_app.py::test_create_app_accepts_explicit_settings
+apps/backend/tests/unit/test_api_validation.py::test_backtest_runs_list_and_detail
+[gw6] [ 80%] PASSED apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+[gw5] [ 81%] PASSED apps/backend/tests/unit/test_api.py::test_draw_results_import_and_settlement_loop
+apps/backend/tests/unit/test_api.py::test_bankroll_endpoint
+[gw2] [ 81%] PASSED apps/backend/tests/unit/test_api_validation.py::test_backtest_runs_list_and_detail
+apps/backend/tests/unit/test_api_validation.py::test_validation_progress_real_state
+[gw7] [ 82%] PASSED apps/backend/tests/unit/test_dc_model.py::test_bootstrap_deterministic_and_content_addressed
+apps/backend/tests/unit/test_dc_model.py::test_save_and_load_latest_run
+[gw5] [ 82%] PASSED apps/backend/tests/unit/test_api.py::test_bankroll_endpoint
+apps/backend/tests/unit/test_api.py::test_pool_slip_creation_and_materialization
+[gw2] [ 83%] PASSED apps/backend/tests/unit/test_api_validation.py::test_validation_progress_real_state
+apps/backend/tests/unit/test_api_validation.py::test_validation_progress_empty_state
+[gw7] [ 83%] PASSED apps/backend/tests/unit/test_dc_model.py::test_save_and_load_latest_run
+apps/backend/tests/unit/test_dc_model.py::test_decay_weights_half_life
+[gw7] [ 84%] PASSED apps/backend/tests/unit/test_dc_model.py::test_decay_weights_half_life
+apps/backend/tests/unit/test_dc_model.py::test_training_rows_respects_as_of_cutoff
+[gw7] [ 84%] PASSED apps/backend/tests/unit/test_dc_model.py::test_training_rows_respects_as_of_cutoff
+apps/backend/tests/unit/test_dc_model.py::test_train_competition_end_to_end
+[gw2] [ 85%] PASSED apps/backend/tests/unit/test_api_validation.py::test_validation_progress_empty_state
+[gw5] [ 86%] PASSED apps/backend/tests/unit/test_api.py::test_pool_slip_creation_and_materialization
+apps/backend/tests/unit/test_api_validation.py::test_backtest_runs_empty
+apps/backend/tests/unit/test_api.py::test_manual_join_endpoint
+[gw7] [ 86%] PASSED apps/backend/tests/unit/test_dc_model.py::test_train_competition_end_to_end
+[gw2] [ 87%] PASSED apps/backend/tests/unit/test_api_validation.py::test_backtest_runs_empty
+[gw5] [ 87%] PASSED apps/backend/tests/unit/test_api.py::test_manual_join_endpoint
+apps/backend/tests/unit/test_api.py::test_live_purchase_correction_and_counterfactual_exclusion
+[gw5] [ 88%] PASSED apps/backend/tests/unit/test_api.py::test_live_purchase_correction_and_counterfactual_exclusion
+apps/backend/tests/unit/test_api.py::test_live_pool_rejected_and_invalid_bet_rolled_back
+[gw0] [ 88%] PASSED apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_end_to_end
+apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_idempotent_rerun
+[gw5] [ 89%] PASSED apps/backend/tests/unit/test_api.py::test_live_pool_rejected_and_invalid_bet_rolled_back
+[gw0] [ 89%] PASSED apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_idempotent_rerun
+apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_skip_reasons
+[gw0] [ 90%] PASSED apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_skip_reasons
+apps/backend/tests/unit/test_forecast.py::test_forecast_matrix_views_from_payload
+[gw0] [ 91%] PASSED apps/backend/tests/unit/test_forecast.py::test_forecast_matrix_views_from_payload
+apps/backend/tests/unit/test_forecast.py::test_had_ci_coverage_frequency
+[gw4] [ 91%] PASSED apps/backend/tests/unit/test_evaluation.py::test_compute_run_metrics_stratified
+apps/backend/tests/unit/test_team_align.py::test_normalize_strips_accents_legal_tokens_and_digits
+[gw3] [ 92%] PASSED apps/backend/tests/unit/test_backtest.py::test_run_backtest_end_to_end
+[gw4] [ 92%] PASSED apps/backend/tests/unit/test_team_align.py::test_normalize_strips_accents_legal_tokens_and_digits
+apps/backend/tests/unit/test_backtest.py::test_run_backtest_run_isolation
+apps/backend/tests/unit/test_team_align.py::test_normalize_expands_fd_abbreviations
+[gw4] [ 93%] PASSED apps/backend/tests/unit/test_team_align.py::test_normalize_expands_fd_abbreviations
+apps/backend/tests/unit/test_team_align.py::test_index_exact_and_subset_matching
+[gw4] [ 93%] PASSED apps/backend/tests/unit/test_team_align.py::test_index_exact_and_subset_matching
+apps/backend/tests/unit/test_team_align.py::test_index_subset_direction_both_ways
+[gw4] [ 94%] PASSED apps/backend/tests/unit/test_team_align.py::test_index_subset_direction_both_ways
+apps/backend/tests/unit/test_team_align.py::test_resolve_hist_team_and_manual_override
+[gw4] [ 94%] PASSED apps/backend/tests/unit/test_team_align.py::test_resolve_hist_team_and_manual_override
+apps/backend/tests/unit/test_team_align.py::test_match_model_team_reverse_mapping
+[gw4] [ 95%] PASSED apps/backend/tests/unit/test_team_align.py::test_match_model_team_reverse_mapping
+apps/backend/tests/unit/test_team_align.py::test_alignment_report_coverage_and_unmatched
+[gw4] [ 96%] PASSED apps/backend/tests/unit/test_team_align.py::test_alignment_report_coverage_and_unmatched
+apps/backend/tests/unit/test_team_align.py::test_backfill_aliases_from_events
+[gw4] [ 96%] PASSED apps/backend/tests/unit/test_team_align.py::test_backfill_aliases_from_events
+[gw0] [ 97%] PASSED apps/backend/tests/unit/test_forecast.py::test_had_ci_coverage_frequency
+[gw1] [ 97%] PASSED apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_idempotent
+apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_full_matrix_urls
+[gw3] [ 98%] PASSED apps/backend/tests/unit/test_backtest.py::test_run_backtest_run_isolation
+apps/backend/tests/unit/test_backtest.py::test_run_backtest_marks_failed_run
+[gw3] [ 98%] PASSED apps/backend/tests/unit/test_backtest.py::test_run_backtest_marks_failed_run
+apps/backend/tests/unit/test_backtest.py::test_backtest_lookahead_guard_via_weeks
+[gw3] [ 99%] PASSED apps/backend/tests/unit/test_backtest.py::test_backtest_lookahead_guard_via_weeks
+[gw1] [100%] PASSED apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_full_matrix_urls
+
+═══════════════════════════════ inline-snapshot ════════════════════════════════
+INFO: inline-snapshot was disabled because you used xdist. This means that tests
+with snapshots will continue to run, but snapshot(x) will only return x and
+inline-snapshot will not be able to fix snapshots or generate reports.
+
+
+
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.13.14-final-0 _______________
+
+Name                                                 Stmts   Miss Branch BrPart   Cover   Missing
+-------------------------------------------------------------------------------------------------
+apps/backend/src/goalx_backend/__init__.py               0      0      0      0 100.00%
+apps/backend/src/goalx_backend/api/__init__.py           2      0      0      0 100.00%
+apps/backend/src/goalx_backend/api/bets.py             111      3     10      3  95.04%   154, 189, 251
+apps/backend/src/goalx_backend/api/deps.py              12      0      0      0 100.00%
+apps/backend/src/goalx_backend/api/fixtures.py          40      0      4      0 100.00%
+apps/backend/src/goalx_backend/api/results.py           84      3      6      1  95.56%   146, 172-173
+apps/backend/src/goalx_backend/api/validation.py        92      1      8      1  98.00%   143
+apps/backend/src/goalx_backend/backtest.py             227     14     52      8  92.11%   116, 155, 271, 359-360, 363-364, 433, 439, 527-533, 543
+apps/backend/src/goalx_backend/clv.py                  105      4     32      4  94.16%   155, 159, 192->182, 224, 234
+apps/backend/src/goalx_backend/config.py                32      0      0      0 100.00%
+apps/backend/src/goalx_backend/db.py                    52      0     12      0 100.00%
+apps/backend/src/goalx_backend/dc_model.py             125      1     14      1  98.56%   81
+apps/backend/src/goalx_backend/evaluation.py           140      4     46      5  95.16%   120, 136, 139, 271, 284->295
+apps/backend/src/goalx_backend/export_openapi.py        16      0      0      0 100.00%
+apps/backend/src/goalx_backend/forecast.py              88      2     18      0  98.11%   80-81
+apps/backend/src/goalx_backend/haircut.py               79      1     18      1  97.94%   109
+apps/backend/src/goalx_backend/ingest/__init__.py        2      0      0      0 100.00%
+apps/backend/src/goalx_backend/ingest/fdhist.py         71      6     14      3  89.41%   61-62, 107, 127-129
+apps/backend/src/goalx_backend/ingest/oddsapi.py       174     22     54      9  85.53%   117, 148, 153, 158->149, 160->144, 171, 209, 225, 288-316, 346->348, 391->343
+apps/backend/src/goalx_backend/ingest/results.py        22      0      8      0 100.00%
+apps/backend/src/goalx_backend/ingest/sporttery.py     126      3     54      4  96.11%   118->120, 150, 169-170, 171->exit, 187->182
+apps/backend/src/goalx_backend/ledger_audit.py          46      7     30      8  80.26%   21, 44, 76, 78, 80, 82, 83->89, 88
+apps/backend/src/goalx_backend/main.py                  40      0      0      0 100.00%
+apps/backend/src/goalx_backend/markets.py                4      0      0      0 100.00%
+apps/backend/src/goalx_backend/migrations.py            42      0     14      0 100.00%
+apps/backend/src/goalx_backend/models.py               236      0      0      0 100.00%
+apps/backend/src/goalx_backend/odds_math.py             35      1      8      0  97.67%   12
+apps/backend/src/goalx_backend/score_matrix.py         117      3     58      3  96.57%   84, 126, 218
+apps/backend/src/goalx_backend/services.py             157      4     64      6  95.48%   109->111, 168, 170, 311, 319, 323->309
+apps/backend/src/goalx_backend/settlement.py           145     10     58      5  90.64%   118, 130-136, 191, 227, 293
+apps/backend/src/goalx_backend/store/__init__.py         2      0      0      0 100.00%
+apps/backend/src/goalx_backend/store/betting.py         85      8     18      3  87.38%   22, 133, 321-345, 349
+apps/backend/src/goalx_backend/store/fixtures.py        63      2     10      2  94.52%   17, 230
+apps/backend/src/goalx_backend/store/forecasts.py       15      5      4      0  63.16%   49-61
+apps/backend/src/goalx_backend/store/results.py         56      7     22      7  82.05%   68, 84, 130->96, 140-148, 161, 197, 212
+apps/backend/src/goalx_backend/team_align.py            99      2     34      2  96.99%   121, 231
+-------------------------------------------------------------------------------------------------
+TOTAL                                                 2742    113    670     76  94.17%
+Coverage XML written to file coverage.xml
+Required test coverage of 90.0% reached. Total coverage: 94.17%
+============================= slowest 10 durations =============================
+12.71s call     apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_full_matrix_urls
+1.47s call     apps/backend/tests/unit/test_backtest.py::test_run_backtest_run_isolation
+1.13s call     apps/backend/tests/unit/test_evaluation.py::test_compute_run_metrics_stratified
+1.09s call     apps/backend/tests/unit/test_backtest.py::test_run_backtest_end_to_end
+1.01s call     apps/backend/tests/unit/test_ingest_fdhist.py::test_import_history_idempotent
+0.72s call     apps/backend/tests/unit/test_backtest.py::test_backtest_lookahead_guard_via_weeks
+0.71s call     apps/backend/tests/unit/test_forecast.py::test_generate_forecasts_end_to_end
+0.39s call     apps/backend/tests/unit/test_forecast.py::test_had_ci_coverage_frequency
+0.27s call     apps/backend/tests/unit/test_dc_model.py::test_bootstrap_deterministic_and_content_addressed
+0.16s call     apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+============================= 179 passed in 20.05s =============================
+task: [web-lint] bun run lint
+$ biome check .
+Checked 34 files in 14ms. No fixes applied.
+task: [web-type] bun run type
+$ tsc -b
+task: [web-coverage] bun run test:coverage
+$ vitest run src --coverage
+
+ RUN  v4.1.11 /Users/chevy/Desktop/code/goalx/apps/web
+      Coverage enabled with v8
+
+
+ Test Files  6 passed (6)
+      Tests  19 passed (19)
+   Start at  11:36:06
+   Duration  1.84s (transform 491ms, setup 1.98s, import 822ms, tests 1.18s, environment 3.47s)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   96.77 |    86.17 |    97.1 |   98.23 |
+ src/api           |    91.3 |    88.23 |   93.33 |    91.3 |
+  client.ts        |     100 |       75 |     100 |     100 | 10
+  goalx.ts         |   89.47 |     92.3 |   92.85 |   89.47 | 29,95
+ src/pages         |   97.91 |    85.62 |   98.07 |     100 |
+  ...roll-page.tsx |     100 |    83.33 |     100 |     100 | 45-47
+  bets-page.tsx    |   97.56 |    82.35 |      96 |     100 | 24-81,118,156-158
+  today-page.tsx   |     100 |       90 |     100 |     100 | 20-24,58,68-72
+  ...tion-page.tsx |   97.22 |     84.5 |     100 |     100 | 15-26,84,145-161
+-------------------|---------|----------|---------|---------|-------------------
+
+=============================== Coverage summary ===============================
+Statements   : 96.77% ( 120/124 )
+Branches     : 86.17% ( 162/188 )
+Functions    : 97.1% ( 67/69 )
+Lines        : 98.23% ( 111/113 )
+================================================================================
+task: [contract-export] uv run --no-sync python -m goalx_backend.export_openapi
+2026-09-13 11:36:08.694 | INFO     | __main__:export_contract:43 - OpenAPI contract written to /Users/chevy/Desktop/code/goalx/contracts/openapi/v1.json
+task: [contract-lint] bun run contract:lint
+$ bun x @redocly/cli lint goalx@v1
+
+    ╔═══════════════════════════════════════════════════════╗
+    ║                                                       ║
+    ║  A new version of Redocly CLI (2.52.1) is available.  ║
+    ║  Update now: `npm i -g @redocly/cli@latest`.          ║
+    ║  Changelog: https://redocly.com/docs/cli/changelog/   ║
+    ║                                                       ║
+    ╚═══════════════════════════════════════════════════════╝
+
+validating contracts/openapi/v1.json using lint rules for api 'goalx@v1'...
+contracts/openapi/v1.json: validated in 24ms
+
+Woohoo! Your API description is valid. 🎉
+
+task: [contract-codegen] bun run contract:codegen
+$ bash apps/web/scripts/gen-api.sh
+🚀 goalx@v1 → ./apps/web/src/api/generated/schema.d.ts [72ms]
+task: [contract-conformance] uv run --no-sync pytest apps/backend/tests/contract -q --no-cov
+============================= test session starts ==============================
+platform darwin -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/chevy/Desktop/code/goalx
+configfile: pyproject.toml
+plugins: mock-3.15.1, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, asyncio-1.4.0, typeguard-4.6.0, anyio-4.15.1, respx-0.23.1, hypothesis-6.168.0, inline-snapshot-0.35.4
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+created: 8/8 workers
+8 workers [1 item]
+
+scheduling tests via LoadFileScheduling
+
+apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+[gw1] [100%] PASSED apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+
+═══════════════════════════════ inline-snapshot ════════════════════════════════
+INFO: inline-snapshot was disabled because you used xdist. This means that tests
+with snapshots will continue to run, but snapshot(x) will only return x and
+inline-snapshot will not be able to fix snapshots or generate reports.
+
+
+
+============================= slowest 10 durations =============================
+0.10s call     apps/backend/tests/contract/test_openapi_conformance.py::test_served_openapi_equals_reviewed_contract
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+============================== 1 passed in 1.73s ===============================
+task: [check-contract] git diff --exit-code -- contracts/openapi apps/web/src/api/generated
+task: [web-build] bun run build
+$ tsc -b && vite build
+vite v8.3.0 building client environment for production...
+transforming...
+✓ 153 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.37 kB │ gzip:   0.26 kB
+dist/assets/index-BTuEyGtP.css   10.90 kB │ gzip:   3.08 kB
+dist/assets/index-OqqIiDmY.js   365.59 kB │ gzip: 113.77 kB
+
+✓ built in 142ms
+task: [web-e2e] bun run e2e
+$ playwright test
+[WebServer] $ vite --host "127.0.0.1" --port "5173"
+[WebServer] (node:78161) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 4 tests using 4 workers
+
+(node:78162) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:78164) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:78165) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:78163) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/fixtures/today
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/fixtures/today
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/validation/progress
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/backtest/runs
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+  ✓  4 [chromium] › e2e/smoke.spec.ts:22:1 › placeholder pages announce their milestone (678ms)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/bets?only_open=false
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/bankroll
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/validation/progress
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:17 AM [vite] http proxy error: /api/v1/backtest/runs
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+  ✓  3 [chromium] › e2e/smoke.spec.ts:14:1 › six-page skeleton navigates (877ms)
+  ✓  2 [chromium] › e2e/smoke.spec.ts:4:1 › today page renders with navigation and stays accessible (929ms)
+[WebServer] 11:36:18 AM [vite] http proxy error: /api/v1/validation/progress
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:18 AM [vite] http proxy error: /api/v1/backtest/runs
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:20 AM [vite] http proxy error: /api/v1/validation/progress
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:20 AM [vite] http proxy error: /api/v1/backtest/runs
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:24 AM [vite] http proxy error: /api/v1/validation/progress
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+[WebServer] 11:36:24 AM [vite] http proxy error: /api/v1/backtest/runs
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8000
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2017:16)
+  ✓  1 [chromium] › e2e/smoke.spec.ts:29:1 › validation page degrades gracefully without backend (8.0s)
+
+  4 passed (9.2s)

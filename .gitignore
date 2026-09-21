@@ -88,6 +88,8 @@ Thumbs.db
 
 logs/
 *.log
+# 转正归档的评审证据日志（docs/plans 内文档引用，需入库）
+!docs/plans/**/*.log
 /artifacts/
 
 # 本地 SQLite 数据库（goalx 运行数据不入库）
