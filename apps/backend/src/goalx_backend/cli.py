@@ -46,6 +46,7 @@ from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation.corpus import completeness_report
+from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
@@ -291,6 +292,16 @@ def _cmd_corpus_report(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_pool_replay_report(args: argparse.Namespace) -> None:
+    """彩池 v2 搏冷十年复验报告（票 51）：只读，纯函数确定性。"""
+    seasons = tuple(args.seasons) if args.seasons else fdhist.SEASONS
+    with task_conn() as conn:
+        report = pool_replay_report(
+            conn, competitions=fdhist.FD_COMPETITIONS, seasons=seasons
+        )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_pool_sync() -> None:
     """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
     stats = tasks.pool_snapshot()
@@ -451,6 +462,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="附 openfootball 比分对 fdhist 交叉验证(拉重叠联赛赛季文件)",
     )
+    replay = sub.add_parser(
+        "pool-replay-report",
+        help="彩池v2搏冷十年复验报告(票 51;冷门EV分布/分期/早期镜,只读)",
+    )
+    replay.add_argument("--seasons", nargs="*", help="fd 季键(默认 1617..2627)")
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -483,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
         "understat-sync": lambda: _cmd_understat_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
+        "pool-replay-report": lambda: _cmd_pool_replay_report(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

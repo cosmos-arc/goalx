@@ -38,6 +38,9 @@ _WDL_TO_HAD = {"3": "h", "1": "d", "0": "a"}
 _HAD_TO_WDL = {v: k for k, v in _WDL_TO_HAD.items()}
 # 传统足彩规则返奖率（研究 03 §0：64% 当期 + 1% 调节基金）
 POOL_RETURN_RATE = 0.65
+# 冷门阈值：公众份额 < 25% 计冷选项（v2 判定/生成器口径，前端同值镜像；
+# evaluation/pool_replay 复验同源引用——单一正典在数据域，api 层再分发）
+COLD_SHARE_MAX = 0.25
 # 池场次 ↔ 竞彩场次映射的开赛时间容差（同一场比赛两源时间口径差）
 _MATCH_KICKOFF_TOLERANCE_SECONDS = 2 * 3600
 

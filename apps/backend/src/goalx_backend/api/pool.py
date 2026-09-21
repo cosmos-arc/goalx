@@ -276,7 +276,9 @@ def _match_views(
 
 # ---- 搏冷生成器（票 pool-v2/02）：纯函数贪心，口径与详情页一致 ----
 
-COLD_SHARE_MAX = 0.25  # 冷门阈值（与前端判定同口径）
+# 冷门阈值正典在数据域（data.pool.COLD_SHARE_MAX），此处别名供本模块
+# 判定逻辑直引；前端为同值镜像（0.25）。
+COLD_SHARE_MAX = pool_store.COLD_SHARE_MAX
 
 
 class ColdSwapView(BaseModel):

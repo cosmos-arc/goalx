@@ -2,7 +2,10 @@
 football-data.co.uk 历史导入（票 21 起底座；票 46 扩联赛 + 十年窗）。
 
 列口径（ADR 0007）：FTR 赛果；PSC*（Pinnacle 收盘）为公允基准，
-AvgC*（市场均值收盘）兜底。日期格式 dd/mm/YY 或 dd/mm/YYYY，utf-8-sig。
+AvgC*（市场均值收盘）兜底；PSH*（Pinnacle 早期）开→收
+漂移镜（票 46 增补裁决，v19 落列；实测 1617 起文件即含该组列）。
+AvgC 自 1920 季起才有列——1617-1819 三季仅 PSC/PSH（票 51 报告按此
+标注覆盖）。日期格式 dd/mm/YY 或 dd/mm/YYYY，utf-8-sig。
 
 覆盖实测（2026-09-20，票 46）：五大+N1 全季可得；扩联赛 E1 英冠/P1 葡超/
 T1 土超/B1 比甲/SC0 苏超均含 PSC 收盘列（2526 季 200 实测）。美职/巴甲/
@@ -105,6 +108,9 @@ def parse_csv(
                 "psc_home": _parse_float(rec.get("PSCH")),
                 "psc_draw": _parse_float(rec.get("PSCD")),
                 "psc_away": _parse_float(rec.get("PSCA")),
+                "psh_home": _parse_float(rec.get("PSH")),
+                "psh_draw": _parse_float(rec.get("PSD")),
+                "psh_away": _parse_float(rec.get("PSA")),
                 "avgc_home": _parse_float(rec.get("AvgCH")),
                 "avgc_draw": _parse_float(rec.get("AvgCD")),
                 "avgc_away": _parse_float(rec.get("AvgCA")),

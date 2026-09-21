@@ -105,14 +105,17 @@ def upsert_hist_matches(conn: sqlite3.Connection, rows: list[dict[str, Any]]) ->
 (competition, season, match_date, home_team,
                 away_team,
 fthg, ftag, ftr, psc_home, psc_draw, psc_away,
-avgc_home,
+psh_home,
+                psh_draw, psh_away, avgc_home,
                 avgc_draw, avgc_away)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(competition, season, match_date, home_team, away_team)
 DO
                 UPDATE SET fthg=excluded.fthg, ftag=excluded.ftag, ftr=excluded.ftr,
                 psc_home=excluded.psc_home, psc_draw=excluded.psc_draw,
-                psc_away=excluded.psc_away, avgc_home=excluded.avgc_home,
+                psc_away=excluded.psc_away, psh_home=excluded.psh_home,
+                psh_draw=excluded.psh_draw, psh_away=excluded.psh_away,
+                avgc_home=excluded.avgc_home,
                 avgc_draw=excluded.avgc_draw, avgc_away=excluded.avgc_away
             """,
             (
@@ -127,6 +130,9 @@ DO
                 row["psc_home"],
                 row["psc_draw"],
                 row["psc_away"],
+                row.get("psh_home"),
+                row.get("psh_draw"),
+                row.get("psh_away"),
                 row["avgc_home"],
                 row["avgc_draw"],
                 row["avgc_away"],
@@ -222,7 +228,21 @@ def hist_close_odds_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         """
         SELECT competition, season, match_date, psc_home, psc_draw, psc_away,
                avgc_home, avgc_draw, avgc_away FROM hist_matches
-        ORDER BY competition, match_date
+        ORDER BY season, match_date, competition, home_team
+        """
+    ).fetchall()
+
+
+def hist_pool_replay_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """彩池 v2 复验回放列（票 51）：赛果 + PSC/PSH/AvgC 三组三向收盘基准。"""
+    return conn.execute(
+        """
+        SELECT competition, season, match_date, home_team, away_team, ftr,
+               psc_home, psc_draw, psc_away,
+               psh_home, psh_draw, psh_away,
+               avgc_home, avgc_draw, avgc_away
+        FROM hist_matches
+        ORDER BY season, match_date, competition, home_team
         """
     ).fetchall()
 
