@@ -120,6 +120,10 @@ def test_today_view_shape(api_client: TestClient) -> None:
     assert "eu_no_quote" in entry["had_quote"]["reasons"]
     assert entry["had_quote"]["single_eligible"] is True
     assert entry["had_quote"]["sale_state"] == "on_sale"
+    # 陈盘信号（票 48）：有竞彩快照 → 只报时长（无欧赔参考，drift 诚实缺省）
+    assert entry["stale_line"] is not None
+    assert entry["stale_line"]["minutes_since_move"] >= 0
+    assert entry["stale_line"]["drift"] is None
 
 
 def test_today_other_business_date_empty(api_client: TestClient) -> None:

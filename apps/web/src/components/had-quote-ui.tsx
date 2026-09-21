@@ -310,6 +310,22 @@ export function EligibleCard({
 					</span>
 				) : null}
 			</div>
+			{fixture.stale_line ? (
+				<p
+					className="mb-2 text-xs text-muted-foreground"
+					data-testid={`stale-line-${fixture.fixture_id}`}
+					title={`竞彩定格 ${localTime(fixture.stale_line.jc_last_move)} · as-of ${localTime(fixture.stale_line.as_of)}`}
+				>
+					上次调盘 {stalenessText(fixture.stale_line.minutes_since_move)} 前
+					{fixture.stale_line.drift !== null &&
+					fixture.stale_line.drift !== undefined &&
+					fixture.stale_line.drift_selection
+						? `；sharp 参考 ${staleSelectionLabel(fixture.stale_line.drift_selection)} ${driftText(fixture.stale_line.drift)}（${
+								fixture.stale_line.sharp_ref === "pinnacle" ? "主锚" : "共识"
+							}）`
+						: ""}
+				</p>
+			) : null}
 			<div className="flex items-center gap-2">
 				{SELECTIONS.map((sel) => (
 					<OddsButton

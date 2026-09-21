@@ -56,5 +56,5 @@ OWNERS: dict[str, set[str]] = {
 # 文档呈现顺序（按数据→模型→情报→投注→评测的管线方向）
 DOMAIN_ORDER: tuple[str, ...] = ("data", "modelling", "llm", "betting", "evaluation")
 
-# 未登记表 = migrations 播种/脚手架（markets/selections 种子、ev_assessments
-# 预留），无归属包写它们；文档归入「infra/种子」组。
+# 未登记表 = migrations 播种（markets/selections 种子），无归属包写它们；
+# ev_assessments 脚手架已 DROP（票 48：派生信号不落表）。

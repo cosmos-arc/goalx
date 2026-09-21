@@ -1079,6 +1079,17 @@ def _apply_v15(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v16(conn: sqlite3.Connection) -> None:
+    """
+    v16（票 48）：DROP ev_assessments——自建库起无写入方的脚手架表。
+
+    陈盘信号等派生读模型不落表：append-only 原料（odds_snapshots）+
+    as-of 纯函数重放即决策存证（五定则：程序计算、重放确定）。
+    EVAssessment 实际口径在视图与 betting 包函数（表 03 预留时已注记）。
+    """
+    conn.execute("DROP TABLE IF EXISTS ev_assessments")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1095,4 +1106,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (13, _apply_v13),
     (14, _apply_v14),
     (15, _apply_v15),
+    (16, _apply_v16),
 )

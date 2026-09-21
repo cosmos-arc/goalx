@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from goalx_backend import odds_math as om
@@ -402,3 +402,124 @@ def _adjudicate_eu(
         s: round(1.0 / p, 4) for s, p in zip(SELECTIONS, probs, strict=True)
     }
     verdict.sources.extend(sorted(valid_books))
+
+
+# --- 票 48：陈盘信号（纯派生，零 schema——append-only 原料可重放） ---
+
+# 主锚书（票 40 语义：单书 Shin）。与 evaluation/clv.PINNACLE_SOURCE 同值
+# 复制——分层禁止 data 上行 import evaluation，改动须两处同步。
+SHARP_ANCHOR_SOURCE = "odds_api:pinnacle"
+# 定格端参考新鲜度上界：p0 过旧会把竞彩已吸收的冻前移动混入漂移（夸大），
+# 宁缺毋滥。12h 覆盖隔夜采集间隔；票 47 停售锚落地后临场窗口天然新鲜。
+SHARP_FREEZE_MAX_AGE_SECONDS = 12 * 3600
+
+
+@dataclass(frozen=True)
+class StaleLineSignal:
+    """
+    一场比赛的陈盘信号（as-of 决策时点的只读派生视图）。
+
+    分钟数 = 竞彩距上次调盘（sporttery captured_at = 源调盘时间）；
+    drift = sharp 参考（pinnacle 主锚，缺则欧共识兜底，双端同法才可比）
+    在"竞彩定格时刻 → as_of"区间内漂移最大的选项的概率变化（带符号，
+    正=该向概率上行）。任一端无参考点 → drift=None（只报陈旧时长）。
+    """
+
+    as_of: str
+    jc_last_move: str
+    minutes_since_move: int
+    drift: float | None = None
+    drift_selection: str | None = None
+    sharp_ref: str | None = None
+
+
+def _probs_from_books(books: dict[str, dict[str, float]]) -> dict[str, float] | None:
+    """欧共识三向 Shin（books_complete_asof 的兜底参考口径）。"""
+    if not books:
+        return None
+    consensus = om.consensus_odds(
+        [{b: books[b][s] for b in sorted(books)} for s in SELECTIONS]
+    )
+    if consensus is None:
+        return None
+    return dict(zip(SELECTIONS, om.shin_implied(consensus), strict=True))
+
+
+def _sharp_probs_asof(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    max_age_seconds: float | None = None,
+) -> tuple[dict[str, float], str] | None:
+    """
+    As_of 时点的 sharp 参考概率与取法身份（pinnacle 主锚优先）。
+
+    身份串含共识书集（排序拼接）——双端按书集精确判等同法，避免同数
+    不同书误判（评审修正）。
+    """
+    books = books_complete_asof(
+        conn, fixture_id, as_of, max_age_seconds=max_age_seconds
+    )
+    anchor = books.get(SHARP_ANCHOR_SOURCE)
+    if anchor is not None:
+        probs = dict(
+            zip(
+                SELECTIONS,
+                om.shin_implied(tuple(anchor[s] for s in SELECTIONS)),
+                strict=True,
+            )
+        )
+        return probs, "pinnacle"
+    consensus = _probs_from_books(books)
+    if consensus is not None:
+        return consensus, f"eu_consensus[{','.join(sorted(books))}]"
+    return None
+
+
+def stale_line_signal(
+    conn: sqlite3.Connection, fixture_id: int, *, as_of: str
+) -> StaleLineSignal | None:
+    """
+    陈盘信号（票 48）：距竞彩上次调盘的时长 + sharp 参考自定格起的漂移。
+
+    无竞彩 had 快照 → None（无信号可言）。纯读 odds_snapshots（SQL 归
+    本包），同 as_of 重算恒同值（重放确定性，验收项）。
+    """
+    # observed_at 门槛（评审修正）：本机未看到的调盘不进 as-of 决策（重放
+    # 语义）；旧行无 observed_at 时按 captured_at 解释（源调盘时间，票 35 口径）
+    jc_rows = conn.execute(
+        """
+        SELECT captured_at FROM odds_snapshots
+        WHERE fixture_id = ? AND market_code = 'had' AND source = 'sporttery'
+          AND COALESCE(observed_at, captured_at) <= ?
+        ORDER BY captured_at DESC, id DESC LIMIT 1
+        """,
+        (fixture_id, as_of),
+    ).fetchall()
+    if not jc_rows:
+        return None
+    jc_last_move = str(jc_rows[0]["captured_at"])
+    signal = StaleLineSignal(
+        as_of=as_of,
+        jc_last_move=jc_last_move,
+        minutes_since_move=max(0, int(_seconds_between(as_of, jc_last_move) // 60)),
+    )
+    frozen = _sharp_probs_asof(
+        conn,
+        fixture_id,
+        jc_last_move,
+        max_age_seconds=SHARP_FREEZE_MAX_AGE_SECONDS,
+    )
+    current = _sharp_probs_asof(conn, fixture_id, as_of)
+    if frozen is None or current is None or frozen[1] != current[1]:
+        # 双端取法不一致（主锚中途出现/消失）→ 漂移不可比，只报时长
+        return signal
+    p0, p1 = frozen[0], current[0]
+    selection = max(SELECTIONS, key=lambda s: abs(p1[s] - p0[s]))
+    return replace(
+        signal,
+        drift=round(p1[selection] - p0[selection], 4),
+        drift_selection=selection,
+        sharp_ref=current[1],
+    )

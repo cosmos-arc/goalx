@@ -343,3 +343,12 @@ test("poolList-derived single fixture enters the combo picks instead of being ex
 	expect(within(card).queryByText("仅串关")).not.toBeInTheDocument();
 	expect(screen.getByTestId("market-pick-6-h")).toBeEnabled();
 });
+
+test("stale line read-only field renders per fixture (票 48)", async () => {
+	await renderAt("/markets/had");
+	const field = await screen.findByTestId("stale-line-1");
+	expect(field).toHaveTextContent("上次调盘 8 分钟 前");
+	expect(field).toHaveTextContent("sharp 参考 客胜 +8.1%（主锚）");
+	// 只读信号：无交互元素、不参与流程
+	expect(field.querySelector("button")).toBeNull();
+});

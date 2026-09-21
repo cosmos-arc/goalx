@@ -5198,6 +5198,63 @@
         "title": "StakeTier",
         "description": "建议档位（前端按档位渲染理由）。"
       },
+      "StaleLineView": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "jc_last_move": {
+            "type": "string",
+            "title": "Jc Last Move"
+          },
+          "minutes_since_move": {
+            "type": "integer",
+            "title": "Minutes Since Move"
+          },
+          "drift": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift"
+          },
+          "drift_selection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Selection"
+          },
+          "sharp_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharp Ref"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "jc_last_move",
+          "minutes_since_move"
+        ],
+        "title": "StaleLineView",
+        "description": "陈盘信号（票 48 纯派生只读）：距上次调盘时长 + sharp 参考漂移。"
+      },
       "StatusResponse": {
         "properties": {
           "app_name": {
@@ -5403,6 +5460,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/HadQuoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale_line": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StaleLineView"
               },
               {
                 "type": "null"

@@ -38,6 +38,17 @@ class HadQuoteStatus(BaseModel):
     eu_books: int = 0
 
 
+class StaleLineView(BaseModel):
+    """陈盘信号（票 48 纯派生只读）：距上次调盘时长 + sharp 参考漂移。"""
+
+    as_of: str
+    jc_last_move: str
+    minutes_since_move: int
+    drift: float | None = None
+    drift_selection: str | None = None
+    sharp_ref: str | None = None
+
+
 class TodayFixtureView(BaseModel):
     """场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。"""
 
@@ -58,6 +69,7 @@ class TodayFixtureView(BaseModel):
     ev: SelectionTriple | None = None
     flags: list[str] = Field(default_factory=list)
     had_quote: HadQuoteStatus | None = None
+    stale_line: StaleLineView | None = None
 
 
 def business_dates_from(start: str, days: int) -> list[str]:
@@ -104,6 +116,16 @@ def build_today_view(
             jc_odds=jc_odds,
             jc_updated_at=max((at for _, at in jc.values()), default=None),
         )
+        signal = quote_evidence.stale_line_signal(conn, fixture_id, as_of=moment)
+        if signal is not None:
+            view.stale_line = StaleLineView(
+                as_of=signal.as_of,
+                jc_last_move=signal.jc_last_move,
+                minutes_since_move=signal.minutes_since_move,
+                drift=signal.drift,
+                drift_selection=signal.drift_selection,
+                sharp_ref=signal.sharp_ref,
+            )
         verdict = quote_evidence.adjudicate_had_quote(conn, fixture_id, moment)
         view.had_quote = HadQuoteStatus(
             as_of=moment,

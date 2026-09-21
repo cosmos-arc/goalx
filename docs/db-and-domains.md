@@ -10,10 +10,10 @@
 
 | 节 | 内容 |
 | --- | --- |
-| [1. 表速览](#t1) | 45 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
+| [1. 表速览](#t1) | 44 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
 | [2. 硬不变量](#t2) | append-only 触发器 / 防前视红线 / 事实源层级等全局铁律 |
 | [3. 表间关系（ER）](#t3) | 主键与外键边总览（Mermaid） |
-| [4. 全列明细](#t4) | 按域分组的生成块（teams → ev_assessments） |
+| [4. 全列明细](#t4) | 按域分组的生成块（44 表） |
 
 <a id="t1"></a>
 ## 1. 表速览
@@ -82,9 +82,12 @@
 | 表 | 用途 | 关键口径 | 生命周期 |
 | --- | --- | --- | --- |
 | `markets` / `selections` | 玩法与选项字典 | migrations 播种，业务表 FK 引用；无归属包写 | 种子 |
-| `ev_assessments` | 票 03 预留脚手架 | 无业务代码写入；EV 实际口径在视图与 betting 包函数 | — |
 
-无表实体（口径约定，不落库）：MarketGroup、MatchIntel（票 09 废弃，由 IntelObservation 承接）、EvidenceSummary（视图态）、DecisionKey（betting 包函数口径）、ClosingLine（odds_snapshots.purpose='closing' 切片）。
+`ev_assessments`（票 03 预留脚手架，自建库起无写入方）已 DROP（票 48
+migration v16）——陈盘信号等派生读模型不落表，append-only 原料 +
+as-of 纯函数重放即决策存证；EVAssessment 口径在视图与 betting 包函数。
+
+无表实体（口径约定，不落库）：MarketGroup、MatchIntel（票 09 废弃，由 IntelObservation 承接）、EvidenceSummary（视图态）、DecisionKey（betting 包函数口径）、ClosingLine（odds_snapshots.purpose='closing' 切片）、StaleLineSignal（票 48 as-of 纯派生，不落表）。
 
 <a id="t2"></a>
 ## 2. 硬不变量
@@ -158,9 +161,6 @@ erDiagram
         INTEGER id PK
     }
     draw_sync_runs {
-        INTEGER id PK
-    }
-    ev_assessments {
         INTEGER id PK
     }
     fixtures {
@@ -261,8 +261,6 @@ erDiagram
     divergences }|--|| fixtures : fixture_id
     draw_result_revisions }|--|| fixtures : fixture_id
     draw_results }|--|| fixtures : fixture_id
-    ev_assessments }o--|| pool_periods : pool_period_id
-    ev_assessments }o--|| fixtures : fixture_id
     fixtures }|--|| teams : away_team_id
     fixtures }|--|| teams : home_team_id
     fixtures }|--|| competitions : competition_id
@@ -1068,20 +1066,3 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`market_code`, `code`)`
 <!-- schema-doc:END:table:selections -->
-<!-- schema-doc:BEGIN:table:ev_assessments -->
-#### `ev_assessments`
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `id` | INTEGER | PK |
-| `fixture_id` | INTEGER | FK→fixtures.id |
-| `pool_period_id` | INTEGER | FK→pool_periods.id |
-| `market_code` | TEXT | NOT NULL |
-| `selection_code` | TEXT | NOT NULL |
-| `ev` | REAL | NOT NULL |
-| `ci_low` | REAL | — |
-| `ci_high` | REAL | — |
-| `cost_adjusted_ev` | REAL | — |
-| `kelly_fraction` | REAL | — |
-| `created_at` | TEXT | NOT NULL |
-<!-- schema-doc:END:table:ev_assessments -->
