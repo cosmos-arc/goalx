@@ -1,6 +1,6 @@
 # 08 GLM 基座（客户端+记账+熔断）
 
-Status: ready-for-agent
+Status: resolved（2026-09-19/20 合入 main，PR #32-38）
 Blocked by: （无）
 
 ## 目标

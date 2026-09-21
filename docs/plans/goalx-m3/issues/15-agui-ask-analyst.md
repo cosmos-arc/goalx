@@ -1,7 +1,19 @@
 # 15 AG-UI 追问 analyst（流式交互面）
 
-Status: ready-for-agent
+Status: resolved（合入 main 28c1b95，PR #41）
 Blocked by: 08, 14
+
+## 交付（2026-09-20）
+
+- 后端 `POST /api/v1/fixtures/{id}/ask`：请求体 = AG-UI RunAgentInput
+  （协议 schema 归 ag-ui-protocol 1.0，不嵌入 OpenAPI——Redocly 过），
+  响应 = AG-UI 1.0 事件 SSE；openai-agents Runner 流式调 GLM；
+  resolve_ask_model 熔断档位（ASK 用途 80% 档不放行）
+- 无情报场次不调模型，诚实降级话术（零成本）；RUN_ERROR 收尾；
+  usage 记 cost_ledger（ask 标签）
+- 前端 A 案：useChat + @ag-ui/client transport（agui-transport.ts）；
+  追问面板挂证据链：流式逐字+引用徽章+弱点声明
+- 流式 e2e（Playwright mock SSE 完整序列）+ 后端事件序列/降级/记账单测
 
 ## 目标
 

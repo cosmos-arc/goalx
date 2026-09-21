@@ -1,6 +1,6 @@
 # 12 LEAP 三项层融合 + ADR-0009
 
-Status: ready-for-agent
+Status: resolved（2026-09-19/20 合入 main，PR #32-38）
 Blocked by: 10
 
 ## 目标

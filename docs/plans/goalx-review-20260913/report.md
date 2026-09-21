@@ -1,7 +1,6 @@
 # Goalx 目标、研究、设计与实现审视
 
 审视日期：2026-09-13。代码基线：`8cf231fac3814c59ce61923ecf524f2a191e1c3b`，main。
-（注：文中 `文件:行号` 引用按该基线定位；PR #9 领域包重构后 services.py、store/results.py、clv.py、forecast.py、backtest.py、haircut.py、evaluation.py、dc_model.py、ingest/oddsapi.py 等已移入对应领域包，旧链接不随之改写。）
 
 后续状态：用户已要求按五票方案更新计划，现行入口为[Spec v1.1](../goalx-quant/spec.md)。以下保留审视当时的事实与建议，代码修复和真实验收尚待实施。
 
@@ -73,45 +72,45 @@
 
 ### 1. 无效场次规则从文档传播到代码和测试
 
-[Settlement](../../../apps/backend/src/goalx_backend/settlement.py#L231) 在串关剩余不足两腿时整单退款。官方说明是无效腿按 1 计奖，并不意味着剩余一腿自动退款；另一腿仍应按原赔率及结果处理。[广东体彩官方说明](https://www.gdlottery.cn/html/ticaidongtai/20240108/89644.html)
+[Settlement](../../../apps/backend/src/goalx_backend/settlement.py:231) 在串关剩余不足两腿时整单退款。官方说明是无效腿按 1 计奖，并不意味着剩余一腿自动退款；另一腿仍应按原赔率及结果处理。[广东体彩官方说明](https://www.gdlottery.cn/html/ticaidongtai/20240108/89644.html)
 
 例如两腿中一腿无效，另一腿输：当前规则退款，会把应亏损的票记成不亏。另一腿赢且赔率为 2：当前只退本金，会少算奖金。应一起更正文档、引擎和测试，不能只修实现后留下错误需求。现有测试通过恰好说明测试固化了同一错误。
 
 ### 2. 购买与资金生命周期不一致（已独立复现）
 
-- [未购 live 也兑付](../../../apps/backend/src/goalx_backend/services.py:220)：批跑扫描全部 open 注，兑付仅判断 mode。未购 10 元、赔率 2 的建议命中，Bankroll 增加 20 元。
-- [重复回录重复扣款](../../../apps/backend/src/goalx_backend/services.py:141)：同一 10 元注回录两次，创建两票、扣款 20 元；关联也被覆盖。应拒绝重复 ID、已购/已结状态，保障事务与幂等。
-- [结果修正与结算脱节](../../../apps/backend/src/goalx_backend/store/results.py:14)：DrawResult 可以覆盖，已结注不重跑；将赢改输后仍保留原兑付。最小修复是更正审计、受影响记录与差额冲正，不需要完整事件溯源平台。
+- [未购 live 也兑付](../../apps/backend/src/goalx_backend/services.py:220)：批跑扫描全部 open 注，兑付仅判断 mode。未购 10 元、赔率 2 的建议命中，Bankroll 增加 20 元。
+- [重复回录重复扣款](../../apps/backend/src/goalx_backend/services.py:141)：同一 10 元注回录两次，创建两票、扣款 20 元；关联也被覆盖。应拒绝重复 ID、已购/已结状态，保障事务与幂等。
+- [结果修正与结算脱节](../../apps/backend/src/goalx_backend/store/results.py:14)：DrawResult 可以覆盖，已结注不重跑；将赢改输后仍保留原兑付。最小修复是更正审计、受影响记录与差额冲正，不需要完整事件溯源平台。
 
 未购建议可以单独计算反事实结果，但不能进入 live 资金或正式购买样本。paper/live 共用算法不等于合并账本。
 
 ### 3. 验证页把未知当通过
 
-[验证进度](../../../apps/backend/src/goalx_backend/api/validation.py#L207) 将“复核无记录”设 `achieved=True`；skill 来自最新历史回测；没有整赛季条件。因此三项绿灯的语义不等于既定纸面通过条件。
+[验证进度](../../../apps/backend/src/goalx_backend/api/validation.py:207) 将“复核无记录”设 `achieved=True`；skill 来自最新历史回测；没有整赛季条件。因此三项绿灯的语义不等于既定纸面通过条件。
 
 应显示“未评估”，区分回测与前瞻样本，固定模型/策略版本、起止区间和纳入标准。即使暂时没有任何真钱放行按钮，看板错误也会误导判断。
 
 ### 4. CLV 的样本单位、来源与时点不一致
 
-[CLV](../../../apps/backend/src/goalx_backend/clv.py:101) 每腿记一行，验证页把行数叫“注”；100 张2串1可能计成200。paper/live/未购建议不分组，同场重复出现不是独立证据。
+[CLV](../../apps/backend/src/goalx_backend/clv.py:101) 每腿记一行，验证页把行数叫“注”；100 张2串1可能计成200。paper/live/未购建议不分组，同场重复出现不是独立证据。
 
-[收盘窗口](../../../apps/backend/src/goalx_backend/clv.py:26) 允许开赛后30分钟，可能纳入赛中信息。正常抓取路径筛尚未开球场次，当前库也无 closing 记录，不能声称已经发生污染；但有效性校验必须拒绝赛后报价。
+[收盘窗口](../../apps/backend/src/goalx_backend/clv.py:26) 允许开赛后30分钟，可能纳入赛中信息。正常抓取路径筛尚未开球场次，当前库也无 closing 记录，不能声称已经发生污染；但有效性校验必须拒绝赛后报价。
 
 实际使用的是多 book 共识，不是 spec 的 Pinnacle 优先，也尚无历史 PSC 补漏。建议明确一种有质量标签的基准，记录报价时间、抓取时间、缺失率；分列票数、腿数、场次数，按实际策略聚合。beat rate 单独不衡量正负幅度、成本或有效独立样本，保留作诊断而非充分证明。
 
 ### 5. Forecast 哈希未替代赛前约束
 
-[日常预测](../../../apps/backend/src/goalx_backend/forecast.py:159) 可对过去业务日加载最新模型生成，没有检查训练窗早于目标比赛，也未拒绝赛后生成。issued_at 保存当前时间是对的；仍需把正式赛前预测和赛后 replay 分开。此处是确定缺失的约束，不是已证实16条预测污染。
+[日常预测](../../apps/backend/src/goalx_backend/forecast.py:159) 可对过去业务日加载最新模型生成，没有检查训练窗早于目标比赛，也未拒绝赛后生成。issued_at 保存当前时间是对的；仍需把正式赛前预测和赛后 replay 分开。此处是确定缺失的约束，不是已证实16条预测污染。
 
 ### 6. Web 纸面闭环缺第一步
 
-今日页没有选注/建建议入口；投注页只能勾选已存在的建议。[createBet API 包装](../../../apps/web/src/api/goalx.ts#L58) 没有页面调用。回录不能填写实际赔率/金额差异；开奖表单仅全场比分，固定 `void:false`，没有半场输入。
+今日页没有选注/建建议入口；投注页只能勾选已存在的建议。[createBet API 包装](../../../apps/web/src/api/goalx.ts:58) 没有页面调用。回录不能填写实际赔率/金额差异；开奖表单仅全场比分，固定 `void:false`，没有半场输入。
 
-因此“Web 全流程可用”过强。最小补齐是用队名/销售编号完成一个 had 纸面路径；未开放玩法明确限制。无需先建完六页。[E2E](../../../apps/web/e2e/smoke.spec.ts#L1) 目前只验证导航、a11y和降级，应增加真实API隔离数据的完整用户路径。
+因此“Web 全流程可用”过强。最小补齐是用队名/销售编号完成一个 had 纸面路径；未开放玩法明确限制。无需先建完六页。[E2E](../../../apps/web/e2e/smoke.spec.ts:1) 目前只验证导航、a11y和降级，应增加真实API隔离数据的完整用户路径。
 
 ### 7. 奖池只有结构与部分判定，未形成奖金结算产品
 
-[池票结算](../../../apps/backend/src/goalx_backend/services.py:231) 组合判定后金额为0；池票 live 未形成完整扣款/兑付，票汇总未纳入组合，14场奖级等也未覆盖。把它称为原型或待实现即可。暂不为保持“全玩法”口号补齐所有玩法。
+[池票结算](../../apps/backend/src/goalx_backend/services.py:231) 组合判定后金额为0；池票 live 未形成完整扣款/兑付，票汇总未纳入组合，14场奖级等也未覆盖。把它称为原型或待实现即可。暂不为保持“全玩法”口号补齐所有玩法。
 
 ## 数据与回测：结论须降到证据支持的范围
 
@@ -119,23 +118,23 @@
 
 football-data 官方公告：自 **2025-07-23** 起 Pinnacle 公共API导致开盘和收盘数据系统性陈旧，已从其市场均值/最大值计算中排除。[官方数据说明](https://football-data.co.uk/data.php)
 
-当前 [fair_probs_from_close](../../../apps/backend/src/goalx_backend/backtest.py:125) 只要 PSC 存在就优先使用，没有日期/质量判定。本库5,238条预测中1,747条在警告日期后，其中893条使用PSC，854条使用AvgC；893条是需重点复核的范围，不代表逐条已确认错误。需按日期与来源拆分、做替代基准敏感性分析，再引用“显著劣于sharp收盘”的精确结论。此建议要求重开 ADR 0007 的来源有效性约定。
+当前 [fair_probs_from_close](../../apps/backend/src/goalx_backend/backtest.py:125) 只要 PSC 存在就优先使用，没有日期/质量判定。本库5,238条预测中1,747条在警告日期后，其中893条使用PSC，854条使用AvgC；893条是需重点复核的范围，不代表逐条已确认错误。需按日期与来源拆分、做替代基准敏感性分析，再引用“显著劣于sharp收盘”的精确结论。此建议要求重开 ADR 0007 的来源有效性约定。
 
 ### 合成价实验不是陈盘策略回测
 
-[模拟价](../../../apps/backend/src/goalx_backend/backtest.py:136) 实际公式是 `O_sim=(1-h)/p_market`。spec/ADR把概率写成“价×haircut”，单位混淆，应明确概率、十进制赔率、折价比例。
+[模拟价](../../apps/backend/src/goalx_backend/backtest.py:136) 实际公式是 `O_sim=(1-h)/p_market`。spec/ADR把概率写成“价×haircut”，单位混淆，应明确概率、十进制赔率、折价比例。
 
-[周内串关](../../../apps/backend/src/goalx_backend/backtest.py:404) 看整周最终收盘衍生 EV 再挑两场，没有两场共同可下单时点；单关也无真实单固资格。训练无前视不等于候选选择可执行。保留该实验作为模型相对市场及折价敏感性基线，不用它证明 A 方向有效或无效。
+[周内串关](../../apps/backend/src/goalx_backend/backtest.py:404) 看整周最终收盘衍生 EV 再挑两场，没有两场共同可下单时点；单关也无真实单固资格。训练无前视不等于候选选择可执行。保留该实验作为模型相对市场及折价敏感性基线，不用它证明 A 方向有效或无效。
 
 还没有动态资金、未结占用及纪律约束，不应把它展示为既定真钱资金曲线。当前负值支持“这份实验没有证明盈利”，不支持“陈盘机会已证伪”。
 
 ### 校准与统计的小修，优先于新模型
 
-- [haircut](../../../apps/backend/src/goalx_backend/haircut.py:46) 独立取最新竞彩与欧赔，时间字段随后丢弃，没有最大时间差；会把市场移动与机构折价混在一起。三选择样本也不是三场独立比赛。
-- [玩法汇总](../../../apps/backend/src/goalx_backend/evaluation.py:263) 每腿重复加入同一串关。主库 overall=4,154注，had=4,675注，恰好多521张2串1；应按每注唯一玩法去重。
-- [显著性检验](../../../apps/backend/src/goalx_backend/evaluation.py:95) 的方差写法与标称 Newey-West 不一致，取样没有稳定时间顺序，同周/同场相关性也未充分处理。先报告差值、样本与分期结果；p值标探索性。需要时再做按周分块检验，不必堆更多统计量。
+- [haircut](../../apps/backend/src/goalx_backend/haircut.py:46) 独立取最新竞彩与欧赔，时间字段随后丢弃，没有最大时间差；会把市场移动与机构折价混在一起。三选择样本也不是三场独立比赛。
+- [玩法汇总](../../apps/backend/src/goalx_backend/evaluation.py:263) 每腿重复加入同一串关。主库 overall=4,154注，had=4,675注，恰好多521张2串1；应按每注唯一玩法去重。
+- [显著性检验](../../apps/backend/src/goalx_backend/evaluation.py:95) 的方差写法与标称 Newey-West 不一致，取样没有稳定时间顺序，同周/同场相关性也未充分处理。先报告差值、样本与分期结果；p值标探索性。需要时再做按周分块检验，不必堆更多统计量。
 - README 的“flat ROI −25.3%”实际上接近投入加权 ROI；按每注收益率均值计算 flat ROI 约−25.19%。明确两者即可。
-- [模型工件身份](../../../apps/backend/src/goalx_backend/dc_model.py:212) 只用数据指纹命名，同数据不同配置可覆盖旧文件；版本应包含参数/配置。Forecast已保存矩阵，因此不是预测立即丢失。
+- [模型工件身份](../../apps/backend/src/goalx_backend/dc_model.py:212) 只用数据指纹命名，同数据不同配置可覆盖旧文件；版本应包含参数/配置。Forecast已保存矩阵，因此不是预测立即丢失。
 - bootstrap 区间不等于实证校准的预测不确定性，更不自动进入稳健Kelly；先补名义水平与覆盖证据，不应宣传“样本薄就自然安全”。
 
 ## 研究与决策：保留方向，撤下无证据的精确数字
@@ -158,7 +157,7 @@ football-data 官方公告：自 **2025-07-23** 起 Pinnacle 公共API导致开�
 
 按当前配置月480 credits，平均30天只有16/day；README设想40/day，持续运行约12天即耗尽月额，且常规采集与收盘采集共用预算。提高日限额不能解决月限额。优先按实际在售目标赛事与有效窗口采样，再判断是否升级数据。
 
-[采集代码](../../../apps/backend/src/goalx_backend/ingest/oddsapi.py#L245) 只在整轮开始检查一次预算，整轮后统一记账。临近限额仍可跨越；中途失败时先前成功请求的消耗可能未记。每次请求前预估、返回后按实际用量记账即可，不需要独立配额服务。当前解析只支持h2h，不要因参数支持totals就付费请求后丢弃数据。
+[采集代码](../../apps/backend/src/goalx_backend/ingest/oddsapi.py:245) 只在整轮开始检查一次预算，整轮后统一记账。临近限额仍可跨越；中途失败时先前成功请求的消耗可能未记。每次请求前预估、返回后按实际用量记账即可，不需要独立配额服务。当前解析只支持h2h，不要因参数支持totals就付费请求后丢弃数据。
 
 [持续采集票](../goalx-quant/issues/19-m1-jingcai-ingest.md) 已关闭但明确“三天连续运行待部署”。应将代码完成与运维验收分开，补运行证据，不必重做复杂项目管理体系。
 

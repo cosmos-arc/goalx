@@ -19,6 +19,7 @@ Label: wayfinder:map
   - **前后端交互基础 = Vercel AI SDK（TS）+ AG-UI 协议**——用户先定 ai-sdk（useChat/AI Elements），二次调研（用户推动）后补定 **AG-UI** 为前后端交互协议：后端 `ag-ui-protocol` v1.0.0（开放 1.0 规格，FastAPI 原生，≥3.13 兼容），前端默认 useChat+自定义 transport 包 `@ag-ui/client`（备选 assistant-ui 适配器），最终形态票 06 原型 A/B。不引入 Node BFF（用户明确）。
   - 推论：证据卡本身是**存量工件渲染**（DB 数据，不涉协议层）；AG-UI 只服务**增量交互场景**（如详情页"追问 analyst"）。
 - **2026-09-19 用户裁决（票 03 开场项，聊天内闭环）**：**基本面免费起步（选项 B）**——内部推导（fdhist 2627 在库）+ football-data.org 免费档 12 项 + 伤停/阵容情报双路（**目标站点直爬**复用 ingester+observations 存证模式 + GLM web_search 兜底）；API-Football Pro $19/月 留作情报价值证明后的升级项。
+- **2026-09-19 裁决追加（伤停路径终局）**：web-search 路线用户否决；直爬四层验证不可行（票 09 Comments 1-4）。伤停情报面降级"有则更好"：现有情报面（fdhist 推导+fdorg）支撑双线开工，重点场次 AI 代采（端点挂票 14），充值前置取消。
 - 既有结论直接复用，勿重调研：
   - 票 05（旧图）：LLM 直接出概率无 +EV 证据 → 定位情报提炼/复核层；scout/gate/analyst 拓扑；LEAP log-pool 融合。
   - 票 09（旧图）：框架 openai-agents（ADR 0004）、JS 散度路由阈值 0.02/0.06、复核只进评测集。
@@ -42,7 +43,7 @@ Label: wayfinder:map
 
 ## M3 拆票（2026-09-19，用户确认粒度与顺序）
 
-- 实施票 08-15 已发布于 [issues/](issues/)，全部 ready-for-agent：08 GLM 基座 / 09 情报与基本面采集 / 10 scout / 11 gate+analyst / 12 LEAP+ADR-0009 / 13 评测协议落库 / 14 API+存量 UI / 15 AG-UI 追问。
+- 实施票 08-15 已发布于 [issues/](issues)，全部 ready-for-agent：08 GLM 基座 / 09 情报与基本面采集 / 10 scout / 11 gate+analyst / 12 LEAP+ADR-0009 / 13 评测协议落库 / 14 API+存量 UI / 15 AG-UI 追问。
 - 依赖链：08+09 并行起步 → 10 → 11/12 并行 → 13/14 → 15。
 - 实施期纪律：新 deployments 合入 main 后重启 serve（票 37 不受扰）；spec/地图/ADR-0009 转正随票 08 的 PR。
 - [01 基本面与情报源调研对比](issues/01-fundamentals-and-intel-sources.md)：实测发现 API-Football 免费档 season gate 锁 2022-2024、当季不可得；推荐主力 = API-Football Pro $19/月 + open-meteo + 源B/源D 复用，Understat/中文舆情不进管道（scout 用 GLM web-search 替代）；**付费与否待票 03 开场裁决**。
