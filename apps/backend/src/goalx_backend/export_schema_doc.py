@@ -98,9 +98,14 @@ def render_table_block(conn: sqlite3.Connection, table: str) -> str:
 
 
 def render_er_block(conn: sqlite3.Connection) -> str:
-    """总 ER 图（Mermaid erDiagram）：实体+主键、FK 边（可空 FK 用零或多）。"""
+    """
+    总 ER 图（Mermaid erDiagram）：实体+主键、FK 边（可空 FK 用零或多）。
+
+    生成体含 ```mermaid 围栏——GitHub 只渲染围栏内的 Mermaid，裸
+    erDiagram 文本按段落显示（2026-09-21 发现自 PR #45 建档起即坏）。
+    """
     tables = _tables(conn)
-    lines = ["erDiagram"]
+    lines = ["```mermaid", "erDiagram"]
     for table in tables:
         pk = next((str(c[1]) for c in _columns(conn, table) if c[5]), None)
         pk_type = next(
@@ -115,6 +120,7 @@ def render_er_block(conn: sqlite3.Connection) -> str:
         for col, ref in _fks(conn, table).items():
             card = "}o" if cols.get(col) else "}|o"
             lines.append(f"    {table} {card}--|| {ref.split('.')[0]} : {col}")
+    lines.append("```")
     return "\n".join(lines) + "\n"
 
 

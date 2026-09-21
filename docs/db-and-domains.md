@@ -55,6 +55,7 @@
 只画主键与外键边；全列细节见下文各表。可空 FK 用 `}|o`（零或多），非空 `}o`（一或多）。
 
 <!-- schema-doc:BEGIN:er -->
+```mermaid
 erDiagram
     backtest_bets {
         INTEGER id PK
@@ -239,6 +240,7 @@ erDiagram
     team_aliases }o--|| teams : team_id
     understat_matches }|o--|| fixtures : fixture_id
     uniform_result_observations }|o--|| fixtures : fixture_id
+```
 <!-- schema-doc:END:er -->
 
 ## data 域（fixtures / results / pool / ingest 支撑）
