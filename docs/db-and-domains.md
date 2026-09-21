@@ -52,7 +52,7 @@
 
 ## 表间关系总览（ER）
 
-只画主键与外键边；全列细节见下文各表。可空 FK 用 `}|o`（零或多），非空 `}o`（一或多）。
+只画主键与外键边；全列细节见下文各表。可空 FK 用 `}o`（零或多），非空 `}|`（一或多）。
 
 <!-- schema-doc:BEGIN:er -->
 ```mermaid
@@ -192,54 +192,54 @@ erDiagram
     uniform_result_observations {
         INTEGER id PK
     }
-    backtest_bets }o--|| backtest_runs : run_id
-    backtest_metrics }o--|| backtest_runs : run_id
-    backtest_predictions }o--|| hist_matches : hist_match_id
-    backtest_predictions }o--|| backtest_runs : run_id
-    bankroll_events }|o--|| bet_slips : slip_id
-    bankroll_events }|o--|| bets : bet_id
-    bet_legs }o--|| selections : market_code
-    bet_legs }o--|| selections : selection_code
-    bet_legs }|o--|| odds_snapshots : snapshot_id
-    bet_legs }o--|| fixtures : fixture_id
-    bet_legs }o--|| bets : bet_id
-    bet_slips }|o--|| pool_periods : pool_period_id
-    bets }|o--|| bet_slips : slip_id
-    blind_reviews }o--|| fixtures : fixture_id
-    clv_records }o--|| fixtures : fixture_id
-    clv_records }o--|| bets : bet_id
-    combinations }o--|| bet_slips : slip_id
-    divergences }o--|| fixtures : fixture_id
-    draw_result_revisions }o--|| fixtures : fixture_id
-    draw_results }o--|| fixtures : fixture_id
-    ev_assessments }|o--|| pool_periods : pool_period_id
-    ev_assessments }|o--|| fixtures : fixture_id
-    fixtures }o--|| teams : away_team_id
-    fixtures }o--|| teams : home_team_id
-    fixtures }o--|| competitions : competition_id
-    forecasts }o--|| fixtures : fixture_id
-    intel_observations }o--|| fixtures : fixture_id
-    match_codes }o--|| fixtures : fixture_id
-    odds_snapshots }o--|| selections : market_code
-    odds_snapshots }o--|| selections : selection_code
-    odds_snapshots }|o--|| quote_observations : observation_id
-    odds_snapshots }o--|| fixtures : fixture_id
-    pool_matches }o--|| pool_periods : pool_period_id
-    pool_periods }o--|| markets : market_code
-    pool_picks }|o--|| fixtures : fixture_id
-    pool_picks }o--|| bet_slips : slip_id
-    pool_states }|o--|| pool_periods : pool_period_id
-    public_shares }o--|| pool_periods : pool_period_id
-    review_items }o--|| fixtures : fixture_id
-    sale_statuses }|o--|| quote_observations : observation_id
-    sale_statuses }o--|| fixtures : fixture_id
-    selections }o--|| markets : market_code
-    settlement_revisions }o--|| settlements : settlement_id
-    settlements }|o--|| bet_slips : slip_id
-    settlements }|o--|| bets : bet_id
-    team_aliases }o--|| teams : team_id
-    understat_matches }|o--|| fixtures : fixture_id
-    uniform_result_observations }|o--|| fixtures : fixture_id
+    backtest_bets }|--|| backtest_runs : run_id
+    backtest_metrics }|--|| backtest_runs : run_id
+    backtest_predictions }|--|| hist_matches : hist_match_id
+    backtest_predictions }|--|| backtest_runs : run_id
+    bankroll_events }o--|| bet_slips : slip_id
+    bankroll_events }o--|| bets : bet_id
+    bet_legs }|--|| selections : market_code
+    bet_legs }|--|| selections : selection_code
+    bet_legs }o--|| odds_snapshots : snapshot_id
+    bet_legs }|--|| fixtures : fixture_id
+    bet_legs }|--|| bets : bet_id
+    bet_slips }o--|| pool_periods : pool_period_id
+    bets }o--|| bet_slips : slip_id
+    blind_reviews }|--|| fixtures : fixture_id
+    clv_records }|--|| fixtures : fixture_id
+    clv_records }|--|| bets : bet_id
+    combinations }|--|| bet_slips : slip_id
+    divergences }|--|| fixtures : fixture_id
+    draw_result_revisions }|--|| fixtures : fixture_id
+    draw_results }|--|| fixtures : fixture_id
+    ev_assessments }o--|| pool_periods : pool_period_id
+    ev_assessments }o--|| fixtures : fixture_id
+    fixtures }|--|| teams : away_team_id
+    fixtures }|--|| teams : home_team_id
+    fixtures }|--|| competitions : competition_id
+    forecasts }|--|| fixtures : fixture_id
+    intel_observations }|--|| fixtures : fixture_id
+    match_codes }|--|| fixtures : fixture_id
+    odds_snapshots }|--|| selections : market_code
+    odds_snapshots }|--|| selections : selection_code
+    odds_snapshots }o--|| quote_observations : observation_id
+    odds_snapshots }|--|| fixtures : fixture_id
+    pool_matches }|--|| pool_periods : pool_period_id
+    pool_periods }|--|| markets : market_code
+    pool_picks }o--|| fixtures : fixture_id
+    pool_picks }|--|| bet_slips : slip_id
+    pool_states }o--|| pool_periods : pool_period_id
+    public_shares }|--|| pool_periods : pool_period_id
+    review_items }|--|| fixtures : fixture_id
+    sale_statuses }o--|| quote_observations : observation_id
+    sale_statuses }|--|| fixtures : fixture_id
+    selections }|--|| markets : market_code
+    settlement_revisions }|--|| settlements : settlement_id
+    settlements }o--|| bet_slips : slip_id
+    settlements }o--|| bets : bet_id
+    team_aliases }|--|| teams : team_id
+    understat_matches }o--|| fixtures : fixture_id
+    uniform_result_observations }o--|| fixtures : fixture_id
 ```
 <!-- schema-doc:END:er -->
 
