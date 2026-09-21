@@ -1,0 +1,91 @@
+Refreshing checks status every 15 seconds. Press Ctrl+C to quit.
+
+Backend format and lint	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+Backend types	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+OpenAPI contract gate	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+Security and supply chain / CodeQL (actions)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / CodeQL (javascript-typescript)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Web e2e and a11y smoke	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+Web production build	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Backend tests and coverage	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Refreshing checks status every 15 seconds. Press Ctrl+C to quit.
+
+Backend tests and coverage	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Security and supply chain / CodeQL (actions)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / CodeQL (javascript-typescript)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Web e2e and a11y smoke	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+OpenAPI contract gate	pass	31s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+CodeQL	skipping	4s	https://github.com/cosmos-arc/goalx/runs/103667717002
+Backend format and lint	pass	21s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+Backend types	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Web production build	pass	29s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
+Refreshing checks status every 15 seconds. Press Ctrl+C to quit.
+
+Backend tests and coverage	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Security and supply chain / CodeQL (javascript-typescript)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Web e2e and a11y smoke	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+Backend format and lint	pass	21s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+OpenAPI contract gate	pass	31s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+CodeQL	skipping	4s	https://github.com/cosmos-arc/goalx/runs/103667717002
+Backend types	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+Security and supply chain / CodeQL (actions)	pass	34s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Web production build	pass	29s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
+Refreshing checks status every 15 seconds. Press Ctrl+C to quit.
+
+Backend format and lint	pass	21s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+Backend tests and coverage	pass	53s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Backend types	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+CodeQL	pass	4s	https://github.com/cosmos-arc/goalx/runs/103667717002
+OpenAPI contract gate	pass	31s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+Security and supply chain / CodeQL (actions)	pass	34s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / CodeQL (javascript-typescript)	pass	55s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pass	49s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Security and supply chain / Security gate	pass	4s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667771217
+Web e2e and a11y smoke	pass	57s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+CI gate	pending	0	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667782453
+Web production build	pass	29s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
+Backend format and lint	pass	21s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+Backend tests and coverage	pass	53s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Backend types	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+CI gate	pass	4s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667782453
+CodeQL	pass	4s	https://github.com/cosmos-arc/goalx/runs/103667717002
+OpenAPI contract gate	pass	31s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+Security and supply chain / CodeQL (actions)	pass	34s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / CodeQL (javascript-typescript)	pass	55s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pass	49s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Security and supply chain / Security gate	pass	4s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667771217
+Web e2e and a11y smoke	pass	57s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+Web production build	pass	29s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
+Backend format and lint	pass	21s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660872
+Backend tests and coverage	pass	53s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660816
+Backend types	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660764
+CI gate	pass	4s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667782453
+CodeQL	pass	4s	https://github.com/cosmos-arc/goalx/runs/103667717002
+OpenAPI contract gate	pass	31s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660867
+Security and supply chain / CodeQL (actions)	pass	34s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661136
+Security and supply chain / CodeQL (javascript-typescript)	pass	55s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661141
+Security and supply chain / CodeQL (python)	pass	49s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661178
+Security and supply chain / OSV lockfile scan	pass	13s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661157
+Security and supply chain / Secret history scan	pass	8s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667661122
+Security and supply chain / Security gate	pass	4s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667771217
+Web e2e and a11y smoke	pass	57s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660891
+Web production build	pass	29s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660844
+Web static checks and coverage	pass	24s	https://github.com/cosmos-arc/goalx/actions/runs/34736084450/job/103667660884
