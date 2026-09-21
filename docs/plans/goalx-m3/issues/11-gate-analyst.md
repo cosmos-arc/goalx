@@ -1,6 +1,6 @@
 # 11 gate 路由 + analyst 复核
 
-Status: ready-for-agent
+Status: resolved（2026-09-19/20 合入 main，PR #32-38）
 Blocked by: 10
 
 ## 目标
@@ -20,3 +20,10 @@ task check；阈值路由单测；复核追加语义单测（原行仍在）。
 
 - 复核只进评测集，不改任何预测工件（旧图纪律）。
 - Tier1 定义以票 17 为准（五大+欧冠欧联，大赛临时升入）。
+
+## Comments（2026-09-20 实施定案）
+
+- ✅ gate：JS 散度（base-2 对称）记 divergences（ml 轨经比分矩阵 had() 推边际，llm 轨直读三项）；>0.02 计分歧、>0.06 且 Tier1 → review_items 入队 + analyst。
+- ✅ analyst：GLM-5.3 复核**追加**新 forecasts(track='llm') 行（payload 带 analyst=true + revision_of 指向 scout 行 id），不改写原行；修订后重扫 JS 自然收敛、不再重复路由（收敛语义，测试固化）。
+- 真库 e2e（2026-09-20）：fixture 12（莱切vs蒙扎）双轨配对 JS=0.0003 落 divergences（判断一致不路由——正确行为）；analyst 真调用待真实大分歧场次自然触发（单测已全路径覆盖）。
+- **数据面发现**：fixture 110（帕尔马vs热那亚）ML 预测 skip `no_mapping`（热那亚→Genoa 别名缺失）——别名缺口待数据面补（挂票 14 前清理）。

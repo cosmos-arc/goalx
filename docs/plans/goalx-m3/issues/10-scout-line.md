@@ -1,6 +1,6 @@
 # 10 scout 线（三项预测落 forecasts）
 
-Status: ready-for-agent
+Status: resolved（2026-09-19/20 合入 main，PR #32-38）
 Blocked by: 08, 09
 
 ## 目标

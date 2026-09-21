@@ -1,6 +1,6 @@
 # 13 评测协议落库（两档阈值+复核回流+证伪开关）
 
-Status: ready-for-agent
+Status: resolved（2026-09-19/20 合入 main，PR #32-38）
 Blocked by: 10, 12
 
 ## 目标
