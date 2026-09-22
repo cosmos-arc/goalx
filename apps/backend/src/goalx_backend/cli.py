@@ -46,6 +46,7 @@ from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation.corpus import completeness_report
+from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
@@ -302,6 +303,16 @@ def _cmd_pool_replay_report(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_drift_replay_report(args: argparse.Namespace) -> None:
+    """开→收漂移复验报告（票 54）：只读，纯函数确定性。"""
+    seasons = tuple(args.seasons) if args.seasons else fdhist.SEASONS
+    with task_conn() as conn:
+        report = drift_replay_report(
+            conn, competitions=fdhist.FD_COMPETITIONS, seasons=seasons
+        )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_pool_sync() -> None:
     """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
     stats = tasks.pool_snapshot()
@@ -350,7 +361,7 @@ def _cmd_seed_demo() -> None:
         conn.close()
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的平铺 argparse
     """CLI 参数。"""
     parser = argparse.ArgumentParser(prog="goalx", description="goalx 运维命令")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -467,6 +478,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="彩池v2搏冷十年复验报告(票 51;冷门EV分布/分期/早期镜,只读)",
     )
     replay.add_argument("--seasons", nargs="*", help="fd 季键(默认 1617..2627)")
+    drift = sub.add_parser(
+        "drift-replay-report",
+        help="开→收漂移复验报告(票 54;早锁vs等待/价值蒸发/实测ROI,只读)",
+    )
+    drift.add_argument("--seasons", nargs="*", help="fd 季键(默认 1617..2627)")
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -500,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
+        "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

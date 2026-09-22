@@ -100,6 +100,21 @@ def weekly_train_flow(
     return tasks.weekly_train(competitions)
 
 
+@flow(name="weekly-refresh", log_prints=True)
+def weekly_refresh_flow() -> dict[str, object]:
+    """
+    周刷新（票 54）：fdhist 幂等重导（新赛果/新季行落库）→ DC 周训练。
+
+    2026-09-22 实证：工件停在 9-18 而 2627 数据 9-20 落库——训练域吃不到
+    新季导致升班马 no_mapping、预测覆盖受损。定拍周一 06:10（fd.co.uk
+    周末赛果数日滞后，周一导入已含上周场次）。训练域 = 五大 + N1
+    （与 data/models 现役工件池一致）。
+    """
+    import_stats = fd_history_import_flow()
+    matches = weekly_train_flow((*TIER1_COMPETITIONS, "N1"))
+    return {"import": import_stats, "trained": matches}
+
+
 @flow(name="forecast-daily", log_prints=True)
 def forecast_daily_flow(business_date: str | None = None) -> dict[str, int]:
     """每日在售竞彩场次 ML Forecast 生成（幂等，跳过清单入日志，票 27）。"""
