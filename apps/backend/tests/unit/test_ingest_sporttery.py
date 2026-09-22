@@ -646,3 +646,25 @@ def test_probe_window_two_regimes(db, tmp_path) -> None:
         for now, payload, _ in cases
     ]
     assert results == [want for _, _, want in cases]
+
+
+def test_league_map_covers_jc_listing_names() -> None:
+    """映射键与 JC 实际上架名对齐（2026-09-22 欧罗巴失配实证，票 17 意图回填）。"""
+    # 主库 competitions 出现过的 JC 名称（映射命中=有 sport key 可 join）
+    listed = (
+        "英超",
+        "西甲",
+        "意甲",
+        "德甲",
+        "法甲",
+        "荷甲",
+        "德乙",
+        "法乙",
+        "欧冠",
+        "欧罗巴",
+        "欧协联",
+    )
+    for name in listed:
+        assert name in sporttery.LEAGUE_MAP, f"JC 赛事 {name} 无映射"
+    # 别名键保留（同名同键，双键等价）
+    assert sporttery.LEAGUE_MAP["欧罗巴"] == sporttery.LEAGUE_MAP["欧联"]
