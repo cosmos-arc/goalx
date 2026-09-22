@@ -161,7 +161,7 @@ def collect_candidates(
     return candidates, coverage
 
 
-def _percentiles(values: list[float]) -> dict[str, float | None]:
+def percentiles(values: list[float]) -> dict[str, float | None]:
     """确定性分位数（排序 + 线性插值，inclusive 口径）。"""
     if not values:
         return {"p50": None, "p90": None, "p99": None, "max": None, "min": None}
@@ -196,9 +196,9 @@ def _stage_stats(cands: list[_Candidate]) -> dict[str, Any]:
         ),
         "fx_ev_positive": len(fx_pos),
         "fx_ev_positive_rate": round(len(fx_pos) / len(cands), 6) if cands else None,
-        "pool_ev_percentiles": _percentiles([c.pool_ev for c in cands]),
-        "fx_ev_percentiles": _percentiles([c.fx_ev for c in cands]),
-        "fair_over_share_percentiles": _percentiles(ratios),
+        "pool_ev_percentiles": percentiles([c.pool_ev for c in cands]),
+        "fx_ev_percentiles": percentiles([c.fx_ev for c in cands]),
+        "fair_over_share_percentiles": percentiles(ratios),
         # 彩池 EV>0 等价 fair/share > 1/返奖率 ≈ 1.538——实测贴近度即结论
         "pool_breakeven_ratio": round(1.0 / pool_store.POOL_RETURN_RATE, 4),
         "mean_fair_minus_share": (

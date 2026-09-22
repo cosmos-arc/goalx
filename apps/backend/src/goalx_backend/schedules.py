@@ -52,6 +52,7 @@ from goalx_backend.flows import (
     scout_line_flow,
     srcb_collect_flow,
     understat_sync_flow,
+    weekly_refresh_flow,
 )
 
 
@@ -157,6 +158,16 @@ def main() -> None:
             schedule=Schedule(cron="50 10,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 周刷新（票 54）：周一 06:10 fdhist 幂等重导（周末赛果）→ DC 周训练
+    # （五大+N1）。此前训练无定拍——工件停在旧数据导致升班马 no_mapping
+    # （2026-09-22 实证），定拍防再烂
+    weekly = cast(
+        RunnerDeployment,
+        weekly_refresh_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="10 6 * * 1", timezone="Asia/Shanghai"),
+        ),
+    )
     serve(
         daily,
         closing,
@@ -166,6 +177,7 @@ def main() -> None:
         understat,
         anchor_dense,
         srcb_collect_deploy,
+        weekly,
         wrap,
         pool,
         intel,
