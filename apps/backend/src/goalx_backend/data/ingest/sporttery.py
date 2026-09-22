@@ -83,6 +83,21 @@ LEAGUE_MAP: dict[str, tuple[str, Tier]] = {
     "意乙": ("soccer_italy_serie_b", Tier.TIER2),
     "德乙": ("soccer_germany_bundesliga2", Tier.TIER2),
     "德国杯": ("soccer_germany_dfb_pokal", Tier.TIER2),
+    # 2026-09-22 用户裁决"也一起采集，如果有的话"：JC 常见联赛扩覆盖
+    # （票 53）。实探可用性——PropLine 有：日职/美职/巴甲/挪超/瑞超/葡超/
+    # 解放者杯（免费 1000/日）；仅 The Odds API 有：韩职/英冠/英联赛杯
+    # （oddsapi 冻结范围 +韩职/英冠，月预算 480 可承受 8 sport×2拍）；
+    # 英锦标赛/日乙/荷乙/芬超/亚运/亚冠 两源皆无，不映射（诚实缺口）。
+    "日职": ("soccer_japan_j_league", Tier.TIER2),
+    "美职": ("soccer_usa_mls", Tier.TIER2),
+    "巴甲": ("soccer_brazil_campeonato", Tier.TIER2),
+    "挪超": ("soccer_norway_eliteserien", Tier.TIER2),
+    "瑞超": ("soccer_sweden_allsvenskan", Tier.TIER2),
+    "葡超": ("soccer_portugal_primeira_liga", Tier.TIER2),
+    "解放者杯": ("soccer_conmebol_copa_libertadores", Tier.TIER2),
+    "韩职": ("soccer_korea_kleague1", Tier.TIER2),
+    "英冠": ("soccer_efl_champ", Tier.TIER2),
+    "英联赛杯": ("soccer_england_efl_cup", Tier.TIER2),
 }
 
 

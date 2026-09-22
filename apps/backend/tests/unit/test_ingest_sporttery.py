@@ -663,6 +663,17 @@ def test_league_map_covers_jc_listing_names() -> None:
         "欧冠",
         "欧罗巴",
         "欧协联",
+        # 票 53 扩覆盖（2026-09-22 用户裁决）：主库出现过 + 实探至少一源可得
+        "日职",
+        "美职",
+        "巴甲",
+        "挪超",
+        "瑞超",
+        "葡超",
+        "解放者杯",
+        "韩职",
+        "英冠",
+        "英联赛杯",
     )
     for name in listed:
         assert name in sporttery.LEAGUE_MAP, f"JC 赛事 {name} 无映射"
