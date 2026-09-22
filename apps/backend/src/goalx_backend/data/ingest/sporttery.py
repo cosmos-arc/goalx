@@ -65,6 +65,8 @@ SELL_STATUS_MAP: dict[str, str] = {"0": "on_sale", "1": "stopped"}
 
 
 # 竞彩联赛缩写 → (Odds API sport key, tier)（票 17：Tier 1=五大+欧冠+欧联）
+# "欧罗巴"=JC 实际上架名（主库 competitions 实证；"欧联"键保留兼容别名——
+# 2026-09-22 前单一"欧联"键从未命中，票 17 声明的欧联 Tier1 覆盖一直失效）
 LEAGUE_MAP: dict[str, tuple[str, Tier]] = {
     "英超": ("soccer_epl", Tier.TIER1),
     "西甲": ("soccer_spain_la_liga", Tier.TIER1),
@@ -73,6 +75,7 @@ LEAGUE_MAP: dict[str, tuple[str, Tier]] = {
     "法甲": ("soccer_france_ligue_one", Tier.TIER1),
     "欧冠": ("soccer_uefa_champs_league", Tier.TIER1),
     "欧联": ("soccer_uefa_europa_league", Tier.TIER1),
+    "欧罗巴": ("soccer_uefa_europa_league", Tier.TIER1),
     "荷甲": ("soccer_netherlands_eredivisie", Tier.TIER2),
     "欧协联": ("soccer_uefa_europa_conference_league", Tier.TIER2),
     "法乙": ("soccer_france_ligue_two", Tier.TIER2),
