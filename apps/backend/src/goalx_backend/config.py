@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     srct_day_url: str = ""
     srct_odds_url: str = ""
     srct_odds_referer: str = ""
+    # 亚盘变化表（GBK；锚定书商 cid 写在模板参数里）与 47 键统计页（UTF-8）
+    srct_handicap_url: str = ""
+    srct_stats_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")

@@ -11,12 +11,18 @@ raw 落盘约定：每响应 gzip 原样字节 + 内容 sha256，路径
 (provider, dataset, key) 唯一——断点续传与零重抓都查这一张表。写入次序
 先文件后 checkpoint 行：中断落在这两步之间时重跑会重抓该条并幂等覆盖，
 同内容重写无害。
+
+bronze 落盘约定（切片 12）：每数据集一文件
+``bronze/{provider}/{dataset}.ndjson.gz``，NDJSON(gzip) append-only，行 =
+信封（provider/dataset/sid/fetched_at/parser_version/raw_sha）+ payload；
+解析失败不写行（raw 已 100% 留档，缺口由采集统计量化）。
 """
 
 from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -126,6 +132,21 @@ class CorpusStore:
         path = self.raw_path(provider, dataset, key, ext=ext)
         return gzip.decompress(path.read_bytes())
 
+    def raw_sha(self, provider: str, dataset: str, key: str) -> str | None:
+        """Checkpoint 中该工件的 sha256（无记录 None；信封回溯对账用）。"""
+        row = (
+            self._checkpoint()
+            .execute(
+                """
+            SELECT sha256 FROM raw_artifacts
+            WHERE provider=? AND dataset=? AND key=?
+            """,
+                (provider, dataset, key),
+            )
+            .fetchone()
+        )
+        return None if row is None else str(row["sha256"])
+
     def verify_raw(
         self, provider: str, dataset: str, key: str, *, ext: str = ""
     ) -> bool:
@@ -145,6 +166,40 @@ class CorpusStore:
             return False
         body = self.read_raw(provider, dataset, key, ext=ext)
         return hashlib.sha256(body).hexdigest() == row["sha256"]
+
+    def bronze_path(self, provider: str, dataset: str) -> Path:
+        """Bronze 工件约定路径（每数据集一文件，NDJSON(gzip) append-only）。"""
+        return self.root / "bronze" / provider / f"{dataset}.ndjson.gz"
+
+    def append_bronze(
+        self, provider: str, dataset: str, rows: list[dict[str, object]]
+    ) -> int:
+        """
+        Bronze NDJSON(gzip) 追加一批信封行；返回写入行数。
+
+        append-only：不查重不改写（重跑由 checkpoint 上游拦截；解析器升版
+        重物化时按 parser_version 取最新行，归 silver 层）。gzip 追加 =
+        新起 member，读取侧透明拼接。
+        """
+        if not rows:
+            return 0
+        path = self.bronze_path(provider, dataset)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            path.open("ab") as raw_fh,
+            gzip.GzipFile(fileobj=raw_fh, mode="ab", mtime=0) as fh,
+        ):
+            for row in rows:
+                fh.write((json.dumps(row, ensure_ascii=False) + "\n").encode())
+        return len(rows)
+
+    def read_bronze(self, provider: str, dataset: str) -> list[dict[str, object]]:
+        """读回全部 bronze 行（测试/对账用；文件不存在返回空）。"""
+        path = self.bronze_path(provider, dataset)
+        if not path.exists():
+            return []
+        lines = gzip.decompress(path.read_bytes()).decode("utf-8").splitlines()
+        return [json.loads(line) for line in lines if line]
 
     def close(self) -> None:
         """关 checkpoint 连接（树文件保留）。"""

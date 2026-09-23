@@ -311,10 +311,20 @@ def _cmd_srct_collect(
         "requests": stats.requests,
         "raw_new": stats.raw_new,
         "skipped": stats.skipped,
+        "parsed_ok": stats.parsed_ok,
+        "parse_failed": stats.parse_failed,
+        "parse_success_rate": _parse_success_rate(stats),
+        "xg_matches": stats.xg_matches,
         "failed": stats.failed,
         "parse_version": srct.PARSE_VERSION,
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _parse_success_rate(stats: srct.SrctCollectStats) -> float | None:
+    """解析成功率（无解析样本返回 None——空日不折算成 1.0）。"""
+    denom = stats.parsed_ok + len(stats.parse_failed)
+    return round(stats.parsed_ok / denom, 4) if denom else None
 
 
 def _cmd_corpus_report(args: argparse.Namespace) -> None:
