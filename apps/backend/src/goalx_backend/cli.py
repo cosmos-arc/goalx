@@ -19,6 +19,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli pool-sync
     uv run python -m goalx_backend.cli understat-sync [--seasons 2021 2022 ...]
     uv run python -m goalx_backend.cli xg-compare --seasons 2022 2023 2024 2025 2026
+    uv run python -m goalx_backend.cli srct-collect --date YYYY-MM-DD
 """
 
 from __future__ import annotations
@@ -34,11 +35,19 @@ from loguru import logger
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
-from goalx_backend.config import get_settings
+from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs_store
-from goalx_backend.data.ingest import caiguo, fdhist, openfootball, sporttery, uniform
+from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest import (
+    caiguo,
+    fdhist,
+    openfootball,
+    sporttery,
+    srct,
+    uniform,
+)
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -274,6 +283,40 @@ def _cmd_xg_compare(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_collect(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> None:
+    """
+    源T轨迹语料按日采集（票 55 切片 11）：raw+checkpoint 断点闭环。
+
+    settings/client 注入口只服务测试接缝；缺省走真实配置与连接。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        if client is None:
+            with httpx.Client() as owned:
+                stats = srct.collect_day(store, resolved, owned, date=args.date)
+        else:
+            stats = srct.collect_day(store, resolved, client, date=args.date)
+    finally:
+        store.close()
+    payload = {
+        "date": stats.date,
+        "scope_sids": stats.scope_sids,
+        "day_page_cached": stats.day_page_cached,
+        "requests": stats.requests,
+        "raw_new": stats.raw_new,
+        "skipped": stats.skipped,
+        "failed": stats.failed,
+        "parse_version": srct.PARSE_VERSION,
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_corpus_report(args: argparse.Namespace) -> None:
     """十年语料报表（票 46）：完整性 + 可选 openfootball 交叉验证。"""
     seasons = tuple(args.seasons) if args.seasons else fdhist.SEASONS
@@ -483,6 +526,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="开→收漂移复验报告(票 54;早锁vs等待/价值蒸发/实测ROI,只读)",
     )
     drift.add_argument("--seasons", nargs="*", help="fd 季键(默认 1617..2627)")
+    srct_collect = sub.add_parser(
+        "srct-collect",
+        help="源T轨迹语料按日采集(票55切片11;端点模板须进本地.env,断点可续)",
+    )
+    srct_collect.add_argument("--date", required=True, help="业务日 YYYY-MM-DD")
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -517,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
         "corpus-report": lambda: _cmd_corpus_report(args),
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
+        "srct-collect": lambda: _cmd_srct_collect(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()
