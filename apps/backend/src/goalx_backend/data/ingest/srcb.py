@@ -26,10 +26,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+from limits import RateLimitItemPerMinute
 from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.db import utc_now_iso
+from goalx_backend.rate_limit import default_limiter, throttle
 
 PARSE_VERSION = "srcb_change_v1"
 # 用户圈定核心书小集（2026-09-20，17 pid；TARGET=竞彩官方在售时才有行）
@@ -56,6 +58,9 @@ MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
     + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
+# 滑动窗口加顶（票 57）：0.5s 间距≈120/min 持续，200/min 纯加顶零行为变化
+_RATE_CEILING = RateLimitItemPerMinute(200)
+
 _ROW_PATTERNS = (
     r"<tr>\s*<td>\s*<span[^>]*>([\d.]+)</span>\s*"
     r"<span[^>]*>([\d.]+)</span>\s*<span[^>]*>([\d.]+)</span>\s*</td>\s*"
@@ -209,10 +214,13 @@ def collect_srcb_changes(
     if not mids:
         _record_run(conn, stats, observed_at)
         return stats
+    limiter = default_limiter()
+    throttle(limiter, _RATE_CEILING)  # 预热首页也是线上请求，先过闸
     warm_session(client, settings)
     for mid in mids:
         for pid in pids:
             try:
+                throttle(limiter, _RATE_CEILING)
                 html = fetch_change_page(client, settings, mid, pid)
                 rows = parse_change_rows(html)
             except httpx.HTTPError as exc:

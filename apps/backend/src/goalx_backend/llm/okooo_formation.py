@@ -19,17 +19,21 @@ import time
 from dataclasses import dataclass, field
 
 import httpx
+from limits import RateLimitItemPerMinute
 from loguru import logger
 
 from goalx_backend.data import pool as pool_store
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.llm.store import IntelDraft, insert_intel_observation
+from goalx_backend.rate_limit import default_limiter, throttle
 
 _BASE = "https://www.okooo.com"
 _FORMATION_PATH = "/soccer/match/{match_id}/formation/"
 _COLLECTOR = "okooo-formation"
 _KIND = "伤停"
 _SLEEP_SECONDS = 0.3
+# 滑动窗口加顶（票 57）：0.3s 间距≈200/min 持续，300/min 纯加顶零行为变化
+_RATE_CEILING = RateLimitItemPerMinute(300)
 _MAX_LISTED = 6  # 单侧摘要最多列出的伤停人数
 
 _HEADERS = {
@@ -185,6 +189,7 @@ def collect_injury_intel(
     """当期在售彩池场次的伤停情报（幂等；单页失败告警跳过不阻塞）。"""
     stats = InjuryStats()
     moment = now or utc_now_iso()
+    limiter = default_limiter()
     drafts: list[tuple[int, IntelDraft]] = []
     with atomic(conn):
         for market_code in ("ttt14", "pick9"):
@@ -205,6 +210,7 @@ def collect_injury_intel(
                         continue  # 无桥接或无源场次 id——无从拉取
                     stats.with_source_id += 1
                     try:
+                        throttle(limiter, _RATE_CEILING)
                         html = fetch_formation_page(client, str(source_id))
                     except httpx.HTTPError as exc:
                         stats.fetch_failed += 1

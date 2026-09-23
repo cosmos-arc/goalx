@@ -23,17 +23,21 @@ from datetime import UTC, datetime
 from typing import cast
 
 import httpx
+from limits import RateLimitItemPerMinute
 from loguru import logger
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.llm.store import IntelDraft, insert_intel_observation
+from goalx_backend.rate_limit import default_limiter, throttle
 
 _BASE = "https://mix.lottery.sina.com.cn/gateway/index/entry"
 _QUERY = "format=json&__caller__=web&__version__=1.0.0&__verno__=1"
 _COLLECTOR = "sina-injury"
 _KIND = "伤停"
 _SLEEP_SECONDS = 0.3
+# 滑动窗口加顶（票 57）：0.3s 间距≈200/min 持续，300/min 纯加顶零行为变化
+_RATE_CEILING = RateLimitItemPerMinute(300)
 _MAX_LISTED = 6  # 单侧摘要最多列出的伤停人数
 
 _HEADERS = {
@@ -226,7 +230,9 @@ def collect_sina_injury_intel(
     """竞彩在售场次的新浪伤停情报（幂等；单场失败跳过不阻塞）。"""
     stats = SinaStats()
     moment = now or utc_now_iso()
+    limiter = default_limiter()
     try:
+        throttle(limiter, _RATE_CEILING)
         on_sell_payload = _gw_json(client, "jczqOnSellMatches", gameTypes="spf")
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("新浪在售列表拉取失败: {}", exc)
@@ -242,6 +248,7 @@ def collect_sina_injury_intel(
                 continue  # 本库无此竞彩编号（未入库/已下架）——无从挂情报
             stats.mapped += 1
             try:
+                throttle(limiter, _RATE_CEILING)
                 injury_payload = _gw_json(
                     client, "footballMatchTeamInjury", matchId=match["matchId"]
                 )

@@ -28,7 +28,6 @@ from datetime import datetime
 
 import httpx
 from limits import RateLimitItemPerMinute
-from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
 from loguru import logger
 from tenacity import (
@@ -40,6 +39,7 @@ from tenacity import (
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.rate_limit import default_limiter, throttle
 
 PARSE_VERSION = "srct_day_v1"
 SRCT_PROVIDER = "srct"
@@ -220,22 +220,6 @@ def _retrying(sleeper: Callable[[float], None]) -> Retrying:
     )
 
 
-def _default_limiter() -> MovingWindowRateLimiter:
-    """滑动窗口限流器（limits+MemoryStorage：进程内，无外部存储依赖）。"""
-    return MovingWindowRateLimiter(MemoryStorage())
-
-
-def _throttle(
-    limiter: MovingWindowRateLimiter,
-    item: RateLimitItemPerMinute,
-    sleeper: Callable[[float], None],
-) -> None:
-    """限流闸门：满窗时睡到窗口滑出再打（每次线上尝试前过闸）。"""
-    while not limiter.hit(item):
-        wait = float(limiter.get_window_stats(item).reset_time) - time.time()
-        sleeper(max(wait, 0.05))
-
-
 def _require_endpoints(settings: Settings) -> None:
     if not (
         settings.srct_day_url and settings.srct_odds_url and settings.srct_odds_referer
@@ -268,7 +252,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
     store.ensure_tree()  # 目录树随首条命令落地（gold/duckdb 先空占位）
-    limiter = rate_limiter if rate_limiter is not None else _default_limiter()
+    limiter = rate_limiter if rate_limiter is not None else default_limiter()
     stats = SrctCollectStats(date=date)
     if store.has(SRCT_PROVIDER, DAY_DATASET, date):
         body = store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
@@ -277,7 +261,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
         wire = [0]
 
         def fetch_day() -> bytes:
-            _throttle(limiter, _REQUEST_WINDOW, sleeper)
+            throttle(limiter, _REQUEST_WINDOW, sleeper)
             wire[0] += 1
             return fetch_day_page(client, settings, date)
 
@@ -294,7 +278,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
         wire = [0]
 
         def fetch_odds(m: DayMatch = match, w: list[int] = wire) -> bytes:
-            _throttle(limiter, _REQUEST_WINDOW, sleeper)
+            throttle(limiter, _REQUEST_WINDOW, sleeper)
             w[0] += 1
             return fetch_odds_js(client, settings, m.sid)
 
