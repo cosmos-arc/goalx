@@ -32,6 +32,9 @@ OWNERS: dict[str, set[str]] = {
         # 票 49 采集先行：源B欧指变化时序（ingest/srcb.py）
         "srcb_change_rows",
         "srcb_change_runs",
+        # 票 55 切片 11：CorpusStore 语料树 checkpoint（data/corpus_store.py，
+        # 语料树独立 SQLite，不进运行面 migrations）
+        "raw_artifacts",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

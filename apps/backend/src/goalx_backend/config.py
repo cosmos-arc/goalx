@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # --- 存储（ADR 0003：SQLite WAL 单机） ---
     db_path: Path = Path("data/goalx.db")
     observations_dir: Path = Path("data/observations")  # 原始响应 gzip 存档（票 35）
+    # CorpusStore 语料树根（ADR-0011）：repo 外独立数据资产，换机/外置盘改这里
+    corpus_root: Path = Path.home() / "goalx-data"
+
+    # 源T（srct）端点模板（票 55 切片 11）：代称红线——实名/接口路径不落码库，
+    # 真值进本地 .env（事实源 research/20 §二/§九）；{date}=YYYYMMDD、{sid}=场次 id
+    srct_day_url: str = ""
+    srct_odds_url: str = ""
+    srct_odds_referer: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")
