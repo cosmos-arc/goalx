@@ -6,9 +6,11 @@
 bronze 解析层与另两端点在切片 12；夜班调度/预算/熔断在切片 13。
 
 口径沿 zucai/srcb 模式：网络薄（固定桌面 UA+对应 Referer）、解析纯函数、
-实测样本裁剪单测。防封基线（research/20 §九 定案 4）：3s±1s 抖动、
-传输失败指数退避重试、单页失败不炸整跑。端点 URL 模板从 config 注入
-（代称红线：实名/路径不落码库，真值进本地 .env）。
+实测样本裁剪单测。HTTP 访问套件（用户裁定 2026-09-23）：httpx 客户端 +
+tenacity 重试 + limits 滑动窗口限流（MemoryStorage，不依赖外部存储）。
+防封基线（research/20 §九 定案 4）：3s±1s 抖动（间距）、20/分钟滑动窗口
+（硬顶）、传输失败指数退避重试、单页失败不炸整跑。端点 URL 模板从 config
+注入（代称红线：实名/路径不落码库，真值进本地 .env）。
 
 三时间口径：changeTime→published_at 属解析层（切片 12）；本切片只记
 抓取时刻 fetched_at（observed_at 语义）。行不带 fixture_id——身份绑定
@@ -25,7 +27,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import httpx
+from limits import RateLimitItemPerMinute
+from limits.storage import MemoryStorage
+from limits.strategies import MovingWindowRateLimiter
 from loguru import logger
+from tenacity import (
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
@@ -61,8 +72,11 @@ DESKTOP_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
-# 防封参数（research/20 §九 定案 4）：请求间隔 3s±1s 均匀抖动
+# 防封参数（research/20 §九 定案 4）：请求间隔 3s±1s 均匀抖动（间距）+
+# 滑动窗口硬顶 20/分钟（jitter 均值 ≈20/min，窗口只加顶不改间距）
 JITTER_RANGE: tuple[float, float] = (2.0, 4.0)
+RATE_LIMIT_PER_MINUTE = 20
+_REQUEST_WINDOW = RateLimitItemPerMinute(RATE_LIMIT_PER_MINUTE)
 BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_CAP_SECONDS = 60.0
 MAX_RETRIES = 3
@@ -188,34 +202,38 @@ def fetch_odds_js(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     return response.content
 
 
-def backoff_seconds(attempt: int) -> float:
-    """指数退避时长（attempt 从 0 起，封顶 60s）。"""
-    return min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_CAP_SECONDS)
+def _retrying(sleeper: Callable[[float], None]) -> Retrying:
+    """
+    Tenacity 重试策略（用户裁定套件，不手搓退避循环）。
+
+    传输类失败（httpx.HTTPError）指数退避 2/4/8s（封顶 60s）重试 3 次；
+    内容错误（SrctContentError）不匹配谓词直抛。
+    """
+    return Retrying(
+        retry=retry_if_exception_type(httpx.HTTPError),
+        stop=stop_after_attempt(MAX_RETRIES + 1),
+        wait=wait_exponential(
+            multiplier=BACKOFF_BASE_SECONDS, exp_base=2, max=BACKOFF_CAP_SECONDS
+        ),
+        sleep=sleeper,
+        reraise=True,
+    )
 
 
-def _counted(fetch: Callable[[], bytes], counter: list[int]) -> Callable[[], bytes]:
-    """包一层线上请求计数（重试也是真请求，预算记账要数全）。"""
-
-    def wrapped() -> bytes:
-        counter[0] += 1
-        return fetch()
-
-    return wrapped
+def _default_limiter() -> MovingWindowRateLimiter:
+    """滑动窗口限流器（limits+MemoryStorage：进程内，无外部存储依赖）。"""
+    return MovingWindowRateLimiter(MemoryStorage())
 
 
-def _fetch_with_retry(
-    fetch: Callable[[], bytes], sleeper: Callable[[float], None]
-) -> bytes:
-    """传输类失败（HTTP 状态/网络）指数退避重试；内容错误不重试。"""
-    attempt = 0
-    while True:
-        try:
-            return fetch()
-        except httpx.HTTPError:
-            if attempt >= MAX_RETRIES:
-                raise
-            sleeper(backoff_seconds(attempt))
-            attempt += 1
+def _throttle(
+    limiter: MovingWindowRateLimiter,
+    item: RateLimitItemPerMinute,
+    sleeper: Callable[[float], None],
+) -> None:
+    """限流闸门：满窗时睡到窗口滑出再打（每次线上尝试前过闸）。"""
+    while not limiter.hit(item):
+        wait = float(limiter.get_window_stats(item).reset_time) - time.time()
+        sleeper(max(wait, 0.05))
 
 
 def _require_endpoints(settings: Settings) -> None:
@@ -229,7 +247,7 @@ def _require_endpoints(settings: Settings) -> None:
         raise RuntimeError(msg)
 
 
-def collect_day(
+def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切片 13 归并预算面
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -238,25 +256,32 @@ def collect_day(
     jitter: tuple[float, float] | None = JITTER_RANGE,
     sleeper: Callable[[float], None] = time.sleep,
     rng: random.Random | None = None,
+    rate_limiter: MovingWindowRateLimiter | None = None,
 ) -> SrctCollectStats:
     """
     一日闭环：日页发现 sid → 逐场 1x2d → raw+checkpoint。
 
     断点续传：日页与每场轨迹以 (provider, dataset, key) 查 checkpoint，
-    已完成零重抓（日页从 raw 本地重解析）。
+    已完成零重抓（日页从 raw 本地重解析）。rate_limiter 缺省每次运行新建
+    滑动窗口（跨夜预算限流归切片 13，届时注入长生命周期 limiter）。
     """
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
     store.ensure_tree()  # 目录树随首条命令落地（gold/duckdb 先空占位）
+    limiter = rate_limiter if rate_limiter is not None else _default_limiter()
     stats = SrctCollectStats(date=date)
     if store.has(SRCT_PROVIDER, DAY_DATASET, date):
         body = store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
         stats.day_page_cached = True
     else:
-        wire: list[int] = [0]
-        body = _fetch_with_retry(
-            _counted(lambda: fetch_day_page(client, settings, date), wire), sleeper
-        )
+        wire = [0]
+
+        def fetch_day() -> bytes:
+            _throttle(limiter, _REQUEST_WINDOW, sleeper)
+            wire[0] += 1
+            return fetch_day_page(client, settings, date)
+
+        body = _retrying(sleeper)(fetch_day)
         stats.requests += wire[0]
         store.ingest_raw(SRCT_PROVIDER, DAY_DATASET, date, body, ext=".htm")
     scope = filter_scope(parse_over_page(decode_day_page(body)))
@@ -267,11 +292,14 @@ def collect_day(
             stats.skipped += 1
             continue
         wire = [0]
+
+        def fetch_odds(m: DayMatch = match, w: list[int] = wire) -> bytes:
+            _throttle(limiter, _REQUEST_WINDOW, sleeper)
+            w[0] += 1
+            return fetch_odds_js(client, settings, m.sid)
+
         try:
-            odds = _fetch_with_retry(
-                _counted(lambda m=match: fetch_odds_js(client, settings, m.sid), wire),
-                sleeper,
-            )
+            odds = _retrying(sleeper)(fetch_odds)
         except (httpx.HTTPError, SrctContentError) as exc:
             stats.failed[match.sid] = str(exc)[:120]
             logger.warning("srct odds {} failed ({})", match.sid, exc)

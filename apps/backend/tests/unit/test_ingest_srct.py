@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from limits import RateLimitItemPerSecond
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
@@ -308,3 +310,19 @@ def test_cli_srct_collect_seam(
     store = CorpusStore(_settings(tmp_path).corpus_root)
     assert store.verify_raw("srct", "day_page", DATE, ext=".htm")
     assert seen[0].headers["User-Agent"] == srct.DESKTOP_UA  # 防封参数 CLI 路径同生效
+
+
+def test_throttle_sliding_window_ceiling() -> None:
+    """限流套件语义：滑动窗口满后按 reset 时间等待（MemoryStorage 无外部存储）。"""
+    limiter = srct._default_limiter()
+    item = RateLimitItemPerSecond(1)  # 1s 窗，组件最小粒度
+    waits: list[float] = []
+
+    def sleep_and_record(seconds: float) -> None:
+        waits.append(seconds)
+        time.sleep(seconds)
+
+    srct._throttle(limiter, item, lambda _s: None)  # 空窗直过，零等待
+    assert waits == []
+    srct._throttle(limiter, item, sleep_and_record)  # 满窗：等到窗口滑出才放行
+    assert 0 < waits[0] <= 1.05
