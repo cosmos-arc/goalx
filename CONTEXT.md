@@ -122,3 +122,17 @@ _Avoid_: Payout（单独使用）
 **Bankroll**:
 专门用于本系统的真实资金池，投注支出和兑付仅来自实际购买的真金记录，另可记录真实出入金；变动以 BankrollEvent 记录。
 _Avoid_: Balance, 余额
+
+### 语料
+
+**TrajectoryCorpus**:
+以逐庄赔率"开→收"时序为主体、按 CorpusScope 圈定的多赛季历史数据集（2017/18 赛季起，源T 回填 + 增量；2020 前仅轨迹+亚盘深度）；服务漂移/时序研究与建模扩展，不作结算事实源。
+_Avoid_: 时序数据（泛指）、历史库
+
+**CorpusScope**:
+轨迹语料的 15 项赛事清单（五大+英冠+荷甲+葡超+土超+比甲+苏超+瑞超+挪超+欧冠+欧联），按竞彩出场频率×市场流动性圈定；采集范围与建模范围（TIER1_COMPETITIONS）解耦——采进来不等于进模型。
+_Avoid_: 联赛白名单、大流动性清单（口语可用，实体一律 CorpusScope）
+
+**CorpusStore**:
+repo 外独立数据资产树（默认 ~/goalx-data/），承载 TrajectoryCorpus 的 raw 压缩件、bronze 解析层、silver canonical 层与研究查询库；与运行面仅经只读桥互通，采集故障与运行面互不波及。
+_Avoid_: 数据目录（泛指）、数据仓库（口语可用，实体一律 CorpusStore）
