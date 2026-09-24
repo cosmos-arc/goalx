@@ -24,6 +24,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-night --list
     uv run python -m goalx_backend.cli srct-silver
     uv run python -m goalx_backend.cli srct-odds
+    uv run python -m goalx_backend.cli srct-gate
     uv run python -m goalx_backend.cli archive-538
 """
 
@@ -45,7 +46,7 @@ from loguru import logger
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, reconcile
+from goalx_backend.data import corpus_duckdb, corpus_gate, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
@@ -454,6 +455,31 @@ def _cmd_srct_odds(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_gate(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """
+    Phase1 五门报告（票 55/56 切片 17）。
+
+    三对账（fdhist×源T 场次 / PSC×cid177 / understat×源T xG）+ 门④转换
+    完整性 + 门⑤管线健康 + 逐赛事×书商 coverage 矩阵；JSON/MD 两视图落
+    语料树 reports/（数据面资产不进 repo），JSON 同步 stdout。门=报告+
+    用户点头——overall 只给 provisional/pending_user，不放行。settings
+    注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = corpus_gate.build_phase1_gate_report(store, resolved)
+    finally:
+        store.close()
+    reports = store.root / corpus_gate.REPORTS_DIR
+    payload = {**report, "md_path": str(reports / f"{corpus_gate.REPORT_BASENAME}.md")}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -723,6 +749,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-odds",
         help="源T 赔率事件重物化(票56切片15;bookmaker 字典+odds_change_event 幂等重建)",
     )
+    sub.add_parser(
+        "srct-gate",
+        help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
+    )
     archive = sub.add_parser(
         "archive-538",
         help="538 终版档案一次性入库(票56切片16;原档进raw+CorpusScope silver 小表)",
@@ -771,6 +801,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
+        "srct-gate": lambda: _cmd_srct_gate(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }
