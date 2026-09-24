@@ -378,6 +378,161 @@ def test_malformed_score_skips_row(tmp_path: Path) -> None:
         store.close()
 
 
+def test_build_xg_observations_flattens_and_keeps_keys(tmp_path: Path) -> None:
+    store = _collect_bronze(tmp_path)
+    try:
+        report = srct_silver.build_xg_observations(store)
+        assert report.rows == 3
+        assert report.has_xg_rows == 3  # 合成统计页含 EXPECTED_GOALS
+        assert report.partitions == 1
+        part = (
+            store.root
+            / "silver"
+            / "srct"
+            / "xg_observation"
+            / "season=2025-26"
+            / "competition=英超"
+        )
+        rows = pq.read_table(part / "data.parquet").to_pylist()
+        first = rows[0]
+        assert first["xg_home"] == pytest.approx(0.71)  # 标题 xG 扁平列
+        assert first["xg_away"] == pytest.approx(1.68)
+        kinds = [item["kind"] for item in first["stats"]]
+        assert kinds == ["EXPECTED_GOALS"]  # 合成页只带一键；真实页 47 键同通道
+        assert first["stats"][0]["home_value"] == "0.71"  # 贴源串保留
+    finally:
+        store.close()
+
+
+def test_build_xg_no_xg_match_keeps_stats(tmp_path: Path) -> None:
+    """老页无 xG：has_xg=False、标题列 None，其余键照落（定则 4）。"""
+    store = _collect_bronze(tmp_path)
+    try:
+        store.append_bronze(
+            "srct",
+            "match_stats",
+            [
+                {
+                    "provider": "srct",
+                    "dataset": "match_stats",
+                    "sid": "91001",
+                    "fetched_at": "2025-10-01T13:00:00+00:00",  # 晚于采集行=最新胜出
+                    "parser_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+                    "raw_sha": "1" * 64,
+                    "payload": {
+                        "stats": [
+                            {
+                                "kind": "CORNER",
+                                "name": "角球",
+                                "home_value": 3,
+                                "away_value": 8,
+                            },
+                            {
+                                "kind": "SHOOT",
+                                "name": "射门",
+                                "home_value": 9,
+                                "away_value": 13,
+                            },
+                        ],
+                        "has_xg": False,
+                    },
+                }
+            ],
+        )
+        report = srct_silver.build_xg_observations(store)
+        assert report.rows == 3
+        assert report.has_xg_rows == 2
+        part = (
+            store.root
+            / "silver"
+            / "srct"
+            / "xg_observation"
+            / "season=2025-26"
+            / "competition=英超"
+        )
+        rows = {r["sid"]: r for r in pq.read_table(part / "data.parquet").to_pylist()}
+        old = rows["91001"]
+        assert old["has_xg"] is False
+        assert old["xg_home"] is None
+        assert [i["kind"] for i in old["stats"]] == ["CORNER", "SHOOT"]  # 键不丢
+        assert old["stats"][0]["home_value"] == "3"
+    finally:
+        store.close()
+
+
+def test_build_xg_orphan_sid_unknown_partition(tmp_path: Path) -> None:
+    """无 fixture 元数据的场：落 _unknown 分区不丢数据，计数留痕。"""
+    store = CorpusStore(_settings(tmp_path).corpus_root)
+    try:
+        store.append_bronze(
+            "srct",
+            "match_stats",
+            [
+                {
+                    "provider": "srct",
+                    "dataset": "match_stats",
+                    "sid": "99999",
+                    "fetched_at": "2025-10-01T12:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+                    "raw_sha": "2" * 64,
+                    "payload": {"stats": [], "has_xg": False},
+                }
+            ],
+        )
+        report = srct_silver.build_xg_observations(store)
+        assert report.rows == 1
+        assert report.orphan_sids == 1
+        part = (
+            store.root
+            / "silver"
+            / "srct"
+            / "xg_observation"
+            / "season=_unknown"
+            / "competition=_unknown"
+        )
+        assert pq.read_table(part / "data.parquet").num_rows == 1
+    finally:
+        store.close()
+
+
+def test_headline_missing_counted(tmp_path: Path) -> None:
+    """has_xg（任一 XG 键）与标题键背离：计数留痕不炸。"""
+    store = _collect_bronze(tmp_path)
+    try:
+        store.append_bronze(
+            "srct",
+            "match_stats",
+            [
+                {
+                    "provider": "srct",
+                    "dataset": "match_stats",
+                    "sid": "91002",
+                    "fetched_at": "2025-10-02T13:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+                    "raw_sha": "5" * 64,
+                    "payload": {
+                        "stats": [
+                            {
+                                "kind": "XGOT",
+                                "name": "射正预期进球",
+                                "home_value": 0.4,
+                                "away_value": 0.9,
+                            }
+                        ],
+                        "has_xg": True,  # XG 前缀键在场，但标题键缺席
+                    },
+                }
+            ],
+        )
+        report = srct_silver.build_xg_observations(store)
+        assert report.rows == 3
+        assert report.has_xg_rows == 3
+        assert report.headline_missing == 1  # 背离信号
+        assert report.bad_xg_values == 0
+    finally:
+        store.close()
+
+
 def test_cli_srct_silver_seam(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -389,8 +544,10 @@ def test_cli_srct_silver_seam(
     args = cli.build_parser().parse_args(["srct-silver"])
     cli._cmd_srct_silver(args, settings=_settings(tmp_path, db_path=face))
     payload: dict[str, Any] = json.loads(capsys.readouterr().out)
-    assert payload["rows"] == 3
-    assert payload["partitions"] == 1
-    assert payload["silver_version"] == srct_silver.SILVER_VERSION
+    assert payload["fixture"]["rows"] == 3
+    assert payload["fixture"]["partitions"] == 1
+    assert payload["fixture"]["silver_version"] == srct_silver.SILVER_VERSION
+    assert payload["xg"]["rows"] == 3  # 每场一条 xg_observation
+    assert payload["xg"]["has_xg_rows"] == 3
     assert Path(payload["duckdb"]).is_file()
     assert payload["cross_face_smoke"]["goalx_hist_matches"] == 2

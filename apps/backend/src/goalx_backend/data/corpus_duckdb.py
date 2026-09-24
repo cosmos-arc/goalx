@@ -22,7 +22,7 @@ from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import srct, srct_silver
+from goalx_backend.data.ingest import archive538, srct, srct_silver
 
 CORPUS_DUCKDB_NAME = "corpus.duckdb"
 # 运行面 ATTACH 别名（infra 常量，非表名）
@@ -33,6 +33,14 @@ _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         srct_silver.FIXTURE_DATASET,
         f"{srct.SRCT_PROVIDER}/{srct_silver.FIXTURE_DATASET}",
+    ),
+    (
+        srct_silver.XG_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_silver.XG_DATASET}",
+    ),
+    (
+        "archive_538",
+        f"{archive538.PROVIDER}/{archive538.DATASET}",
     ),
 )
 
