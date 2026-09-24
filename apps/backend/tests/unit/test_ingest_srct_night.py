@@ -198,7 +198,7 @@ def test_run_night_completes_and_persists(tmp_path: Path) -> None:
     assert summary.dates_done == 3
     assert summary.requests == 12  # 3 日页 + 3×3 端点
     assert summary.raw_new == 9  # 场次端点页（日页另计，沿切片 11 口径）
-    assert summary.parsed_ok == 9
+    assert summary.parsed_ok == 12  # 9 端点 + 3 日页 bronze 行
     assert summary.xg_matches == 3
     assert summary.failed_count == 0
     assert summary.pending_before == 3

@@ -22,6 +22,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-collect --date YYYY-MM-DD
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
+    uv run python -m goalx_backend.cli srct-silver
 """
 
 from __future__ import annotations
@@ -34,14 +35,15 @@ from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, datetime
 
+import duckdb
 import httpx
 from loguru import logger
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
+from goalx_backend.data import corpus_duckdb, reconcile
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
@@ -51,6 +53,7 @@ from goalx_backend.data.ingest import (
     sporttery,
     srct,
     srct_night,
+    srct_silver,
     uniform,
 )
 from goalx_backend.db import connect, migrate
@@ -320,6 +323,7 @@ def _cmd_srct_collect(
         "parse_failed": stats.parse_failed,
         "parse_success_rate": _parse_success_rate(stats),
         "xg_matches": stats.xg_matches,
+        "bronze_repaired": stats.bronze_repaired,
         "failed": stats.failed,
         "parse_version": srct.PARSE_VERSION,
     }
@@ -374,6 +378,42 @@ def _cmd_srct_night(
             payload = asdict(summary)
     finally:
         store.close()
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_srct_silver(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """
+    源T silver 重物化 + DuckDB 只读桥（票 55/56 切片 14）。
+
+    fixture_universe 从 bronze 幂等重建（分区/排序/版本戳），corpus.duckdb
+    视图刷新，附跨面冒烟（运行面 hist_matches 经 ATTACH 只读计数）。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = srct_silver.build_fixture_universe(store)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    hist_count: int | None = None
+    try:
+        con = corpus_duckdb.connect(resolved)
+        try:
+            hist_count = corpus_duckdb.hist_matches_count(con)
+        finally:
+            con.close()
+    except (duckdb.Error, OSError) as exc:
+        logger.warning("srct-silver 跨面冒烟不可用：{}", exc)
+    payload = {
+        **asdict(report),
+        "duckdb": str(duckdb_path),
+        "cross_face_smoke": {"goalx_hist_matches": hist_count},
+    }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -613,6 +653,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--limit", type=int, default=20, help="--list 行数(默认 20)"
     )
     sub.add_parser(
+        "srct-silver",
+        help="源T silver 重物化+DuckDB 只读桥(票56切片14;fixture_universe 幂等重建)",
+    )
+    sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
     return parser
@@ -648,6 +692,7 @@ def main(argv: list[str] | None = None) -> int:
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-night": lambda: _cmd_srct_night(args),
+        "srct-silver": lambda: _cmd_srct_silver(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

@@ -15,8 +15,8 @@ wayfinder 地图十票终审，多项难以逆转且未来读者会问"为什么
 1. **混合底座，不上 PostgreSQL**。运行面 SQLite 一律不动（竞彩/结算/评估/既有五源）；
    语料层 = repo 外独立数据树 **CorpusStore**（默认 `~/goalx-data/`，词条见 CONTEXT.md）：
    `raw/`（压缩件+sha256）+ `bronze/`（NDJSON(gzip) append-only，行信封 provider/dataset/
-   sid/fetched_at/parser_version/raw_sha）+ `silver/`（canonical Parquet，competition/season
-   分区）+ `gold/`（feature 预留，schema 归模型图）+ `duckdb/`（研究查询库）+ 独立
+   sid/fetched_at/parser_version/raw_sha）+ `silver/`（canonical Parquet，season/competition
+   分区——季为外层，查询主裁剪维度是季；2026-09-24 切片 14 裁定）+ `gold/`（feature 预留，schema 归模型图）+ `duckdb/`（研究查询库）+ 独立
    checkpoint SQLite。PG 的收益（>1 亿行 OLAP）在 DuckDB-over-Parquet 甜区，对单机个人
    系统是过度基建。
 2. **源T raw 全留本地**。每个响应压缩落盘+sha256（不进 repo）。源T 是"容忍非合同"的

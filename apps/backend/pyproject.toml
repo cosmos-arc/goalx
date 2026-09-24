@@ -4,6 +4,7 @@ requires-python = ">= 3.13"
 version = "0.1.0"
 dependencies = [
     "ag-ui-protocol>=1.0,<2",
+    "duckdb>=1.5.5",
     "fastapi>=0.115,<0.137",
     "granian>=2.0,<3",
     "httpx>=0.28,<1",
@@ -12,6 +13,7 @@ dependencies = [
     "openai-agents>=0.22.3",
     "penaltyblog>=1.6.2",
     "prefect>=3.4,<4",
+    "pyarrow>=25.0.1",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.10,<3",
     "scipy>=1.18.1",
