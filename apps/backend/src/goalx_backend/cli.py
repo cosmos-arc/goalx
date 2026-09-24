@@ -23,6 +23,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
     uv run python -m goalx_backend.cli srct-silver
+    uv run python -m goalx_backend.cli srct-odds
     uv run python -m goalx_backend.cli archive-538
 """
 
@@ -56,6 +57,7 @@ from goalx_backend.data.ingest import (
     sporttery,
     srct,
     srct_night,
+    srct_odds,
     srct_silver,
     uniform,
 )
@@ -423,6 +425,35 @@ def _cmd_srct_silver(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_odds(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """
+    源T 赔率事件重物化 + DuckDB 只读桥（票 55/56 切片 15）。
+
+    bookmaker 字典（数据派生全量，无 tier/is_core）+ odds_change_event
+    （1x2+亚盘变化事件流）从 bronze 幂等重建，corpus.duckdb 视图刷新
+    （含两新视图）。报告含门④转换完整性记账（unexplained_gap 须为 0）。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        book_report = srct_odds.build_bookmakers(store)
+        odds_report = srct_odds.build_odds_change_events(store)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {
+        "bookmaker": asdict(book_report),
+        "odds": asdict(odds_report),
+        "duckdb": str(duckdb_path),
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -688,6 +719,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-silver",
         help="源T silver 重物化+DuckDB 只读桥(票56切片14/16;fixture+xg 幂等重建)",
     )
+    sub.add_parser(
+        "srct-odds",
+        help="源T 赔率事件重物化(票56切片15;bookmaker 字典+odds_change_event 幂等重建)",
+    )
     archive = sub.add_parser(
         "archive-538",
         help="538 终版档案一次性入库(票56切片16;原档进raw+CorpusScope silver 小表)",
@@ -735,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
+        "srct-odds": lambda: _cmd_srct_odds(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

@@ -27,7 +27,9 @@ wayfinder 地图十票终审，多项难以逆转且未来读者会问"为什么
 4. **silver canonical 最小集四件**：fixture_universe / bookmaker 字典 / odds_change_event
    （1x2+亚盘变化事件流，非快照）/ xg_observation（47 键按场，源T单源）。~157 家书商
    全量进 silver（字典只记源身份和覆盖画像，不预设 core/tier）——源T 单请求已含全量轨迹，silver 再砍书商是把
-   已抓到的数据藏回 raw。竞彩官方价 cid1129 随行为书商（`srct:1129`），不建独立域；
+   已抓到的数据藏回 raw。竞彩官方价 cid1129 随行为书商（`srct:1x2:1129`
+   ——bookmaker_id 带端点族前缀：1x2 联合空间与亚盘 changeDetail 空间
+   不同构，扁平 cid 有跨脸撞名风险，切片 15 design-15 定案），不建独立域；
    xG 跨源归一（understat 运行面+538 档案×源T）归消费面视图+系数表，normalized_xg
    物化不建（校准拟合是研究工作，不固化进数据层）。
 5. **回填窗口 2017/18 季初起·分层深度·分三批**（修订 ADR-0010 的 2020→今）。终点
