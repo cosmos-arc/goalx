@@ -19,7 +19,7 @@ published_at 语义）。赛季按开球日 8 月界切（8/1-次年 7/31，与�
 资格赛，9 月起=正赛）。
 """
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 # （pyarrow 无官方 stub，同 dc_model/xg_dc 先例）
 
 from __future__ import annotations
@@ -187,12 +187,12 @@ def build_fixture_universe(store: CorpusStore) -> SilverFixtureReport:
     target_dirs: set[Path] = set()
     for (season, league), rows in sorted(grouped.items()):
         part = root / f"season={season}" / f"competition={league}"
-        _write_partition(part, rows)
+        write_partition(part, rows, _FIXTURE_SCHEMA)
         target_dirs.add(part)
         report.seasons[season] = report.seasons.get(season, 0) + len(rows)
     report.rows = len(fixtures)
     report.partitions = len(target_dirs)
-    report.stale_partitions_removed = _remove_stale(root, target_dirs)
+    report.stale_partitions_removed = remove_stale(root, target_dirs)
     root.mkdir(parents=True, exist_ok=True)  # 空语料也要落 _meta（建库即审计）
     meta = {
         "silver_version": SILVER_VERSION,
@@ -214,17 +214,19 @@ def _fixture_root(store: CorpusStore) -> Path:
     return store.root / "silver" / srct.SRCT_PROVIDER / FIXTURE_DATASET
 
 
-def _write_partition(part: Path, rows: list[dict[str, object]]) -> None:
+def write_partition(
+    part: Path, rows: list[dict[str, object]], schema: pa.Schema
+) -> None:
     """一分区一 parquet 文件（tmp 原子替换；排序已在上游统一完成）。"""
     part.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pylist(rows, schema=_FIXTURE_SCHEMA)
+    table = pa.Table.from_pylist(rows, schema=schema)
     tmp = part / "data.parquet.tmp"
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(part / "data.parquet")
 
 
-def _remove_stale(root: Path, target: set[Path]) -> int:
-    """删除不在目标集里的旧分区（重建幂等的清理半边）。"""
+def remove_stale(root: Path, target: set[Path]) -> int:
+    """删除不在目标集里的旧分区（重建幂等的清理半边；silver 各数据集共用）。"""
     removed = 0
     if not root.exists():
         return removed
@@ -240,3 +242,180 @@ def _remove_stale(root: Path, target: set[Path]) -> int:
         if season_dir.is_dir() and not any(season_dir.iterdir()):
             season_dir.rmdir()
     return removed
+
+
+# ---- xg_observation（切片 16）：47 键统计按场 silver，源T 单源口径 ----
+
+XG_DATASET = "xg_observation"
+XG_SILVER_VERSION = "silver_xg_v1"
+# 标题 xG 扁平列取 EXPECTED_GOALS（预期进球，全五味之总）；其余四味留在
+# stats 列内按 kind 保留（键集逐年演进，贴源不砍）
+_HEADLINE_KIND = "EXPECTED_GOALS"
+
+_STAT_ITEM = pa.struct(
+    [
+        pa.field("kind", pa.string()),
+        pa.field("name", pa.string()),
+        pa.field("home_value", pa.string()),  # 贴源原串（int/float 落串）
+        pa.field("away_value", pa.string()),
+    ]
+)
+_XG_SCHEMA = pa.schema(
+    [
+        pa.field("sid", pa.string()),
+        pa.field("has_xg", pa.bool_()),
+        pa.field("xg_home", pa.float64()),  # EXPECTED_GOALS 数值化（缺/坏 None）
+        pa.field("xg_away", pa.float64()),
+        pa.field("stats", pa.list_(_STAT_ITEM)),  # 全键保留（无 xG 场不丢 40+ 键）
+        pa.field(
+            "fetched_at", pa.string()
+        ),  # 观测时刻（bronze 行信封，observed_at 语义）
+    ]
+)
+
+
+@dataclass
+class SilverXgReport:
+    """一次 xg_observation 重物化报告（coverage 摘要口径）。"""
+
+    silver_version: str = XG_SILVER_VERSION
+    rows: int = 0
+    has_xg_rows: int = 0  # coverage：has_xg=True 场数
+    bad_xg_values: int = 0  # EXPECTED_GOALS 在场但值非数值（留 None 计数）
+    headline_missing: int = 0  # has_xg=True 但标题键缺席（口径背离信号）
+    orphan_sids: int = 0  # 无 fixture 元数据的场（落 _unknown 分区不丢）
+    partitions: int = 0
+    stale_partitions_removed: int = 0
+    seasons: dict[str, int] = field(default_factory=dict)
+    built_at: str = ""
+
+
+def _to_float(value: object) -> float | None:
+    """数值化容错（贴源串/数值均可；失败 None）。"""
+    if value is None:
+        return None
+    try:
+        return float(str(value))
+    except ValueError:
+        return None
+
+
+def _headline_xg(
+    stats: list[dict[str, object]],
+) -> tuple[float | None, float | None, bool]:
+    """标题 xG：(home, away, 值坏)；键不在场返回 (None, None, False)。"""
+    headline = next((i for i in stats if i.get("kind") == _HEADLINE_KIND), None)
+    if headline is None:
+        return None, None, False
+    home, away = (
+        _to_float(headline.get("home_value")),
+        _to_float(headline.get("away_value")),
+    )
+    return home, away, home is None or away is None
+
+
+def _latest_stats_rows(store: CorpusStore) -> dict[str, dict[str, object]]:
+    """当前解析器版本的 match_stats 行，sid→最新（append-only 后行胜出）。"""
+    latest: dict[str, dict[str, object]] = {}
+    for row in store.read_bronze(srct.SRCT_PROVIDER, srct.STATS_DATASET):
+        if row.get("parser_version") != srct.BRONZE_VERSIONS[srct.STATS_DATASET]:
+            continue
+        latest[str(row["sid"])] = row
+    return latest
+
+
+def _stat_items(stats: list[dict[str, object]]) -> list[dict[str, str | None]]:
+    """47 键贴源投影：值转串、None 保留（键集演进零假设）。"""
+    return [
+        {
+            "kind": str(i.get("kind")),
+            "name": str(i.get("name")),
+            "home_value": None
+            if i.get("home_value") is None
+            else str(i.get("home_value")),
+            "away_value": None
+            if i.get("away_value") is None
+            else str(i.get("away_value")),
+        }
+        for i in stats
+    ]
+
+
+def build_xg_observations(store: CorpusStore) -> SilverXgReport:
+    """
+    重物化 silver xg_observation（幂等；输入=bronze match_stats 当前版本）。
+
+    一行=一场：has_xg 布尔 + 标题 xG 扁平列 + 全部 47 键 stats 贴源保留。
+    赛季/联赛分区取自 fixture_universe 的 sid 元数据（join 地基，spec
+    story 12）；无元数据的场落 `season=_unknown/competition=_unknown`
+    （不丢数据，计数留痕——含"真孤儿"与 fixture 侧开球/比分解析跳行
+    两类，审计看 fixture 报告的 skipped_anomaly 可分口径）。观测时刻 =
+    bronze 行信封 fetched_at（列名同义）。
+    """
+    report = SilverXgReport(built_at=utc_now_iso())
+    latest = _latest_stats_rows(store)
+    meta = {str(r["sid"]): r for r in fixture_rows(store)[0]}
+    rows: list[dict[str, object]] = []
+    unknown: list[dict[str, object]] = []
+    for sid, bronze in sorted(latest.items()):
+        payload = bronze.get("payload")
+        payload_dict = payload if isinstance(payload, dict) else {}
+        stats = payload_dict.get("stats", [])
+        has_xg = bool(payload_dict.get("has_xg"))
+        xg_home, xg_away, bad = _headline_xg(stats)
+        if bad:
+            report.bad_xg_values += 1
+        if has_xg and not any(i.get("kind") == _HEADLINE_KIND for i in stats):
+            # has_xg 口径（任一 XG 键在场）与标题键背离——coverage 对账信号
+            report.headline_missing += 1
+        row: dict[str, object] = {
+            "sid": sid,
+            "has_xg": has_xg,
+            "xg_home": xg_home,
+            "xg_away": xg_away,
+            "stats": _stat_items(stats),
+            "fetched_at": str(bronze.get("fetched_at")),
+        }
+        if has_xg:
+            report.has_xg_rows += 1
+        fixture = meta.get(sid)
+        if fixture is None:
+            report.orphan_sids += 1
+            unknown.append(row)
+        else:
+            rows.append(row)
+    root = store.root / "silver" / srct.SRCT_PROVIDER / XG_DATASET
+    target_dirs: set[Path] = set()
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for row in rows:
+        fixture = meta[str(row["sid"])]
+        season = season_of(cast(datetime, fixture["kickoff"]))
+        grouped.setdefault((season, str(fixture["league"])), []).append(row)
+    if unknown:
+        grouped.setdefault(("_unknown", "_unknown"), []).extend(unknown)
+    for (season, league), part_rows in sorted(grouped.items()):
+        part_rows.sort(key=lambda r: str(r["sid"]))
+        part = root / f"season={season}" / f"competition={league}"
+        write_partition(part, part_rows, _XG_SCHEMA)
+        target_dirs.add(part)
+        report.seasons[season] = report.seasons.get(season, 0) + len(part_rows)
+    report.rows = len(rows) + len(unknown)
+    report.partitions = len(target_dirs)
+    report.stale_partitions_removed = remove_stale(root, target_dirs)
+    root.mkdir(parents=True, exist_ok=True)
+    meta_out = {
+        "silver_version": XG_SILVER_VERSION,
+        "bronze_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+        "built_at": report.built_at,
+        "rows": report.rows,
+        "has_xg_rows": report.has_xg_rows,
+        "orphan_sids": report.orphan_sids,
+        "bad_xg_values": report.bad_xg_values,
+        "headline_missing": report.headline_missing,
+        "partitions": report.partitions,
+        "seasons": report.seasons,
+    }
+    (root / "_meta.json").write_text(
+        json.dumps(meta_out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return report

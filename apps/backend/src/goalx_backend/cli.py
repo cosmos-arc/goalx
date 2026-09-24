@@ -23,6 +23,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
     uv run python -m goalx_backend.cli srct-silver
+    uv run python -m goalx_backend.cli archive-538
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 
 import duckdb
 import httpx
@@ -47,6 +49,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
+    archive538,
     caiguo,
     fdhist,
     openfootball,
@@ -387,16 +390,18 @@ def _cmd_srct_silver(
     settings: Settings | None = None,
 ) -> None:
     """
-    源T silver 重物化 + DuckDB 只读桥（票 55/56 切片 14）。
+    源T silver 重物化 + DuckDB 只读桥（票 55/56 切片 14/16）。
 
-    fixture_universe 从 bronze 幂等重建（分区/排序/版本戳），corpus.duckdb
-    视图刷新，附跨面冒烟（运行面 hist_matches 经 ATTACH 只读计数）。
-    settings 注入口只服务测试接缝。
+    fixture_universe + xg_observation 从 bronze 幂等重建（分区/排序/版本
+    戳），corpus.duckdb 视图刷新（archive_538 已入库则一并挂视图），附跨面
+    冒烟（运行面 hist_matches 经 ATTACH 只读计数）。settings 注入口只服务
+    测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
     try:
         report = srct_silver.build_fixture_universe(store)
+        xg_report = srct_silver.build_xg_observations(store)
         duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     finally:
         store.close()
@@ -410,10 +415,37 @@ def _cmd_srct_silver(
     except (duckdb.Error, OSError) as exc:
         logger.warning("srct-silver 跨面冒烟不可用：{}", exc)
     payload = {
-        **asdict(report),
+        "fixture": asdict(report),
+        "xg": asdict(xg_report),
         "duckdb": str(duckdb_path),
         "cross_face_smoke": {"goalx_hist_matches": hist_count},
     }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_archive_538(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+    csv_path: Path | None = None,
+) -> None:
+    """
+    538 终版档案一次性入库（票 55/56 切片 16）。
+
+    原档进 raw + CorpusScope silver 小表（幂等重建；树内已有 raw 时源档
+    缺席也可重建）。settings/csv_path 注入口只服务测试接缝；缺省源档取
+    research/21 留档。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = archive538.ingest_archive_538(
+            store, csv_path if csv_path is not None else args.csv
+        )
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {**asdict(report), "duckdb": str(duckdb_path)}
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -654,7 +686,17 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "srct-silver",
-        help="源T silver 重物化+DuckDB 只读桥(票56切片14;fixture_universe 幂等重建)",
+        help="源T silver 重物化+DuckDB 只读桥(票56切片14/16;fixture+xg 幂等重建)",
+    )
+    archive = sub.add_parser(
+        "archive-538",
+        help="538 终版档案一次性入库(票56切片16;原档进raw+CorpusScope silver 小表)",
+    )
+    archive.add_argument(
+        "--csv",
+        type=Path,
+        default=archive538.DEFAULT_CSV_PATH,
+        help="原档 CSV 路径(默认 research/21 留档)",
     )
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
@@ -693,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
+        "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()
