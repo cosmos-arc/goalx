@@ -128,14 +128,7 @@ def fixture_rows(store: CorpusStore) -> tuple[list[dict[str, object]], int, int]
     重挂场次，防御性去重）。开球两形态/比分解析失败均跳行计数留痕。
     返回 (行集, 日页数, 异常跳行数)。
     """
-    bronze_rows = [
-        row
-        for row in store.read_bronze(srct.SRCT_PROVIDER, srct.DAY_DATASET)
-        if row.get("parser_version") == srct.BRONZE_VERSIONS[srct.DAY_DATASET]
-    ]
-    latest_day: dict[str, dict[str, object]] = {}
-    for row in bronze_rows:  # append-only 顺序即时间序，后行覆盖前行
-        latest_day[str(row["sid"])] = row
+    latest_day = latest_bronze_rows(store, srct.DAY_DATASET)
     latest_match: dict[str, dict[str, object]] = {}
     fixtures: list[dict[str, object]] = []
     skipped = 0
@@ -193,19 +186,18 @@ def build_fixture_universe(store: CorpusStore) -> SilverFixtureReport:
     report.rows = len(fixtures)
     report.partitions = len(target_dirs)
     report.stale_partitions_removed = remove_stale(root, target_dirs)
-    root.mkdir(parents=True, exist_ok=True)  # 空语料也要落 _meta（建库即审计）
-    meta = {
-        "silver_version": SILVER_VERSION,
-        "bronze_version": srct.BRONZE_VERSIONS[srct.DAY_DATASET],
-        "built_at": report.built_at,
-        "rows": report.rows,
-        "day_pages": report.day_pages,
-        "skipped_anomaly": report.skipped_anomaly,
-        "partitions": report.partitions,
-        "seasons": report.seasons,
-    }
-    (root / "_meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    write_dataset_meta(
+        root,
+        {
+            "silver_version": SILVER_VERSION,
+            "bronze_version": srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+            "built_at": report.built_at,
+            "rows": report.rows,
+            "day_pages": report.day_pages,
+            "skipped_anomaly": report.skipped_anomaly,
+            "partitions": report.partitions,
+            "seasons": report.seasons,
+        },
     )
     return report
 
@@ -242,6 +234,31 @@ def remove_stale(root: Path, target: set[Path]) -> int:
         if season_dir.is_dir() and not any(season_dir.iterdir()):
             season_dir.rmdir()
     return removed
+
+
+def write_dataset_meta(root: Path, meta: dict[str, object]) -> None:
+    """数据集 _meta.json（空语料也要落——建库即审计；silver 各数据集共用）。"""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "_meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def latest_bronze_rows(
+    store: CorpusStore, dataset: str
+) -> dict[str, dict[str, object]]:
+    """
+    当前解析器版本的 bronze 行，key→最新（append-only 后行胜出）。
+
+    silver 各 builder 共用的选取口径（切片 15 抽出）：重复抓取选一份
+    轨迹、旧 parser_version 行一律不可见。
+    """
+    latest: dict[str, dict[str, object]] = {}
+    for row in store.read_bronze(srct.SRCT_PROVIDER, dataset):
+        if row.get("parser_version") != srct.BRONZE_VERSIONS[dataset]:
+            continue
+        latest[str(row["sid"])] = row
+    return latest
 
 
 # ---- xg_observation（切片 16）：47 键统计按场 silver，源T 单源口径 ----
@@ -290,7 +307,7 @@ class SilverXgReport:
     built_at: str = ""
 
 
-def _to_float(value: object) -> float | None:
+def to_float(value: object) -> float | None:
     """数值化容错（贴源串/数值均可；失败 None）。"""
     if value is None:
         return None
@@ -308,20 +325,10 @@ def _headline_xg(
     if headline is None:
         return None, None, False
     home, away = (
-        _to_float(headline.get("home_value")),
-        _to_float(headline.get("away_value")),
+        to_float(headline.get("home_value")),
+        to_float(headline.get("away_value")),
     )
     return home, away, home is None or away is None
-
-
-def _latest_stats_rows(store: CorpusStore) -> dict[str, dict[str, object]]:
-    """当前解析器版本的 match_stats 行，sid→最新（append-only 后行胜出）。"""
-    latest: dict[str, dict[str, object]] = {}
-    for row in store.read_bronze(srct.SRCT_PROVIDER, srct.STATS_DATASET):
-        if row.get("parser_version") != srct.BRONZE_VERSIONS[srct.STATS_DATASET]:
-            continue
-        latest[str(row["sid"])] = row
-    return latest
 
 
 def _stat_items(stats: list[dict[str, object]]) -> list[dict[str, str | None]]:
@@ -353,7 +360,7 @@ def build_xg_observations(store: CorpusStore) -> SilverXgReport:
     bronze 行信封 fetched_at（列名同义）。
     """
     report = SilverXgReport(built_at=utc_now_iso())
-    latest = _latest_stats_rows(store)
+    latest = latest_bronze_rows(store, srct.STATS_DATASET)
     meta = {str(r["sid"]): r for r in fixture_rows(store)[0]}
     rows: list[dict[str, object]] = []
     unknown: list[dict[str, object]] = []
@@ -402,20 +409,19 @@ def build_xg_observations(store: CorpusStore) -> SilverXgReport:
     report.rows = len(rows) + len(unknown)
     report.partitions = len(target_dirs)
     report.stale_partitions_removed = remove_stale(root, target_dirs)
-    root.mkdir(parents=True, exist_ok=True)
-    meta_out = {
-        "silver_version": XG_SILVER_VERSION,
-        "bronze_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
-        "built_at": report.built_at,
-        "rows": report.rows,
-        "has_xg_rows": report.has_xg_rows,
-        "orphan_sids": report.orphan_sids,
-        "bad_xg_values": report.bad_xg_values,
-        "headline_missing": report.headline_missing,
-        "partitions": report.partitions,
-        "seasons": report.seasons,
-    }
-    (root / "_meta.json").write_text(
-        json.dumps(meta_out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    write_dataset_meta(
+        root,
+        {
+            "silver_version": XG_SILVER_VERSION,
+            "bronze_version": srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+            "built_at": report.built_at,
+            "rows": report.rows,
+            "has_xg_rows": report.has_xg_rows,
+            "orphan_sids": report.orphan_sids,
+            "bad_xg_values": report.bad_xg_values,
+            "headline_missing": report.headline_missing,
+            "partitions": report.partitions,
+            "seasons": report.seasons,
+        },
     )
     return report

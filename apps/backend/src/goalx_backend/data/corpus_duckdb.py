@@ -22,13 +22,13 @@ from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import archive538, srct, srct_silver
+from goalx_backend.data.ingest import archive538, srct, srct_odds, srct_silver
 
 CORPUS_DUCKDB_NAME = "corpus.duckdb"
 # 运行面 ATTACH 别名（infra 常量，非表名）
 RUNNING_FACE_ALIAS = "goalx"
 # 银层视图清单（视图名, 语料树 silver 相对路径；随数据集逐张扩：
-# 538 静态表切片 16、其余三件套切片 15+）
+# 538 静态表+odds/字典=切片 15/16，四件套齐）
 _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         srct_silver.FIXTURE_DATASET,
@@ -41,6 +41,14 @@ _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         "archive_538",
         f"{archive538.PROVIDER}/{archive538.DATASET}",
+    ),
+    (
+        srct_odds.ODDS_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_odds.ODDS_DATASET}",
+    ),
+    (
+        srct_odds.BOOKMAKER_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_odds.BOOKMAKER_DATASET}",
     ),
 )
 
