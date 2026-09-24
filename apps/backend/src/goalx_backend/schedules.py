@@ -23,6 +23,10 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 - official-reconcile 08:30：赛果日终审计（票 44）——源D 页面 + openfootball
   双参照源对账，跟在官方同步 08:00 补扫落事实之后
 - srcb-collect 10:40/22:40（票 49 采集先行）：源B变化时序低频回溯式攒语料
+- srct-night 01:00（票 55 切片 13）：源T夜班 Phase1 回填——01:00-08:00 窗口
+  内 ~8K 请求预算自动推进，连败 5 场熔断当晚收手，每夜摘要落语料树
+  checkpoint 库（`goalx srct-night --list` 晨检）；Phase1 批次（三完整季+
+  当季 ≈47K 请求）跑完后每夜零成本心跳
 - understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
@@ -51,6 +55,7 @@ from goalx_backend.flows import (
     pool_snapshot_flow,
     scout_line_flow,
     srcb_collect_flow,
+    srct_night_flow,
     understat_sync_flow,
     weekly_refresh_flow,
 )
@@ -117,6 +122,16 @@ def main() -> None:
             schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 源T夜班（票 55 切片 13）：家宽低峰窗口开工，~8K 请求/日预算推进
+    # Phase1 回填；窗口 01:00-08:00 = 7h ≈ 8.4K 请求（3s 均值抖动），预算
+    # 与窗口天然咬合；跑完 Phase1 后每夜零请求心跳（断点续传零重抓）
+    srct_night_deploy = cast(
+        RunnerDeployment,
+        srct_night_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="0 1 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
     # 累计）；09:20 赶在 daily-capture 10:00 前，当日预测决策时点最新鲜
     understat = cast(
@@ -177,6 +192,7 @@ def main() -> None:
         understat,
         anchor_dense,
         srcb_collect_deploy,
+        srct_night_deploy,
         weekly,
         wrap,
         pool,

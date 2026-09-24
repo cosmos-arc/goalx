@@ -1,0 +1,387 @@
+"""源T夜班调度与请求预算测试（票 55 切片 13）：季窗清单 + 高位夜班接缝。
+
+合成页面（结构对齐 2026-09 实测裁剪样本）走 MockTransport：真源网络
+永不进测试——夜班实探才是真验证（spec 测试接缝裁定）。端点模板一律
+`.test` 占位域（代称红线）。
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+from limits import RateLimitItemPerMinute
+
+from goalx_backend.config import Settings
+from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest import srct, srct_night
+
+NOW_IN_WINDOW = datetime(2026, 9, 24, 2, 0, 0)  # 深夜窗口内（01:00-08:00）
+TODAY = date(2026, 9, 24)
+# 小季窗：3 日 × 每日 1 场（91001/91002/91003），夜班全场景够用
+TEST_SEASONS = (srct_night.SeasonWindow("2025/26", "2025-10-01", "2025-10-03"),)
+DATES = ["2025-10-01", "2025-10-02", "2025-10-03"]
+DATE_TO_SID = dict(zip(DATES, ["91001", "91002", "91003"], strict=True))
+
+
+@pytest.fixture(autouse=True)
+def _wide_rate_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """放宽滑窗硬顶：noop sleeper 下 20/min 窗会忙转到真实时间翻窗。
+
+    防封语义本身在 test_ingest_srct（真实 sleep 接缝）与本文件
+    NightBudget 单测里钉死，这里只测夜班编排。
+    """
+    monkeypatch.setattr(srct, "_REQUEST_WINDOW", RateLimitItemPerMinute(10**6))
+
+
+DAY_404_BYTES = ("<html><body><img src='/image/error_404.gif'></body></html>").encode(
+    "gb18030"
+)
+
+
+def _day_page(sid: str) -> bytes:
+    row = (
+        "<tr height=18 align=center>"
+        "<td><span>英超</span></td><td>1日20:00</td><td class=style1>完</td>"
+        "<td align=right>主队甲</td>"
+        "<td class=style1><font color=blue>1</font>-<font color=red>2</font></td>"
+        "<td align=left>客队乙</td>"
+        f"<td><a onclick='analysis({sid})'>析</a></td></tr>"
+    )
+    return f"<html><body><table>{row}</table></body></html>".encode("gb18030")
+
+
+ODDS_JS = (
+    'var matchname_cn="英超";var ScheduleID=91001;'
+    'game=Array("1129|1|Lottery Official|3.2|3.4|2.1|27|26|47|88|'
+    '2.9|3.1|2.2|30|27|43|88|0.85|0.85|0.93|2025,10-1,18,10,28,00|");\n'
+    "gameDetail=Array();\n"
+).encode()
+HANDICAP_BYTES = (
+    "<html><head><title>亚赔变化表</title></head><body><table>"
+    "<TR align=center><TD>0.80</TD><TD>平手</TD><TD>1.05</TD>"
+    "<TD>10-01 19:29</TD><TD>即</TD></TR>"
+    "</table></body></html>"
+).encode("gb18030")
+STATS_HTML = (
+    '<html><body><script>var jsonData = {"techStat":{"itemList":['
+    '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
+    '"kind":"EXPECTED_GOALS"}]},"info":{}};</script></body></html>'
+).encode()
+
+
+def _settings(tmp_path: Path) -> Settings:
+    return Settings(
+        corpus_root=tmp_path / "corpus",
+        srct_day_url="https://srct.test/over/{date}.htm",
+        srct_odds_url="https://srct.test/odds/{sid}.js",
+        srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
+        srct_handicap_url="https://srct.test/handicap/{sid}",
+        srct_stats_url="https://srct.test/shijian/{sid}.htm",
+    )
+
+
+def _transport_spy() -> tuple[list[httpx.Request], dict[str, httpx.Response]]:
+    """请求记录器 + 全日期全端点可编程响应表。"""
+    seen: list[httpx.Request] = []
+    routes: dict[str, httpx.Response] = {}
+    for day, sid in DATE_TO_SID.items():
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=_day_page(sid)
+        )
+        routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
+        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
+    return seen, routes
+
+
+def _client(
+    seen: list[httpx.Request], routes: dict[str, httpx.Response]
+) -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if path.startswith("/over/"):
+            key = f"day:{path.removeprefix('/over/').removesuffix('.htm')}"
+        elif path.startswith("/odds/"):
+            key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
+        elif path.startswith("/handicap/"):
+            key = f"hdp:{path.removeprefix('/handicap/')}"
+        else:
+            key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
+        if key not in routes:
+            return httpx.Response(500, text="boom")
+        return routes[key]
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _run(
+    tmp_path: Path,
+    seen: list[httpx.Request],
+    routes: dict[str, httpx.Response],
+    **kwargs: Any,
+) -> srct_night.SrctNightSummary:
+    kwargs.setdefault("now_fn", lambda: NOW_IN_WINDOW)
+    kwargs.setdefault("seasons", TEST_SEASONS)
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        return srct_night.run_night(
+            store,
+            settings,
+            _client(seen, routes),
+            today=TODAY,
+            sleeper=lambda _s: None,
+            **kwargs,
+        )
+    finally:
+        store.close()
+
+
+def _store(tmp_path: Path) -> CorpusStore:
+    return CorpusStore(_settings(tmp_path).corpus_root)
+
+
+def test_night_budget_guards() -> None:
+    budget = srct.NightBudget(request_cap=3, failure_streak_cap=2)
+    budget.charge(2)
+    with pytest.raises(srct.BudgetExhausted):
+        budget.charge(1)  # 3 >= 3 触顶
+    budget2 = srct.NightBudget(failure_streak_cap=2)
+    budget2.note(True)
+    budget2.note(False)  # 成功清零
+    budget2.note(True)
+    with pytest.raises(srct.CircuitOpen):
+        budget2.note(True)  # 连败 2 熔断
+
+
+def test_phase1_task_list_shape() -> None:
+    tasks = srct_night.phase1_dates(TODAY)
+    labels = [s for s, _ in tasks]
+    # 最新季优先 + 季内最新日倒序；当季上界 = 前天（today-2）
+    assert labels[0] == "2026/27"
+    assert labels[0] == labels[1] == labels[2]
+    assert tasks[0][1] == "2026-09-22"  # TODAY-2：完场稳态上界
+    assert labels[-1] == "2023/24"
+    assert tasks[-1][1] == "2023-08-01"
+    assert set(labels) == {"2026/27", "2025/26", "2024/25", "2023/24"}
+    days = [d for _, d in tasks]
+    assert days == sorted(days, reverse=True)  # 整表单调（全局倒序）
+
+
+def test_season_windows_are_contiguous_twelve_months() -> None:
+    # 季窗 8/1-次年 7/31 连续 12 个月：挪超/瑞超夏季历不吃空洞
+    days = srct_night.season_dates(srct_night.PHASE1_SEASONS[1], TODAY)
+    assert days[0] == "2025-08-01"
+    assert days[-1] == "2026-07-31"
+    assert len(days) == 365
+
+
+def test_pending_excludes_settled(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.ensure_tree()
+    store.set_day_status("2025-10-02", "done")
+    store.set_day_status("2025-10-03", "not_found")
+    pending = srct_night.pending_dates(store, TODAY, TEST_SEASONS)
+    assert [d for _, d in pending] == ["2025-10-01"]
+
+
+def test_run_night_completes_and_persists(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    summary = _run(tmp_path, seen, routes)
+    assert summary.stop_reason == "completed"
+    assert summary.dates_done == 3
+    assert summary.requests == 12  # 3 日页 + 3×3 端点
+    assert summary.raw_new == 9  # 场次端点页（日页另计，沿切片 11 口径）
+    assert summary.parsed_ok == 9
+    assert summary.xg_matches == 3
+    assert summary.failed_count == 0
+    assert summary.pending_before == 3
+    assert summary.pending_after == 0
+    store = _store(tmp_path)
+    rows = store.night_summaries()
+    assert len(rows) == 1
+    assert rows[0]["stop_reason"] == "completed"
+    assert rows[0]["requests"] == 12
+    assert json.loads(str(rows[0]["failed_json"])) == {}
+    for day in DATES:
+        assert store.verify_raw("srct", "day_page", day, ext=".htm")
+    # 日级台账：done 三日全报
+    assert store.day_status_dates("done") == set(DATES)
+
+
+def test_second_night_zero_requests_heartbeat(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    _run(tmp_path, seen, routes)
+    wire_after_night1 = len(seen)
+    summary = _run(tmp_path, seen, routes)
+    assert len(seen) == wire_after_night1  # 断点续传零重抓
+    assert summary.stop_reason == "completed"
+    assert summary.requests == 0
+    assert summary.dates_attempted == 0
+    assert summary.pending_before == 0
+    assert len(_store(tmp_path).night_summaries()) == 2  # 心跳也留行
+
+
+def test_budget_stop_cross_night_resume(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    night1 = _run(tmp_path, seen, routes, request_cap=6)
+    # 预算 6：日1（1+3=4 请求）干净完成；日2 日页（第 5 请求）落库后
+    # 首端点计费触顶即停（第 6 次计费但未发出）——日2 无 done，次夜 pending
+    assert night1.stop_reason == "budget"
+    assert night1.requests == 6  # 预算口径：含触顶未发的那一次
+    assert len(seen) == 5  # 真实线上 = 已发出 5 次
+    assert night1.dates_done == 1
+    assert night1.pending_after == 2
+    day2_raw = _store(tmp_path).has("srct", "day_page", "2025-10-02")
+    assert day2_raw  # 中断日的日页已留档
+    night2 = _run(tmp_path, seen, routes)
+    assert night2.stop_reason == "completed"
+    assert night2.dates_done == 2  # 日2（只补 3 端点）+ 日3（全量）
+    assert night2.requests == 7  # 3 + 4：日2 日页零重抓
+    # 两夜合计线上请求 = 全集 12，零浪费
+    assert len(seen) == 12
+    assert _store(tmp_path).day_status_dates("done") == set(DATES)
+
+
+def test_circuit_breaker_stops_night(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    breaker_seasons = (srct_night.SeasonWindow("2025/26", "2025-10-01", "2025-10-05"),)
+    for sid in ("91001", "91002", "91003"):
+        routes.pop(f"odds:{sid}")  # 全端点 500 → 每场必败
+        routes.pop(f"hdp:{sid}")
+        routes.pop(f"stats:{sid}")
+    # 补出 4/5 两日的日页路由（ breaker 季窗 5 日）
+    for day, sid in (("2025-10-04", "91004"), ("2025-10-05", "91005")):
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=_day_page(sid)
+        )
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        summary = srct_night.run_night(
+            store,
+            settings,
+            _client(seen, routes),
+            today=TODAY,
+            now_fn=lambda: NOW_IN_WINDOW,
+            sleeper=lambda _s: None,
+            seasons=breaker_seasons,
+        )
+    finally:
+        store.close()
+    assert summary.stop_reason == "circuit"
+    # 5 场连败熔断：日页 5 + 每场 3 端点 × 4 次尝试 = 65 请求即收手
+    assert summary.requests == 5 + 5 * 3 * (srct.MAX_RETRIES + 1)
+    assert summary.failed_count == 15
+    assert summary.dates_done == 4  # 前四日干净返回（场败不拦 done）
+    assert summary.pending_after == 1  # 熔断日次夜再试
+    assert _store(tmp_path).night_summaries()[0]["stop_reason"] == "circuit"
+
+
+def test_not_found_day_recorded_and_not_refetched(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    routes["day:20251002"] = httpx.Response(200, content=DAY_404_BYTES)
+    night1 = _run(tmp_path, seen, routes)
+    assert night1.dates_done == 2
+    assert night1.dates_not_found == 1
+    assert _store(tmp_path).day_status_dates("not_found") == {"2025-10-02"}
+    wire_after_night1 = len(seen)
+    night2 = _run(tmp_path, seen, routes)
+    assert len(seen) == wire_after_night1  # not_found 日不再耗请求
+    assert night2.pending_before == 0  # 待办清零（done×2 + not_found×1）
+    assert night2.stop_reason == "completed"
+
+
+def test_window_closed_no_work_no_row(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    summary = _run(tmp_path, seen, routes, now_fn=lambda: datetime(2026, 9, 24, 12, 0))
+    assert summary.stop_reason == "window_closed"
+    assert seen == []  # 窗口外零请求
+    assert _store(tmp_path).night_summaries() == []  # 没干活不留行
+
+
+def test_day_page_transport_failure_continues(tmp_path: Path) -> None:
+    seen, routes = _transport_spy()
+    routes["day:20251002"] = httpx.Response(502, text="bad gateway")
+    summary = _run(tmp_path, seen, routes)
+    assert summary.stop_reason == "completed"  # 单日页失败不炸整夜
+    assert summary.dates_done == 2
+    assert "2025-10-02:day_page" in summary.failed
+    assert summary.pending_after == 1  # 失败日无 done，次夜重试
+    # 摘要 requests = 预算口径：日页重试 4 次全计入（stats 丢弃路径不丢账）
+    assert summary.requests == 4 + (srct.MAX_RETRIES + 1) + 4
+    assert sum(1 for r in seen if "20251002" in r.url.path) == srct.MAX_RETRIES + 1
+
+
+def test_consecutive_fake_200_day_pages_trip_circuit(tmp_path: Path) -> None:
+    """软封锁以伪 200 日页呈现：不许绕开熔断整夜烧完/not_found 全表。"""
+    seen, routes = _transport_spy()
+    for day in DATES:  # 三日全伪 200 + 断点处仍差 2 败 → 用 5 日季窗钉死熔断
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=DAY_404_BYTES
+        )
+    seasons5 = (srct_night.SeasonWindow("2025/26", "2025-10-01", "2025-10-05"),)
+    for day in ("2025-10-04", "2025-10-05"):
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=DAY_404_BYTES
+        )
+    summary = _run(tmp_path, seen, routes, seasons=seasons5)
+    assert summary.stop_reason == "circuit"
+    assert summary.dates_not_found == 5  # 第 5 日也先记账再熔断，当晚收手
+    assert summary.requests == 5  # 每伪 200 日恰 1 请求（内容错误不重试）
+    # 摘要留痕 + 已记的 not_found 不回滚（次夜晨检人工判）
+    assert _store(tmp_path).night_summaries()[0]["stop_reason"] == "circuit"
+
+
+def test_window_rechecked_per_date_mid_night(tmp_path: Path) -> None:
+    """长夜越 08:00：逐日复判，越界即收手（已干活的夜照落摘要行）。"""
+    seen, routes = _transport_spy()
+    ticks = iter(
+        [
+            datetime(2026, 9, 24, 7, 59),  # 开跑（窗内）
+            datetime(2026, 9, 24, 7, 59),  # 日1 前复判（窗内）
+            datetime(2026, 9, 24, 8, 0),  # 日2 前复判（越界）
+            datetime(2026, 9, 24, 8, 0),  # ended_at
+        ]
+    )
+    summary = _run(tmp_path, seen, routes, now_fn=lambda: next(ticks))
+    assert summary.stop_reason == "window_closed"
+    assert summary.dates_done == 1  # 日1 完成后越界收手
+    assert summary.pending_after == 2
+    assert summary.requests == 4
+    assert len(_store(tmp_path).night_summaries()) == 1  # 干过活照留行
+
+
+def test_cli_run_and_list_seam(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from goalx_backend import cli
+
+    seen, routes = _transport_spy()
+    args = cli.build_parser().parse_args(["srct-night", "--request-cap", "20"])
+    cli._cmd_srct_night(
+        args,
+        settings=_settings(tmp_path),
+        client=_client(seen, routes),
+        now_fn=lambda: NOW_IN_WINDOW,
+        sleeper=lambda _s: None,
+        seasons=TEST_SEASONS,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stop_reason"] == "completed"
+    assert payload["requests"] == 12
+    assert payload["dates_done"] == 3
+    assert payload["failed"] == {}
+
+    list_args = cli.build_parser().parse_args(["srct-night", "--list"])
+    cli._cmd_srct_night(list_args, settings=_settings(tmp_path))
+    nights = json.loads(capsys.readouterr().out)["nights"]
+    assert len(nights) == 1
+    assert nights[0]["stop_reason"] == "completed"
+    assert nights[0]["dates_done"] == 3
