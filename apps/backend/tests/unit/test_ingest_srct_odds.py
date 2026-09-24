@@ -448,7 +448,9 @@ def _tree_digest(root: Path) -> str:
     return sha.hexdigest()
 
 
-def test_cli_srct_odds_payload(tmp_path: Path, capsys: pytest.CaptureFilter) -> None:
+def test_cli_srct_odds_payload(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     store, settings = _collect_bronze(tmp_path)
     store.close()
     import argparse
