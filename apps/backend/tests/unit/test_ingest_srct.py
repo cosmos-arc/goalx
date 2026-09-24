@@ -310,7 +310,7 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
     stats, store = _collect(tmp_path, seen, routes, jitter=None)
     assert stats.requests == 13  # 1 日页 + 4 场×3 端点
     assert stats.raw_new == 12
-    assert stats.parsed_ok == 12
+    assert stats.parsed_ok == 13  # 12 端点 + 1 日页 bronze 行（切片 14）
     assert stats.xg_matches == 3  # 挪超场无 xG（老键集），其余三家有
     assert stats.scope_sids == SCOPE_SIDS
     assert stats.failed == {}
@@ -411,7 +411,7 @@ def test_collect_day_backoff_retries_then_failed(tmp_path: Path) -> None:
     assert "500" in stats.failed["2789205:odds_1x2d"]
     # 同场另两端点与其余场不受牵连
     assert stats.raw_new == 11
-    assert stats.parsed_ok == 11
+    assert stats.parsed_ok == 12  # 端点 + 日页 bronze 行
     store = CorpusStore(_settings(tmp_path).corpus_root)
     assert store.verify_raw("srct", "asian_handicap", "2789205", ext=".html")
     assert store.verify_raw("srct", "odds_1x2d", "2711573", ext=".js")
@@ -430,7 +430,7 @@ def test_parse_failed_raw_kept_no_bronze_row(tmp_path: Path) -> None:
     assert sleeps == []
     assert "game 数组" in stats.parse_failed["2789205:odds_1x2d"]
     assert stats.failed == {}
-    assert stats.parsed_ok == 11
+    assert stats.parsed_ok == 12  # 端点 + 日页 bronze 行
     assert store.verify_raw("srct", "odds_1x2d", "2789205", ext=".js")  # raw 留档
     assert len(store.read_bronze("srct", "odds_1x2d")) == 3  # 失败场无 bronze 行
 
@@ -572,7 +572,7 @@ def test_cli_three_endpoint_seam(
     payload = json.loads(capsys.readouterr().out)
     assert payload["requests"] == 4  # 日页 + 三端点
     assert payload["raw_new"] == 3
-    assert payload["parsed_ok"] == 3
+    assert payload["parsed_ok"] == 4  # 3 端点 + 1 日页
     assert payload["parse_failed"] == {}
     assert payload["xg_matches"] == 1  # 英超场统计页含 xG
     assert payload["parse_success_rate"] == 1.0

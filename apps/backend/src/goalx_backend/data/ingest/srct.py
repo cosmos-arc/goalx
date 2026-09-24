@@ -53,8 +53,10 @@ ODDS_DATASET = "odds_1x2d"
 HANDICAP_DATASET = "asian_handicap"  # 亚盘变化表（锚定书商 cid 走 URL 模板）
 STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进）
 # 每解析器独立版本（spec story 8：记录可追溯到确切解析器版本；修一个只
-# 重物化其数据集）
+# 重物化其数据集）。day_page=PARSE_VERSION（srct_day_v1）：一行=一日
+# CorpusScope 完赛场清单，silver fixture_universe 的唯一输入（切片 14）
 BRONZE_VERSIONS: dict[str, str] = {
+    DAY_DATASET: PARSE_VERSION,
     ODDS_DATASET: "srct_odds_v1",
     HANDICAP_DATASET: "srct_hdp_v1",
     STATS_DATASET: "srct_stats_v1",
@@ -62,8 +64,8 @@ BRONZE_VERSIONS: dict[str, str] = {
 
 # CorpusScope 15 项（ADR-0010 定案 1）：日页联赛名按字面量精确匹配。
 # 欧战两词为 2026-09-23 实测钉死的站点字面量（欧冠杯/欧罗巴杯——资格赛与
-# 正赛同名随行，正赛区分留给切片 14 fixture_universe 按开球日期窗口）；
-# 欧会杯（Conference）/欧联U19 等由精确匹配天然排除。
+# 正赛同名随行，正赛区分已落切片 14 silver fixture_universe 的 stage 列，
+# 按开球月窗口派生）；欧会杯（Conference）/欧联U19 等由精确匹配天然排除。
 CORPUS_SCOPE: tuple[str, ...] = (
     "英超",
     "西甲",
@@ -573,44 +575,64 @@ def _attempt_fetch(
         return None, wire[0], str(exc)[:120]
 
 
+def _day_payload(body: bytes) -> dict[str, object]:
+    """日页 → bronze payload：CorpusScope 完赛场清单（fixture_universe 输入）。"""
+    return {
+        "matches": [
+            {
+                "sid": m.sid,
+                "league": m.league,
+                "kickoff_label": m.kickoff_label,
+                "home": m.home,
+                "away": m.away,
+                "score": m.score,
+            }
+            for m in filter_scope(parse_over_page(decode_day_page(body)))
+        ]
+    }
+
+
 def _bronze_append(
     store: CorpusStore,
-    spec: _EndpointSpec,
-    sid: str,
+    dataset: str,
+    parse: Callable[[bytes], dict[str, object]],
+    key: str,
     page: bytes,
     fetched_at: str,
     stats: SrctCollectStats,
 ) -> bool:
     """解析并追加 bronze 行；解析失败只计数不写行（raw 已留档）。"""
     try:
-        payload = spec.parse(page)
+        payload = parse(page)
     except SrctContentError as exc:
-        stats.parse_failed[f"{sid}:{spec.dataset}"] = str(exc)[:120]
-        logger.warning("srct parse {}:{} failed ({})", sid, spec.dataset, exc)
+        stats.parse_failed[f"{key}:{dataset}"] = str(exc)[:120]
+        logger.warning("srct parse {}:{} failed ({})", key, dataset, exc)
         return False
     store.append_bronze(
         SRCT_PROVIDER,
-        spec.dataset,
-        [_bronze_row(sid, spec.dataset, _page_sha(page), fetched_at, payload)],
+        dataset,
+        [_bronze_row(key, dataset, _page_sha(page), fetched_at, payload)],
     )
     stats.parsed_ok += 1
-    if spec.dataset == STATS_DATASET and payload.get("has_xg"):
+    if dataset == STATS_DATASET and payload.get("has_xg"):
         stats.xg_matches += 1
     return True
 
 
 def _handle_cached(
     store: CorpusStore,
-    spec: _EndpointSpec,
-    sid: str,
+    dataset: str,
+    ext: str,
+    parse: Callable[[bytes], dict[str, object]],
+    key: str,
     in_bronze: bool,
     stats: SrctCollectStats,
 ) -> None:
     """Raw 在缓存：bronze 齐则纯跳过；缺（中断窗口）则本地重解析回补，零重抓。"""
     if in_bronze:
         return
-    page = store.read_raw(SRCT_PROVIDER, spec.dataset, sid, ext=spec.ext)
-    if _bronze_append(store, spec, sid, page, utc_now_iso(), stats):
+    page = store.read_raw(SRCT_PROVIDER, dataset, key, ext=ext)
+    if _bronze_append(store, dataset, parse, key, page, utc_now_iso(), stats):
         stats.bronze_repaired += 1
 
 
@@ -645,7 +667,18 @@ def _load_day_page(  # noqa: PLR0913 与 collect_day 同集接缝（防封/预�
     """
     if store.has(SRCT_PROVIDER, DAY_DATASET, date):
         stats.day_page_cached = True
-        return store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
+        body = store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
+        # 回补：raw 在而 bronze 缺（切片 14 前存量/中断窗口）——本地重解析
+        _handle_cached(
+            store,
+            DAY_DATASET,
+            ".htm",
+            _day_payload,
+            date,
+            date in _bronze_sids(store, DAY_DATASET),
+            stats,
+        )
+        return body
     day_wire = [0]
     fetch_day = _gated(
         lambda: fetch_day_page(client, settings, date),
@@ -661,6 +694,8 @@ def _load_day_page(  # noqa: PLR0913 与 collect_day 同集接缝（防封/预�
         return None
     stats.requests += day_wire[0]
     store.ingest_raw(SRCT_PROVIDER, DAY_DATASET, date, body, ext=".htm")
+    # 日页也进 bronze（切片 14）：sid=date，一行=一日 CorpusScope 完场清单
+    _bronze_append(store, DAY_DATASET, _day_payload, date, body, utc_now_iso(), stats)
     return body
 
 
@@ -709,7 +744,15 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
                 sid, dataset = match.sid, spec.dataset
                 if store.has(SRCT_PROVIDER, dataset, sid):
                     cached += 1
-                    _handle_cached(store, spec, sid, sid in bronze_sids[dataset], stats)
+                    _handle_cached(
+                        store,
+                        dataset,
+                        spec.ext,
+                        spec.parse,
+                        sid,
+                        sid in bronze_sids[dataset],
+                        stats,
+                    )
                     continue
                 page, wire, error = _attempt_fetch(spec, sid, limiter, sleeper, budget)
                 stats.requests += wire
@@ -721,7 +764,9 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
                     continue
                 store.ingest_raw(SRCT_PROVIDER, dataset, sid, page, ext=spec.ext)
                 stats.raw_new += 1
-                _bronze_append(store, spec, sid, page, utc_now_iso(), stats)
+                _bronze_append(
+                    store, dataset, spec.parse, sid, page, utc_now_iso(), stats
+                )
             if cached == len(specs):
                 stats.skipped += 1  # 三端点 raw 全在缓存（回补不重抓）
             if budget is not None:
