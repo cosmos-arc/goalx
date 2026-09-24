@@ -35,6 +35,9 @@ OWNERS: dict[str, set[str]] = {
         # 票 55 切片 11：CorpusStore 语料树 checkpoint（data/corpus_store.py，
         # 语料树独立 SQLite，不进运行面 migrations）
         "raw_artifacts",
+        # 票 55 切片 13：夜班台账（日级状态 + 每夜摘要，同 checkpoint 库）
+        "srct_day_status",
+        "srct_night_summaries",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

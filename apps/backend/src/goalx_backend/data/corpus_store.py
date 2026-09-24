@@ -16,6 +16,10 @@ bronze 落盘约定（切片 12）：每数据集一文件
 ``bronze/{provider}/{dataset}.ndjson.gz``，NDJSON(gzip) append-only，行 =
 信封（provider/dataset/sid/fetched_at/parser_version/raw_sha）+ payload；
 解析失败不写行（raw 已 100% 留档，缺口由采集统计量化）。
+
+夜班台账（切片 13）：srct_day_status（日级 done/not_found——done 只由夜班
+干净跑完一日报，日页 raw 在而状态缺 = 中断日，次夜仍 pending 续传）+
+srct_night_summaries（每夜请求/新增/吸收/失败摘要，晨检一眼健康度）。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import gzip
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +47,58 @@ CREATE TABLE IF NOT EXISTS raw_artifacts (
     PRIMARY KEY (provider, dataset, key)
 )
 """
+# 切片 13 夜班台账：日级状态（done=该日 collect 干净跑完；not_found=日页
+# 伪 200 留痕防夜夜重试）与每夜摘要（窗口外非跑不落行）
+_SRCT_DAY_STATUS_SQL = """
+CREATE TABLE IF NOT EXISTS srct_day_status (
+    date TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)
+"""
+_SRCT_NIGHT_SUMMARIES_SQL = """
+CREATE TABLE IF NOT EXISTS srct_night_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    night_date TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    stop_reason TEXT NOT NULL,
+    dates_attempted INTEGER NOT NULL,
+    dates_done INTEGER NOT NULL,
+    dates_not_found INTEGER NOT NULL,
+    pending_before INTEGER NOT NULL,
+    pending_after INTEGER NOT NULL,
+    requests INTEGER NOT NULL,
+    raw_new INTEGER NOT NULL,
+    parsed_ok INTEGER NOT NULL,
+    bronze_repaired INTEGER NOT NULL,
+    xg_matches INTEGER NOT NULL,
+    parse_failed_count INTEGER NOT NULL,
+    failed_count INTEGER NOT NULL,
+    failed_json TEXT NOT NULL,
+    budget_cap INTEGER NOT NULL
+)
+"""
+_NIGHT_SUMMARY_COLUMNS = (
+    "night_date",
+    "started_at",
+    "ended_at",
+    "stop_reason",
+    "dates_attempted",
+    "dates_done",
+    "dates_not_found",
+    "pending_before",
+    "pending_after",
+    "requests",
+    "raw_new",
+    "parsed_ok",
+    "bronze_repaired",
+    "xg_matches",
+    "parse_failed_count",
+    "failed_count",
+    "failed_json",
+    "budget_cap",
+)
 _TREE_SUBDIRS = ("raw", "bronze", "silver", "gold", "duckdb")
 
 
@@ -70,8 +127,11 @@ class CorpusStore:
         """建目录树与 checkpoint 表（幂等）。"""
         for sub in _TREE_SUBDIRS:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-        self._checkpoint().execute(_RAW_ARTIFACTS_SQL)
-        self._checkpoint().commit()
+        conn = self._checkpoint()
+        conn.execute(_RAW_ARTIFACTS_SQL)
+        conn.execute(_SRCT_DAY_STATUS_SQL)
+        conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
+        conn.commit()
 
     def _checkpoint(self) -> sqlite3.Connection:
         # ponytail: 进程内单连接串行用；夜班单进程采集足够，多进程并发再上锁
@@ -80,6 +140,8 @@ class CorpusStore:
             self._conn = sqlite3.connect(self.checkpoint_path)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute(_RAW_ARTIFACTS_SQL)
+            self._conn.execute(_SRCT_DAY_STATUS_SQL)
+            self._conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
             self._conn.commit()
         return self._conn
 
@@ -200,6 +262,45 @@ class CorpusStore:
             return []
         lines = gzip.decompress(path.read_bytes()).decode("utf-8").splitlines()
         return [json.loads(line) for line in lines if line]
+
+    def set_day_status(self, date: str, status: str) -> None:
+        """记/改一日状态（done / not_found；夜班台账，幂等覆盖）。"""
+        self._checkpoint().execute(
+            """
+            INSERT OR REPLACE INTO srct_day_status (date, status, recorded_at)
+            VALUES (?, ?, ?)
+            """,
+            (date, status, utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def day_status_dates(self, status: str) -> set[str]:
+        """该状态的全部日期（夜班 pending 计算排除集）。"""
+        rows = self._checkpoint().execute(
+            "SELECT date FROM srct_day_status WHERE status=?", (status,)
+        )
+        return {str(row["date"]) for row in rows}
+
+    def record_night_summary(self, row: Mapping[str, object]) -> None:
+        """落一夜摘要行（键 = _NIGHT_SUMMARY_COLUMNS；晨检口径）。"""
+        columns = ",".join(_NIGHT_SUMMARY_COLUMNS)
+        marks = ",".join("?" for _ in _NIGHT_SUMMARY_COLUMNS)
+        self._checkpoint().execute(
+            # 列名/占位来自模块常量元组，非用户输入
+            f"INSERT INTO srct_night_summaries ({columns}) VALUES ({marks})",  # noqa: S608
+            tuple(row[column] for column in _NIGHT_SUMMARY_COLUMNS),
+        )
+        self._checkpoint().commit()
+
+    def night_summaries(self, limit: int = 20) -> list[dict[str, object]]:
+        """最近的夜班摘要（新→旧；CLI --list / 晨检用）。"""
+        rows = self._checkpoint().execute(
+            """
+            SELECT * FROM srct_night_summaries ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         """关 checkpoint 连接（树文件保留）。"""

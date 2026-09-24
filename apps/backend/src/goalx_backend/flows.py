@@ -177,6 +177,19 @@ def srcb_collect_flow() -> dict[str, object]:
     return stats
 
 
+@flow(name="srct-night", log_prints=True)
+def srct_night_flow() -> dict[str, object]:
+    """
+    源T夜班（票 55 切片 13）：Phase1 回填批自动推进。
+
+    01:00 deployment 触发；窗口/预算/熔断在任务体内裁（窗口外零成本）。
+    每夜摘要落语料树 checkpoint 库，`goalx srct-night --list` 晨检。
+    """
+    stats = tasks.srct_night_run()
+    logger.info("srct night: {}", stats)
+    return stats
+
+
 @flow(name="propline-snapshot", log_prints=True)
 def propline_snapshot_flow() -> dict[str, object]:
     """PropLine 互备采集（票 50）：与欧赔快照双跑；降级零统计不炸整跑。"""

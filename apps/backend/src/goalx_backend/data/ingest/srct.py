@@ -3,7 +3,8 @@
 
 单命令按日闭环：Over 日页（GB18030）发现 CorpusScope 场次 sid → 逐场拉
 1x2d 轨迹 → 每响应 gzip+sha256 落 CorpusStore raw/ → checkpoint 断点可续。
-bronze 解析层与另两端点在切片 12；夜班调度/预算/熔断在切片 13。
+bronze 解析层与另两端点在切片 12；夜班调度/预算/熔断的编排层在
+srct_night.py（本模块持有 NightBudget 语义，避免反向依赖）。
 
 口径沿 zucai/srcb 模式：网络薄（固定桌面 UA+对应 Referer）、解析纯函数、
 实测样本裁剪单测。HTTP 访问套件（用户裁定 2026-09-23）：httpx 客户端 +
@@ -94,6 +95,11 @@ BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_CAP_SECONDS = 60.0
 MAX_RETRIES = 3
 
+# 夜班预算（切片 13，research/20 §九 定案 4 + spec story 3/5）：~8K 请求/日
+# 上限与连败 5 场熔断；编排（窗口/台账/摘要）在 srct_night.py
+NIGHT_REQUEST_CAP = 8000
+FAILURE_STREAK_CAP = 5
+
 # 伪 200/坏响应按内容判别的标记
 _CONTENT_404_MARKER = "error_404.gif"
 _HANDICAP_TITLE_MARKER = "亚赔变化表"
@@ -176,6 +182,56 @@ class SrctContentError(Exception):
     """内容判别失败（伪 200/标记缺失）——确定性坏响应，不退避重试。"""
 
 
+class NightStop(Exception):
+    """夜班停机信号（预算触顶/熔断）——进度已落库，次夜断点续传。"""
+
+    reason: str = "night_stop"
+
+
+class BudgetExhausted(NightStop):
+    """请求预算触顶（当晚收手；越界误差 ≤ 一场请求串）。"""
+
+    reason = "budget"
+
+
+class CircuitOpen(NightStop):
+    """连败熔断（当晚收手留痕，不再消耗预算试探源端）。"""
+
+    reason = "circuit"
+
+
+@dataclass
+class NightBudget:
+    """
+    夜班双重护栏：请求预算硬顶 + 连败熔断（spec story 3/5）。
+
+    charge 在闸门内逐请求计（重试也计）；note 记连续失败事件——场级（一场
+    任一端点传输失败）与日页级（传输失败/伪 200）共用同一连败计数，连续
+    FAILURE_STREAK_CAP 次熔断（源端软封锁最常见的两种形态都落在护栏内），
+    任一成功事件清零。
+    """
+
+    request_cap: int = NIGHT_REQUEST_CAP
+    failure_streak_cap: int = FAILURE_STREAK_CAP
+    requests: int = 0
+    failure_streak: int = 0
+
+    def charge(self, count: int = 1) -> None:
+        """计线上请求；触顶抛 BudgetExhausted（当次请求不再发出）。"""
+        self.requests += count
+        if self.requests >= self.request_cap:
+            raise BudgetExhausted(f"预算触顶 {self.requests}/{self.request_cap}")
+
+    def note(self, failed: bool) -> None:
+        """按场记成败；连续失败达 cap 抛 CircuitOpen。"""
+        if not failed:
+            self.failure_streak = 0
+            return
+        self.failure_streak += 1
+        if self.failure_streak >= self.failure_streak_cap:
+            raise CircuitOpen(f"连败 {self.failure_streak} 场熔断")
+
+
 @dataclass(frozen=True)
 class DayMatch:
     """日页一行完赛场次（sid 全站唯一主键）。"""
@@ -203,6 +259,7 @@ class SrctCollectStats:
     xg_matches: int = 0  # 统计页解析成功且含 xG 的场数（coverage 摘要）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
+    stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
 
 
 def parse_over_page(html: str) -> list[DayMatch]:
@@ -480,20 +537,35 @@ def _bronze_row(
     }
 
 
+def _gated(
+    fetch: Callable[[], bytes],
+    limiter: MovingWindowRateLimiter,
+    sleeper: Callable[[float], None],
+    budget: NightBudget | None,
+    wire: list[int],
+) -> Callable[[], bytes]:
+    """闸门包裹：滑窗 → 计数 → 预算计费 → 拉取（日页/端点共用形状）。"""
+
+    def gated() -> bytes:
+        throttle(limiter, _REQUEST_WINDOW, sleeper)
+        wire[0] += 1
+        if budget is not None:
+            budget.charge(1)  # 逐请求计（重试也计）；触顶时本次请求不发出
+        return fetch()
+
+    return gated
+
+
 def _attempt_fetch(
     spec: _EndpointSpec,
     sid: str,
     limiter: MovingWindowRateLimiter,
     sleeper: Callable[[float], None],
+    budget: NightBudget | None = None,
 ) -> tuple[bytes | None, int, str | None]:
     """闸门+计数+重试拉一页；失败返回 (None, 线上请求数, 错误摘要)。"""
     wire = [0]
-
-    def gated() -> bytes:
-        throttle(limiter, _REQUEST_WINDOW, sleeper)
-        wire[0] += 1
-        return spec.fetch(sid)
-
+    gated = _gated(lambda: spec.fetch(sid), limiter, sleeper, budget, wire)
     try:
         return _retrying(sleeper)(gated), wire[0], None
     except httpx.HTTPError as exc:
@@ -556,6 +628,42 @@ def _page_sha(page: bytes) -> str:
     return hashlib.sha256(page).hexdigest()
 
 
+def _load_day_page(  # noqa: PLR0913 与 collect_day 同集接缝（防封/预算/统计）
+    store: CorpusStore,
+    settings: Settings,
+    client: httpx.Client,
+    date: str,
+    limiter: MovingWindowRateLimiter,
+    sleeper: Callable[[float], None],
+    budget: NightBudget | None,
+    stats: SrctCollectStats,
+) -> bytes | None:
+    """
+    日页字节：缓存命中本地读，否则闸门+重试+预算计费+落 raw。
+
+    None = 夜班停机（预算触顶），stats.stopped 已记，进度已落库。
+    """
+    if store.has(SRCT_PROVIDER, DAY_DATASET, date):
+        stats.day_page_cached = True
+        return store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
+    day_wire = [0]
+    fetch_day = _gated(
+        lambda: fetch_day_page(client, settings, date),
+        limiter,
+        sleeper,
+        budget,
+        day_wire,
+    )
+    try:
+        body = _retrying(sleeper)(fetch_day)
+    except NightStop as stop:
+        stats.stopped = stop.reason
+        return None
+    stats.requests += day_wire[0]
+    store.ingest_raw(SRCT_PROVIDER, DAY_DATASET, date, body, ext=".htm")
+    return body
+
+
 def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切片 13 归并预算面
     store: CorpusStore,
     settings: Settings,
@@ -566,33 +674,28 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     sleeper: Callable[[float], None] = time.sleep,
     rng: random.Random | None = None,
     rate_limiter: MovingWindowRateLimiter | None = None,
+    budget: NightBudget | None = None,
 ) -> SrctCollectStats:
     """
     一日闭环：日页发现 sid → 每场三端点（轨迹/亚盘/统计）→ raw+bronze。
 
     断点续传：日页与每场每端点以 (provider, dataset, key) 查 checkpoint，
     已完成零重抓（日页从 raw 本地重解析）。rate_limiter 缺省每次运行新建
-    滑动窗口（跨夜预算限流归切片 13，届时注入长生命周期 limiter）。
+    滑动窗口（夜班应注入跨日期共享的 limiter）。
+
+    budget（夜班注入）：触顶/熔断不抛出——记 stats.stopped 后正常返回，
+    中断点前的进度已全部落库，次夜按 checkpoint 续传。
     """
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
     store.ensure_tree()  # 目录树随首条命令落地（gold/duckdb 先空占位）
     limiter = rate_limiter if rate_limiter is not None else default_limiter()
     stats = SrctCollectStats(date=date)
-    if store.has(SRCT_PROVIDER, DAY_DATASET, date):
-        body = store.read_raw(SRCT_PROVIDER, DAY_DATASET, date, ext=".htm")
-        stats.day_page_cached = True
-    else:
-        day_wire = [0]
-
-        def fetch_day() -> bytes:
-            throttle(limiter, _REQUEST_WINDOW, sleeper)
-            day_wire[0] += 1
-            return fetch_day_page(client, settings, date)
-
-        body = _retrying(sleeper)(fetch_day)
-        stats.requests += day_wire[0]
-        store.ingest_raw(SRCT_PROVIDER, DAY_DATASET, date, body, ext=".htm")
+    body = _load_day_page(
+        store, settings, client, date, limiter, sleeper, budget, stats
+    )
+    if body is None:
+        return stats
     scope = filter_scope(parse_over_page(decode_day_page(body)))
     stats.scope_sids = [m.sid for m in scope]
     jitter_rng = random.Random() if rng is None else rng  # noqa: S311 抖动非加密用途
@@ -600,23 +703,30 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     bronze_sids = {spec.dataset: _bronze_sids(store, spec.dataset) for spec in specs}
     for match in scope:
         cached = 0
-        for spec in specs:
-            sid, dataset = match.sid, spec.dataset
-            if store.has(SRCT_PROVIDER, dataset, sid):
-                cached += 1
-                _handle_cached(store, spec, sid, sid in bronze_sids[dataset], stats)
-                continue
-            page, wire, error = _attempt_fetch(spec, sid, limiter, sleeper)
-            stats.requests += wire
-            # 抖动对成败两态都生效——失败连发后立即打下一场同样扰站
-            if jitter is not None:
-                sleeper(jitter_rng.uniform(*jitter))
-            if page is None:
-                stats.failed[f"{sid}:{dataset}"] = error or "unknown"
-                continue
-            store.ingest_raw(SRCT_PROVIDER, dataset, sid, page, ext=spec.ext)
-            stats.raw_new += 1
-            _bronze_append(store, spec, sid, page, utc_now_iso(), stats)
-        if cached == len(specs):
-            stats.skipped += 1  # 三端点 raw 全在缓存（回补不重抓）
+        failed_before = len(stats.failed)
+        try:
+            for spec in specs:
+                sid, dataset = match.sid, spec.dataset
+                if store.has(SRCT_PROVIDER, dataset, sid):
+                    cached += 1
+                    _handle_cached(store, spec, sid, sid in bronze_sids[dataset], stats)
+                    continue
+                page, wire, error = _attempt_fetch(spec, sid, limiter, sleeper, budget)
+                stats.requests += wire
+                # 抖动对成败两态都生效——失败连发后立即打下一场同样扰站
+                if jitter is not None:
+                    sleeper(jitter_rng.uniform(*jitter))
+                if page is None:
+                    stats.failed[f"{sid}:{dataset}"] = error or "unknown"
+                    continue
+                store.ingest_raw(SRCT_PROVIDER, dataset, sid, page, ext=spec.ext)
+                stats.raw_new += 1
+                _bronze_append(store, spec, sid, page, utc_now_iso(), stats)
+            if cached == len(specs):
+                stats.skipped += 1  # 三端点 raw 全在缓存（回补不重抓）
+            if budget is not None:
+                budget.note(len(stats.failed) > failed_before)
+        except NightStop as stop:
+            stats.stopped = stop.reason  # 进度已落库；次夜按 checkpoint 续传
+            return stats
     return stats

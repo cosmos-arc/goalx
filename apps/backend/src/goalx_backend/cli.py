@@ -20,6 +20,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli understat-sync [--seasons 2021 2022 ...]
     uv run python -m goalx_backend.cli xg-compare --seasons 2022 2023 2024 2025 2026
     uv run python -m goalx_backend.cli srct-collect --date YYYY-MM-DD
+    uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
+    uv run python -m goalx_backend.cli srct-night --list
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
+from contextlib import ExitStack
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 import httpx
@@ -46,6 +50,7 @@ from goalx_backend.data.ingest import (
     openfootball,
     sporttery,
     srct,
+    srct_night,
     uniform,
 )
 from goalx_backend.db import connect, migrate
@@ -327,6 +332,51 @@ def _parse_success_rate(stats: srct.SrctCollectStats) -> float | None:
     return round(stats.parsed_ok / denom, 4) if denom else None
 
 
+def _cmd_srct_night(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+    now_fn: Callable[[], datetime] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+    seasons: tuple[srct_night.SeasonWindow, ...] | None = None,
+) -> None:
+    """
+    源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1；--list 只读查摘要。
+
+    settings/client/now_fn/sleeper/seasons 注入口只服务测试接缝；缺省走
+    真实配置、真实连接、本机墙钟、真实防封间隔与 Phase1 全表（窗口外
+    直接 window_closed，白天冒烟走 --no-window）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    window = None if args.no_window else srct_night.NIGHT_WINDOW
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        if args.list:
+            payload = {"nights": store.night_summaries(limit=args.limit)}
+        else:
+            with ExitStack() as stack:
+                run_client = (
+                    client
+                    if client is not None
+                    else stack.enter_context(httpx.Client())
+                )
+                summary = srct_night.run_night(
+                    store,
+                    resolved,
+                    run_client,
+                    now_fn=now_fn,
+                    window=window,
+                    request_cap=args.request_cap,
+                    sleeper=sleeper,
+                    seasons=seasons,
+                )
+            payload = asdict(summary)
+    finally:
+        store.close()
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_corpus_report(args: argparse.Namespace) -> None:
     """十年语料报表（票 46）：完整性 + 可选 openfootball 交叉验证。"""
     seasons = tuple(args.seasons) if args.seasons else fdhist.SEASONS
@@ -541,6 +591,27 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="源T轨迹语料按日采集(票55切片11;端点模板须进本地.env,断点可续)",
     )
     srct_collect.add_argument("--date", required=True, help="业务日 YYYY-MM-DD")
+    srct_night_parser = sub.add_parser(
+        "srct-night",
+        help="源T夜班推进Phase1回填(票55切片13;预算/熔断/断点续传,摘要落库)",
+    )
+    srct_night_parser.add_argument(
+        "--request-cap",
+        type=int,
+        default=srct.NIGHT_REQUEST_CAP,
+        help=f"当夜请求预算上限(默认 {srct.NIGHT_REQUEST_CAP})",
+    )
+    srct_night_parser.add_argument(
+        "--no-window",
+        action="store_true",
+        help="跳过 01:00-08:00 窗口判断(白天冒烟/手工回补用)",
+    )
+    srct_night_parser.add_argument(
+        "--list", action="store_true", help="只读查最近夜班摘要(不发请求)"
+    )
+    srct_night_parser.add_argument(
+        "--limit", type=int, default=20, help="--list 行数(默认 20)"
+    )
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
@@ -576,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
+        "srct-night": lambda: _cmd_srct_night(args),
         "seed-demo": _cmd_seed_demo,
     }
     handlers[args.command]()

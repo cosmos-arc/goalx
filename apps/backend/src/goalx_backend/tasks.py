@@ -14,6 +14,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 import httpx
@@ -24,6 +25,7 @@ from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs
+from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     caiguo,
     fdhist,
@@ -32,6 +34,7 @@ from goalx_backend.data.ingest import (
     propline,
     sporttery,
     srcb,
+    srct_night,
     understat,
     uniform,
     zucai,
@@ -282,6 +285,27 @@ def srcb_collect() -> dict[str, object]:
         "rows_absorbed": stats.rows_absorbed,
         "failed": len(stats.failed),
     }
+
+
+def srct_night_run() -> dict[str, object]:
+    """
+    源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1 回填批。
+
+    窗口外零成本返回（deployment 01:00 触发总在窗内，此判保手工误触）；
+    摘要已落 checkpoint 库，这里只回计数（failed 采样防 flow 日志爆量）。
+    """
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    try:
+        with httpx.Client() as client:
+            summary = srct_night.run_night(store, settings, client)
+    finally:
+        store.close()
+    payload = asdict(summary)
+    payload["failed"] = dict(
+        list(summary.failed.items())[: srct_night.FAILED_SAMPLE_CAP]
+    )
+    return payload
 
 
 def settlement_sweep() -> dict[str, int]:
