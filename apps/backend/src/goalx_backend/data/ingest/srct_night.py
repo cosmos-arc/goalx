@@ -21,10 +21,11 @@ checkpoint 库（srct_night_summaries，`goalx srct-night --list` 晨检）。
 熔断只对系统性故障（连续 5 次失败事件）生效。
 
 老季深度分层（票 18，Phase2/3 扩展批）：起始年 ≤2019 的季窗默认浅深
-（每场只打 日页+1x2 轨迹 两请求，跳过亚盘/统计——老场统计页大概率空，
-空页请求纯浪费）；每季首个 pending 日全深探针，统计/亚盘页非空即升全深
-（宁可错升不错漏）。判定落 checkpoint（srct_season_depth，跨夜不重探）；
-升深后浅深期 done 日自动重开三端点（day/odds 缓存命中，只补两新端点）。
+（每场只打 日页+1x2 轨迹 两请求，跳过深端点——老场深页大概率空，
+空页请求纯浪费）；每季首个 pending 日全深探针，统计/亚盘多庄页非空即
+升全深（宁可错升不错漏）。判定落 checkpoint（srct_season_depth，跨夜
+不重探）；升深后浅深期 done 日自动重开端点集（day/odds 缓存命中，只补
+深端点；端点集注册表驱动，票 59 起）。
 
 挂接：Prefect srct-night deployment 每日 01:00（schedules.py）；窗口逐日
 复判（越 08:00 当场收手），手工白天冒烟走 `--no-window`。
@@ -125,7 +126,13 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
     零证据须当日干净跑完且有场次才降浅深——中断/任一失败/解析失败/零场
     都留待次夜下一 pending 日重探（不重探指已断案的季，见 srct_season_depth）。
     """
-    if stats.stats_nonempty or stats.handicap_nonempty:
+    if (
+        stats.stats_nonempty
+        or stats.asian_odds_nonempty
+        or stats.over_down_nonempty
+        or stats.detail_nonempty
+        or stats.analysis_nonempty
+    ):
         return srct.DEPTH_FULL
     if stats.stopped is not None or stats.failed or stats.parse_failed:
         return None
@@ -172,19 +179,27 @@ def _depth_backfill_dates(
     depths: dict[str, str],
 ) -> list[tuple[str, str]]:
     """
-    升深补抓清单（票 18）：全深老季中，浅深期完成的 done 日。
+    补抓清单（票 18 升深 + 票 63 规格扩展泛化）。
 
-    判据=该日 CorpusScope 场次的亚盘/统计 raw 缺席（浅深跳过端点不记
+    判据=done 日 CorpusScope 场次的任一当前深端点 raw 缺席（跳过端点不记
     checkpoint；传输失败同形态——重试无害且自愈，预算/熔断照护栏计）。
-    重跑 day/odds 命中缓存零重抓，只补两新端点。
+    重跑 day/odds/已采端点命中缓存零重抓，只补缺的端点。适用面：
+
+    - Phase1（不分层季）：规格 v2 新四端点（票 59-62）落地前 done 的存量日
+      自动补采新端点（~492 日 ≈ 21.6K 请求 ≈ 2.7 夜，票 63 测算）；
+    - 老季分层：浅深判定季不重开（深端点已判空，重开纯浪费请求），
+      全深季照常补。
+
+    顺序=补欠在前、pending 殿后（票 63 裁决：存量日深页有源端老化风险，
+    ~2.7 夜补完再续推进新日期；季窗内均为最新日倒序）。
     """
-    old_full = [
+    candidates = [
         season
         for season in seasons
-        if _is_layered(season) and depths.get(season.label) == srct.DEPTH_FULL
+        if not (_is_layered(season) and depths.get(season.label) != srct.DEPTH_FULL)
     ]
-    if not old_full:
-        return []  # Phase1 窗口零成本短路（无老季全深）
+    if not candidates:
+        return []
     day_sids: dict[str, list[str]] = {}
     for line in store.iter_bronze_lines(srct.SRCT_PROVIDER, srct.DAY_DATASET):
         row = json.loads(line)
@@ -192,15 +207,16 @@ def _depth_backfill_dates(
         if payload is not None:
             day_sids[str(row["sid"])] = srct.day_page_sids(payload)
     done = store.day_status_dates("done")
+    deep_datasets = srct.deep_endpoint_datasets()  # 注册表驱动（票 59 起）
     backfill: list[tuple[str, str]] = []
-    for season in old_full:
+    for season in candidates:
         for day in reversed(season_dates(season, today)):
             if day not in done:
                 continue
             if any(
                 not store.has(srct.SRCT_PROVIDER, dataset, sid)
                 for sid in day_sids.get(day, [])
-                for dataset in (srct.HANDICAP_DATASET, srct.STATS_DATASET)
+                for dataset in deep_datasets
             ):
                 backfill.append((season.label, day))
     return backfill
@@ -292,9 +308,10 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
     tasks = pending_dates(store, run_today, scoped_seasons)
     summary.pending_before = len(tasks)
     depths = store.season_depths()
-    # 升深补抓（票 18）：全深老季的浅深 done 日重开三端点（缓存只补新端点；
-    # 无老季全深时 _depth_backfill_dates 立即空返，Phase1 零成本）
-    tasks = tasks + _depth_backfill_dates(store, run_today, scoped_seasons, depths)
+    # 补抓（票 18 升深 + 票 63 规格扩展）：done 日缺当前深端点 raw 即重开
+    # （缓存命中零重抓，只补缺端点）；浅深判定老季不重开。补欠在前、
+    # pending 殿后（存量日深页老化风险 > 新日页下线风险）。
+    tasks = _depth_backfill_dates(store, run_today, scoped_seasons, depths) + tasks
     windows = {season.label: season for season in scoped_seasons}
     budget = srct.NightBudget(
         request_cap=request_cap, failure_streak_cap=failure_streak_cap

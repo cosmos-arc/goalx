@@ -1,21 +1,28 @@
 """
-源T（srct）轨迹语料采集·切片 11：CorpusStore 骨架上的第一夜最小闭环。
+源T（srct）轨迹语料采集：CorpusStore 上的按日闭环（规格 v2，票 59 起）。
 
-单命令按日闭环：Over 日页（GB18030）发现 CorpusScope 场次 sid → 逐场拉
-1x2d 轨迹 → 每响应 gzip+sha256 落 CorpusStore raw/ → checkpoint 断点可续。
-bronze 解析层与另两端点在切片 12；夜班调度/预算/熔断的编排层在
-srct_night.py（本模块持有 NightBudget 语义，避免反向依赖）。
+单命令按日闭环：Over 日页（GB18030）发现 CorpusScope 场次 sid → 逐场按
+端点注册表拉页 → 每响应 gzip+sha256 落 CorpusStore raw/ → checkpoint
+断点可续。夜班调度/预算/熔断的编排层在 srct_night.py（本模块持有
+NightBudget 语义，避免反向依赖）。
+
+**端点集数据驱动（票 59）**：SPEC_ENDPOINTS 是
+`.scratch/goalx-quant/collection-spec.md` §一规格表的机器面——先改表再
+改码，新端点=一行注册表 + 一对抓取/解析函数；测试 test_ingest_srct_spec
+钉死注册表与规格一致（防规格再漂移）。changeDetail 单书亚盘轨迹已按
+规格 v2 撤采（历史两端点多庄页即得、当期轨迹由当期班快照自建），数据集
+常量留档供存量 silver 口径引用。
 
 口径沿 zucai/srcb 模式：网络薄（固定桌面 UA+对应 Referer）、解析纯函数、
-实测样本裁剪单测。HTTP 访问套件（用户裁定 2026-09-23）：httpx 客户端 +
-tenacity 重试 + limits 滑动窗口限流（MemoryStorage，不依赖外部存储）。
-防封基线（research/20 §九 定案 4）：3s±1s 抖动（间距）、20/分钟滑动窗口
-（硬顶）、传输失败指数退避重试、单页失败不炸整跑。端点 URL 模板从 config
-注入（代称红线：实名/路径不落码库，真值进本地 .env）。
+实测样本裁剪单测（书商名一律打码，代称红线）。HTTP 访问套件（用户裁定
+2026-09-23）：httpx 客户端 + tenacity 重试 + limits 滑动窗口限流
+（MemoryStorage，不依赖外部存储）。防封基线（research/20 §九 定案 4）：
+3s±1s 抖动（间距）、20/分钟滑动窗口（硬顶）、传输失败指数退避重试、
+单页失败不炸整跑。端点 URL 模板从 config 注入（代称红线：实名/路径不落
+码库，真值进本地 .env）。
 
-三时间口径：changeTime→published_at 属解析层（切片 12）；本切片只记
-抓取时刻 fetched_at（observed_at 语义）。行不带 fixture_id——身份绑定
-后置（定则 1）。
+三时间口径：源页时间→published_at 属 silver 层；采集只记抓取时刻
+fetched_at（observed_at 语义）。行不带 fixture_id——身份绑定后置（定则 1）。
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import cast
 
 import httpx
@@ -50,16 +58,28 @@ PARSE_VERSION = "srct_day_v1"
 SRCT_PROVIDER = "srct"
 DAY_DATASET = "day_page"
 ODDS_DATASET = "odds_1x2d"
-HANDICAP_DATASET = "asian_handicap"  # 亚盘变化表（锚定书商 cid 走 URL 模板）
-STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进）
+ASIANODDS_DATASET = "asian_odds"  # 亚盘多庄页（规格 v2 端点 3；初/即时/终三组）
+OVERDOWN_DATASET = "over_down"  # 大小球多庄页（规格 v2 端点 4；与亚盘多庄同构）
+DETAIL_DATASET = (
+    "match_detail"  # 详情页（规格 v2 端点 5；xG/阵容/事件/场地，票 66 撤 stats 切此）
+)
+ANALYSIS_DATASET = "match_analysis"  # 分析页（规格 v2 端点 6；特征面 bronze-only）
+STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进；票 66 撤切 detail）
+# 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
+# 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
+HANDICAP_DATASET = "asian_handicap"
 # 每解析器独立版本（spec story 8：记录可追溯到确切解析器版本；修一个只
 # 重物化其数据集）。day_page=PARSE_VERSION（srct_day_v1）：一行=一日
-# CorpusScope 完赛场清单，silver fixture_universe 的唯一输入（切片 14）
+# CorpusScope 完场清单，silver fixture_universe 的唯一输入（切片 14）
 BRONZE_VERSIONS: dict[str, str] = {
     DAY_DATASET: PARSE_VERSION,
     ODDS_DATASET: "srct_odds_v1",
-    HANDICAP_DATASET: "srct_hdp_v1",
+    ASIANODDS_DATASET: "srct_ah_multi_v1",
+    OVERDOWN_DATASET: "srct_ou_multi_v1",
+    DETAIL_DATASET: "srct_detail_v1",
+    ANALYSIS_DATASET: "srct_analysis_v1",
     STATS_DATASET: "srct_stats_v1",
+    HANDICAP_DATASET: "srct_hdp_v1",
 }
 
 # CorpusScope 15 项（ADR-0010 定案 1）：日页联赛名按字面量精确匹配。
@@ -102,16 +122,15 @@ MAX_RETRIES = 3
 NIGHT_REQUEST_CAP = 8000
 FAILURE_STREAK_CAP = 5
 
-# 采集深度（票 18 老季分层，Phase2/3 扩展批）：全深=每场三端点；
-# 浅深=只 日页+1x2 轨迹 两请求（跳过 asian_handicap/match_stats——
-# checkpoint 不记跳过端点，升深重跑天然只补这两类）。判定/持久/探针
+# 采集深度（票 18 老季分层，Phase2/3 扩展批）：全深=每场全端点；
+# 浅深=只 日页+1x2 轨迹 两请求（浅深成员见 SPEC_ENDPOINTS.in_shallow——
+# checkpoint 不记跳过端点，升深重跑天然只补深端点）。判定/持久/探针
 # 编排在 srct_night.py
 DEPTH_FULL = "full"
 DEPTH_SHALLOW = "shallow"
 
 # 伪 200/坏响应按内容判别的标记
 _CONTENT_404_MARKER = "error_404.gif"
-_HANDICAP_TITLE_MARKER = "亚赔变化表"
 _STATS_MARKER = "var jsonData"
 
 _SID_RE = re.compile(r"analysis\((\d+)\)")
@@ -121,22 +140,76 @@ _TEAMS_RE = re.compile(r"\|([^|]{2,20})\|(\d+)\|-\|(\d+)\|([^|]{2,20})\|")
 _RANK_RE = re.compile(r"\[[^\]]{1,10}\]")
 
 
-_TIME_CELL_RE = re.compile(r"\d{2}-\d{2} \d{2}:\d{2}")
-_SCORE_CELL_RE = re.compile(r"\d+-\d+")
-# 亚盘行列位语义（实测三形态：临场 6/7 格、早盘 5 格、封盘 4 格）
-_TIME_IDX_LIVE = 5  # 临场行时间列
-_TIME_IDX_EARLY = 3  # 早盘/封盘行时间列
-_MIN_EARLY_CELLS = 4  # 封盘最少格数（分/比分/封/时间）
-_LIVE_STATUS_CELLS = 7  # 临场行含状态列的格数
-_EARLY_STATUS_CELLS = 5  # 早盘行含状态列的格数
+# —— 端点规格注册表（票 59）：collection-spec.md §一 的机器面 ——
+# 先改表再改码：新端点=本表一行 + _ENDPOINT_WIRING 一对抓取/解析；
+# test_ingest_srct_spec 钉死本表与规格表一致（防漂移契约）。
+#
+# 状态：active=采集面；retired=撤采留档（数据集常量供存量 silver 引用，
+# 不再进采集循环/升深补抓）。票 66 落地后 match_stats 转 retired、
+# 四新端点（票 60/61/62）转 active——本表是唯一改动点。
+@dataclass(frozen=True)
+class SpecEndpoint:
+    """规格表一行：数据集 / raw 扩展名 / 深度与状态成员资格。"""
+
+    dataset: str
+    ext: str
+    per_day: bool = False  # 日页=按日一键（不进每场端点循环）
+    in_shallow: bool = False  # 浅深（老季两请求层）是否包含
+    status: str = "active"
+
+
+SPEC_ENDPOINTS: tuple[SpecEndpoint, ...] = (
+    SpecEndpoint(DAY_DATASET, ".htm", per_day=True),
+    SpecEndpoint(ODDS_DATASET, ".js", in_shallow=True),
+    SpecEndpoint(ASIANODDS_DATASET, ".html"),
+    SpecEndpoint(OVERDOWN_DATASET, ".html"),
+    SpecEndpoint(DETAIL_DATASET, ".html"),
+    SpecEndpoint(ANALYSIS_DATASET, ".html"),
+    SpecEndpoint(STATS_DATASET, ".html"),
+    SpecEndpoint(HANDICAP_DATASET, ".html", status="retired"),
+)
+
+
+def match_endpoint_datasets(depth: str = DEPTH_FULL) -> tuple[str, ...]:
+    """该深度的每场端点数据集（注册表序；浅深只含 in_shallow 成员）。"""
+    return tuple(
+        spec.dataset
+        for spec in SPEC_ENDPOINTS
+        if spec.status == "active"
+        and not spec.per_day
+        and (depth == DEPTH_FULL or spec.in_shallow)
+    )
+
+
+def deep_endpoint_datasets() -> tuple[str, ...]:
+    """全深独占的每场端点（浅深跳过）：升深补抓判据与中断证据重放集。"""
+    shallow = set(match_endpoint_datasets(DEPTH_SHALLOW))
+    return tuple(d for d in match_endpoint_datasets() if d not in shallow)
+
+
+def retired_endpoint_datasets() -> tuple[str, ...]:
+    """撤采留档数据集（不进采集循环；常量供存量 silver/对账引用）。"""
+    return tuple(spec.dataset for spec in SPEC_ENDPOINTS if spec.status == "retired")
+
+
+# 多庄对比页（亚盘/大小球同构，2026-09-25 实测）：每数据行自带 changeDetail
+# 链接（companyID=cid，大小写混见）；页题标记用于真页判别（空表≠坏页，
+# 定则 4）；数据行 ≥12 格：勾选/名/盘序 + 初/即时/终三组 + 详情
+_MULTI_BOOK_CID_RE = re.compile(r"companyID=(\d+)", re.I)
+_ASIANODDS_TITLE_MARKER = "亚指指数"
+_OVERDOWN_TITLE_MARKER = "大小指数"
+_MULTI_BOOK_MIN_CELLS = 12
 
 
 def _js_var(text: str, name: str) -> str | None:
-    """`var name="value"` 或 `var name=数值` 取值（缺变量 None）。"""
-    found = re.search(rf'var {name}=("([^"]*)"|[^;]*);', text)
+    """`var name="v"` / `var name='v'` / `var name=数值` 取值（缺变量 None）。"""
+    found = re.search(rf'var {name}\s*=\s*("([^"]*)"|\'([^\']*)\'|[^;]*)', text)
     if found is None:
         return None
-    return found.group(2) if found.group(2) is not None else found.group(1).strip()
+    for group in (found.group(2), found.group(3)):
+        if group is not None:
+            return group
+    return found.group(1).strip() or None
 
 
 def _js_array_rows(text: str, name: str) -> list[str] | None:
@@ -145,46 +218,6 @@ def _js_array_rows(text: str, name: str) -> list[str] | None:
     if block is None:
         return None
     return re.findall(r'"([^"]*)"', block.group(1))
-
-
-def _handicap_row(cells: list[str]) -> dict[str, object] | None:
-    """按时间列位置归一一行（临场 6/7 格、早盘 5 格、封盘 4 格；未识别 None）。"""
-    time_idx = next(
-        (i for i, cell in enumerate(cells) if _TIME_CELL_RE.fullmatch(cell)), None
-    )
-    if time_idx == _TIME_IDX_LIVE:  # 临场：分/比分/水/盘/水/时间(/状态)
-        return {
-            "minute": cells[0],
-            "score": cells[1],
-            "home_water": cells[2],
-            "line": cells[3],
-            "away_water": cells[4],
-            "change_time": cells[_TIME_IDX_LIVE],
-            "status": cells[6] if len(cells) >= _LIVE_STATUS_CELLS else None,
-        }
-    if (
-        time_idx == _TIME_IDX_EARLY and len(cells) >= _MIN_EARLY_CELLS
-    ):  # 早盘（水/盘/水/时间/早）或封盘（分/比分/封/时间）
-        if _SCORE_CELL_RE.fullmatch(cells[1]):
-            return {
-                "minute": cells[0],
-                "score": cells[1],
-                "home_water": None,
-                "line": None,
-                "away_water": None,
-                "change_time": cells[_TIME_IDX_EARLY],
-                "status": cells[2],  # 封（暂停报价时点）
-            }
-        return {
-            "minute": None,
-            "score": None,
-            "home_water": cells[0],
-            "line": cells[1],
-            "away_water": cells[2],
-            "change_time": cells[_TIME_IDX_EARLY],
-            "status": cells[4] if len(cells) >= _EARLY_STATUS_CELLS else None,
-        }
-    return None
 
 
 class SrctContentError(Exception):
@@ -262,12 +295,17 @@ class SrctCollectStats:
     day_page_cached: bool = False
     requests: int = 0  # 全部线上请求（含重试）
     raw_new: int = 0
-    skipped: int = 0  # 三端点全缓存的场次
+    skipped: int = 0  # 全端点 raw 缓存的场次
     parsed_ok: int = 0
     parse_failed: dict[str, str] = field(default_factory=dict)
     xg_matches: int = 0  # 统计页解析成功且含 xG 的场数（coverage 摘要）
     stats_nonempty: int = 0  # 统计页 stats 非空场数（票 18 老季深度探针证据）
-    handicap_nonempty: int = 0  # 亚盘 rows 非空场数（同上）
+    asian_odds_nonempty: int = 0  # 亚盘多庄页有报价行场数（同上，票 59 起接管）
+    asian_odds_books: int = 0  # 亚盘多庄页逐盘行累计（书商×多盘；CLI 摘要）
+    over_down_nonempty: int = 0  # 大小球多庄页有报价行场数（票 60 起）
+    over_down_books: int = 0  # 大小球多庄页逐盘行累计（CLI 摘要）
+    detail_nonempty: int = 0  # 详情页有技统/首发场数（票 61 起）
+    analysis_nonempty: int = 0  # 分析页有特征数据场数（票 62 起）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -351,10 +389,43 @@ def fetch_odds_js(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     return response.content
 
 
-def fetch_handicap_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
-    """拉一场亚盘变化表原始字节（GBK；锚定书商 cid 在 URL 模板内）。"""
+def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场亚盘多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
     response = client.get(
-        settings.srct_handicap_url.format(sid=sid),
+        settings.srct_asianodds_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def fetch_overdown_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场大小球多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_overdown_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def fetch_detail_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场详情页原始字节（live 主机，UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_detail_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def fetch_analysis_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场分析页原始字节（zq 主机，UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_analysis_url.format(sid=sid),
         headers={"User-Agent": DESKTOP_UA},
         timeout=30.0,
     )
@@ -399,27 +470,302 @@ def parse_odds_page(body: bytes) -> dict[str, object]:
     }
 
 
-def parse_handicap_page(body: bytes) -> dict[str, object]:
-    """
-    亚盘变化表（GB18030）→ 归一行数组（临场/早盘/封盘三形态）。
+def _quote_triple(cells: list[str], start: int) -> dict[str, str | None]:
+    """水|线|水 三格 → 贴源报价组（值归一归 silver；空串为源页空格）。"""
+    keys = ("home_water", "line", "away_water")
+    return {keys[i]: cells[start + i].strip() or None for i in range(3)}
 
-    行字段：minute/score/home_water/line/away_water/change_time/status，
-    缺列 None（值保留原串，浮点归一归 silver）。书商无数据=0 行（有效）。
+
+def _parse_multi_book_page(
+    body: bytes, title_marker: str, label: str
+) -> list[dict[str, object]]:
     """
-    text = body.decode("gb18030", errors="replace")
-    if _HANDICAP_TITLE_MARKER not in text:
-        msg = "handicap: 非亚赔变化表页（伪 200 或改版）"
+    多庄对比页公共行解析（亚盘 AsianOdds_n / 大小球 OverDown_n 同构）。
+
+    行结构（2026-09-25 实测，两页同 13 格）：勾选|公司名+状态|盘序
+    |初(水线水)|即时(水线水)|终(水线水)|详情，每行一 changeDetail 链接
+    =一书一盘。三组贴源存原文——
+    - initial=初盘（页方口径，可能与 changeDetail 首行水位差一拍：后者有截断先例）；
+    - latest=抓取时点最新价（完场后=场内末价，2026-09-25 实测与存档 92' 临场行一致）；
+    - close=终盘（完场后=盘前末价，实测与 changeDetail 盘前末行逐值一致）。
+
+    内容判别（定则 4 空≠无）：页题标记在而零书商行=合法空表（老场无报价，
+    照常返回 []）；标记缺/伪 200 图=坏响应抛 SrctContentError。公司名原串
+    入 bronze（语料数据面；repo 侧一律代称/打码）。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if title_marker not in text or is_content_404(text):
+        msg = f"{label}: 非多庄对比页（伪 200 或改版）"
         raise SrctContentError(msg)
-    rows: list[dict[str, object]] = []
-    for chunk in re.findall(r"<TR align=center[^>]*>(.*?)</TR>", text, re.S):
+    books: list[dict[str, object]] = []
+    for chunk in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S | re.I):
+        cid = _MULTI_BOOK_CID_RE.search(chunk)
+        if cid is None:
+            continue
         cells = [
-            re.sub(r"<[^>]+>", "", cell).strip()
-            for cell in re.findall(r"<TD[^>]*>(.*?)</TD>", chunk, re.S)
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
+            for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", chunk, re.S | re.I)
         ]
-        row = _handicap_row(cells)
-        if row is not None:
-            rows.append(row)
-    return {"rows": rows}
+        if len(cells) < _MULTI_BOOK_MIN_CELLS:
+            continue
+        books.append(
+            {
+                "cid": cid.group(1),
+                "name_raw": cells[1],  # 公司名+封/即状态原串（silver 层代称化）
+                "multi": cells[2] or "盘1",  # 多盘标记（盘2/盘3/…；空=主盘）
+                "initial": _quote_triple(cells, 3),
+                "latest": _quote_triple(cells, 6),
+                "close": _quote_triple(cells, 9),
+            }
+        )
+    return books
+
+
+def parse_asianodds_page(body: bytes) -> dict[str, object]:
+    """亚盘多庄页（UTF-8）→ {"books": [...]}（行语义见 _parse_multi_book_page）。"""
+    return {"books": _parse_multi_book_page(body, _ASIANODDS_TITLE_MARKER, "asianodds")}
+
+
+def parse_overdown_page(body: bytes) -> dict[str, object]:
+    """
+    大小球多庄页（UTF-8）→ {"books": [...]}。
+
+    与亚盘多庄同构（行语义见 _parse_multi_book_page），差异仅线值语义：
+    line=进球数盘口线（"2.5/3" 等），水=大球/小球水位（票面口径：大球/进球数）。
+    """
+    return {"books": _parse_multi_book_page(body, _OVERDOWN_TITLE_MARKER, "overdown")}
+
+
+# detail 详情页（live 主机，UTF-8，规格 v2 端点 5）：页题标记=现场分析。
+# 分区结构（2026-09-25 实测历史页 2025-05）：技统条 li.lists>div.data 三
+# span（主/名/客，当期页含 xG 行）；事件 eventtable>li；阵容 homeN/guestN
+# 标题（队名+阵型+教练）+ plays>home/guest 首发块（em.num+名）+ 替补块
+# （name>i 号）；头部 场地/天气/温度。xG 历史页可缺（老页真无，非坏页）。
+_DETAIL_TITLE_MARKER = "现场分析"
+_DETAIL_TECH_MIN_SPANS = 3  # 技统条行最少 span 数（主/名/客）
+_DETAIL_KICKOFF_RE = re.compile(r"var strTime = '([^']+)'")
+_DETAIL_VENUE_RE = re.compile(r"场地：\s*(.+?)\s*天气：\s*(.+?)\s*温度：\s*(\S+)")
+_DETAIL_REFEREE_RE = re.compile(r"主裁判[:：]\s*([^\s<]+)")
+_DETAIL_FORMATION_RE = re.compile(r"\d+(?:-\d+)+")
+_DETAIL_COACH_RE = re.compile(r"主教练[:：]\s*([^)<]+)")
+
+
+def _clean_html(fragment: str) -> str:
+    """去标签压空白（事件/头部等贴源清洗共用）。"""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip()
+
+
+def _detail_tech(text: str) -> list[dict[str, str]]:
+    """技统条 li.lists → (home, name, away) 三元组（值贴源字符串）。"""
+    rows: list[dict[str, str]] = []
+    for data in re.findall(
+        r"<li class='lists'>.*?<div class='data'>(.*?)</div>", text, re.S
+    ):
+        cells = [
+            _clean_html(c) for c in re.findall(r"<span[^>]*>(.*?)</span>", data, re.S)
+        ]
+        cells = [c for c in cells if c]
+        if len(cells) >= _DETAIL_TECH_MIN_SPANS:
+            rows.append({"home": cells[0], "name": cells[1], "away": cells[2]})
+    return rows
+
+
+def _detail_lineup(text: str) -> dict[str, object]:
+    """
+    阵容区：首发（em.num 号 + 球员名 + pid + 队长标）与替补（name>i 号）。
+
+    主客归属=该条目之前最近一次 class="home"/"guest" 容器标记（骨架实测：
+    plays>home 首发块→guest 首发块→替补 home/guest 块顺序稳定）。pid 取
+    setImgUrl(pid) 的球员 id；队长标=紧邻条目前的 captain div。
+    """
+    start = text.find("首发阵容")
+    seg = text[start:] if start >= 0 else ""
+    markers = sorted(
+        (m.start(), cls)
+        for cls in ("home", "guest")
+        for m in re.finditer(rf'class="{cls}"', seg)
+    )
+    starters: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    bench: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    for m in re.finditer(r"<div class='play'[^>]*>(.*?)</span>", seg, re.S):
+        chunk = m.group(0)
+        side = next((cls for pos, cls in reversed(markers) if pos <= m.start()), "home")
+        entry: dict[str, object] = {
+            "pid": None,
+            # 队长标在 play 块内部（<div class="captain"> 先于球员 span）
+            "captain": 'class="captain"' in chunk,
+        }
+        pid = re.search(r"setImgUrl\((\d+)\)", chunk)
+        if pid is not None:
+            entry["pid"] = pid.group(1)
+        num = re.search(r'<em class="num">\s*(\d+)\s*</em>', chunk)
+        if num is not None:
+            name = re.search(r"class='name'><a[^>]*>([^<]+)</a>", chunk)
+            entry.update(num=num.group(1), name=name.group(1) if name else None)
+            starters[side].append(entry)
+            continue
+        bench_num = re.search(
+            r"<div class='name'><i>\s*(\d+)\s*</i><a[^>]*>([^<]+)</a>", chunk
+        )
+        if bench_num is not None:
+            entry.update(num=bench_num.group(1), name=bench_num.group(2))
+            bench[side].append(entry)
+    return {
+        "home_starters": starters["home"],
+        "away_starters": starters["guest"],
+        "home_bench": bench["home"],
+        "away_bench": bench["guest"],
+    }
+
+
+def parse_detail_page(body: bytes) -> dict[str, object]:
+    """
+    Detail 详情页（UTF-8）→ meta/tech/events/lineup 分区（bronze 贴源）。
+
+    分区缺=空（老页无 xG/裁判等，空≠无，定则 4）；页题标记缺/伪 200 图
+    =坏响应抛 SrctContentError。与旧 47 键 stats 端点并存（票 61 expand：
+    独立数据集 match_detail，撤切在票 66）。事件保留清洗串（进球/助攻/
+    换人原文），字段级解读归 silver。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _DETAIL_TITLE_MARKER not in text or is_content_404(text):
+        msg = "detail: 非详情分析页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    head_window = _clean_html(
+        text[: text.find("首发阵容") if "首发阵容" in text else 4000]
+    )
+    venue = _DETAIL_VENUE_RE.search(head_window)
+    referee = _DETAIL_REFEREE_RE.search(head_window)
+    formations: dict[str, str | None] = {}
+    coaches: dict[str, str | None] = {}
+    for side, cls in (("home", "homeN"), ("away", "guestN")):
+        block = re.search(rf'class="{cls}"[^>]*>(.*?)</div>', text, re.S)
+        if block is not None:
+            seg = block.group(1)
+            fmt = _DETAIL_FORMATION_RE.search(_clean_html(seg))
+            coach = _DETAIL_COACH_RE.search(seg)
+            formations[side] = fmt.group(0) if fmt else None
+            coaches[side] = coach.group(1).strip() if coach else None
+    event_start = text.find("eventtable")
+    events = (
+        [
+            _clean_html(li)
+            for li in re.findall(
+                r"<li[^>]*>(.*?)</li>", text[event_start : event_start + 12000], re.S
+            )
+            if _clean_html(li)
+        ]
+        if event_start >= 0
+        else []
+    )
+    tech = _detail_tech(text)
+    kickoff = _DETAIL_KICKOFF_RE.search(text)
+    return {
+        "meta": {
+            "home": _js_var(text, "homeTeamName"),
+            "away": _js_var(text, "guestTeamName"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+            "venue": venue.group(1).strip() if venue else None,
+            "weather": venue.group(2).strip() if venue else None,
+            "temperature": venue.group(3) if venue else None,
+            "referee": referee.group(1) if referee else None,
+            "home_formation": formations.get("home"),
+            "away_formation": formations.get("away"),
+            "home_coach": coaches.get("home"),
+            "away_coach": coaches.get("away"),
+        },
+        "tech": tech,
+        "has_xg": any(
+            "xg" in r["name"].lower() or "预期进球" in r["name"] for r in tech
+        ),
+        "events": events,
+        "lineup": _detail_lineup(text),
+    }
+
+
+# 分析页（zq 主机，UTF-8，规格 v2 端点 6）：特征面，bronze-only（票 62——
+# silver 消费按 YAGNI 挂起，特征线开票时再接）。数据层=JS 数组 var（近况/
+# 交战/盘路对比/积分榜），未来五场在 HTML 表（单格行=队名切换主客块）。
+_ANALYSIS_TITLE_MARKER = "数据分析"
+_ANALYSIS_ARRAY_VARS: tuple[tuple[str, str], ...] = (
+    # (payload 键, 源 var 名)——键贴源 var 名，零转译；silver 层再语义化
+    ("h_data", "h_data"),  # 主队近况（近 47 行）
+    ("a_data", "a_data"),  # 客队近况
+    ("h2_data", "h2_data"),  # 主队近况（主客拆分口径）
+    ("a2_data", "a2_data"),
+    ("v_data", "v_data"),  # 交战历史（h2h）
+    ("Vs_hOdds", "Vs_hOdds"),  # 盘路对比（逐书，行首 scheduleId+cid）
+    ("Vs_eOdds", "Vs_eOdds"),  # 欧赔对比（逐书）
+    ("homeScoreStr", "homeScoreStr"),  # 主队积分榜
+    ("guestScoreStr", "guestScoreStr"),  # 客队积分榜
+)
+_ANALYSIS_FUTURE_DATE_RE = re.compile(r"\d{2}-\d{2}")
+_ANALYSIS_FUTURE_HEADER = frozenset(("时间", "赛事", "对阵", "分析", "直播", "相隔"))
+_ANALYSIS_HOME_BLOCK = 1  # 单格行（队名块头）计数：1=主队块，>1=客队块
+
+
+def _analysis_array_rows(text: str, name: str) -> list[str]:
+    """`var name=[[..],[..]];` → 顶层数组行原文串列表（贴源；缺 var 空）。"""
+    m = re.search(rf"var {name}\s*=\s*(\[.*?\]);", text, re.S)
+    if m is None:
+        return []
+    return [
+        row.strip()
+        for row in re.split(r"\],\s*\[", m.group(1).strip()[1:-1])
+        if row.strip()
+    ]
+
+
+def _analysis_future_fixtures(text: str) -> dict[str, list[list[str]]]:
+    """未来五场：单格行（队名）切换主客块，含日期形态的行=赛程行。"""
+    start = text.find("未来五场")
+    seg = text[start:] if start >= 0 else ""
+    sides: dict[str, list[list[str]]] = {"home": [], "away": []}
+    block = 0  # 单格行（队名）计数：1=主队块，2=客队块
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", seg, re.S | re.I):
+        cells = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
+            for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S | re.I)
+        ]
+        cells = [c for c in cells if c and c != "&nbsp;"]
+        while cells and cells[0] in _ANALYSIS_FUTURE_HEADER:  # 行内残留表头格剥掉
+            cells.pop(0)
+        if not cells:
+            continue
+        if len(cells) == 1:
+            block += 1
+            continue
+        has_date = any(_ANALYSIS_FUTURE_DATE_RE.search(c) for c in cells)
+        if block == _ANALYSIS_HOME_BLOCK and has_date:
+            sides["home"].append(cells)
+        elif block > _ANALYSIS_HOME_BLOCK and has_date:
+            sides["away"].append(cells)
+    return sides
+
+
+def parse_analysis_page(body: bytes) -> dict[str, object]:
+    """
+    分析页（UTF-8）→ 特征面分区（票 62 bronze-only）。
+
+    bronze 贴源：近况/交战/盘路对比/积分/未来五场。页题标记"数据分析"
+    判别真页；分区缺=空（老页空≠无）。silver 消费按 YAGNI 挂起。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _ANALYSIS_TITLE_MARKER not in text or is_content_404(text):
+        msg = "analysis: 非数据分析页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    kickoff = _DETAIL_KICKOFF_RE.search(text)
+    return {
+        "meta": {
+            "home": _js_var(text, "hometeam"),
+            "away": _js_var(text, "guestteam"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+        },
+        "arrays": {
+            key: _analysis_array_rows(text, var) for key, var in _ANALYSIS_ARRAY_VARS
+        },
+        "future_fixtures": _analysis_future_fixtures(text),
+    }
 
 
 def parse_stats_page(body: bytes) -> dict[str, object]:
@@ -476,14 +822,25 @@ def _retrying(sleeper: Callable[[float], None]) -> Retrying:
     )
 
 
+# 活跃端点 → 必配 settings 字段（URL 模板；1x2 轨迹另需 Referer）
+_ENDPOINT_SETTINGS: dict[str, tuple[str, ...]] = {
+    DAY_DATASET: ("srct_day_url",),
+    ODDS_DATASET: ("srct_odds_url", "srct_odds_referer"),
+    ASIANODDS_DATASET: ("srct_asianodds_url",),
+    OVERDOWN_DATASET: ("srct_overdown_url",),
+    DETAIL_DATASET: ("srct_detail_url",),
+    ANALYSIS_DATASET: ("srct_analysis_url",),
+    STATS_DATASET: ("srct_stats_url",),
+}
+
+
 def _require_endpoints(settings: Settings) -> None:
-    required = (
-        "srct_day_url",
-        "srct_odds_url",
-        "srct_odds_referer",
-        "srct_handicap_url",
-        "srct_stats_url",
-    )
+    required = [
+        field
+        for spec in SPEC_ENDPOINTS
+        if spec.status == "active"
+        for field in _ENDPOINT_SETTINGS[spec.dataset]
+    ]
     missing = [f"GOALX_{f.upper()}" for f in required if not getattr(settings, f)]
     if missing:
         msg = (
@@ -493,6 +850,10 @@ def _require_endpoints(settings: Settings) -> None:
         raise RuntimeError(msg)
 
 
+_FetchFn = Callable[[httpx.Client, Settings, str], bytes]
+_ParseFn = Callable[[bytes], dict[str, object]]
+
+
 @dataclass(frozen=True)
 class _EndpointSpec:
     """一场一个端点：数据集名 / raw 扩展名 / 拉取 / 解析。"""
@@ -500,41 +861,49 @@ class _EndpointSpec:
     dataset: str
     ext: str
     fetch: Callable[[str], bytes]
-    parse: Callable[[bytes], dict[str, object]]
+    parse: _ParseFn
+
+
+# 每场端点接线表：数据集 → (抓取, 解析)。新端点入列 = 注册表一行 + 此一对
+# （retired 数据集不接线——撤采后永不回采集循环）
+_ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
+    ODDS_DATASET: (fetch_odds_js, parse_odds_page),
+    ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
+    OVERDOWN_DATASET: (fetch_overdown_page, parse_overdown_page),
+    DETAIL_DATASET: (fetch_detail_page, parse_detail_page),
+    ANALYSIS_DATASET: (fetch_analysis_page, parse_analysis_page),
+    STATS_DATASET: (fetch_stats_page, parse_stats_page),
+}
 
 
 def _endpoint_specs(
     client: httpx.Client, settings: Settings, *, depth: str = DEPTH_FULL
 ) -> tuple[_EndpointSpec, ...]:
     """
-    ADR-0010 定案 2：全深=每场三请求（轨迹 / 亚盘 / 47 键统计）。
+    注册表驱动的每场端点集（票 59 数据驱动化）。
 
-    浅深（票 18 老季）只打轨迹端点——跳过端点不记 checkpoint，升深重跑
-    只补亚盘/统计。
+    全深=全部 active 每场端点；浅深=仅 in_shallow 成员（老季两请求层）；
+    retired 永不进；日页 per_day 不进（按日单独走 `_load_day_page`）。
     """
-    specs = (
-        _EndpointSpec(
-            ODDS_DATASET,
-            ".js",
-            lambda sid: fetch_odds_js(client, settings, sid),
-            parse_odds_page,
-        ),
-        _EndpointSpec(
-            HANDICAP_DATASET,
-            ".html",
-            lambda sid: fetch_handicap_page(client, settings, sid),
-            parse_handicap_page,
-        ),
-        _EndpointSpec(
-            STATS_DATASET,
-            ".html",
-            lambda sid: fetch_stats_page(client, settings, sid),
-            parse_stats_page,
-        ),
-    )
-    if depth == DEPTH_SHALLOW:
-        return tuple(spec for spec in specs if spec.dataset == ODDS_DATASET)
-    return specs
+    specs: list[_EndpointSpec] = []
+    for spec in SPEC_ENDPOINTS:
+        wiring = _ENDPOINT_WIRING.get(spec.dataset)
+        if (
+            wiring is None
+            or spec.status != "active"
+            or spec.per_day
+            or (depth != DEPTH_FULL and not spec.in_shallow)
+        ):
+            continue
+        specs.append(
+            _EndpointSpec(
+                dataset=spec.dataset,
+                ext=spec.ext,
+                fetch=partial(wiring[0], client, settings),
+                parse=wiring[1],
+            )
+        )
+    return tuple(specs)
 
 
 def _bronze_row(
@@ -612,11 +981,24 @@ def _day_payload(body: bytes) -> dict[str, object]:
 def _note_evidence(
     dataset: str, payload: dict[str, object], stats: SrctCollectStats
 ) -> None:
-    """票 18 探针证据计数：统计页 stats 非空 / 亚盘 rows 非空（新旧两路径共用）。"""
+    """票 18 探针证据计数：统计/亚盘多庄/大小球多庄有内容（新旧两路径共用）。"""
     if dataset == STATS_DATASET and payload.get("stats"):
         stats.stats_nonempty += 1
-    elif dataset == HANDICAP_DATASET and payload.get("rows"):
-        stats.handicap_nonempty += 1
+    elif dataset == ASIANODDS_DATASET and payload.get("books"):
+        stats.asian_odds_nonempty += 1
+        stats.asian_odds_books += len(cast("list[object]", payload["books"]))
+    elif dataset == OVERDOWN_DATASET and payload.get("books"):
+        stats.over_down_nonempty += 1
+        stats.over_down_books += len(cast("list[object]", payload["books"]))
+    elif dataset == DETAIL_DATASET and (
+        payload.get("tech")
+        or cast("dict[str, object]", payload.get("lineup") or {}).get("home_starters")
+    ):
+        stats.detail_nonempty += 1
+    elif dataset == ANALYSIS_DATASET and any(
+        cast("dict[str, list[object]]", payload.get("arrays") or {}).values()
+    ):
+        stats.analysis_nonempty += 1
 
 
 def _bronze_append(
@@ -658,7 +1040,7 @@ def _handle_cached(
 ) -> None:
     """Raw 在缓存：bronze 齐则纯跳过；缺（中断窗口）则本地重解析回补，零重抓。"""
     if in_bronze:
-        if dataset in (HANDICAP_DATASET, STATS_DATASET):
+        if dataset in deep_endpoint_datasets():
             # 票 18：中断探针日续传时，已落库深端点的证据要从缓存重放
             # （宁可错升不错漏——漏=数据永久缺口）；xg_matches 不重复记
             _note_evidence(
@@ -755,7 +1137,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     depth: str = DEPTH_FULL,
 ) -> SrctCollectStats:
     """
-    一日闭环：日页发现 sid → 每场三端点（轨迹/亚盘/统计）→ raw+bronze。
+    一日闭环：日页发现 sid → 每场按注册表端点集 → raw+bronze。
 
     断点续传：日页与每场每端点以 (provider, dataset, key) 查 checkpoint，
     已完成零重抓（日页从 raw 本地重解析）。rate_limiter 缺省每次运行新建
@@ -765,7 +1147,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     中断点前的进度已全部落库，次夜按 checkpoint 续传。
 
     depth（票 18）：shallow 只打 日页+1x2 轨迹（老季浅深）；跳过端点不记
-    checkpoint——升深重跑按缓存只补亚盘/统计，零重抓。
+    checkpoint——升深重跑按缓存只补深端点，零重抓（端点集见 SPEC_ENDPOINTS）。
     """
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
@@ -814,7 +1196,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
                     store, dataset, spec.parse, sid, page, utc_now_iso(), stats
                 )
             if cached == len(specs):
-                stats.skipped += 1  # 三端点 raw 全在缓存（回补不重抓）
+                stats.skipped += 1  # 全端点 raw 在缓存（回补不重抓）
             if budget is not None:
                 budget.note(len(stats.failed) > failed_before)
         except NightStop as stop:

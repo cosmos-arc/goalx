@@ -38,8 +38,10 @@ ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议�
 
 from __future__ import annotations
 
+import argparse
 from typing import cast
 
+from loguru import logger
 from prefect import serve
 from prefect.deployments.runner import RunnerDeployment
 from prefect.schedules import Schedule
@@ -61,8 +63,13 @@ from goalx_backend.flows import (
 )
 
 
-def main() -> None:
-    """单进程服务协议 v1 的全部定时 deployment（随票累加）。"""
+def main(only: str | None = None) -> None:
+    """
+    单进程服务协议 v1 的定时 deployment（随票累加）。
+
+    only=逗号分隔 deployment 键——停采期只服务指定面（票 63：源T 夜班
+    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；缺省全量（原行为）。
+    """
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -183,23 +190,48 @@ def main() -> None:
             schedule=Schedule(cron="10 6 * * 1", timezone="Asia/Shanghai"),
         ),
     )
+    deployments: dict[str, RunnerDeployment] = {
+        "daily-capture": daily,
+        "eu-odds-closing": closing,
+        "draw-results-sync": draw_sync,
+        "draw-results-sweep": draw_sync_sweep,
+        "official-reconcile": official_reconcile,
+        "understat-sync": understat,
+        "odds-anchor-dense": anchor_dense,
+        "srcb-collect": srcb_collect_deploy,
+        "srct-night": srct_night_deploy,
+        "weekly-refresh": weekly,
+        "daily-wrap": wrap,
+        "pool-snapshot": pool,
+        "intel-collect": intel,
+        "scout-line": scout,
+    }
+    selected = tuple(deployments.values())
+    if only:
+        wanted = {name.strip() for name in only.split(",") if name.strip()}
+        unknown = wanted - set(deployments)
+        if unknown:
+            known = sorted(deployments)
+            msg = f"--only 未知 deployment：{sorted(unknown)}（可用 {known}）"
+            raise SystemExit(msg)
+        selected = tuple(dep for key, dep in deployments.items() if key in wanted)
+        logger.info("schedules --only：{}（其余停采面不注册）", sorted(wanted))
     serve(
-        daily,
-        closing,
-        draw_sync,
-        draw_sync_sweep,
-        official_reconcile,
-        understat,
-        anchor_dense,
-        srcb_collect_deploy,
-        srct_night_deploy,
-        weekly,
-        wrap,
-        pool,
-        intel,
-        scout,
+        *selected,
     )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Prefect 调度入口（--only 停采期过滤）"
+    )
+    parser.add_argument(
+        "--only",
+        default="srct-night",
+        help=(
+            "逗号分隔要服务的 deployment 键"
+            "（缺省 srct-night=停采期票 63 口径；全量传 all）"
+        ),
+    )
+    args = parser.parse_args()
+    main(only=None if args.only == "all" else args.only)

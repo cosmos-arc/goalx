@@ -560,13 +560,12 @@ def gate5_pipeline_health(
     门⑤：管线健康（解析率代理/夜班台账/Phase1 进度/silver 版本面）。
 
     进度分母=phase1_dates 任务清单，分子=settled（done|not_found——夜班
-    对两者的判定都算完成，与 pending_dates 口径一致）。
+    对两者的判定都算完成，与 pending_dates 口径一致）。数据集集从端点
+    注册表派生（票 59 起：retired 留档数据集不进健康面）。
     """
     datasets = (
         srct.DAY_DATASET,
-        srct.ODDS_DATASET,
-        srct.HANDICAP_DATASET,
-        srct.STATS_DATASET,
+        *srct.match_endpoint_datasets(srct.DEPTH_FULL),
     )
     per_dataset: dict[str, dict[str, int | float | None]] = {}
     worst: float | None = None

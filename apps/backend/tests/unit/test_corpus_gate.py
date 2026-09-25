@@ -46,11 +46,38 @@ ODDS_JS = (
     '1.50|6.00|9.00|10-01 10:00|0.90|0.90|0.90|2025;",\n'
     '"600002^1.30|5.50|8.50|10-01 10:00|0.93|0.97|0.84|2025;");\n'
 ).encode()
-HANDICAP_BYTES = (
-    "<html><head><title>亚赔变化表</title></head><body><table>"
-    "<TR align=center><TD>0.80</TD><TD>平手/半球</TD><TD>1.05</TD>"
-    "<TD>10-01 19:30</TD><TD>即</TD></TR></table></body></html>"
-).encode("gb18030")
+ASIANODDS_BYTES = (
+    "<html><head><title>甲VS乙-亚指指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商8 封</td><td></td>"
+    "<td>0.90</td><td>受让半球</td><td>0.95</td>"
+    "<td>2.65</td><td>平手/半球</td><td>0.27</td>"
+    "<td>0.80</td><td>受让平手/半球</td><td>1.05</td>"
+    "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
+# 大小球多庄页（票 60）：与亚盘多庄同构，线=进球数盘口线
+OVERDOWN_BYTES = (
+    "<html><head><title>甲VS乙-大小指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商1 封</td><td></td>"
+    "<td>0.93</td><td>2.5/3</td><td>0.87</td>"
+    "<td>1.25</td><td>2.5</td><td>0.50</td>"
+    "<td>0.80</td><td>2.5</td><td>1.00</td>"
+    "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
+# 详情页（票 61）：与旧 stats 并存（独立数据集）；tech 一行即有效页
+DETAIL_BYTES = (
+    "<html><head><title>甲VS乙-现场分析-新球体育</title></head><body>"
+    "<ul><li class='lists'><div class='data'><span >3</span><span>角球</span>"
+    "<span >3</span></div></li></ul>"
+    "</body></html>"
+).encode()
+# 分析页（票 62）：数组层一行即正证据（特征面 bronze-only）
+ANALYSIS_BYTES = (
+    "<html><head><title>甲VS乙-数据分析-新球体育</title></head><body>"
+    "<script>var h_data =[['25-05-10',36,'英超',52,'主队甲',60,'客队乙']];</script>"
+    "</body></html>"
+).encode()
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
     '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
@@ -86,7 +113,10 @@ def _settings(tmp_path: Path) -> Settings:
         srct_day_url="https://srct.test/over/{date}.htm",
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
-        srct_handicap_url="https://srct.test/handicap/{sid}",
+        srct_asianodds_url="https://srct.test/asian/{sid}",
+        srct_overdown_url="https://srct.test/overdown/{sid}",
+        srct_detail_url="https://srct.test/detail/{sid}cn.htm",
+        srct_analysis_url="https://srct.test/analysis/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -98,8 +128,14 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"day:{path.removeprefix('/over/').removesuffix('.htm')}"
         elif path.startswith("/odds/"):
             key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
-        elif path.startswith("/handicap/"):
-            key = f"hdp:{path.removeprefix('/handicap/')}"
+        elif path.startswith("/asian/"):
+            key = f"ah:{path.removeprefix('/asian/')}"
+        elif path.startswith("/overdown/"):
+            key = f"ou:{path.removeprefix('/overdown/')}"
+        elif path.startswith("/detail/"):
+            key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
+        elif path.startswith("/analysis/"):
+            key = f"ay:{path.removeprefix('/analysis/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -220,7 +256,10 @@ def _build_corpus(tmp_path: Path) -> tuple[CorpusStore, Settings]:
             200, content=_day_page(sid, label, score)
         )
         routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
-        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_BYTES)
+        routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_BYTES)
+        routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_BYTES)
+        routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     _seed_running_face(settings.db_path)

@@ -79,39 +79,85 @@ ODDS_JS = (
     "gameDetail=Array(\n" + ",\n".join(f'"{d}"' for d in _ODDS_DETAILS) + ");\n"
 ).encode()
 
-# 亚盘（2025-10-01 20:00 开球）：源页序新→旧。09:00 与 09-30 同值连续→
-# 心跳；12:00 球半、13:00 回摆受让半球（A→B→A）；19:30 临场早段；
-# 21:46+ 为赛中（不得顶替赛前末价）；21:50 封盘。
-HANDICAP_HTML = (
-    "<html><head><title>亚赔变化表</title></head><body><table>"
-    "<TR align=center><TD>90</TD><TD>3-1</TD><TD>封</TD><TD>10-01 21:50</TD></TR>"
-    "<TR align=center><TD>88</TD><TD>3-1</TD><TD>0.45</TD><TD>平手</TD>"
-    "<TD>1.80</TD><TD>10-01 21:48</TD></TR>"
-    "<TR align=center><TD>86</TD><TD>2-1</TD><TD>0.42</TD><TD>平手</TD>"
-    "<TD>1.90</TD><TD>10-01 21:46</TD></TR>"
-    "<TR align=center><TD>0.80</TD><TD>平手/半球</TD><TD>1.05</TD>"
-    "<TD>10-01 19:30</TD><TD>即</TD></TR>"
-    "<TR align=center><TD>0.90</TD><TD>受让半球</TD><TD>0.92</TD>"
-    "<TD>10-01 13:00</TD><TD>即</TD></TR>"
-    "<TR align=center><TD>0.95</TD><TD>球半</TD><TD>0.90</TD>"
-    "<TD>10-01 12:00</TD><TD>即</TD></TR>"
-    "<TR align=center><TD>0.90</TD><TD>受让半球</TD><TD>0.92</TD>"
-    "<TD>10-01 09:00</TD><TD>即</TD></TR>"
-    "<TR align=center><TD>0.90</TD><TD>受让半球</TD><TD>0.92</TD>"
-    "<TD>09-30 22:00</TD><TD>即</TD></TR>"
-    "</table></body></html>"
-).encode("gb18030")
-
-# 跨年场（2026-01-02 开球）：亚盘行 12-30 无年份→推断 2025
 ODDS_JS_EMPTY = (
     'var matchname_cn="英超";\ngame=Array();\ngameDetail=Array();\n'
 ).encode()
-HANDICAP_CROSS_YEAR = (
-    "<html><head><title>亚赔变化表</title></head><body><table>"
-    "<TR align=center><TD>0.85</TD><TD>半球</TD><TD>0.95</TD>"
-    "<TD>12-30 23:00</TD><TD>即</TD></TR>"
-    "</table></body></html>"
-).encode("gb18030")
+
+
+# 撤采留档（票 59）：changeDetail 单书亚盘轨迹不再有采集面——silver ah 面
+# 的输入 bronze 行在测试里直写（结构与撤除前解析器产出逐字段一致）。
+# 两常规场（2025-10-01 20:00 开球）：行序=源页序新→旧。09:00 与 09-30 同值
+# 连续→心跳；12:00 球半、13:00 回摆受让半球（A→B→A）；19:30 临场早段；
+# 21:46+ 为赛中（不得顶替赛前末价）；21:50 封盘。
+def _hdp_row(
+    minute: str | None,
+    score: str | None,
+    home_water: str | None,
+    line: str | None,
+    away_water: str | None,
+    change_time: str,
+    status: str | None,
+) -> dict[str, object]:
+    """撤除前 parse_handicap_page 的行形状（贴源串/缺列 None）。"""
+    return {
+        "minute": minute,
+        "score": score,
+        "home_water": home_water,
+        "line": line,
+        "away_water": away_water,
+        "change_time": change_time,
+        "status": status,
+    }
+
+
+_HDP_ROWS = [
+    _hdp_row("90", "3-1", None, None, None, "10-01 21:50", "封"),
+    _hdp_row("88", "3-1", "0.45", "平手", "1.80", "10-01 21:48", None),
+    _hdp_row("86", "2-1", "0.42", "平手", "1.90", "10-01 21:46", None),
+    _hdp_row(None, None, "0.80", "平手/半球", "1.05", "10-01 19:30", "即"),
+    _hdp_row(None, None, "0.90", "受让半球", "0.92", "10-01 13:00", "即"),
+    _hdp_row(None, None, "0.95", "球半", "0.90", "10-01 12:00", "即"),
+    _hdp_row(None, None, "0.90", "受让半球", "0.92", "10-01 09:00", "即"),
+    _hdp_row(None, None, "0.90", "受让半球", "0.92", "09-30 22:00", "即"),
+]
+# 跨年场（2026-01-02 开球）：亚盘行 12-30 无年份→推断 2025
+_HDP_ROWS_CROSS_YEAR = [
+    _hdp_row(None, None, "0.85", "半球", "0.95", "12-30 23:00", "即"),
+]
+
+# 亚盘多庄页（票 59 新采集面；silver 消费在票 64，这里只让采集闭环干净）
+ASIANODDS_HTML = (
+    "<html><head><title>甲VS乙-亚指指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商8 封</td><td></td>"
+    "<td>0.90</td><td>受让半球</td><td>0.95</td>"
+    "<td>2.65</td><td>平手/半球</td><td>0.27</td>"
+    "<td>0.80</td><td>受让平手/半球</td><td>1.05</td>"
+    "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
+# 大小球多庄页（票 60）：与亚盘多庄同构，线=进球数盘口线
+OVERDOWN_HTML = (
+    "<html><head><title>甲VS乙-大小指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商1 封</td><td></td>"
+    "<td>0.93</td><td>2.5/3</td><td>0.87</td>"
+    "<td>1.25</td><td>2.5</td><td>0.50</td>"
+    "<td>0.80</td><td>2.5</td><td>1.00</td>"
+    "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
+# 详情页（票 61）：与旧 stats 并存（独立数据集）；tech 一行即有效页
+DETAIL_HTML = (
+    "<html><head><title>甲VS乙-现场分析-新球体育</title></head><body>"
+    "<ul><li class='lists'><div class='data'><span >3</span><span>角球</span>"
+    "<span >3</span></div></li></ul>"
+    "</body></html>"
+).encode()
+# 分析页（票 62）：数组层一行即正证据（特征面 bronze-only）
+ANALYSIS_HTML = (
+    "<html><head><title>甲VS乙-数据分析-新球体育</title></head><body>"
+    "<script>var h_data =[['25-05-10',36,'英超',52,'主队甲',60,'客队乙']];</script>"
+    "</body></html>"
+).encode()
 
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
@@ -127,7 +173,10 @@ def _settings(tmp_path: Path) -> Settings:
         srct_day_url="https://srct.test/over/{date}.htm",
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
-        srct_handicap_url="https://srct.test/handicap/{sid}",
+        srct_asianodds_url="https://srct.test/asian/{sid}",
+        srct_overdown_url="https://srct.test/overdown/{sid}",
+        srct_detail_url="https://srct.test/detail/{sid}cn.htm",
+        srct_analysis_url="https://srct.test/analysis/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -139,8 +188,14 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"day:{path.removeprefix('/over/').removesuffix('.htm')}"
         elif path.startswith("/odds/"):
             key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
-        elif path.startswith("/handicap/"):
-            key = f"hdp:{path.removeprefix('/handicap/')}"
+        elif path.startswith("/asian/"):
+            key = f"ah:{path.removeprefix('/asian/')}"
+        elif path.startswith("/overdown/"):
+            key = f"ou:{path.removeprefix('/overdown/')}"
+        elif path.startswith("/detail/"):
+            key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
+        elif path.startswith("/analysis/"):
+            key = f"ay:{path.removeprefix('/analysis/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -155,9 +210,34 @@ def _odds_routes(sid: str, *, empty_odds: bool = False) -> dict[str, httpx.Respo
         f"odds:{sid}": httpx.Response(
             200, content=ODDS_JS_EMPTY if empty_odds else ODDS_JS
         ),
-        f"hdp:{sid}": httpx.Response(200, content=HANDICAP_HTML),
+        f"ah:{sid}": httpx.Response(200, content=ASIANODDS_HTML),
+        f"ou:{sid}": httpx.Response(200, content=OVERDOWN_HTML),
+        f"dt:{sid}": httpx.Response(200, content=DETAIL_HTML),
+        f"ay:{sid}": httpx.Response(200, content=ANALYSIS_HTML),
         f"stats:{sid}": httpx.Response(200, content=STATS_HTML),
     }
+
+
+def _append_hdp_bronze(
+    store: CorpusStore, rows: list[dict[str, object]], sids: list[str]
+) -> None:
+    """直写撤采留档数据集的 bronze 行（采集面已停，silver 仍消费该形状）。"""
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct.HANDICAP_DATASET,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": srct.HANDICAP_DATASET,
+                "sid": sid,
+                "fetched_at": "2026-09-25T00:00:00+00:00",
+                "parser_version": srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+                "raw_sha": "f" * 64,
+                "payload": {"rows": rows},
+            }
+            for sid in sids
+        ],
+    )
 
 
 def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
@@ -173,7 +253,10 @@ def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
         200, content=_day_page("90011", label="2日20:00")
     )
     routes["odds:90011"] = httpx.Response(200, content=ODDS_JS_EMPTY)
-    routes["hdp:90011"] = httpx.Response(200, content=HANDICAP_CROSS_YEAR)
+    routes["ah:90011"] = httpx.Response(200, content=ASIANODDS_HTML)
+    routes["ou:90011"] = httpx.Response(200, content=OVERDOWN_HTML)
+    routes["dt:90011"] = httpx.Response(200, content=DETAIL_HTML)
+    routes["ay:90011"] = httpx.Response(200, content=ANALYSIS_HTML)
     routes["stats:90011"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
@@ -181,6 +264,9 @@ def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
         srct.collect_day(
             store, settings, _client(routes), date=day, sleeper=lambda _s: None
         )
+    # 亚盘轨迹 bronze 直写（票 59 起采集面只产 asian_odds 多庄页）
+    _append_hdp_bronze(store, _HDP_ROWS, ["90001", "90002"])
+    _append_hdp_bronze(store, _HDP_ROWS_CROSS_YEAR, ["90011"])
     return store, settings
 
 
@@ -209,7 +295,7 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     finally:
         store.close()
     rows = _book_rows(store)
-    assert report.rows == 3  # 两 1x2 书 + 亚盘锚
+    assert report.rows == 4  # 两 1x2 书 + 亚盘多庄锚 + 大小球多庄家（票 64）
     assert report.ah_anchor is True
     assert report.matches == 3
     fields = {
@@ -225,7 +311,7 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     assert "tier" not in fields  # 设计红线：无分层列
     assert "is_core" not in fields
     by_id = {r["bookmaker_id"]: r for r in rows}
-    assert set(by_id) == {"srct:1x2:9001", "srct:1x2:1129", "srct:ah:8"}
+    assert set(by_id) == {"srct:1x2:9001", "srct:1x2:1129", "srct:ah:8", "srct:ou:1"}
     sharp = by_id["srct:1x2:9001"]
     assert sharp["space"] == "1x2"
     assert sharp["cid"] == "9001"
@@ -235,8 +321,13 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     assert sharp["first_seen"] <= sharp["last_seen"]
     anchor = by_id["srct:ah:8"]
     assert anchor["space"] == "ah"
-    assert anchor["name_en"] is None  # 页面无名
-    assert anchor["match_count"] == 3  # 三场亚盘均有报价轨迹
+    assert anchor["name_en"] is None  # 多庄页无 en 名
+    assert anchor["name_zh_masked"] == "书商8"  # 站点遮罩短名（票 64 代称化）
+    assert anchor["match_count"] == 6  # 多庄页 3 场 + 留档轨迹 3 场并集
+    ou_book = by_id["srct:ou:1"]
+    assert ou_book["space"] == "ou"
+    assert ou_book["name_zh_masked"] == "书商1"
+    assert ou_book["match_count"] == 3  # 三场大小球页各一书
 
 
 def test_odds_events_semantics_and_gate_accounting(tmp_path: Path) -> None:
@@ -460,7 +551,7 @@ def test_cli_srct_odds_payload(
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {"bookmaker", "odds", "duckdb"}
     assert payload["odds"]["unexplained_gap"] == 0
-    assert payload["bookmaker"]["rows"] == 3
+    assert payload["bookmaker"]["rows"] == 4
     assert payload["bookmaker"]["ah_anchor"] is True
     assert Path(payload["duckdb"]).exists()
 
@@ -481,7 +572,7 @@ def test_no_pre_kickoff_quote_returns_missing(tmp_path: Path) -> None:
                 '0.92|0.90|0.90|2025;");\n'
             ).encode(),
         ),
-        "hdp:90003": httpx.Response(200, content=b"<html></html>"),
+        "ah:90003": httpx.Response(200, content=ASIANODDS_HTML),
         "stats:90003": httpx.Response(200, content=STATS_HTML),
     }
     settings = _settings(tmp_path)

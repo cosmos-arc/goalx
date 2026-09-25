@@ -22,7 +22,13 @@ from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import archive538, srct, srct_odds, srct_silver
+from goalx_backend.data.ingest import (
+    archive538,
+    srct,
+    srct_market,
+    srct_odds,
+    srct_silver,
+)
 
 CORPUS_DUCKDB_NAME = "corpus.duckdb"
 # 运行面 ATTACH 别名（infra 常量，非表名）
@@ -49,6 +55,18 @@ _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         srct_odds.BOOKMAKER_DATASET,
         f"{srct.SRCT_PROVIDER}/{srct_odds.BOOKMAKER_DATASET}",
+    ),
+    (
+        srct_market.MARKET_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_market.MARKET_DATASET}",
+    ),
+    (
+        srct_market.DETAIL_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_market.DETAIL_DATASET}",
+    ),
+    (
+        srct_market.ANALYSIS_DATASET,
+        f"{srct.SRCT_PROVIDER}/{srct_market.ANALYSIS_DATASET}",
     ),
 )
 
