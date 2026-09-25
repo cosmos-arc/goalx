@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -251,7 +252,9 @@ def latest_bronze_rows(
     当前解析器版本的 bronze 行，key→最新（append-only 后行胜出）。
 
     silver 各 builder 共用的选取口径（切片 15 抽出）：重复抓取选一份
-    轨迹、旧 parser_version 行一律不可见。
+    轨迹、旧 parser_version 行一律不可见。**全量物化**——仅限有界数据集
+    （day_page/match_stats，15.5K 行级）；odds/handicap 大数据集走
+    latest_bronze_ledger + 流式遍（票 19）。
     """
     latest: dict[str, dict[str, object]] = {}
     for row in store.read_bronze(srct.SRCT_PROVIDER, dataset):
@@ -259,6 +262,39 @@ def latest_bronze_rows(
             continue
         latest[str(row["sid"])] = row
     return latest
+
+
+def latest_bronze_ledger(store: CorpusStore, dataset: str) -> dict[str, int]:
+    """
+    选轨信封账本：sid → 选中行号（票 19 选轨遍）。
+
+    选取口径与 latest_bronze_rows 全同（当前 parser_version、后行胜出）
+    但零物化——流式过 bronze 只留每 sid 一个行号，载荷逐行即弃；内存=
+    每 sid 一条 int，与语料总量无关。载荷遍按行号精确命中选中行。
+    """
+    version = srct.BRONZE_VERSIONS[dataset]
+    ledger: dict[str, int] = {}
+    for lineno, line in enumerate(store.iter_bronze_lines(srct.SRCT_PROVIDER, dataset)):
+        row = json.loads(line)
+        if row.get("parser_version") == version and row.get("sid") is not None:
+            ledger[str(row["sid"])] = lineno
+    return ledger
+
+
+def iter_selected_rows(
+    store: CorpusStore, dataset: str, ledger: dict[str, int]
+) -> Iterator[tuple[str, dict[str, object]]]:
+    """
+    信封账本的载荷遍：yield (sid, 选中 bronze 行)。
+
+    命中行号才 json.loads、单行即弃（内存=单行）。需原文透传的 spill 遍
+    不走这里（零解析写回保字节），见 srct_odds._spill_selected。
+    """
+    want = {lineno: sid for sid, lineno in ledger.items()}
+    for lineno, line in enumerate(store.iter_bronze_lines(srct.SRCT_PROVIDER, dataset)):
+        sid = want.get(lineno)
+        if sid is not None:
+            yield sid, json.loads(line)
 
 
 # ---- xg_observation（切片 16）：47 键统计按场 silver，源T 单源口径 ----
