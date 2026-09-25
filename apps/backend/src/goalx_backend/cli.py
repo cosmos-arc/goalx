@@ -57,6 +57,7 @@ from goalx_backend.data.ingest import (
     caiguo,
     fdhist,
     jc,
+    jc_silver,
     openfootball,
     sporttery,
     srct,
@@ -576,6 +577,26 @@ def _cmd_jc_collect(
     sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_jc_silver(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    Jc silver 重物化 + DuckDB 桥（票 72）：jc_sp_change_event 幂等重建。
+
+    变化事件流语义与书商层 odds_change_event 同构（心跳丢/A→B→A 保留/
+    同刻并列规则）；报告含门④记账（unexplained_gap 须为 0）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = jc_silver.build_sp_change_events(store)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -876,6 +897,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
     )
+    sub.add_parser(
+        "jc-silver",
+        help="jc_sp_change_event silver 重物化(票72;与书商层事件流同构,幂等)",
+    )
     jc_collect = sub.add_parser(
         "jc-collect",
         help="竞彩官方SP历史采集(票70;jc provider 独立落,HAD/HHAD/TTG+CRS/HAFU 留档)",
@@ -936,6 +961,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
+        "jc-silver": lambda: _cmd_jc_silver(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

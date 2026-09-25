@@ -24,6 +24,8 @@ from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     archive538,
+    jc,
+    jc_silver,
     srct,
     srct_market,
     srct_odds,
@@ -67,6 +69,10 @@ _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         srct_market.ANALYSIS_DATASET,
         f"{srct.SRCT_PROVIDER}/{srct_market.ANALYSIS_DATASET}",
+    ),
+    (
+        jc_silver.SP_EVENT_DATASET,
+        f"{jc.JC_PROVIDER}/{jc_silver.SP_EVENT_DATASET}",
     ),
 )
 
