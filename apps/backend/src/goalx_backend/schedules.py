@@ -233,7 +233,8 @@ RESUME_DEPLOYMENTS = (
     "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",
-    "pool-snapshot",
+    # pool-snapshot 暂不恢复：其源=源B zucai（判死面），足彩对阵容官方=票 68
+    # （2026-09-25 深夜裁决：任9/14场/4场进球+彩果全转官方）；落地后重挂
     "intel-collect",
     "scout-line",
 )
