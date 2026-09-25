@@ -57,6 +57,8 @@ from goalx_backend.data.ingest import (
     caiguo,
     fdhist,
     jc,
+    jc_audit,
+    jc_backfill,
     jc_silver,
     openfootball,
     sporttery,
@@ -577,6 +579,72 @@ def _cmd_jc_collect(
     sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_jc_backfill(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    JC 历史回填批（票 67）：uniform 按日反查 → fixedBonus 逐场（官方域）。
+
+    --day-cap 抽样冒烟；done 日零成本跳过（裸键判据）。settings 注入口
+    只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = jc_backfill.backfill_range(
+                store,
+                resolved,
+                client,
+                date_to=args.date_to,
+                date_from=args.date_from,
+                budget=srct.NightBudget(request_cap=args.request_cap),
+                day_cap=args.day_cap,
+            )
+    finally:
+        store.close()
+    sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_jc_audit(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    JC audit 面（票 67）：TTG 按年密度 + 存档最早年限 + cid1129 对账。
+
+    --date 抽样对账日（可多次，须为语料已有日页的日期）；存档探针二分
+    约 5-10 请求（官方域）。报告 JSON 落 stdout。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    density = jc_audit.ttg_density_by_year(store)
+    earliest: int | None = None
+    report: dict[str, object] = {
+        "ttg_density_by_year": {y: asdict(d) for y, d in density.by_year.items()},
+    }
+    try:
+        if args.probe_archive:
+            with httpx.Client() as client:
+                earliest = jc_audit.earliest_archive_year(client, resolved)
+        if args.date:
+            with httpx.Client() as client:
+                recon = jc_audit.reconcile_cid1129(
+                    store, resolved, client, dates=args.date
+                )
+            report["reconcile"] = {
+                "matched": recon.matched,
+                "unmatched_names": recon.unmatched_names,
+                "comparable": recon.comparable,
+                "consistent": recon.consistent,
+                "consistency_rate": recon.consistency_rate,
+                "rows": [asdict(r) for r in recon.rows],
+            }
+    finally:
+        store.close()
+    report["earliest_archive_year"] = earliest
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_jc_silver(
     args: argparse.Namespace, *, settings: Settings | None = None
 ) -> None:
@@ -897,6 +965,32 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
     )
+    jc_audit_parser = sub.add_parser(
+        "jc-audit",
+        help="JC audit 面(票67;TTG 按年密度+存档最早年限+官方vs cid1129 对账)",
+    )
+    jc_audit_parser.add_argument(
+        "--date", action="append", help="对账抽样日 YYYY-MM-DD(可多次)"
+    )
+    jc_audit_parser.add_argument(
+        "--probe-archive", action="store_true", help="二分探存档最早年限(~10 请求)"
+    )
+    jc_backfill_parser = sub.add_parser(
+        "jc-backfill",
+        help="JC 历史回填批(票67;uniform 按日反查→逐场,done 日零成本跳过)",
+    )
+    jc_backfill_parser.add_argument(
+        "--date-to", required=True, help="起始日(新) YYYY-MM-DD"
+    )
+    jc_backfill_parser.add_argument(
+        "--date-from", required=True, help="截止日(旧) YYYY-MM-DD"
+    )
+    jc_backfill_parser.add_argument(
+        "--request-cap", type=int, default=srct.NIGHT_REQUEST_CAP
+    )
+    jc_backfill_parser.add_argument(
+        "--day-cap", type=int, default=None, help="单日 mid 上限(抽样冒烟)"
+    )
     sub.add_parser(
         "jc-silver",
         help="jc_sp_change_event silver 重物化(票72;与书商层事件流同构,幂等)",
@@ -962,6 +1056,8 @@ def main(argv: list[str] | None = None) -> int:
         "srct-gate": lambda: _cmd_srct_gate(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),
+        "jc-backfill": lambda: _cmd_jc_backfill(args),
+        "jc-audit": lambda: _cmd_jc_audit(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

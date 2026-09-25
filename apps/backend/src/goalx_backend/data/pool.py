@@ -419,6 +419,11 @@ def devig_euro_odds(
 _NAME_PREFIX_MIN_CHARS = 2
 
 
+def names_match(pool_name: str, fixture_name: str) -> bool:
+    """公开别名（票 67 对账复用；语义同 _names_match）。"""
+    return _names_match(pool_name, fixture_name)
+
+
 def _names_match(pool_name: str, fixture_name: str) -> bool:
     """源B 缩写名 vs 库内全名的宽松匹配（互为前缀，去空白）。"""
     a = pool_name.replace(" ", "")

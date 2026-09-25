@@ -378,6 +378,24 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
         )
     if not stopped:
         summary.stop_reason = "completed"
+    # JC 历史回填殿后相位（票 67）：源T 补欠优先，剩余预算推进十年回填
+    # （官方域；预算尽/熔断已停则相位自然跳过——只在源T 干净跑完时挂）
+    if summary.stop_reason == "completed":
+        from goalx_backend.data.ingest import jc_backfill  # noqa: PLC0415 防环局部导入
+
+        jc_stats = jc_backfill.night_backfill_phase(
+            store, settings, client, budget, today=run_today, sleeper=sleep_fn
+        )
+        if jc_stats.stopped is not None:
+            summary.stop_reason = f"jc_{jc_stats.stopped}"
+        summary.requests = budget.requests  # 殿后相位计入权威口径
+        logger.info(
+            "srct night {}: jc 回填殿后——{} 日尝试/{} 场采/空 {}",
+            summary.night_date,
+            jc_stats.days_attempted,
+            jc_stats.matches_collected,
+            jc_stats.empty,
+        )
     # requests 权威口径 = 预算计费（含重试/失败路径/触顶未发的那一次）——
     # stats.requests 在异常中断路径会丢已发请求的计数
     summary.requests = budget.requests
