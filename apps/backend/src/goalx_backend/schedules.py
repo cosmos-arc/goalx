@@ -62,24 +62,6 @@ from goalx_backend.flows import (
     weekly_refresh_flow,
 )
 
-# deployment 注册表（--only 过滤键；票 63 停采期恢复用）
-DEPLOYMENTS: dict[str, str] = {
-    "daily-capture": "竞彩/预测/欧赔聚合双拍（停采中）",
-    "eu-odds-closing": "欧赔聚合收盘拍（已停用，票 63 前裁决）",
-    "draw-results-sync": "官方赛果同步（停采中）",
-    "draw-results-sweep": "官方赛果 08:00 补扫（停采中）",
-    "official-reconcile": "赛果日终审计（停采中）",
-    "odds-anchor-dense": "双锚临场采样（停采中）",
-    "srcb-collect": "源B 变化时序（已停用，票 63 前裁决）",
-    "srct-night": "源T 夜班回填（票 63 先行恢复）",
-    "understat-sync": "xG 特征同步（停采中）",
-    "daily-wrap": "结算批跑（停采中）",
-    "pool-snapshot": "彩池三拍（停采中）",
-    "intel-collect": "情报采集（停采中）",
-    "scout-line": "scout 概率（停采中）",
-    "weekly-refresh": "周刷新（停采中）",
-}
-
 
 def main(only: str | None = None) -> None:
     """

@@ -33,8 +33,9 @@ from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 from goalx_backend.db import utc_now_iso
 
 MARKET_DATASET = "market_quote"
-DETAIL_DATASET = "match_detail"
-ANALYSIS_DATASET = "match_analysis"
+# silver 数据集名与 bronze 同名（分层路径不同；常量复用 srct 单一真相源）
+DETAIL_DATASET = srct.DETAIL_DATASET
+ANALYSIS_DATASET = srct.ANALYSIS_DATASET
 MARKET_SILVER_VERSION = "silver_market_v1"
 DETAIL_SILVER_VERSION = "silver_detail_v1"
 ANALYSIS_SILVER_VERSION = "silver_analysis_v1"
