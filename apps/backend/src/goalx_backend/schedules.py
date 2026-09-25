@@ -221,16 +221,35 @@ def main(only: str | None = None) -> None:
     )
 
 
+# 2026-09-25 恢复清单（用户裁决"相关采集任务一起调整"）：除两个判死面
+# （eu-odds-closing 欧赔聚合 / srcb-collect 源B，国际赔率全走源T）外全量
+RESUME_DEPLOYMENTS = (
+    "daily-capture",
+    "draw-results-sync",
+    "draw-results-sweep",
+    "official-reconcile",
+    "srct-night",
+    "understat-sync",
+    "odds-anchor-dense",
+    "weekly-refresh",
+    "daily-wrap",
+    "pool-snapshot",
+    "intel-collect",
+    "scout-line",
+)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Prefect 调度入口（--only 停采期过滤）"
     )
     parser.add_argument(
         "--only",
-        default="srct-night",
+        default=",".join(RESUME_DEPLOYMENTS),
         help=(
-            "逗号分隔要服务的 deployment 键"
-            "（缺省 srct-night=停采期票 63 口径；全量传 all）"
+            "逗号分隔要服务的 deployment 键（缺省=2026-09-25 恢复清单"
+            " RESUME_DEPLOYMENTS；全量传 all；判死面 eu-odds-closing/"
+            "srcb-collect 不在恢复清单）"
         ),
     )
     args = parser.parse_args()

@@ -201,26 +201,15 @@ def propline_snapshot_flow() -> dict[str, object]:
 @flow(name="daily-capture", log_prints=True)
 def daily_capture_flow() -> dict[str, object]:
     """
-    销售日两拍采集（票 37 协议 v1）：竞彩→预测→范围内欧赔，顺序固定。
+    销售日两拍采集（票 37 协议 v1；2026-09-25 停采重整后改段）：竞彩→预测。
 
-    PropLine 互备拍（票 50，2026-09-21 互备裁决）尾随欧赔——源故障/
-    预算触顶只降级自身，不连坐主线三步。
+    欧赔聚合段与 PropLine 互备拍已按 2026-09-25 裁决摘除（国际书商
+    赔率全走源T 六端点，欧赔聚合无存在必要）；残留函数保留仅供
+    手工调用。竞彩官方 SP 历史与赛前实时拍归语料层（票 65/67）。
     """
     jingcai = jingcai_snapshot_flow()
     forecast = forecast_daily_flow()
-    eu = eu_odds_snapshot_flow()
-    propline_stats: dict[str, object] = {}
-    try:
-        propline_stats = propline_snapshot_flow()
-    except Exception as exc:
-        logger.warning("propline mutual-run degraded: {}", exc)
-        propline_stats = {"error": str(exc)}
-    return {
-        "jingcai": jingcai,
-        "forecast": forecast,
-        "eu": eu,
-        "propline": propline_stats,
-    }
+    return {"jingcai": jingcai, "forecast": forecast}
 
 
 @flow(name="daily-wrap", log_prints=True)
