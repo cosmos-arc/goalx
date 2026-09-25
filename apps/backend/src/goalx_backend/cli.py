@@ -23,6 +23,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
     uv run python -m goalx_backend.cli srct-shift [--no-window] [--request-cap N]
+    uv run python -m goalx_backend.cli jc-collect --match-id 1234567 [--match-id …]
     uv run python -m goalx_backend.cli srct-silver
     uv run python -m goalx_backend.cli srct-odds
     uv run python -m goalx_backend.cli srct-gate
@@ -55,6 +56,7 @@ from goalx_backend.data.ingest import (
     archive538,
     caiguo,
     fdhist,
+    jc,
     openfootball,
     sporttery,
     srct,
@@ -553,6 +555,27 @@ def _cmd_srct_gate(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_jc_collect(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    竞彩官方 SP 历史采集（票 70）：getFixedBonusV1 → jc provider raw+bronze。
+
+    一场一请求全量返回（幂等缓存）；oddsHistory={} 合法空只落 raw。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = jc.JcCollectStats()
+            for match_id in args.match_id:
+                jc.collect_match(store, resolved, client, match_id, stats=stats)
+    finally:
+        store.close()
+    sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -853,6 +876,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
     )
+    jc_collect = sub.add_parser(
+        "jc-collect",
+        help="竞彩官方SP历史采集(票70;jc provider 独立落,HAD/HHAD/TTG+CRS/HAFU 留档)",
+    )
+    jc_collect.add_argument(
+        "--match-id", action="append", required=True, help="uniform matchId(可多次)"
+    )
     archive = sub.add_parser(
         "archive-538",
         help="538 终版档案一次性入库(票56切片16;原档进raw+CorpusScope silver 小表)",
@@ -905,6 +935,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
+        "jc-collect": lambda: _cmd_jc_collect(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

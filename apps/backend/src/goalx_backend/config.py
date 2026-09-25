@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # Understat xG（票 45）：robots.txt 全站 Disallow——个人研究低频使用
     # （默认每日 1 首页 + 5 联赛文件 = 6 请求 ≤10 上限，见 schedules）
     understat_base_url: str = "https://understat.com"
+    # 竞彩官方 SP 历史（票 70，uniform 族固定奖金端点；官方域可直书）
+    jc_fixed_bonus_url: str = (
+        "https://webapi.sporttery.cn/gateway/uniform/football/getFixedBonusV1.qry"
+    )
     # 传统足彩官方（票 68，lottery 族；官方域可直书）——当期+历史两端点
     zucai_official_current_url: str = (
         "https://webapi.sporttery.cn/gateway/lottery/getFootBallMatchV1.qry"
