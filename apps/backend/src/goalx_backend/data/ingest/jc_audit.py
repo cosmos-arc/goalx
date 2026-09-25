@@ -32,7 +32,7 @@ _TTG_MULTI_MIN_BEATS = 2  # 粒度密度信号：ttg ≥2 笔计多笔场
 _SRCT_TIME_IDX = 3  # 1129 行 'H|D|A|MM-DD HH:MM|…' 的时间列位
 _SRCT_TIME_RE = r"(\d{1,2})-(\d{1,2}) (\d{2}):(\d{2})"  # MM-DD HH:MM
 _HAD_TRIPLE = 3
-_SP_EPSILON = 0.011  # 末位四舍五入容差（同源价允许半分位级差）
+_SP_EPSILON = 0.001  # 末位舍入容差（同源镜像应逐值相等）
 
 
 @dataclass

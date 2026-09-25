@@ -60,8 +60,8 @@ MARKET_SFC = "ttt14"
 MARKET_JQC = "goals4"
 GAME_SFC = "90"
 GAME_JQC = "94"
-# 历史回填礼貌间隔（官方域无 20/min 共享闸，仍保持低频）
-BACKFILL_SLEEP_SECONDS = 0.8
+# 历史回填请求间距=20/min 等效（spec 69 story 12：官方采集同 20/min 护栏）
+BACKFILL_SLEEP_SECONDS = 3.2
 
 
 def _headers(referer: str) -> dict[str, str]:
@@ -173,14 +173,15 @@ def _tier_rows(prize_list: object) -> list[dict[str, object]]:
 
 
 def _game_state(
-    game: dict[str, Any], *, rj: dict[str, Any] | None = None
+    game: dict[str, Any], *, market: str = MARKET_SFC, rj: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    """一玩法彩果面 → prize_tiers json 内容（sfc 可并任9 面）。"""
+    """一玩法彩果面 → prize_tiers json 内容（键随市场；ttt14 另并任9 面）。"""
     tiers = _tier_rows(game.get("prizeLevelList"))
     if not tiers:
         return None
+    face = "jqc" if market == MARKET_JQC else "sfc"
     state: dict[str, Any] = {
-        "sfc": {
+        face: {
             "total_sale": _money(game.get("totalSaleAmount")),
             "pool_after": _money(
                 game.get("poolBalanceAfterDraw") or game.get("poolBalanceAfterdraw")
@@ -281,11 +282,12 @@ def _period_from_game(
         published_at=_cst_naive_to_utc(game.get("lotteryDrawTime")),
         matches=parse_match_list(game.get("matchList")),
     )
-    tiers = _game_state(game, rj=rj)
+    face = "jqc" if market == MARKET_JQC else "sfc"
+    tiers = _game_state(game, market=market, rj=rj)
     if tiers is not None:
         period.prize_tiers = tiers
-        period.sales_amount = tiers["sfc"]["total_sale"]
-        period.rollover_in = tiers["sfc"]["pool_after"]
+        period.sales_amount = tiers[face]["total_sale"]
+        period.rollover_in = tiers[face]["pool_after"]
     return period
 
 

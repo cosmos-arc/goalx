@@ -158,9 +158,13 @@ def run_jc_beats(  # noqa: C901, PLR0912, PLR0915 拍决策分支随四类拍累
     """
     stats = JcShiftStats()
     try:
+        if budget is not None:
+            budget.charge(1)  # 发现也进共享预算（spec 69 story 12 口径）
         fetched = fetch_calculator(settings, client)
-        stats.requests += 1  # 发现也是线上请求（预算由 run_shift 层共享池外记——
-        # calculator 为官方域轻端点，护栏重心在 fixedBonus 逐场拍）
+        stats.requests += 1
+    except srct.NightStop as stop:
+        stats.failed["jc:discovery"] = f"budget: {stop.reason}"
+        return stats
     except (httpx.HTTPError, ValueError) as exc:
         stats.failed["jc:discovery"] = f"{type(exc).__name__}: {exc}"[:120]
         logger.warning("jc shift 发现失败（{}）", exc)

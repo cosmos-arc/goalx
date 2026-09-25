@@ -42,7 +42,6 @@ SP_EVENT_DATASET = "jc_sp_change_event"
 SILVER_VERSION = "silver_jc_sp_v1"
 _BEIJING = timezone(timedelta(hours=8))
 _TTG_OUTCOMES = tuple(f"s{i}" for i in range(8))
-_PLAYTYPES = ("had", "hhad", "ttg")
 _UNSORTABLE_MS = 1 << 62  # 不可解时间排序垫底（随后按 bad_time 跳行）
 
 _SCHEMA = pa.schema(
@@ -382,6 +381,3 @@ def _kickoff_ms(store: CorpusStore) -> dict[str, int]:
             if ms is not None:
                 out[str(match_id)] = ms
     return out
-
-
-_ = _PLAYTYPES  # 消费端枚举导出位（票 67 对账用）

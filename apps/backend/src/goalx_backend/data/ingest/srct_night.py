@@ -389,7 +389,6 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
         )
         if jc_stats.stopped is not None:
             summary.stop_reason = f"jc_{jc_stats.stopped}"
-        summary.requests = budget.requests  # 殿后相位计入权威口径
         logger.info(
             "srct night {}: jc 回填殿后——{} 日尝试/{} 场采/空 {}",
             summary.night_date,

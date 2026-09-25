@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 import httpx
 from loguru import logger
@@ -138,16 +138,15 @@ def night_backfill_phase(
     """
     夜班殿后相位（票 67 排期裁决）：源T 清单跑完后以剩余预算推进。
 
-    区间=今日-3 回溯 10 年（新→旧）；预算尽即停（次日续——日 done 判据
-    零成本跳过）。十年一轮后每夜零请求心跳。
+    区间=今日-3 回溯 10 年（新→旧）；预算尽即停（次日续——done 日入
+    `jc_backfill_days` 日账零成本跳过）。十年一轮后每夜真零请求心跳。
     """
     date_to = (today - timedelta(days=3)).isoformat()
-    date_from = (
-        datetime.now(UTC)
-        .replace(year=int(datetime.now(UTC).year - years))
-        .date()
-        .isoformat()
-    )
+    try:
+        oldest = today.replace(year=today.year - int(years))
+    except ValueError:
+        oldest = today.replace(year=today.year - int(years), day=28)  # 闰日守卫
+    date_from = oldest.isoformat()
     return backfill_range(
         store,
         settings,
