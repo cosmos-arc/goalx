@@ -19,7 +19,9 @@ bronze 落盘约定（切片 12）：每数据集一文件
 
 夜班台账（切片 13）：srct_day_status（日级 done/not_found——done 只由夜班
 干净跑完一日报，日页 raw 在而状态缺 = 中断日，次夜仍 pending 续传）+
-srct_night_summaries（每夜请求/新增/吸收/失败摘要，晨检一眼健康度）。
+srct_night_summaries（每夜请求/新增/吸收/失败摘要，晨检一眼健康度）；
+季深度判定（票 18）：srct_season_depth（season PK，老季浅深/全深跨夜
+持久，夜班直读不重探）。
 """
 
 from __future__ import annotations
@@ -79,6 +81,14 @@ CREATE TABLE IF NOT EXISTS srct_night_summaries (
     budget_cap INTEGER NOT NULL
 )
 """
+# 票 18 老季深度判定：跨夜持久不重探；shallow→full 升深=合法状态迁移
+_SRCT_SEASON_DEPTH_SQL = """
+CREATE TABLE IF NOT EXISTS srct_season_depth (
+    season TEXT PRIMARY KEY,
+    depth TEXT NOT NULL,
+    probed_at TEXT NOT NULL
+)
+"""
 _NIGHT_SUMMARY_COLUMNS = (
     "night_date",
     "started_at",
@@ -131,6 +141,7 @@ class CorpusStore:
         conn.execute(_RAW_ARTIFACTS_SQL)
         conn.execute(_SRCT_DAY_STATUS_SQL)
         conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
+        conn.execute(_SRCT_SEASON_DEPTH_SQL)
         conn.commit()
 
     def _checkpoint(self) -> sqlite3.Connection:
@@ -142,6 +153,7 @@ class CorpusStore:
             self._conn.execute(_RAW_ARTIFACTS_SQL)
             self._conn.execute(_SRCT_DAY_STATUS_SQL)
             self._conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
+            self._conn.execute(_SRCT_SEASON_DEPTH_SQL)
             self._conn.commit()
         return self._conn
 
@@ -295,6 +307,22 @@ class CorpusStore:
             "SELECT date FROM srct_day_status WHERE status=?", (status,)
         )
         return {str(row["date"]) for row in rows}
+
+    def season_depths(self) -> dict[str, str]:
+        """季深度判定全表（票 18：夜班跨夜直读不重探）。"""
+        rows = self._checkpoint().execute("SELECT season, depth FROM srct_season_depth")
+        return {str(row["season"]): str(row["depth"]) for row in rows}
+
+    def set_season_depth(self, season: str, depth: str) -> None:
+        """记/升一季深度（full/shallow；同值重写无害）。"""
+        self._checkpoint().execute(
+            """
+            INSERT OR REPLACE INTO srct_season_depth (season, depth, probed_at)
+            VALUES (?, ?, ?)
+            """,
+            (season, depth, utc_now_iso()),
+        )
+        self._checkpoint().commit()
 
     def record_night_summary(self, row: Mapping[str, object]) -> None:
         """落一夜摘要行（键 = _NIGHT_SUMMARY_COLUMNS；晨检口径）。"""

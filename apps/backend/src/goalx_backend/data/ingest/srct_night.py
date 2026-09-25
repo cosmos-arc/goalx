@@ -20,6 +20,12 @@ checkpoint 库（srct_night_summaries，`goalx srct-night --list` 晨检）。
 `srct-collect --date` 低成本回补（成功件已在 checkpoint，只补失败端点）；
 熔断只对系统性故障（连续 5 次失败事件）生效。
 
+老季深度分层（票 18，Phase2/3 扩展批）：起始年 ≤2019 的季窗默认浅深
+（每场只打 日页+1x2 轨迹 两请求，跳过亚盘/统计——老场统计页大概率空，
+空页请求纯浪费）；每季首个 pending 日全深探针，统计/亚盘页非空即升全深
+（宁可错升不错漏）。判定落 checkpoint（srct_season_depth，跨夜不重探）；
+升深后浅深期 done 日自动重开三端点（day/odds 缓存命中，只补两新端点）。
+
 挂接：Prefect srct-night deployment 每日 01:00（schedules.py）；窗口逐日
 复判（越 08:00 当场收手），手工白天冒烟走 `--no-window`。
 """
@@ -33,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
+from typing import cast
 
 import httpx
 from loguru import logger
@@ -48,6 +55,9 @@ NIGHT_WINDOW: tuple[dt_time, dt_time] = (dt_time(1, 0), dt_time(8, 0))
 CURRENT_SEASON_LAG_DAYS = 2
 # 摘要 failed 采样上限（全量进日志，行内截断防爆；tasks/flow 返回同口径）
 FAILED_SAMPLE_CAP = 20
+# 票 18 老季分层：起始年 ≤2019 的季窗默认浅深（两请求/场），探针可升
+# 全深；Phase1 窗口（2023/24 起）不落此界，不受影响
+LAYERED_SEASON_MAX_START_YEAR = 2019
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,100 @@ def pending_dates(
     return [(s, d) for s, d in phase1_dates(today, seasons) if d not in settled]
 
 
+def _is_layered(season: SeasonWindow) -> bool:
+    """该季窗是否落老季分层界（票 18：起始年 ≤2019）。"""
+    return int(season.start[:4]) <= LAYERED_SEASON_MAX_START_YEAR
+
+
+def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
+    """
+    探针日判定（票 18）：full / shallow / None（不断案）。
+
+    宁可错升不错漏（漏=数据永久缺口，升=多花 1/3 请求）：正证据即升全深；
+    零证据须当日干净跑完且有场次才降浅深——中断/任一失败/解析失败/零场
+    都留待次夜下一 pending 日重探（不重探指已断案的季，见 srct_season_depth）。
+    """
+    if stats.stats_nonempty or stats.handicap_nonempty:
+        return srct.DEPTH_FULL
+    if stats.stopped is not None or stats.failed or stats.parse_failed:
+        return None
+    if not stats.scope_sids:
+        return None
+    return srct.DEPTH_SHALLOW
+
+
+def _resolve_depth(
+    season: str,
+    windows: dict[str, SeasonWindow],
+    depths: dict[str, str],
+) -> tuple[str, bool]:
+    """该日采集深度：返回 (depth, 是否探针日)。老季无判定=全深探针。"""
+    window = windows.get(season)
+    if window is None or not _is_layered(window):
+        return srct.DEPTH_FULL, False  # Phase1 季窗：不分层
+    known = depths.get(season)
+    if known is None:
+        return srct.DEPTH_FULL, True
+    return known, False
+
+
+def _record_probe(
+    store: CorpusStore,
+    depths: dict[str, str],
+    season: str,
+    day: str,
+    stats: srct.SrctCollectStats,
+) -> None:
+    """探针日收尾断案并持久（None=不断案，次夜下一 pending 日重探）。"""
+    verdict = _probe_verdict(stats)
+    if verdict is None:
+        return
+    depths[season] = verdict
+    store.set_season_depth(season, verdict)
+    logger.info("srct night {}: 老季深度判定 {}（探针日 {}）", season, verdict, day)
+
+
+def _depth_backfill_dates(
+    store: CorpusStore,
+    today: date,
+    seasons: tuple[SeasonWindow, ...],
+    depths: dict[str, str],
+) -> list[tuple[str, str]]:
+    """
+    升深补抓清单（票 18）：全深老季中，浅深期完成的 done 日。
+
+    判据=该日 CorpusScope 场次的亚盘/统计 raw 缺席（浅深跳过端点不记
+    checkpoint；传输失败同形态——重试无害且自愈，预算/熔断照护栏计）。
+    重跑 day/odds 命中缓存零重抓，只补两新端点。
+    """
+    old_full = [
+        season
+        for season in seasons
+        if _is_layered(season) and depths.get(season.label) == srct.DEPTH_FULL
+    ]
+    if not old_full:
+        return []  # Phase1 窗口零成本短路（无老季全深）
+    day_sids: dict[str, list[str]] = {}
+    for line in store.iter_bronze_lines(srct.SRCT_PROVIDER, srct.DAY_DATASET):
+        row = json.loads(line)
+        payload = cast("dict[str, object] | None", row.get("payload"))
+        if payload is not None:
+            day_sids[str(row["sid"])] = srct.day_page_sids(payload)
+    done = store.day_status_dates("done")
+    backfill: list[tuple[str, str]] = []
+    for season in old_full:
+        for day in reversed(season_dates(season, today)):
+            if day not in done:
+                continue
+            if any(
+                not store.has(srct.SRCT_PROVIDER, dataset, sid)
+                for sid in day_sids.get(day, [])
+                for dataset in (srct.HANDICAP_DATASET, srct.STATS_DATASET)
+            ):
+                backfill.append((season.label, day))
+    return backfill
+
+
 @dataclass
 class SrctNightSummary:
     """一夜运行摘要（持久化行 + CLI/flow 返回口径）。"""
@@ -151,7 +255,7 @@ def _absorb(summary: SrctNightSummary, stats: srct.SrctCollectStats) -> None:
     summary.failed.update(stats.failed)
 
 
-def run_night(  # noqa: PLR0913, PLR0915 接缝与逐日编排分支随护栏累加（同 collect_day 先例）
+def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护栏/分层累加（同 collect_day 先例）
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -187,6 +291,11 @@ def run_night(  # noqa: PLR0913, PLR0915 接缝与逐日编排分支随护栏累
     run_today = today if today is not None else started.date()
     tasks = pending_dates(store, run_today, scoped_seasons)
     summary.pending_before = len(tasks)
+    depths = store.season_depths()
+    # 升深补抓（票 18）：全深老季的浅深 done 日重开三端点（缓存只补新端点；
+    # 无老季全深时 _depth_backfill_dates 立即空返，Phase1 零成本）
+    tasks = tasks + _depth_backfill_dates(store, run_today, scoped_seasons, depths)
+    windows = {season.label: season for season in scoped_seasons}
     budget = srct.NightBudget(
         request_cap=request_cap, failure_streak_cap=failure_streak_cap
     )
@@ -198,6 +307,7 @@ def run_night(  # noqa: PLR0913, PLR0915 接缝与逐日编排分支随护栏累
             summary.stop_reason = "window_closed"
             stopped = True
             break
+        depth, probing = _resolve_depth(season, windows, depths)
         summary.dates_attempted += 1
         try:
             stats = srct.collect_day(
@@ -210,6 +320,7 @@ def run_night(  # noqa: PLR0913, PLR0915 接缝与逐日编排分支随护栏累
                 rng=rng,
                 rate_limiter=limiter,
                 budget=budget,
+                depth=depth,
             )
         except srct.SrctContentError as exc:
             store.set_day_status(day, "not_found")
@@ -232,6 +343,8 @@ def run_night(  # noqa: PLR0913, PLR0915 接缝与逐日编排分支随护栏累
                 break  # 熔断也落摘要留痕
             continue
         _absorb(summary, stats)
+        if probing:
+            _record_probe(store, depths, season, day, stats)
         if stats.stopped is not None:
             summary.stop_reason = stats.stopped
             stopped = True

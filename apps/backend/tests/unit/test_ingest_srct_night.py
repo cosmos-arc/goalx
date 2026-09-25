@@ -385,3 +385,186 @@ def test_cli_run_and_list_seam(
     assert len(nights) == 1
     assert nights[0]["stop_reason"] == "completed"
     assert nights[0]["dates_done"] == 3
+
+
+# ---- 票 18：老季两请求分层（浅深默认 + 探针升全深 + 持久 + 升深补抓） ----
+
+# 老季窗（起始年 ≤2019 分层界）：3 日 × 每日 1 场；pending 序 = 新→旧
+OLD_SEASONS = (srct_night.SeasonWindow("2019/20", "2019-08-01", "2019-08-03"),)
+OLD_DATES = ["2019-08-01", "2019-08-02", "2019-08-03"]  # sids 91001/91002/91003
+
+# 空内容形态（合法零行解析——探针"零证据"的事实依据）
+HANDICAP_EMPTY_BYTES = (
+    "<html><head><title>亚赔变化表</title></head><body><table></table></body></html>"
+).encode("gb18030")
+STATS_EMPTY_HTML = (
+    b'<html><body><script>var jsonData = {"techStat":{"itemList":[]},"info":{}};'
+    b"</script></body></html>"
+)
+
+
+def _old_day_routes(routes: dict[str, httpx.Response]) -> None:
+    """老季日页路由（_transport_spy 只注册 2025-10 三日）。"""
+    for day, sid in zip(OLD_DATES, DATE_TO_SID.values(), strict=True):
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=_day_page(sid)
+        )
+
+
+def _deep_paths(seen: list[httpx.Request]) -> list[str]:
+    """wire 上的亚盘/统计端点路径（浅深断言：不应出现）。"""
+    return [
+        r.url.path
+        for r in seen
+        if r.url.path.startswith("/handicap/") or r.url.path.startswith("/shijian/")
+    ]
+
+
+def test_phase1_window_not_layered(tmp_path: Path) -> None:
+    """Phase1 季窗（2023/24 起）不落分层界：全深直跑，零深度行。"""
+    seen, routes = _transport_spy()
+    summary = _run(tmp_path, seen, routes)
+    assert summary.requests == 12  # 全深三端点，与分层前完全一致
+    store = _store(tmp_path)
+    assert store.season_depths() == {}  # 无判定即无行（表随 ensure_tree 建好）
+    assert srct_night._is_layered(TEST_SEASONS[0]) is False
+
+
+def test_old_season_probe_upgrades_to_full(tmp_path: Path) -> None:
+    """探针日统计页非空 → 该季升全深：三日全打三端点。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert summary.stop_reason == "completed"
+    assert summary.requests == 12  # 探针升全深：与 Phase1 同价（1+3）×3
+    assert summary.xg_matches == 3
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
+
+
+def test_old_season_probe_empty_downgrades_shallow(tmp_path: Path) -> None:
+    """探针日统计/亚盘全空 → 降浅深：余日只打 日页+轨迹 两请求。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    for sid in DATE_TO_SID.values():
+        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_EMPTY_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert summary.stop_reason == "completed"
+    assert summary.dates_done == 3
+    # 探针日（最新 pending=08-03，sid 91003）全深 4 请求；余两日浅深各 2
+    assert summary.requests == 4 + 2 * 2
+    # 浅深日零深端点上线；探针日恰一对（老季日均 8/3 ≤ 2×1+1 验收线）
+    assert _deep_paths(seen) == ["/handicap/91003", "/shijian/91003.htm"]
+    assert summary.xg_matches == 0
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_SHALLOW}
+
+
+def test_shallow_depth_persists_across_nights(tmp_path: Path) -> None:
+    """跨夜不重探：夜1 判浅深后，夜2 直读——pending 日全浅深零深端点。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    for sid in DATE_TO_SID.values():
+        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_EMPTY_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    # 预算 5：探针日（4 请求）干净跑完即断浅深；次日日页计费触顶停机
+    night1 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS, request_cap=5)
+    assert night1.stop_reason == "budget"
+    assert night1.dates_done == 1
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_SHALLOW}
+    wire_after_night1 = len(seen)
+    night2 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert night2.stop_reason == "completed"
+    assert night2.requests == 4  # 两日 ×（日页+轨迹）
+    assert len(seen) == wire_after_night1 + 4
+    assert _deep_paths(seen) == ["/handicap/91003", "/shijian/91003.htm"]  # 仅探针日
+    assert _store(tmp_path).day_status_dates("done") == set(OLD_DATES)
+
+
+def test_upgrade_backfill_refetches_only_deep_endpoints(tmp_path: Path) -> None:
+    """升深补抓：浅深期 done 日重开三端点——day/odds 缓存命中，只补两新端点。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    for sid in DATE_TO_SID.values():
+        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_EMPTY_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    _run(tmp_path, seen, routes, seasons=OLD_SEASONS)  # 夜1：全季浅深完成
+    wire_after_night1 = len(seen)
+    store = _store(tmp_path)
+    store.set_season_depth("2019/20", srct.DEPTH_FULL)  # 模拟人工升深
+    store.close()
+    night2 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert night2.pending_before == 0  # 无新 pending——纯补抓
+    assert night2.dates_done == 2  # 探针日深端点已在（空页有 raw），不补
+    assert night2.requests == 4  # 两日 ×（亚盘+统计）；日页/轨迹全缓存
+    assert len(seen) == wire_after_night1 + 4
+    backfilled = sorted(p for p in _deep_paths(seen) if "91003" not in p)
+    assert backfilled == [
+        "/handicap/91001",
+        "/handicap/91002",
+        "/shijian/91001.htm",
+        "/shijian/91002.htm",
+    ]
+    night3 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert night3.requests == 0  # 补齐后零请求心跳（浅深完成日不再挂账）
+    assert night3.dates_attempted == 0
+
+
+def test_probe_day_not_found_defers_decision(tmp_path: Path) -> None:
+    """伪 200 探针日无证据不断案：次日夜下一 pending 日重探。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    routes["day:20190803"] = httpx.Response(200, content=DAY_404_BYTES)
+    summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert summary.dates_not_found == 1
+    assert summary.dates_done == 2
+    # 08-03 伪 200（1 请求）不断案；08-02 重探升全深（4）；08-01 全深（4）
+    assert summary.requests == 1 + 4 + 4
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
+
+
+def test_probe_endpoint_failure_defers_to_next_day(tmp_path: Path) -> None:
+    """宁可错升不错漏：探针日任一端点失败=证据不可信，不断案次日重探。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    routes.pop("stats:91003")  # 探针日统计端点 500（传输失败无 raw）
+    summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    assert summary.stop_reason == "completed"
+    assert summary.dates_done == 3  # 场级失败不拦 done
+    # 08-03 探针失败日（1+1+1+4 重试）不断案；08-02 重探升全深；08-01 全深
+    assert summary.requests == (1 + 1 + 1 + (srct.MAX_RETRIES + 1)) + 4 + 4
+    assert "91003:match_stats" in summary.failed
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
+
+
+def test_interrupted_probe_resume_keeps_evidence(tmp_path: Path) -> None:
+    """回归（票 18 评审）：探针日采完落库但断案前崩溃——续传从缓存重放证据。
+
+    干净停机（预算/熔断）当夜即断案不受影响；本测模拟的是进程崩溃窗口
+    （bronze 已落、无判定行）：次日重探同日全缓存命中，正证据必须从
+    缓存重放计账，否则错降浅深=数据永久缺口（宁可错升不错漏）。
+    """
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    routes["hdp:91003"] = httpx.Response(200, content=HANDICAP_BYTES)  # 唯一正证据
+    for sid in ("91001", "91002", "91003"):
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    for sid in ("91001", "91002"):
+        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_EMPTY_BYTES)
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    srct.collect_day(  # 崩溃模拟：探针日全深采完落库，断案/报 done 均未发生
+        store,
+        settings,
+        _client(seen, routes),
+        date="2019-08-03",
+        sleeper=lambda _s: None,
+    )
+    store.close()
+    assert len(seen) == 4  # 日页+三端点已上线落库
+    assert _store(tmp_path).season_depths() == {}  # 无判定行（崩溃）
+    night = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
+    # 重探同日全缓存命中：亚盘证据从缓存重放 → 升全深；后两日全深
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
+    assert night.dates_done == 3
+    assert night.requests == 8  # 续传探针日零线上 + 08-02/08-01 各 4
+    assert len(seen) == 4 + 8
