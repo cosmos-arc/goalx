@@ -35,9 +35,10 @@ from goalx_backend.data.ingest import (
     sporttery,
     srcb,
     srct_night,
+    srct_shift,
     understat,
     uniform,
-    zucai,
+    zucai_official,
 )
 from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import connect, migrate
@@ -308,6 +309,22 @@ def srct_night_run() -> dict[str, object]:
     return payload
 
 
+def srct_shift_run() -> dict[str, object]:
+    """
+    源T 当期班（票 65）：在售清单 → 四类拍决策 → raw+bronze append。
+
+    夜窗让位/预算触顶都正常返回（拍键幂等，下轮自愈）；这里只回计数。
+    """
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = srct_shift.run_shift(store, settings, client)
+    finally:
+        store.close()
+    return srct_shift.stats_dict(stats)
+
+
 def settlement_sweep() -> dict[str, int]:
     """结算批跑（配合开奖导入；paper/live 统一引擎）。"""
     with task_conn() as conn:
@@ -372,11 +389,19 @@ def understat_sync(
     return understat.stats_dict(stats)
 
 
-def pool_snapshot() -> zucai.PoolSyncStats:
-    """彩池同步（票 43）：源B 期次/对阵/人气分布 → pool 域表。"""
+def pool_snapshot() -> zucai_official.PoolSyncStats:
+    """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果 → pool 域表。"""
     settings = get_settings()
-    with task_conn() as conn, polite_client() as client:
-        return zucai.sync_pool_data(conn, settings, client)
+    with task_conn() as conn, httpx.Client() as client:
+        return zucai_official.sync_current(conn, settings, client)
+
+
+def pool_backfill(periods: int = 20) -> dict[str, object]:
+    """彩池历史彩果回填（票 68）：V2 逐期倒查官方注数/奖池/销量。"""
+    settings = get_settings()
+    with task_conn() as conn, httpx.Client() as client:
+        stats = zucai_official.backfill_draws(conn, settings, client, periods=periods)
+    return zucai_official.stats_dict(stats)
 
 
 def intel_collection() -> dict[str, object]:

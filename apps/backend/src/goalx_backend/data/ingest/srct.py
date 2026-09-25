@@ -113,6 +113,8 @@ DESKTOP_UA = (
 JITTER_RANGE: tuple[float, float] = (2.0, 4.0)
 RATE_LIMIT_PER_MINUTE = 20
 _REQUEST_WINDOW = RateLimitItemPerMinute(RATE_LIMIT_PER_MINUTE)
+# 公开别名（票 65 当期班同窗共用；测试经本属性放宽窗口）
+REQUEST_WINDOW = _REQUEST_WINDOW
 BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_CAP_SECONDS = 60.0
 MAX_RETRIES = 3
@@ -874,6 +876,11 @@ _ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
     ANALYSIS_DATASET: (fetch_analysis_page, parse_analysis_page),
     STATS_DATASET: (fetch_stats_page, parse_stats_page),
 }
+
+
+def endpoint_wiring(dataset: str) -> tuple[_FetchFn, _ParseFn]:
+    """公开访问器（票 65 当期班共用接线——与夜班同抓取/解析，零漂移）。"""
+    return _ENDPOINT_WIRING[dataset]
 
 
 def _endpoint_specs(

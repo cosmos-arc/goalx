@@ -89,6 +89,21 @@ CREATE TABLE IF NOT EXISTS srct_season_depth (
     probed_at TEXT NOT NULL
 )
 """
+# 票 65 当期班：sid 建档（联赛/开球/scope 资格——开售拍顺带取自 1x2d meta）；
+# 拍去重不在此表（raw checkpoint 键 @open/@daily-*/@close 即台账，has() 即判）
+_SRCT_SHIFT_MATCHES_SQL = """
+CREATE TABLE IF NOT EXISTS srct_shift_matches (
+    sid TEXT PRIMARY KEY,
+    league TEXT NOT NULL DEFAULT '',
+    home TEXT NOT NULL DEFAULT '',
+    away TEXT NOT NULL DEFAULT '',
+    kickoff_utc TEXT,
+    in_scope INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    beats INTEGER NOT NULL DEFAULT 0,
+    last_beat_at TEXT
+)
+"""
 _NIGHT_SUMMARY_COLUMNS = (
     "night_date",
     "started_at",
@@ -142,6 +157,7 @@ class CorpusStore:
         conn.execute(_SRCT_DAY_STATUS_SQL)
         conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
         conn.execute(_SRCT_SEASON_DEPTH_SQL)
+        conn.execute(_SRCT_SHIFT_MATCHES_SQL)
         conn.commit()
 
     def _checkpoint(self) -> sqlite3.Connection:
@@ -154,6 +170,7 @@ class CorpusStore:
             self._conn.execute(_SRCT_DAY_STATUS_SQL)
             self._conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
             self._conn.execute(_SRCT_SEASON_DEPTH_SQL)
+            self._conn.execute(_SRCT_SHIFT_MATCHES_SQL)
             self._conn.commit()
         return self._conn
 
@@ -323,6 +340,35 @@ class CorpusStore:
             (season, depth, utc_now_iso()),
         )
         self._checkpoint().commit()
+
+    def upsert_shift_match(self, row: Mapping[str, object]) -> None:
+        """当期班 sid 建档/刷新（票 65；键=sid，开售拍后随拍更新计数）。"""
+        columns = (
+            "sid",
+            "league",
+            "home",
+            "away",
+            "kickoff_utc",
+            "in_scope",
+            "beats",
+            "last_beat_at",
+        )
+        values = tuple(row.get(c) for c in columns)
+        updates = ",".join(f"{c}=excluded.{c}" for c in columns if c != "sid")
+        self._checkpoint().execute(
+            # 列名来自模块常量元组，非用户输入；first_seen_at 插入盖戳、
+            # 更新保留（不在 DO UPDATE 集）
+            "INSERT INTO srct_shift_matches (first_seen_at,"  # noqa: S608
+            + f"{','.join(columns)}) VALUES (?,{','.join('?' for _ in columns)})"
+            + f" ON CONFLICT(sid) DO UPDATE SET {updates}",
+            (utc_now_iso(), *values),
+        )
+        self._checkpoint().commit()
+
+    def shift_matches(self) -> dict[str, dict[str, object]]:
+        """当期班建档全表（sid → 行；拍决策的联赛/开球/scope 事实源）。"""
+        rows = self._checkpoint().execute("SELECT * FROM srct_shift_matches")
+        return {str(row["sid"]): dict(row) for row in rows}
 
     def record_night_summary(self, row: Mapping[str, object]) -> None:
         """落一夜摘要行（键 = _NIGHT_SUMMARY_COLUMNS；晨检口径）。"""

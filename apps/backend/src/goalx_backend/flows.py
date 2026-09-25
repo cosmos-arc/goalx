@@ -31,7 +31,7 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
-from goalx_backend.data.ingest.zucai import stats_dict
+from goalx_backend.data.ingest.zucai_official import stats_dict
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
@@ -163,7 +163,7 @@ def understat_sync_flow() -> dict[str, object]:
 
 @flow(name="pool-snapshot", log_prints=True)
 def pool_snapshot_flow() -> dict[str, object]:
-    """彩池同步（票 43）：源B 期次/对阵/人气分布（幂等；份额追加快照）。"""
+    """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果（幂等）。"""
     stats = tasks.pool_snapshot()
     logger.info("pool snapshot: {}", stats_dict(stats))
     return stats_dict(stats)
@@ -174,6 +174,18 @@ def srcb_collect_flow() -> dict[str, object]:
     """源B变化时序采集（票 49 采集先行）：低频回溯式攒语料。"""
     stats = tasks.srcb_collect()
     logger.info("srcb collect: {}", stats)
+    return stats
+
+
+@flow(name="srct-shift", log_prints=True)
+def srct_shift_flow() -> dict[str, object]:
+    """
+    源T 当期班（票 65）：*/30 拍，竞彩在售场四类拍决策。
+
+    夜窗让位零成本；拍键幂等（漏拍重试自愈）。
+    """
+    stats = tasks.srct_shift_run()
+    logger.info("srct shift: {}", stats)
     return stats
 
 

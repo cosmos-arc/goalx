@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     srct_detail_url: str = ""
     srct_analysis_url: str = ""
     srct_stats_url: str = ""
+    # 当期班在售清单（票 65 实测票 d）：live 主机当日场次 ID 表（var Ba_Soccer）
+    srct_basid_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")
@@ -88,6 +90,13 @@ class Settings(BaseSettings):
     # Understat xG（票 45）：robots.txt 全站 Disallow——个人研究低频使用
     # （默认每日 1 首页 + 5 联赛文件 = 6 请求 ≤10 上限，见 schedules）
     understat_base_url: str = "https://understat.com"
+    # 传统足彩官方（票 68，lottery 族；官方域可直书）——当期+历史两端点
+    zucai_official_current_url: str = (
+        "https://webapi.sporttery.cn/gateway/lottery/getFootBallMatchV1.qry"
+    )
+    zucai_official_draw_url: str = (
+        "https://webapi.sporttery.cn/gateway/lottery/getFootBallDrawInfoByDrawNumV2.qry"
+    )
     # 源B（票 43 代称表）：传统足彩期次/对阵/人气分布（官方销量无源，走 AI 代采）
     zucai_base_url: str = "https://www.okooo.com"
     # 源B 移动端（票 49 采集先行）：欧指变化时序（三步预热 Referer 链）

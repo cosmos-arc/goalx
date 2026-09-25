@@ -58,6 +58,7 @@ from goalx_backend.flows import (
     scout_line_flow,
     srcb_collect_flow,
     srct_night_flow,
+    srct_shift_flow,
     understat_sync_flow,
     weekly_refresh_flow,
 )
@@ -129,6 +130,15 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 当期班（票 65）：*/30 拍四类拍决策（开售/每日/临场；收口归夜班）；
+    # 08:00-00:59 与夜班窗口互斥（01:00-08:00 让位家宽低峰）；限流同 20/min
+    srct_shift_deploy = cast(
+        RunnerDeployment,
+        srct_shift_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="*/30 8-23,0 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     # 源T夜班（票 55 切片 13）：家宽低峰窗口开工，~8K 请求/日预算推进
     # Phase1 回填；窗口 01:00-08:00 = 7h ≈ 8.4K 请求（3s 均值抖动），预算
     # 与窗口天然咬合；跑完 Phase1 后每夜零请求心跳（断点续传零重抓）
@@ -155,8 +165,8 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="30 23 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # 彩池（票 43）：期次跨 2-3 天、分布随销售累积，每日三拍足够；
-    # 官方销量无自动源（AI 代采层按需人工触发，不进调度）
+    # 彩池（票 68 官方化）：体彩官方在售对阵+上期彩果，三拍节奏不变
+    # （源B 时代拍位沿袭；历史彩果回填走 pool-backfill CLI 手动批）
     pool = cast(
         RunnerDeployment,
         pool_snapshot_flow.to_deployment(
@@ -200,6 +210,7 @@ def main(only: str | None = None) -> None:
         "odds-anchor-dense": anchor_dense,
         "srcb-collect": srcb_collect_deploy,
         "srct-night": srct_night_deploy,
+        "srct-shift": srct_shift_deploy,
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
         "pool-snapshot": pool,
@@ -229,12 +240,12 @@ RESUME_DEPLOYMENTS = (
     "draw-results-sweep",
     "official-reconcile",
     "srct-night",
+    "srct-shift",
     "understat-sync",
     "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",
-    # pool-snapshot 暂不恢复：其源=源B zucai（判死面），足彩对阵容官方=票 68
-    # （2026-09-25 深夜裁决：任9/14场/4场进球+彩果全转官方）；落地后重挂
+    "pool-snapshot",
     "intel-collect",
     "scout-line",
 )

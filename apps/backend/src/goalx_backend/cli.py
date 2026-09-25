@@ -22,6 +22,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-collect --date YYYY-MM-DD
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
+    uv run python -m goalx_backend.cli srct-shift [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-silver
     uv run python -m goalx_backend.cli srct-odds
     uv run python -m goalx_backend.cli srct-gate
@@ -60,8 +61,10 @@ from goalx_backend.data.ingest import (
     srct_market,
     srct_night,
     srct_odds,
+    srct_shift,
     srct_silver,
     uniform,
+    zucai_official,
 )
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
@@ -394,6 +397,39 @@ def _cmd_srct_night(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_shift(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> None:
+    """
+    源T当期班（票 65）：在售清单 → 四类拍决策 → raw+bronze append。
+
+    --no-window 跳过夜窗让位判断（白天冒烟/手工回补用）。settings/client
+    注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with ExitStack() as stack:
+            run_client = (
+                client if client is not None else stack.enter_context(httpx.Client())
+            )
+            stats = srct_shift.run_shift(
+                store,
+                resolved,
+                run_client,
+                request_cap=args.request_cap,
+                enforce_window=not args.no_window,
+            )
+    finally:
+        store.close()
+    sys.stdout.write(
+        json.dumps(srct_shift.stats_dict(stats), ensure_ascii=False, indent=2) + "\n"
+    )
+
+
 def _cmd_srct_silver(
     args: argparse.Namespace,
     *,
@@ -583,15 +619,18 @@ def _cmd_drift_replay_report(args: argparse.Namespace) -> None:
 
 
 def _cmd_pool_sync() -> None:
-    """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
+    """彩池同步：体彩官方在售对阵+上期彩果（幂等，票 68 官方化）。"""
     stats = tasks.pool_snapshot()
-    logger.info(
-        "pool sync: periods={} matches={} share_rows={} missing_shares={}",
-        stats.period_nos,
-        stats.matches,
-        stats.share_rows,
-        stats.missing_shares,
+    sys.stdout.write(
+        json.dumps(zucai_official.stats_dict(stats), ensure_ascii=False, indent=2)
+        + "\n"
     )
+
+
+def _cmd_pool_backfill(args: argparse.Namespace) -> None:
+    """彩池历史彩果回填：官方 V2 逐期倒查（票 68；已有官方面自动跳过）。"""
+    payload = tasks.pool_backfill(periods=args.periods)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _cmd_set_alias(args: argparse.Namespace) -> None:
@@ -742,6 +781,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="附 openfootball 比分对 fdhist 交叉验证(拉重叠联赛赛季文件)",
     )
+    backfill = sub.add_parser(
+        "pool-backfill",
+        help="彩池历史彩果回填(票68;官方V2逐期倒查,已有官方面跳过)",
+    )
+    backfill.add_argument("--periods", type=int, default=20, help="回溯期数(默认 20)")
     replay = sub.add_parser(
         "pool-replay-report",
         help="彩池v2搏冷十年复验报告(票 51;冷门EV分布/分期/早期镜,只读)",
@@ -777,6 +821,21 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     srct_night_parser.add_argument(
         "--limit", type=int, default=20, help="--list 行数(默认 20)"
+    )
+    srct_shift_parser = sub.add_parser(
+        "srct-shift",
+        help="源T当期班四类拍(票65;在售清单发现+开售/每日/临场拍,拍键幂等)",
+    )
+    srct_shift_parser.add_argument(
+        "--request-cap",
+        type=int,
+        default=srct_shift.SHIFT_REQUEST_CAP,
+        help=f"当次运行请求预算上限(默认 {srct_shift.SHIFT_REQUEST_CAP})",
+    )
+    srct_shift_parser.add_argument(
+        "--no-window",
+        action="store_true",
+        help="跳过 01:00-08:00 夜窗让位判断(冒烟/手工回补用)",
     )
     sub.add_parser(
         "srct-silver",
@@ -833,6 +892,7 @@ def main(argv: list[str] | None = None) -> int:
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-sync": _cmd_pool_sync,
+        "pool-backfill": lambda: _cmd_pool_backfill(args),
         "understat-sync": lambda: _cmd_understat_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
@@ -840,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-night": lambda: _cmd_srct_night(args),
+        "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),
