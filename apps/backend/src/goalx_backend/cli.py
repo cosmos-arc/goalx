@@ -22,6 +22,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-collect --date YYYY-MM-DD
     uv run python -m goalx_backend.cli srct-night [--no-window] [--request-cap N]
     uv run python -m goalx_backend.cli srct-night --list
+    uv run python -m goalx_backend.cli srct-shift [--no-window] [--request-cap N]
+    uv run python -m goalx_backend.cli jc-collect --match-id 1234567 [--match-id …]
     uv run python -m goalx_backend.cli srct-silver
     uv run python -m goalx_backend.cli srct-odds
     uv run python -m goalx_backend.cli srct-gate
@@ -54,14 +56,20 @@ from goalx_backend.data.ingest import (
     archive538,
     caiguo,
     fdhist,
+    jc,
+    jc_audit,
+    jc_backfill,
+    jc_silver,
     openfootball,
     sporttery,
     srct,
     srct_market,
     srct_night,
     srct_odds,
+    srct_shift,
     srct_silver,
     uniform,
+    zucai_official,
 )
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
@@ -357,6 +365,7 @@ def _cmd_srct_night(
     now_fn: Callable[[], datetime] | None = None,
     sleeper: Callable[[float], None] | None = None,
     seasons: tuple[srct_night.SeasonWindow, ...] | None = None,
+    jc_phase: bool = True,
 ) -> None:
     """
     源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1；--list 只读查摘要。
@@ -387,11 +396,45 @@ def _cmd_srct_night(
                     request_cap=args.request_cap,
                     sleeper=sleeper,
                     seasons=seasons,
+                    jc_phase=jc_phase,
                 )
             payload = asdict(summary)
     finally:
         store.close()
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_srct_shift(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> None:
+    """
+    源T当期班（票 65）：在售清单 → 四类拍决策 → raw+bronze append。
+
+    --no-window 跳过夜窗让位判断（白天冒烟/手工回补用）。settings/client
+    注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with ExitStack() as stack:
+            run_client = (
+                client if client is not None else stack.enter_context(httpx.Client())
+            )
+            stats = srct_shift.run_shift(
+                store,
+                resolved,
+                run_client,
+                request_cap=args.request_cap,
+                enforce_window=not args.no_window,
+            )
+    finally:
+        store.close()
+    sys.stdout.write(
+        json.dumps(srct_shift.stats_dict(stats), ensure_ascii=False, indent=2) + "\n"
+    )
 
 
 def _cmd_srct_silver(
@@ -517,6 +560,113 @@ def _cmd_srct_gate(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_jc_collect(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    竞彩官方 SP 历史采集（票 70）：getFixedBonusV1 → jc provider raw+bronze。
+
+    一场一请求全量返回（幂等缓存）；oddsHistory={} 合法空只落 raw。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = jc.JcCollectStats()
+            for match_id in args.match_id:
+                jc.collect_match(store, resolved, client, match_id, stats=stats)
+    finally:
+        store.close()
+    sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_jc_backfill(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    JC 历史回填批（票 67）：uniform 按日反查 → fixedBonus 逐场（官方域）。
+
+    --day-cap 抽样冒烟；done 日零成本跳过（裸键判据）。settings 注入口
+    只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = jc_backfill.backfill_range(
+                store,
+                resolved,
+                client,
+                date_to=args.date_to,
+                date_from=args.date_from,
+                budget=srct.NightBudget(request_cap=args.request_cap),
+                day_cap=args.day_cap,
+            )
+    finally:
+        store.close()
+    sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_jc_audit(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    JC audit 面（票 67）：TTG 按年密度 + 存档最早年限 + cid1129 对账。
+
+    --date 抽样对账日（可多次，须为语料已有日页的日期）；存档探针二分
+    约 5-10 请求（官方域）。报告 JSON 落 stdout。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    density = jc_audit.ttg_density_by_year(store)
+    earliest: int | None = None
+    report: dict[str, object] = {
+        "ttg_density_by_year": {y: asdict(d) for y, d in density.by_year.items()},
+    }
+    try:
+        if args.probe_archive:
+            with httpx.Client() as client:
+                earliest = jc_audit.earliest_archive_year(client, resolved)
+        if args.date:
+            with httpx.Client() as client:
+                recon = jc_audit.reconcile_cid1129(
+                    store, resolved, client, dates=args.date
+                )
+            report["reconcile"] = {
+                "matched": recon.matched,
+                "unmatched_names": recon.unmatched_names,
+                "comparable": recon.comparable,
+                "consistent": recon.consistent,
+                "consistency_rate": recon.consistency_rate,
+                "rows": [asdict(r) for r in recon.rows],
+            }
+    finally:
+        store.close()
+    report["earliest_archive_year"] = earliest
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_jc_silver(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    Jc silver 重物化 + DuckDB 桥（票 72）：jc_sp_change_event 幂等重建。
+
+    变化事件流语义与书商层 odds_change_event 同构（心跳丢/A→B→A 保留/
+    同刻并列规则）；报告含门④记账（unexplained_gap 须为 0）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = jc_silver.build_sp_change_events(store)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -583,15 +733,18 @@ def _cmd_drift_replay_report(args: argparse.Namespace) -> None:
 
 
 def _cmd_pool_sync() -> None:
-    """彩池同步：源B 期次/对阵/人气分布（幂等，票 43）。"""
+    """彩池同步：体彩官方在售对阵+上期彩果（幂等，票 68 官方化）。"""
     stats = tasks.pool_snapshot()
-    logger.info(
-        "pool sync: periods={} matches={} share_rows={} missing_shares={}",
-        stats.period_nos,
-        stats.matches,
-        stats.share_rows,
-        stats.missing_shares,
+    sys.stdout.write(
+        json.dumps(zucai_official.stats_dict(stats), ensure_ascii=False, indent=2)
+        + "\n"
     )
+
+
+def _cmd_pool_backfill(args: argparse.Namespace) -> None:
+    """彩池历史彩果回填：官方 V2 逐期倒查（票 68；已有官方面自动跳过）。"""
+    payload = tasks.pool_backfill(periods=args.periods)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _cmd_set_alias(args: argparse.Namespace) -> None:
@@ -742,6 +895,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="附 openfootball 比分对 fdhist 交叉验证(拉重叠联赛赛季文件)",
     )
+    backfill = sub.add_parser(
+        "pool-backfill",
+        help="彩池历史彩果回填(票68;官方V2逐期倒查,已有官方面跳过)",
+    )
+    backfill.add_argument("--periods", type=int, default=20, help="回溯期数(默认 20)")
     replay = sub.add_parser(
         "pool-replay-report",
         help="彩池v2搏冷十年复验报告(票 51;冷门EV分布/分期/早期镜,只读)",
@@ -778,6 +936,21 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     srct_night_parser.add_argument(
         "--limit", type=int, default=20, help="--list 行数(默认 20)"
     )
+    srct_shift_parser = sub.add_parser(
+        "srct-shift",
+        help="源T当期班四类拍(票65;在售清单发现+开售/每日/临场拍,拍键幂等)",
+    )
+    srct_shift_parser.add_argument(
+        "--request-cap",
+        type=int,
+        default=srct_shift.SHIFT_REQUEST_CAP,
+        help=f"当次运行请求预算上限(默认 {srct_shift.SHIFT_REQUEST_CAP})",
+    )
+    srct_shift_parser.add_argument(
+        "--no-window",
+        action="store_true",
+        help="跳过 01:00-08:00 夜窗让位判断(冒烟/手工回补用)",
+    )
     sub.add_parser(
         "srct-silver",
         help="源T silver 重物化+DuckDB 只读桥(票56切片14/16;fixture+xg 幂等重建)",
@@ -793,6 +966,43 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     sub.add_parser(
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
+    )
+    jc_audit_parser = sub.add_parser(
+        "jc-audit",
+        help="JC audit 面(票67;TTG 按年密度+存档最早年限+官方vs cid1129 对账)",
+    )
+    jc_audit_parser.add_argument(
+        "--date", action="append", help="对账抽样日 YYYY-MM-DD(可多次)"
+    )
+    jc_audit_parser.add_argument(
+        "--probe-archive", action="store_true", help="二分探存档最早年限(~10 请求)"
+    )
+    jc_backfill_parser = sub.add_parser(
+        "jc-backfill",
+        help="JC 历史回填批(票67;uniform 按日反查→逐场,done 日零成本跳过)",
+    )
+    jc_backfill_parser.add_argument(
+        "--date-to", required=True, help="起始日(新) YYYY-MM-DD"
+    )
+    jc_backfill_parser.add_argument(
+        "--date-from", required=True, help="截止日(旧) YYYY-MM-DD"
+    )
+    jc_backfill_parser.add_argument(
+        "--request-cap", type=int, default=srct.NIGHT_REQUEST_CAP
+    )
+    jc_backfill_parser.add_argument(
+        "--day-cap", type=int, default=None, help="单日 mid 上限(抽样冒烟)"
+    )
+    sub.add_parser(
+        "jc-silver",
+        help="jc_sp_change_event silver 重物化(票72;与书商层事件流同构,幂等)",
+    )
+    jc_collect = sub.add_parser(
+        "jc-collect",
+        help="竞彩官方SP历史采集(票70;jc provider 独立落,HAD/HHAD/TTG+CRS/HAFU 留档)",
+    )
+    jc_collect.add_argument(
+        "--match-id", action="append", required=True, help="uniform matchId(可多次)"
     )
     archive = sub.add_parser(
         "archive-538",
@@ -833,6 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-sync": _cmd_pool_sync,
+        "pool-backfill": lambda: _cmd_pool_backfill(args),
         "understat-sync": lambda: _cmd_understat_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
@@ -840,10 +1051,15 @@ def main(argv: list[str] | None = None) -> int:
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-night": lambda: _cmd_srct_night(args),
+        "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
+        "jc-collect": lambda: _cmd_jc_collect(args),
+        "jc-silver": lambda: _cmd_jc_silver(args),
+        "jc-backfill": lambda: _cmd_jc_backfill(args),
+        "jc-audit": lambda: _cmd_jc_audit(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

@@ -169,6 +169,7 @@ def _run(
 ) -> srct_night.SrctNightSummary:
     kwargs.setdefault("now_fn", lambda: NOW_IN_WINDOW)
     kwargs.setdefault("seasons", TEST_SEASONS)
+    kwargs.setdefault("jc_phase", False)  # 殿后相位有专门测试（jc 路由不在此 mock）
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     try:
@@ -186,6 +187,68 @@ def _run(
 
 def _store(tmp_path: Path) -> CorpusStore:
     return CorpusStore(_settings(tmp_path).corpus_root)
+
+
+def test_jc_backfill_phase_after_clean_srct(tmp_path: Path) -> None:
+    """票 67 殿后相位：源T 零待办干净跑完 → jc 回填以剩余预算推进。"""
+    jc_fixed = json.dumps(
+        {
+            "success": True,
+            "value": {
+                "oddsHistory": {
+                    "matchId": 555001,
+                    "hadList": [
+                        {
+                            "h": "2.0",
+                            "d": "3.0",
+                            "a": "3.5",
+                            "updateDate": "2025-10-02",
+                            "updateTime": "10:00:00",
+                        }
+                    ],
+                    "hhadList": [],
+                    "ttgList": [],
+                }
+            },
+        }
+    ).encode()
+    uniform_rows = json.dumps(
+        {
+            "success": True,
+            "value": {
+                "matchResult": [{"matchId": 555001, "matchDate": "2025-10-02"}],
+                "pages": 1,
+            },
+        }
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "getUniformMatchResultV1" in request.url.path:
+            return httpx.Response(200, content=uniform_rows)
+        if "getFixedBonusV1" in request.url.path:
+            return httpx.Response(200, content=jc_fixed)
+        return httpx.Response(500, text="srct-route-not-expected")
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        for day in DATES:  # 全 done：源T 清单零待办（相位前的源T 零请求）
+            store.set_day_status(day, "done")
+        summary = srct_night.run_night(
+            store,
+            settings,
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            today=date(2025, 10, 5),
+            now_fn=lambda: NOW_IN_WINDOW,
+            sleeper=lambda _s: None,
+            seasons=TEST_SEASONS,
+            jc_phase=True,
+        )
+    finally:
+        store.close()
+    assert summary.stop_reason in ("completed", "jc_budget")
+    rows = CorpusStore(settings.corpus_root).read_bronze("jc", "sp_history")
+    assert any(str(r["sid"]) == "555001" for r in rows)
 
 
 def test_night_budget_guards() -> None:
@@ -415,6 +478,7 @@ def test_cli_run_and_list_seam(
         now_fn=lambda: NOW_IN_WINDOW,
         sleeper=lambda _s: None,
         seasons=TEST_SEASONS,
+        jc_phase=False,
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["stop_reason"] == "completed"

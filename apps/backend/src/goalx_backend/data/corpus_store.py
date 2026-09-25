@@ -89,6 +89,44 @@ CREATE TABLE IF NOT EXISTS srct_season_depth (
     probed_at TEXT NOT NULL
 )
 """
+# 票 71 JC 当期拍：matchId 建档（kickoff 取自 calculator 发现响应；收口
+# 判据=开球已过而裸键 raw 缺——fixedBonus 存档永在，赛后任意时点可收）
+_JC_SHIFT_MATCHES_SQL = """
+CREATE TABLE IF NOT EXISTS jc_shift_matches (
+    match_id TEXT PRIMARY KEY,
+    league TEXT NOT NULL DEFAULT '',
+    home TEXT NOT NULL DEFAULT '',
+    away TEXT NOT NULL DEFAULT '',
+    kickoff_utc TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    beats INTEGER NOT NULL DEFAULT 0,
+    finalized INTEGER NOT NULL DEFAULT 0
+)
+"""
+# 票 67 JC 回填日账（done 日不重枚举——十年一轮后真零请求心跳的前提）
+_JC_BACKFILL_DAYS_SQL = """
+CREATE TABLE IF NOT EXISTS jc_backfill_days (
+    day TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)
+"""
+# 票 65 当期班：sid 建档（联赛/开球/scope 资格——开售拍顺带取自 1x2d meta）；
+# 拍去重不在此表（raw checkpoint 键 @open/@daily-*/@close 即台账，has() 即判）
+_SRCT_SHIFT_MATCHES_SQL = """
+CREATE TABLE IF NOT EXISTS srct_shift_matches (
+    sid TEXT PRIMARY KEY,
+    league TEXT NOT NULL DEFAULT '',
+    home TEXT NOT NULL DEFAULT '',
+    away TEXT NOT NULL DEFAULT '',
+    kickoff_utc TEXT,
+    in_scope INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    beats INTEGER NOT NULL DEFAULT 0,
+    last_beat_at TEXT
+)
+"""
 _NIGHT_SUMMARY_COLUMNS = (
     "night_date",
     "started_at",
@@ -142,6 +180,9 @@ class CorpusStore:
         conn.execute(_SRCT_DAY_STATUS_SQL)
         conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
         conn.execute(_SRCT_SEASON_DEPTH_SQL)
+        conn.execute(_SRCT_SHIFT_MATCHES_SQL)
+        conn.execute(_JC_SHIFT_MATCHES_SQL)
+        conn.execute(_JC_BACKFILL_DAYS_SQL)
         conn.commit()
 
     def _checkpoint(self) -> sqlite3.Connection:
@@ -154,6 +195,9 @@ class CorpusStore:
             self._conn.execute(_SRCT_DAY_STATUS_SQL)
             self._conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
             self._conn.execute(_SRCT_SEASON_DEPTH_SQL)
+            self._conn.execute(_SRCT_SHIFT_MATCHES_SQL)
+            self._conn.execute(_JC_SHIFT_MATCHES_SQL)
+            self._conn.execute(_JC_BACKFILL_DAYS_SQL)
             self._conn.commit()
         return self._conn
 
@@ -323,6 +367,81 @@ class CorpusStore:
             (season, depth, utc_now_iso()),
         )
         self._checkpoint().commit()
+
+    def upsert_shift_match(self, row: Mapping[str, object]) -> None:
+        """当期班 sid 建档/刷新（票 65；键=sid，开售拍后随拍更新计数）。"""
+        columns = (
+            "sid",
+            "league",
+            "home",
+            "away",
+            "kickoff_utc",
+            "in_scope",
+            "beats",
+            "last_beat_at",
+        )
+        values = tuple(row.get(c) for c in columns)
+        updates = ",".join(f"{c}=excluded.{c}" for c in columns if c != "sid")
+        self._checkpoint().execute(
+            # 列名来自模块常量元组，非用户输入；first_seen_at 插入盖戳、
+            # 更新保留（不在 DO UPDATE 集）
+            "INSERT INTO srct_shift_matches (first_seen_at,"  # noqa: S608
+            + f"{','.join(columns)}) VALUES (?,{','.join('?' for _ in columns)})"
+            + f" ON CONFLICT(sid) DO UPDATE SET {updates}",
+            (utc_now_iso(), *values),
+        )
+        self._checkpoint().commit()
+
+    def upsert_jc_shift_match(self, row: Mapping[str, object]) -> None:
+        """JC 当期拍 matchId 建档/刷新（票 71；同 srct_shift_matches 形态）。"""
+        columns = (
+            "match_id",
+            "league",
+            "home",
+            "away",
+            "kickoff_utc",
+            "beats",
+            "last_seen_at",
+            "finalized",
+        )
+        values = tuple(row.get(c) for c in columns)
+        updates = ",".join(f"{c}=excluded.{c}" for c in columns if c != "match_id")
+        self._checkpoint().execute(
+            # 列名来自模块常量元组，非用户输入；first_seen_at 插入盖戳、更新保留
+            "INSERT INTO jc_shift_matches (first_seen_at,"  # noqa: S608
+            + f"{','.join(columns)}) VALUES (?,{','.join('?' for _ in columns)})"
+            + f" ON CONFLICT(match_id) DO UPDATE SET {updates}",
+            (utc_now_iso(), *values),
+        )
+        self._checkpoint().commit()
+
+    def jc_shift_matches(self) -> dict[str, dict[str, object]]:
+        """JC 当期拍建档全表（matchId → 行；拍决策/收口判据事实源）。"""
+        rows = self._checkpoint().execute("SELECT * FROM jc_shift_matches")
+        return {str(row["match_id"]): dict(row) for row in rows}
+
+    def set_jc_backfill_day(self, day: str, status: str = "done") -> None:
+        """记 JC 回填一日状态（done=该日 mid 全采；幂等覆盖）。"""
+        self._checkpoint().execute(
+            """
+            INSERT OR REPLACE INTO jc_backfill_days (day, status, recorded_at)
+            VALUES (?, ?, ?)
+            """,
+            (day, status, utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def jc_backfill_days(self, status: str = "done") -> set[str]:
+        """JC 回填该状态的全部日期。"""
+        rows = self._checkpoint().execute(
+            "SELECT day FROM jc_backfill_days WHERE status=?", (status,)
+        )
+        return {str(row["day"]) for row in rows}
+
+    def shift_matches(self) -> dict[str, dict[str, object]]:
+        """当期班建档全表（sid → 行；拍决策的联赛/开球/scope 事实源）。"""
+        rows = self._checkpoint().execute("SELECT * FROM srct_shift_matches")
+        return {str(row["sid"]): dict(row) for row in rows}
 
     def record_night_summary(self, row: Mapping[str, object]) -> None:
         """落一夜摘要行（键 = _NIGHT_SUMMARY_COLUMNS；晨检口径）。"""

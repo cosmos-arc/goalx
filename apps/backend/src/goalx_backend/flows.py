@@ -31,7 +31,7 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
-from goalx_backend.data.ingest.zucai import stats_dict
+from goalx_backend.data.ingest.zucai_official import stats_dict
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
@@ -163,7 +163,7 @@ def understat_sync_flow() -> dict[str, object]:
 
 @flow(name="pool-snapshot", log_prints=True)
 def pool_snapshot_flow() -> dict[str, object]:
-    """彩池同步（票 43）：源B 期次/对阵/人气分布（幂等；份额追加快照）。"""
+    """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果（幂等）。"""
     stats = tasks.pool_snapshot()
     logger.info("pool snapshot: {}", stats_dict(stats))
     return stats_dict(stats)
@@ -174,6 +174,18 @@ def srcb_collect_flow() -> dict[str, object]:
     """源B变化时序采集（票 49 采集先行）：低频回溯式攒语料。"""
     stats = tasks.srcb_collect()
     logger.info("srcb collect: {}", stats)
+    return stats
+
+
+@flow(name="srct-shift", log_prints=True)
+def srct_shift_flow() -> dict[str, object]:
+    """
+    源T 当期班（票 65）：*/30 拍，竞彩在售场四类拍决策。
+
+    夜窗让位零成本；拍键幂等（漏拍重试自愈）。
+    """
+    stats = tasks.srct_shift_run()
+    logger.info("srct shift: {}", stats)
     return stats
 
 
@@ -201,26 +213,15 @@ def propline_snapshot_flow() -> dict[str, object]:
 @flow(name="daily-capture", log_prints=True)
 def daily_capture_flow() -> dict[str, object]:
     """
-    销售日两拍采集（票 37 协议 v1）：竞彩→预测→范围内欧赔，顺序固定。
+    销售日两拍采集（票 37 协议 v1；2026-09-25 停采重整后改段）：竞彩→预测。
 
-    PropLine 互备拍（票 50，2026-09-21 互备裁决）尾随欧赔——源故障/
-    预算触顶只降级自身，不连坐主线三步。
+    欧赔聚合段与 PropLine 互备拍已按 2026-09-25 裁决摘除（国际书商
+    赔率全走源T 六端点，欧赔聚合无存在必要）；残留函数保留仅供
+    手工调用。竞彩官方 SP 历史与赛前实时拍归语料层（票 65/67）。
     """
     jingcai = jingcai_snapshot_flow()
     forecast = forecast_daily_flow()
-    eu = eu_odds_snapshot_flow()
-    propline_stats: dict[str, object] = {}
-    try:
-        propline_stats = propline_snapshot_flow()
-    except Exception as exc:
-        logger.warning("propline mutual-run degraded: {}", exc)
-        propline_stats = {"error": str(exc)}
-    return {
-        "jingcai": jingcai,
-        "forecast": forecast,
-        "eu": eu,
-        "propline": propline_stats,
-    }
+    return {"jingcai": jingcai, "forecast": forecast}
 
 
 @flow(name="daily-wrap", log_prints=True)

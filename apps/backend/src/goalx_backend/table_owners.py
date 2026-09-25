@@ -39,6 +39,12 @@ OWNERS: dict[str, set[str]] = {
         "srct_day_status",
         # 票 18：老季深度判定（同 checkpoint 库，跨夜不重探）
         "srct_season_depth",
+        # 票 65 当期班：sid 建档（联赛/开球/scope 资格）
+        "srct_shift_matches",
+        # 票 71 JC 当期拍：matchId 建档（kickoff/收口旗）
+        "jc_shift_matches",
+        # 票 67 JC 回填日账（done 日不重枚举）
+        "jc_backfill_days",
         # 票 55/56 切片 14/15：corpus.duckdb 银层四视图（data 包建视图并查询）
         "fixture_universe",
         "xg_observation",
