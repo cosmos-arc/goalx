@@ -126,7 +126,7 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
     零证据须当日干净跑完且有场次才降浅深——中断/任一失败/解析失败/零场
     都留待次夜下一 pending 日重探（不重探指已断案的季，见 srct_season_depth）。
     """
-    if stats.stats_nonempty or stats.asian_odds_nonempty:
+    if stats.stats_nonempty or stats.asian_odds_nonempty or stats.over_down_nonempty:
         return srct.DEPTH_FULL
     if stats.stopped is not None or stats.failed or stats.parse_failed:
         return None

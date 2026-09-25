@@ -6,8 +6,8 @@
 与撤除（票 66 stats→detail 切换）都必须同步改本文件——这就是"改表"
 动作的测试面。
 
-钉死时点：票 59（AsianOdds 入列；changeDetail 撤采留档；stats 过渡在列
-至票 66）。票 66 后全深每场端点=5（规格 §一"每场 5 请求"终态）。
+钉死时点：票 60（AsianOdds+OverDown 入列；changeDetail 撤采留档；stats
+过渡在列至票 66）。票 66 后全深每场端点=5（规格 §一"每场 5 请求"终态）。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ def test_spec_registry_pinned_to_collection_spec() -> None:
         srct.SpecEndpoint("day_page", ".htm", per_day=True),
         srct.SpecEndpoint("odds_1x2d", ".js", in_shallow=True),
         srct.SpecEndpoint("asian_odds", ".html"),
+        srct.SpecEndpoint("over_down", ".html"),
         srct.SpecEndpoint("match_stats", ".html"),
         srct.SpecEndpoint("asian_handicap", ".html", status="retired"),
     ) == srct.SPEC_ENDPOINTS
@@ -35,10 +36,15 @@ def test_depth_sets_derived_from_registry() -> None:
     assert srct.match_endpoint_datasets(srct.DEPTH_FULL) == (
         "odds_1x2d",
         "asian_odds",
+        "over_down",
         "match_stats",
     )
     assert srct.match_endpoint_datasets(srct.DEPTH_SHALLOW) == ("odds_1x2d",)
-    assert srct.deep_endpoint_datasets() == ("asian_odds", "match_stats")
+    assert srct.deep_endpoint_datasets() == (
+        "asian_odds",
+        "over_down",
+        "match_stats",
+    )
     assert srct.retired_endpoint_datasets() == ("asian_handicap",)
 
 
@@ -61,6 +67,7 @@ def test_full_depth_request_count_per_match() -> None:
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
         srct_asianodds_url="https://srct.test/asian/{sid}",
+        srct_overdown_url="https://srct.test/overdown/{sid}",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
     specs = srct._endpoint_specs(httpx.Client(), settings)

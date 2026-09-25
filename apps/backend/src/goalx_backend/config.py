@@ -48,9 +48,11 @@ class Settings(BaseSettings):
     srct_day_url: str = ""
     srct_odds_url: str = ""
     srct_odds_referer: str = ""
-    # 亚盘多庄页（UTF-8，规格 v2 端点 3）与 47 键统计页（UTF-8；
-    # 票 66 撤切 detail）。changeDetail 单书亚盘已撤采（票 59）——不再配置
+    # 亚盘多庄页（UTF-8，规格 v2 端点 3）、大小球多庄页（UTF-8，端点 4）与
+    # 47 键统计页（UTF-8；票 66 撤切 detail）。changeDetail 单书亚盘已撤采
+    # （票 59）——不再配置
     srct_asianodds_url: str = ""
+    srct_overdown_url: str = ""
     srct_stats_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---

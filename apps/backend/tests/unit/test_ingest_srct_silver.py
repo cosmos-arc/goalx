@@ -61,6 +61,16 @@ ASIANODDS_BYTES = (
     "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td>"
     "</tr></table></body></html>"
 ).encode()
+# 大小球多庄页（票 60）：与亚盘多庄同构，线=进球数盘口线
+OVERDOWN_BYTES = (
+    "<html><head><title>甲VS乙-大小指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商1 封</td><td></td>"
+    "<td>0.93</td><td>2.5/3</td><td>0.87</td>"
+    "<td>1.25</td><td>2.5</td><td>0.50</td>"
+    "<td>0.80</td><td>2.5</td><td>1.00</td>"
+    "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
     '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
@@ -76,6 +86,7 @@ def _settings(tmp_path: Path, db_path: Path | None = None) -> Settings:
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
         srct_asianodds_url="https://srct.test/asian/{sid}",
+        srct_overdown_url="https://srct.test/overdown/{sid}",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -89,6 +100,8 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
         elif path.startswith("/asian/"):
             key = f"ah:{path.removeprefix('/asian/')}"
+        elif path.startswith("/overdown/"):
+            key = f"ou:{path.removeprefix('/overdown/')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -108,6 +121,7 @@ def _collect_bronze(tmp_path: Path) -> CorpusStore:
         )
         routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_BYTES)
+        routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)

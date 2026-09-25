@@ -59,6 +59,7 @@ SRCT_PROVIDER = "srct"
 DAY_DATASET = "day_page"
 ODDS_DATASET = "odds_1x2d"
 ASIANODDS_DATASET = "asian_odds"  # 亚盘多庄页（规格 v2 端点 3；初/即时/终三组）
+OVERDOWN_DATASET = "over_down"  # 大小球多庄页（规格 v2 端点 4；与亚盘多庄同构）
 STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进；票 66 撤切 detail）
 # 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
 # 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
@@ -70,6 +71,7 @@ BRONZE_VERSIONS: dict[str, str] = {
     DAY_DATASET: PARSE_VERSION,
     ODDS_DATASET: "srct_odds_v1",
     ASIANODDS_DATASET: "srct_ah_multi_v1",
+    OVERDOWN_DATASET: "srct_ou_multi_v1",
     STATS_DATASET: "srct_stats_v1",
     HANDICAP_DATASET: "srct_hdp_v1",
 }
@@ -154,6 +156,7 @@ SPEC_ENDPOINTS: tuple[SpecEndpoint, ...] = (
     SpecEndpoint(DAY_DATASET, ".htm", per_day=True),
     SpecEndpoint(ODDS_DATASET, ".js", in_shallow=True),
     SpecEndpoint(ASIANODDS_DATASET, ".html"),
+    SpecEndpoint(OVERDOWN_DATASET, ".html"),
     SpecEndpoint(STATS_DATASET, ".html"),
     SpecEndpoint(HANDICAP_DATASET, ".html", status="retired"),
 )
@@ -181,11 +184,13 @@ def retired_endpoint_datasets() -> tuple[str, ...]:
     return tuple(spec.dataset for spec in SPEC_ENDPOINTS if spec.status == "retired")
 
 
-# 亚盘多庄页：每数据行自带 changeDetail 链接（companyID=cid，大小写混见）；
-# 页题标记用于真页判别（空表≠坏页，定则 4）
-_ASIANODDS_CID_RE = re.compile(r"companyID=(\d+)", re.I)
+# 多庄对比页（亚盘/大小球同构，2026-09-25 实测）：每数据行自带 changeDetail
+# 链接（companyID=cid，大小写混见）；页题标记用于真页判别（空表≠坏页，
+# 定则 4）；数据行 ≥12 格：勾选/名/盘序 + 初/即时/终三组 + 详情
+_MULTI_BOOK_CID_RE = re.compile(r"companyID=(\d+)", re.I)
 _ASIANODDS_TITLE_MARKER = "亚指指数"
-_ASIANODDS_MIN_CELLS = 12  # 数据行 ≥12 格：勾选/名/盘序 + 初/即时/终三组 + 详情
+_OVERDOWN_TITLE_MARKER = "大小指数"
+_MULTI_BOOK_MIN_CELLS = 12
 
 
 def _js_var(text: str, name: str) -> str | None:
@@ -286,6 +291,8 @@ class SrctCollectStats:
     stats_nonempty: int = 0  # 统计页 stats 非空场数（票 18 老季深度探针证据）
     asian_odds_nonempty: int = 0  # 亚盘多庄页有报价行场数（同上，票 59 起接管）
     asian_odds_books: int = 0  # 亚盘多庄页逐盘行累计（书商×多盘；CLI 摘要）
+    over_down_nonempty: int = 0  # 大小球多庄页有报价行场数（票 60 起）
+    over_down_books: int = 0  # 大小球多庄页逐盘行累计（CLI 摘要）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -380,6 +387,17 @@ def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> 
     return response.content
 
 
+def fetch_overdown_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场大小球多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_overdown_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
 def fetch_stats_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场 47 键统计页原始字节（UTF-8；实测免 Referer）。"""
     response = client.get(
@@ -417,52 +435,70 @@ def parse_odds_page(body: bytes) -> dict[str, object]:
     }
 
 
-def _asianodds_triple(cells: list[str], start: int) -> dict[str, str | None]:
-    """水|盘|水 三格 → 贴源报价组（值归一归 silver；空串为源页空格）。"""
+def _quote_triple(cells: list[str], start: int) -> dict[str, str | None]:
+    """水|线|水 三格 → 贴源报价组（值归一归 silver；空串为源页空格）。"""
     keys = ("home_water", "line", "away_water")
     return {keys[i]: cells[start + i].strip() or None for i in range(3)}
 
 
-def parse_asianodds_page(body: bytes) -> dict[str, object]:
+def _parse_multi_book_page(
+    body: bytes, title_marker: str, label: str
+) -> list[dict[str, object]]:
     """
-    亚盘多庄页（UTF-8）→ 逐书商逐盘行（每行一 changeDetail 链接=一书一盘）。
+    多庄对比页公共行解析（亚盘 AsianOdds_n / 大小球 OverDown_n 同构）。
 
-    行结构（2026-09-25 实测，历史完场 14 家/47 行）：勾选|公司名+状态|盘序
-    |初(水盘水)|即时(水盘水)|终(水盘水)|详情。三组贴源存原文——
+    行结构（2026-09-25 实测，两页同 13 格）：勾选|公司名+状态|盘序
+    |初(水线水)|即时(水线水)|终(水线水)|详情，每行一 changeDetail 链接
+    =一书一盘。三组贴源存原文——
     - initial=初盘（页方口径，可能与 changeDetail 首行水位差一拍：后者有截断先例）；
     - latest=抓取时点最新价（完场后=场内末价，2026-09-25 实测与存档 92' 临场行一致）；
     - close=终盘（完场后=盘前末价，实测与 changeDetail 盘前末行逐值一致）。
 
     内容判别（定则 4 空≠无）：页题标记在而零书商行=合法空表（老场无报价，
-    books=[] 照常入 bronze）；标记缺/伪 200 图=坏响应抛 SrctContentError。
-    公司名原串入 bronze（语料数据面；repo 侧一律代称/打码）。
+    照常返回 []）；标记缺/伪 200 图=坏响应抛 SrctContentError。公司名原串
+    入 bronze（语料数据面；repo 侧一律代称/打码）。
     """
     text = body.decode("utf-8-sig", errors="replace")
-    if _ASIANODDS_TITLE_MARKER not in text or is_content_404(text):
-        msg = "asianodds: 非亚指多庄页（伪 200 或改版）"
+    if title_marker not in text or is_content_404(text):
+        msg = f"{label}: 非多庄对比页（伪 200 或改版）"
         raise SrctContentError(msg)
     books: list[dict[str, object]] = []
     for chunk in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S | re.I):
-        cid = _ASIANODDS_CID_RE.search(chunk)
+        cid = _MULTI_BOOK_CID_RE.search(chunk)
         if cid is None:
             continue
         cells = [
             re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
             for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", chunk, re.S | re.I)
         ]
-        if len(cells) < _ASIANODDS_MIN_CELLS:
+        if len(cells) < _MULTI_BOOK_MIN_CELLS:
             continue
         books.append(
             {
                 "cid": cid.group(1),
                 "name_raw": cells[1],  # 公司名+封/即状态原串（silver 层代称化）
                 "multi": cells[2] or "盘1",  # 多盘标记（盘2/盘3/…；空=主盘）
-                "initial": _asianodds_triple(cells, 3),
-                "latest": _asianodds_triple(cells, 6),
-                "close": _asianodds_triple(cells, 9),
+                "initial": _quote_triple(cells, 3),
+                "latest": _quote_triple(cells, 6),
+                "close": _quote_triple(cells, 9),
             }
         )
-    return {"books": books}
+    return books
+
+
+def parse_asianodds_page(body: bytes) -> dict[str, object]:
+    """亚盘多庄页（UTF-8）→ {"books": [...]}（行语义见 _parse_multi_book_page）。"""
+    return {"books": _parse_multi_book_page(body, _ASIANODDS_TITLE_MARKER, "asianodds")}
+
+
+def parse_overdown_page(body: bytes) -> dict[str, object]:
+    """
+    大小球多庄页（UTF-8）→ {"books": [...]}。
+
+    与亚盘多庄同构（行语义见 _parse_multi_book_page），差异仅线值语义：
+    line=进球数盘口线（"2.5/3" 等），水=大球/小球水位（票面口径：大球/进球数）。
+    """
+    return {"books": _parse_multi_book_page(body, _OVERDOWN_TITLE_MARKER, "overdown")}
 
 
 def parse_stats_page(body: bytes) -> dict[str, object]:
@@ -524,6 +560,7 @@ _ENDPOINT_SETTINGS: dict[str, tuple[str, ...]] = {
     DAY_DATASET: ("srct_day_url",),
     ODDS_DATASET: ("srct_odds_url", "srct_odds_referer"),
     ASIANODDS_DATASET: ("srct_asianodds_url",),
+    OVERDOWN_DATASET: ("srct_overdown_url",),
     STATS_DATASET: ("srct_stats_url",),
 }
 
@@ -563,6 +600,7 @@ class _EndpointSpec:
 _ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
     ODDS_DATASET: (fetch_odds_js, parse_odds_page),
     ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
+    OVERDOWN_DATASET: (fetch_overdown_page, parse_overdown_page),
     STATS_DATASET: (fetch_stats_page, parse_stats_page),
 }
 
@@ -672,12 +710,15 @@ def _day_payload(body: bytes) -> dict[str, object]:
 def _note_evidence(
     dataset: str, payload: dict[str, object], stats: SrctCollectStats
 ) -> None:
-    """票 18 探针证据计数：统计页 stats 非空 / 亚盘多庄页有报价行（新旧两路径共用）。"""
+    """票 18 探针证据计数：统计/亚盘多庄/大小球多庄有内容（新旧两路径共用）。"""
     if dataset == STATS_DATASET and payload.get("stats"):
         stats.stats_nonempty += 1
     elif dataset == ASIANODDS_DATASET and payload.get("books"):
         stats.asian_odds_nonempty += 1
         stats.asian_odds_books += len(cast("list[object]", payload["books"]))
+    elif dataset == OVERDOWN_DATASET and payload.get("books"):
+        stats.over_down_nonempty += 1
+        stats.over_down_books += len(cast("list[object]", payload["books"]))
 
 
 def _bronze_append(
