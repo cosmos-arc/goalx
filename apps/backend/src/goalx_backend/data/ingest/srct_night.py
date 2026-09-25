@@ -131,6 +131,7 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
         or stats.asian_odds_nonempty
         or stats.over_down_nonempty
         or stats.detail_nonempty
+        or stats.analysis_nonempty
     ):
         return srct.DEPTH_FULL
     if stats.stopped is not None or stats.failed or stats.parse_failed:

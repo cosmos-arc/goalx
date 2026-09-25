@@ -334,6 +334,7 @@ def _cmd_srct_collect(
         "over_down_nonempty": stats.over_down_nonempty,
         "over_down_books": stats.over_down_books,
         "detail_nonempty": stats.detail_nonempty,
+        "analysis_nonempty": stats.analysis_nonempty,
         "bronze_repaired": stats.bronze_repaired,
         "failed": stats.failed,
         "parse_version": srct.PARSE_VERSION,

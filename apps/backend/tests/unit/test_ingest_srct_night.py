@@ -89,6 +89,12 @@ DETAIL_BYTES = (
     "<span >3</span></div></li></ul>"
     "</body></html>"
 ).encode()
+# 分析页（票 62）：数组层一行即正证据（特征面 bronze-only）
+ANALYSIS_BYTES = (
+    "<html><head><title>甲VS乙-数据分析-新球体育</title></head><body>"
+    "<script>var h_data =[['25-05-10',36,'英超',52,'主队甲',60,'客队乙']];</script>"
+    "</body></html>"
+).encode()
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
     '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
@@ -105,6 +111,7 @@ def _settings(tmp_path: Path) -> Settings:
         srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_overdown_url="https://srct.test/overdown/{sid}",
         srct_detail_url="https://srct.test/detail/{sid}cn.htm",
+        srct_analysis_url="https://srct.test/analysis/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -121,6 +128,7 @@ def _transport_spy() -> tuple[list[httpx.Request], dict[str, httpx.Response]]:
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_BYTES)
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     return seen, routes
 
@@ -141,6 +149,8 @@ def _client(
             key = f"ou:{path.removeprefix('/overdown/')}"
         elif path.startswith("/detail/"):
             key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
+        elif path.startswith("/analysis/"):
+            key = f"ay:{path.removeprefix('/analysis/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -226,9 +236,9 @@ def test_run_night_completes_and_persists(tmp_path: Path) -> None:
     summary = _run(tmp_path, seen, routes)
     assert summary.stop_reason == "completed"
     assert summary.dates_done == 3
-    assert summary.requests == 18  # 3 日页 + 3×5 端点
-    assert summary.raw_new == 15  # 场次端点页（日页另计，沿切片 11 口径）
-    assert summary.parsed_ok == 18  # 15 端点 + 3 日页 bronze 行
+    assert summary.requests == 21  # 3 日页 + 3×6 端点
+    assert summary.raw_new == 18  # 场次端点页（日页另计，沿切片 11 口径）
+    assert summary.parsed_ok == 21  # 18 端点 + 3 日页 bronze 行
     assert summary.xg_matches == 3
     assert summary.failed_count == 0
     assert summary.pending_before == 3
@@ -237,7 +247,7 @@ def test_run_night_completes_and_persists(tmp_path: Path) -> None:
     rows = store.night_summaries()
     assert len(rows) == 1
     assert rows[0]["stop_reason"] == "completed"
-    assert rows[0]["requests"] == 18
+    assert rows[0]["requests"] == 21
     assert json.loads(str(rows[0]["failed_json"])) == {}
     for day in DATES:
         assert store.verify_raw("srct", "day_page", day, ext=".htm")
@@ -261,7 +271,7 @@ def test_second_night_zero_requests_heartbeat(tmp_path: Path) -> None:
 def test_budget_stop_cross_night_resume(tmp_path: Path) -> None:
     seen, routes = _transport_spy()
     night1 = _run(tmp_path, seen, routes, request_cap=6)
-    # 预算 6：日1 末端点（第 6 请求）计费触顶未发出——日1 无 done，次夜补
+    # 预算 6：日1 第 5 端点（analysis，第 6 计费）触顶未发出——日1 无 done
     assert night1.stop_reason == "budget"
     assert night1.requests == 6  # 预算口径：第 6 次计费触顶未发出
     assert len(seen) == 5  # 真实线上 = 已发出 5 次
@@ -271,10 +281,10 @@ def test_budget_stop_cross_night_resume(tmp_path: Path) -> None:
     assert not day2_raw  # 中断日的日页请求未发出、raw 未落
     night2 = _run(tmp_path, seen, routes)
     assert night2.stop_reason == "completed"
-    assert night2.dates_done == 3  # 日1（只补末端点）+ 日2/日3 全量
-    assert night2.requests == 13  # 1 + 6 + 6：日1 末端点 + 日2/日3 全量
-    # 两夜合计线上请求 = 全集 18，零浪费
-    assert len(seen) == 18
+    assert night2.dates_done == 3  # 日1（只补余两端点）+ 日2/日3 全量
+    assert night2.requests == 16  # 2 + 7 + 7：日1 余两端点 + 日2/日3 全量
+    # 两夜合计线上请求 = 全集 21，零浪费
+    assert len(seen) == 21
     assert _store(tmp_path).day_status_dates("done") == set(DATES)
 
 
@@ -287,6 +297,7 @@ def test_circuit_breaker_stops_night(tmp_path: Path) -> None:
         routes.pop(f"ou:{sid}")
         routes.pop(f"stats:{sid}")
         routes.pop(f"dt:{sid}")
+        routes.pop(f"ay:{sid}")
     # 补出 4/5 两日的日页路由（ breaker 季窗 5 日）
     for day, sid in (("2025-10-04", "91004"), ("2025-10-05", "91005")):
         routes[f"day:{day.replace('-', '')}"] = httpx.Response(
@@ -307,9 +318,9 @@ def test_circuit_breaker_stops_night(tmp_path: Path) -> None:
     finally:
         store.close()
     assert summary.stop_reason == "circuit"
-    # 5 场连败熔断：日页 5 + 每场 5 端点 × 4 次尝试 = 105 请求即收手
-    assert summary.requests == 5 + 5 * 5 * (srct.MAX_RETRIES + 1)
-    assert summary.failed_count == 25
+    # 5 场连败熔断：日页 5 + 每场 6 端点 × 4 次尝试 = 125 请求即收手
+    assert summary.requests == 5 + 5 * 6 * (srct.MAX_RETRIES + 1)
+    assert summary.failed_count == 30
     assert summary.dates_done == 4  # 前四日干净返回（场败不拦 done）
     assert summary.pending_after == 1  # 熔断日次夜再试
     assert _store(tmp_path).night_summaries()[0]["stop_reason"] == "circuit"
@@ -346,7 +357,7 @@ def test_day_page_transport_failure_continues(tmp_path: Path) -> None:
     assert "2025-10-02:day_page" in summary.failed
     assert summary.pending_after == 1  # 失败日无 done，次夜重试
     # 摘要 requests = 预算口径：日页重试 4 次全计入（stats 丢弃路径不丢账）
-    assert summary.requests == 6 + (srct.MAX_RETRIES + 1) + 6
+    assert summary.requests == 7 + (srct.MAX_RETRIES + 1) + 7
     assert sum(1 for r in seen if "20251002" in r.url.path) == srct.MAX_RETRIES + 1
 
 
@@ -385,7 +396,7 @@ def test_window_rechecked_per_date_mid_night(tmp_path: Path) -> None:
     assert summary.stop_reason == "window_closed"
     assert summary.dates_done == 1  # 日1 完成后越界收手
     assert summary.pending_after == 2
-    assert summary.requests == 6
+    assert summary.requests == 7
     assert len(_store(tmp_path).night_summaries()) == 1  # 干过活照留行
 
 
@@ -395,7 +406,7 @@ def test_cli_run_and_list_seam(
     from goalx_backend import cli
 
     seen, routes = _transport_spy()
-    args = cli.build_parser().parse_args(["srct-night", "--request-cap", "20"])
+    args = cli.build_parser().parse_args(["srct-night", "--request-cap", "30"])
     cli._cmd_srct_night(
         args,
         settings=_settings(tmp_path),
@@ -406,7 +417,7 @@ def test_cli_run_and_list_seam(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["stop_reason"] == "completed"
-    assert payload["requests"] == 18
+    assert payload["requests"] == 21
     assert payload["dates_done"] == 3
     assert payload["failed"] == {}
 
@@ -425,6 +436,9 @@ OLD_SEASONS = (srct_night.SeasonWindow("2019/20", "2019-08-01", "2019-08-03"),)
 OLD_DATES = ["2019-08-01", "2019-08-02", "2019-08-03"]  # sids 91001/91002/91003
 
 # 空内容形态（合法零行解析——探针"零证据"的事实依据；页题在=真页）
+ANALYSIS_EMPTY_BYTES = (
+    "<html><head><title>甲VS乙-数据分析-新球体育</title></head><body></body></html>"
+).encode()
 DETAIL_EMPTY_BYTES = (
     "<html><head><title>甲VS乙-现场分析-新球体育</title></head><body></body></html>"
 ).encode()
@@ -459,6 +473,7 @@ def _deep_paths(seen: list[httpx.Request]) -> list[str]:
             r.url.path.startswith("/asian/")
             or r.url.path.startswith("/overdown/")
             or r.url.path.startswith("/detail/")
+            or r.url.path.startswith("/analysis/")
             or r.url.path.startswith("/shijian/")
         )
     ]
@@ -468,7 +483,7 @@ def test_phase1_window_not_layered(tmp_path: Path) -> None:
     """Phase1 季窗（2023/24 起）不落分层界：全深直跑，零深度行。"""
     seen, routes = _transport_spy()
     summary = _run(tmp_path, seen, routes)
-    assert summary.requests == 18  # 全深五端点，与分层前完全一致
+    assert summary.requests == 21  # 全深六端点，与分层前完全一致
     store = _store(tmp_path)
     assert store.season_depths() == {}  # 无判定即无行（表随 ensure_tree 建好）
     assert srct_night._is_layered(TEST_SEASONS[0]) is False
@@ -480,7 +495,7 @@ def test_old_season_probe_upgrades_to_full(tmp_path: Path) -> None:
     _old_day_routes(routes)
     summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert summary.stop_reason == "completed"
-    assert summary.requests == 18  # 探针升全深：与 Phase1 同价（1+5）×3
+    assert summary.requests == 21  # 探针升全深：与 Phase1 同价（1+6）×3
     assert summary.xg_matches == 3
     assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
 
@@ -493,17 +508,19 @@ def test_old_season_probe_empty_downgrades_shallow(tmp_path: Path) -> None:
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
     summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert summary.stop_reason == "completed"
     assert summary.dates_done == 3
-    # 探针日（最新 pending=08-03，sid 91003）全深 6 请求；余两日浅深各 2
-    assert summary.requests == 6 + 2 * 2
+    # 探针日（最新 pending=08-03，sid 91003）全深 7 请求；余两日浅深各 2
+    assert summary.requests == 7 + 2 * 2
     # 浅深日零深端点上线；探针日恰一对（老季日均 8/3 ≤ 2×1+1 验收线）
     assert _deep_paths(seen) == [
         "/asian/91003",
         "/overdown/91003",
         "/detail/91003cn.htm",
+        "/analysis/91003cn.htm",
         "/shijian/91003.htm",
     ]
     assert summary.xg_matches == 0
@@ -518,9 +535,10 @@ def test_shallow_depth_persists_across_nights(tmp_path: Path) -> None:
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
-    # 预算 7：探针日（6 请求）干净跑完即断浅深；次日日页计费触顶停机
-    night1 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS, request_cap=7)
+    # 预算 8：探针日（7 请求）干净跑完即断浅深；次日日页计费触顶停机
+    night1 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS, request_cap=8)
     assert night1.stop_reason == "budget"
     assert night1.dates_done == 1
     assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_SHALLOW}
@@ -533,6 +551,7 @@ def test_shallow_depth_persists_across_nights(tmp_path: Path) -> None:
         "/asian/91003",
         "/overdown/91003",
         "/detail/91003cn.htm",
+        "/analysis/91003cn.htm",
         "/shijian/91003.htm",
     ]  # 仅探针日
     assert _store(tmp_path).day_status_dates("done") == set(OLD_DATES)
@@ -546,6 +565,7 @@ def test_upgrade_backfill_refetches_only_deep_endpoints(tmp_path: Path) -> None:
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
     _run(tmp_path, seen, routes, seasons=OLD_SEASONS)  # 夜1：全季浅深完成
     wire_after_night1 = len(seen)
@@ -555,10 +575,12 @@ def test_upgrade_backfill_refetches_only_deep_endpoints(tmp_path: Path) -> None:
     night2 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert night2.pending_before == 0  # 无新 pending——纯补抓
     assert night2.dates_done == 2  # 探针日深端点已在（空页有 raw），不补
-    assert night2.requests == 8  # 两日 ×（亚盘/大小球/详情/统计）；日页/轨迹全缓存
-    assert len(seen) == wire_after_night1 + 8
+    assert night2.requests == 10  # 两日 × 5 深端点；日页/轨迹全缓存
+    assert len(seen) == wire_after_night1 + 10
     backfilled = sorted(p for p in _deep_paths(seen) if "91003" not in p)
     assert backfilled == [
+        "/analysis/91001cn.htm",
+        "/analysis/91002cn.htm",
         "/asian/91001",
         "/asian/91002",
         "/detail/91001cn.htm",
@@ -581,8 +603,8 @@ def test_probe_day_not_found_defers_decision(tmp_path: Path) -> None:
     summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert summary.dates_not_found == 1
     assert summary.dates_done == 2
-    # 08-03 伪 200（1 请求）不断案；08-02 重探升全深（6）；08-01 全深（6）
-    assert summary.requests == 1 + 6 + 6
+    # 08-03 伪 200（1 请求）不断案；08-02 重探升全深（7）；08-01 全深（7）
+    assert summary.requests == 1 + 7 + 7
     assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
 
 
@@ -594,8 +616,8 @@ def test_probe_endpoint_failure_defers_to_next_day(tmp_path: Path) -> None:
     summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert summary.stop_reason == "completed"
     assert summary.dates_done == 3  # 场级失败不拦 done
-    # 08-03 探针失败日（1×5+4 重试）不断案；08-02 重探升全深；08-01 全深
-    assert summary.requests == (5 + (srct.MAX_RETRIES + 1)) + 6 + 6
+    # 08-03 探针失败日（6+4 重试）不断案；08-02 重探升全深；08-01 全深
+    assert summary.requests == (6 + (srct.MAX_RETRIES + 1)) + 7 + 7
     assert "91003:match_stats" in summary.failed
     assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
 
@@ -616,6 +638,7 @@ def test_interrupted_probe_resume_keeps_evidence(tmp_path: Path) -> None:
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     srct.collect_day(  # 崩溃模拟：探针日全深采完落库，断案/报 done 均未发生
@@ -626,11 +649,11 @@ def test_interrupted_probe_resume_keeps_evidence(tmp_path: Path) -> None:
         sleeper=lambda _s: None,
     )
     store.close()
-    assert len(seen) == 6  # 日页+五端点已上线落库
+    assert len(seen) == 7  # 日页+六端点已上线落库
     assert _store(tmp_path).season_depths() == {}  # 无判定行（崩溃）
     night = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     # 重探同日全缓存命中：亚盘证据从缓存重放 → 升全深；后两日全深
     assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
     assert night.dates_done == 3
-    assert night.requests == 12  # 续传探针日零线上 + 08-02/08-01 各 6
-    assert len(seen) == 6 + 12
+    assert night.requests == 14  # 续传探针日零线上 + 08-02/08-01 各 7
+    assert len(seen) == 7 + 14

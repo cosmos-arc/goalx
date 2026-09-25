@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     srct_asianodds_url: str = ""
     srct_overdown_url: str = ""
     srct_detail_url: str = ""
+    srct_analysis_url: str = ""
     srct_stats_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---

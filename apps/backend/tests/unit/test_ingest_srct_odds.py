@@ -152,6 +152,12 @@ DETAIL_HTML = (
     "<span >3</span></div></li></ul>"
     "</body></html>"
 ).encode()
+# 分析页（票 62）：数组层一行即正证据（特征面 bronze-only）
+ANALYSIS_HTML = (
+    "<html><head><title>甲VS乙-数据分析-新球体育</title></head><body>"
+    "<script>var h_data =[['25-05-10',36,'英超',52,'主队甲',60,'客队乙']];</script>"
+    "</body></html>"
+).encode()
 
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
@@ -170,6 +176,7 @@ def _settings(tmp_path: Path) -> Settings:
         srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_overdown_url="https://srct.test/overdown/{sid}",
         srct_detail_url="https://srct.test/detail/{sid}cn.htm",
+        srct_analysis_url="https://srct.test/analysis/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -187,6 +194,8 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"ou:{path.removeprefix('/overdown/')}"
         elif path.startswith("/detail/"):
             key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
+        elif path.startswith("/analysis/"):
+            key = f"ay:{path.removeprefix('/analysis/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -204,6 +213,7 @@ def _odds_routes(sid: str, *, empty_odds: bool = False) -> dict[str, httpx.Respo
         f"ah:{sid}": httpx.Response(200, content=ASIANODDS_HTML),
         f"ou:{sid}": httpx.Response(200, content=OVERDOWN_HTML),
         f"dt:{sid}": httpx.Response(200, content=DETAIL_HTML),
+        f"ay:{sid}": httpx.Response(200, content=ANALYSIS_HTML),
         f"stats:{sid}": httpx.Response(200, content=STATS_HTML),
     }
 
@@ -246,6 +256,7 @@ def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
     routes["ah:90011"] = httpx.Response(200, content=ASIANODDS_HTML)
     routes["ou:90011"] = httpx.Response(200, content=OVERDOWN_HTML)
     routes["dt:90011"] = httpx.Response(200, content=DETAIL_HTML)
+    routes["ay:90011"] = httpx.Response(200, content=ANALYSIS_HTML)
     routes["stats:90011"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)

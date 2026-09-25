@@ -63,6 +63,7 @@ OVERDOWN_DATASET = "over_down"  # 大小球多庄页（规格 v2 端点 4；与�
 DETAIL_DATASET = (
     "match_detail"  # 详情页（规格 v2 端点 5；xG/阵容/事件/场地，票 66 撤 stats 切此）
 )
+ANALYSIS_DATASET = "match_analysis"  # 分析页（规格 v2 端点 6；特征面 bronze-only）
 STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进；票 66 撤切 detail）
 # 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
 # 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
@@ -76,6 +77,7 @@ BRONZE_VERSIONS: dict[str, str] = {
     ASIANODDS_DATASET: "srct_ah_multi_v1",
     OVERDOWN_DATASET: "srct_ou_multi_v1",
     DETAIL_DATASET: "srct_detail_v1",
+    ANALYSIS_DATASET: "srct_analysis_v1",
     STATS_DATASET: "srct_stats_v1",
     HANDICAP_DATASET: "srct_hdp_v1",
 }
@@ -162,6 +164,7 @@ SPEC_ENDPOINTS: tuple[SpecEndpoint, ...] = (
     SpecEndpoint(ASIANODDS_DATASET, ".html"),
     SpecEndpoint(OVERDOWN_DATASET, ".html"),
     SpecEndpoint(DETAIL_DATASET, ".html"),
+    SpecEndpoint(ANALYSIS_DATASET, ".html"),
     SpecEndpoint(STATS_DATASET, ".html"),
     SpecEndpoint(HANDICAP_DATASET, ".html", status="retired"),
 )
@@ -302,6 +305,7 @@ class SrctCollectStats:
     over_down_nonempty: int = 0  # 大小球多庄页有报价行场数（票 60 起）
     over_down_books: int = 0  # 大小球多庄页逐盘行累计（CLI 摘要）
     detail_nonempty: int = 0  # 详情页有技统/首发场数（票 61 起）
+    analysis_nonempty: int = 0  # 分析页有特征数据场数（票 62 起）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -411,6 +415,17 @@ def fetch_detail_page(client: httpx.Client, settings: Settings, sid: str) -> byt
     """拉一场详情页原始字节（live 主机，UTF-8；实测免 Referer，2026-09-25）。"""
     response = client.get(
         settings.srct_detail_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def fetch_analysis_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场分析页原始字节（zq 主机，UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_analysis_url.format(sid=sid),
         headers={"User-Agent": DESKTOP_UA},
         timeout=30.0,
     )
@@ -668,6 +683,91 @@ def parse_detail_page(body: bytes) -> dict[str, object]:
     }
 
 
+# 分析页（zq 主机，UTF-8，规格 v2 端点 6）：特征面，bronze-only（票 62——
+# silver 消费按 YAGNI 挂起，特征线开票时再接）。数据层=JS 数组 var（近况/
+# 交战/盘路对比/积分榜），未来五场在 HTML 表（单格行=队名切换主客块）。
+_ANALYSIS_TITLE_MARKER = "数据分析"
+_ANALYSIS_ARRAY_VARS: tuple[tuple[str, str], ...] = (
+    # (payload 键, 源 var 名)——键贴源 var 名，零转译；silver 层再语义化
+    ("h_data", "h_data"),  # 主队近况（近 47 行）
+    ("a_data", "a_data"),  # 客队近况
+    ("h2_data", "h2_data"),  # 主队近况（主客拆分口径）
+    ("a2_data", "a2_data"),
+    ("v_data", "v_data"),  # 交战历史（h2h）
+    ("Vs_hOdds", "Vs_hOdds"),  # 盘路对比（逐书，行首 scheduleId+cid）
+    ("Vs_eOdds", "Vs_eOdds"),  # 欧赔对比（逐书）
+    ("homeScoreStr", "homeScoreStr"),  # 主队积分榜
+    ("guestScoreStr", "guestScoreStr"),  # 客队积分榜
+)
+_ANALYSIS_FUTURE_DATE_RE = re.compile(r"\d{2}-\d{2}")
+_ANALYSIS_FUTURE_HEADER = frozenset(("时间", "赛事", "对阵", "分析", "直播", "相隔"))
+_ANALYSIS_HOME_BLOCK = 1  # 单格行（队名块头）计数：1=主队块，>1=客队块
+
+
+def _analysis_array_rows(text: str, name: str) -> list[str]:
+    """`var name=[[..],[..]];` → 顶层数组行原文串列表（贴源；缺 var 空）。"""
+    m = re.search(rf"var {name}\s*=\s*(\[.*?\]);", text, re.S)
+    if m is None:
+        return []
+    return [
+        row.strip()
+        for row in re.split(r"\],\s*\[", m.group(1).strip()[1:-1])
+        if row.strip()
+    ]
+
+
+def _analysis_future_fixtures(text: str) -> dict[str, list[list[str]]]:
+    """未来五场：单格行（队名）切换主客块，含日期形态的行=赛程行。"""
+    start = text.find("未来五场")
+    seg = text[start:] if start >= 0 else ""
+    sides: dict[str, list[list[str]]] = {"home": [], "away": []}
+    block = 0  # 单格行（队名）计数：1=主队块，2=客队块
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", seg, re.S | re.I):
+        cells = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
+            for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S | re.I)
+        ]
+        cells = [c for c in cells if c and c != "&nbsp;"]
+        while cells and cells[0] in _ANALYSIS_FUTURE_HEADER:  # 行内残留表头格剥掉
+            cells.pop(0)
+        if not cells:
+            continue
+        if len(cells) == 1:
+            block += 1
+            continue
+        has_date = any(_ANALYSIS_FUTURE_DATE_RE.search(c) for c in cells)
+        if block == _ANALYSIS_HOME_BLOCK and has_date:
+            sides["home"].append(cells)
+        elif block > _ANALYSIS_HOME_BLOCK and has_date:
+            sides["away"].append(cells)
+    return sides
+
+
+def parse_analysis_page(body: bytes) -> dict[str, object]:
+    """
+    分析页（UTF-8）→ 特征面分区（票 62 bronze-only）。
+
+    bronze 贴源：近况/交战/盘路对比/积分/未来五场。页题标记"数据分析"
+    判别真页；分区缺=空（老页空≠无）。silver 消费按 YAGNI 挂起。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _ANALYSIS_TITLE_MARKER not in text or is_content_404(text):
+        msg = "analysis: 非数据分析页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    kickoff = _DETAIL_KICKOFF_RE.search(text)
+    return {
+        "meta": {
+            "home": _js_var(text, "hometeam"),
+            "away": _js_var(text, "guestteam"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+        },
+        "arrays": {
+            key: _analysis_array_rows(text, var) for key, var in _ANALYSIS_ARRAY_VARS
+        },
+        "future_fixtures": _analysis_future_fixtures(text),
+    }
+
+
 def parse_stats_page(body: bytes) -> dict[str, object]:
     """
     47 键统计页（UTF-8）→ 键值数组 + xG coverage；缺键容忍（定则 4）。
@@ -729,6 +829,7 @@ _ENDPOINT_SETTINGS: dict[str, tuple[str, ...]] = {
     ASIANODDS_DATASET: ("srct_asianodds_url",),
     OVERDOWN_DATASET: ("srct_overdown_url",),
     DETAIL_DATASET: ("srct_detail_url",),
+    ANALYSIS_DATASET: ("srct_analysis_url",),
     STATS_DATASET: ("srct_stats_url",),
 }
 
@@ -770,6 +871,7 @@ _ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
     ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
     OVERDOWN_DATASET: (fetch_overdown_page, parse_overdown_page),
     DETAIL_DATASET: (fetch_detail_page, parse_detail_page),
+    ANALYSIS_DATASET: (fetch_analysis_page, parse_analysis_page),
     STATS_DATASET: (fetch_stats_page, parse_stats_page),
 }
 
@@ -893,6 +995,10 @@ def _note_evidence(
         or cast("dict[str, object]", payload.get("lineup") or {}).get("home_starters")
     ):
         stats.detail_nonempty += 1
+    elif dataset == ANALYSIS_DATASET and any(
+        cast("dict[str, list[object]]", payload.get("arrays") or {}).values()
+    ):
+        stats.analysis_nonempty += 1
 
 
 def _bronze_append(
