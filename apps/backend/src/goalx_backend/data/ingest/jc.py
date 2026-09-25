@@ -122,17 +122,21 @@ def collect_match(
     *,
     stats: JcCollectStats | None = None,
     ext: str = ".json",
+    key: str | None = None,
 ) -> JcCollectStats:
     """
-    一场闭环：拉取 → raw（键=matchId）→ bronze（oddsHistory 非空才写）。
+    一场闭环：拉取 → raw → bronze（oddsHistory 非空才写；行 sid=matchId）。
 
-    幂等：raw checkpoint 命中即零重抓（oddsHistory 全量返回，无增量语义；
-    实时拍的多拍需求归 71 的拍键通道）。stats 注入累计（回填循环用）。
+    raw 键缺省=matchId（收口/回填：一场一工件全量）；71 实时拍传拍键
+    （``{mid}@open`` 等——同场多拍 append，bronze latest-per-sid 收敛）。
+    幂等：键命中零重抓（oddsHistory 全量返回，无增量语义）。stats 注入
+    累计（回填循环/拍循环共用）。
     """
     stats = stats if stats is not None else JcCollectStats()
+    artifact_key = key if key is not None else match_id
     if match_id not in stats.match_ids:
         stats.match_ids.append(match_id)
-    if store.has(JC_PROVIDER, SP_DATASET, match_id):
+    if store.has(JC_PROVIDER, SP_DATASET, artifact_key):
         stats.cached += 1
         return stats
     stats.requests += 1
@@ -140,9 +144,9 @@ def collect_match(
         body = fetch_fixed_bonus(client, settings, match_id)
         value = parse_fixed_bonus(body)
     except (httpx.HTTPError, JcContentError) as exc:
-        stats.failed[match_id] = f"{type(exc).__name__}: {exc}"[:120]
+        stats.failed[artifact_key] = f"{type(exc).__name__}: {exc}"[:120]
         return stats
-    store.ingest_raw(JC_PROVIDER, SP_DATASET, match_id, body, ext=ext)
+    store.ingest_raw(JC_PROVIDER, SP_DATASET, artifact_key, body, ext=ext)
     stats.raw_new += 1
     odds_history = cast("dict[str, Any]", value.get("oddsHistory") or {})
     if odds_history:
@@ -156,7 +160,7 @@ def collect_match(
                     "sid": match_id,
                     "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
                     "parser_version": BRONZE_VERSION,
-                    "raw_sha": store.raw_sha(JC_PROVIDER, SP_DATASET, match_id),
+                    "raw_sha": store.raw_sha(JC_PROVIDER, SP_DATASET, artifact_key),
                     "payload": value,
                 }
             ],

@@ -40,7 +40,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from limits.strategies import MovingWindowRateLimiter
@@ -50,6 +50,9 @@ from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct
 from goalx_backend.rate_limit import default_limiter, throttle
+
+if TYPE_CHECKING:
+    from goalx_backend.data.ingest import jc_shift
 
 BEIJING = timezone(timedelta(hours=8))  # 拍时刻表/停售墙钟的业务时区
 # 入口清单数据集（raw-only：BaSID 源页留档审计，无 bronze 消费链）
@@ -91,6 +94,12 @@ class ShiftStats:
     parsed_ok: int = 0
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # budget/window_closed；None=清单跑完
+    # JC 官方拍相位（票 71；jc: 前缀区分于源T 层）
+    jc_discovered: int = 0
+    jc_open_beats: int = 0
+    jc_daily_beats: int = 0
+    jc_close_beats: int = 0
+    jc_finalized: int = 0
 
 
 def parse_basid(body: bytes) -> list[str]:
@@ -280,7 +289,7 @@ def _bump_beats(
     return row
 
 
-def run_shift(  # noqa: PLR0913 接缝参数随防封/预算/窗口累加（同 collect_day 先例）
+def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累加（同 collect_day 先例）
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -373,7 +382,36 @@ def run_shift(  # noqa: PLR0913 接缝参数随防封/预算/窗口累加（同 
             return stats
         if row is not None:
             known[sid] = row
+    # JC 官方拍（票 71）：同窗同预算殿后（源T 优先；发现失败只留痕）。
+    # 局部导入防环（jc_shift 复用本模块的 BEIJING/slot/lead 决策件）
+    from goalx_backend.data.ingest import jc_shift  # noqa: PLC0415
+
+    try:
+        jc_stats = jc_shift.run_jc_beats(
+            store,
+            settings,
+            client,
+            now=now,
+            sleeper=sleeper,
+            budget=budget,
+        )
+    except srct.NightStop as stop:
+        stats.stopped = stop.reason
+        return stats
+    _absorb_jc(stats, jc_stats)
     return stats
+
+
+def _absorb_jc(stats: ShiftStats, jc_stats: jc_shift.JcShiftStats) -> None:
+    """JC 拍统计并进当期班摘要（键前缀 jc: 区分两层）。"""
+    stats.jc_discovered = jc_stats.discovered
+    stats.jc_open_beats = jc_stats.open_beats
+    stats.jc_daily_beats = jc_stats.daily_beats
+    stats.jc_close_beats = jc_stats.close_beats
+    stats.jc_finalized = jc_stats.finalized
+    stats.requests += jc_stats.requests
+    stats.raw_new += jc_stats.raw_new
+    stats.failed.update({f"jc:{k}": v for k, v in jc_stats.failed.items()})
 
 
 def _open_beat(
