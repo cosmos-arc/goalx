@@ -164,6 +164,17 @@ def _kickoff_ms(
     )
 
 
+def _ou_line(line_raw: str | None) -> float | None:
+    """大小球线数值化："3"→3.0，"2.5/3"→2.75（四分位中值）；非数 None。"""
+    if line_raw is None:
+        return None
+    parts = line_raw.split("/")
+    values = [srct_silver.to_float(p) for p in parts]
+    if not values or any(v is None for v in values):
+        return None
+    return sum(cast("list[float]", values)) / len(values)
+
+
 def _quote_row(
     market: str,
     book: dict[str, object],
@@ -171,7 +182,7 @@ def _quote_row(
     kickoff_ms: int | None,
     report: SilverMarketReport,
 ) -> dict[str, object]:
-    """一书一盘 bronze 行 → 报价行（三组线值归一；坏值 None 计数留痕）。"""
+    """一书一盘 bronze 行 → 报价行（三组线值按市场归一；坏值 None 计数留痕）。"""
     row: dict[str, object] = {
         "sid": bronze.get("sid"),
         "market": market,
@@ -184,7 +195,9 @@ def _quote_row(
     for prefix, key in (("open", "initial"), ("latest", "latest"), ("close", "close")):
         quote = cast("dict[str, object]", book.get(key) or {})
         line_raw = quote.get("line")
-        line = srct_odds.normalize_line(str(line_raw) if line_raw is not None else None)
+        raw = str(line_raw) if line_raw is not None else None
+        # ah=中文盘口词归一（主队视角受让为负）；ou=进球数线数值化（四分位中值）
+        line = srct_odds.normalize_line(raw) if market == MARKET_AH else _ou_line(raw)
         home = srct_silver.to_float(quote.get("home_water"))
         away = srct_silver.to_float(quote.get("away_water"))
         if line_raw is not None and line is None:
@@ -201,16 +214,35 @@ def _quote_row(
 def build_market_quotes(
     store: CorpusStore, *, chunk_rows: int = srct_odds.STREAM_CHUNK_ROWS
 ) -> SilverMarketReport:
-    """重物化 silver market_quote（幂等；asian_odds+over_down bronze 当前版本）。"""
+    """
+    重物化 silver market_quote（幂等；asian_odds+over_down bronze 当前版本）。
+
+    输入整表装一次（本表=逐行报价，行数随场×书增长但单行小；选轨遍/外排
+    归 odds_change_event 大表，此处不复用）；孤场排序垫后（同 srct_odds
+    排序契约：kickoff 升序、孤儿末块）。
+    """
     report = SilverMarketReport(built_at=utc_now_iso())
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
     root = store.root / "silver" / srct.SRCT_PROVIDER / MARKET_DATASET
     out = srct_odds.StreamingPartitions(root, _QUOTE_SCHEMA, chunk_rows)
+    latest = {
+        dataset: srct_silver.latest_bronze_rows(store, dataset)
+        for dataset in (srct.ASIANODDS_DATASET, srct.OVERDOWN_DATASET)
+    }
+    kickoff_of = {
+        sid: _kickoff_ms(meta, sid)[0]
+        for sid in set(latest[srct.ASIANODDS_DATASET])
+        | set(latest[srct.OVERDOWN_DATASET])
+    }
     sids = sorted(
-        set(srct_silver.latest_bronze_rows(store, srct.ASIANODDS_DATASET))
-        | set(srct_silver.latest_bronze_rows(store, srct.OVERDOWN_DATASET)),
-        key=lambda s: _kickoff_ms(meta, s)[:1] or (0,),  # 孤子垫后稳定序
+        kickoff_of,
+        key=lambda s: (
+            kickoff_of[s] is None,
+            kickoff_of[s] if kickoff_of[s] is not None else 0,
+            s,
+        ),
     )
+    seen_books: set[tuple[str, str]] = set()
     for sid in sids:
         kickoff_ms, season, competition = _kickoff_ms(meta, sid)
         if kickoff_ms is None:
@@ -219,7 +251,7 @@ def build_market_quotes(
             (MARKET_AH, srct.ASIANODDS_DATASET),
             (MARKET_OU, srct.OVERDOWN_DATASET),
         ):
-            bronze = srct_silver.latest_bronze_rows(store, dataset).get(sid)
+            bronze = latest[dataset].get(sid)
             if bronze is None:
                 continue
             payload = bronze.get("payload")
@@ -234,23 +266,11 @@ def build_market_quotes(
                     competition,
                     _quote_row(market, book, bronze, kickoff_ms, report),
                 )
+                seen_books.add((market, str(book.get("cid"))))
                 if market == MARKET_AH:
                     report.quotes_ah += 1
                 else:
                     report.quotes_ou += 1
-    seen_books: set[tuple[str, str]] = set()
-    for dataset, market in (
-        (srct.ASIANODDS_DATASET, MARKET_AH),
-        (srct.OVERDOWN_DATASET, MARKET_OU),
-    ):
-        for bronze in srct_silver.latest_bronze_rows(store, dataset).values():
-            payload = bronze.get("payload")
-            books = (
-                cast("list[dict[str, object]]", payload.get("books", []))
-                if isinstance(payload, dict)
-                else []
-            )
-            seen_books.update((market, str(b.get("cid"))) for b in books)
     report.books_ah = sum(1 for m, _ in seen_books if m == MARKET_AH)
     report.books_ou = sum(1 for m, _ in seen_books if m == MARKET_OU)
     report.partitions, report.stale_partitions_removed = out.close()

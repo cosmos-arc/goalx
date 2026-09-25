@@ -175,7 +175,7 @@ def test_market_quote_shape_and_semantics(tmp_path: Path) -> None:
     # 三场 ×（ah 2 逐盘行 + ou 1 行）
     assert (report.quotes_ah, report.quotes_ou) == (6, 3)
     assert len(rows) == 9
-    assert report.bad_waters == 0  # AH 全线组可归一；ou 线串非盘口词（下行断言）
+    assert report.bad_waters == 0
     ah1 = next(
         r
         for r in rows
@@ -189,9 +189,10 @@ def test_market_quote_shape_and_semantics(tmp_path: Path) -> None:
     assert ah1["latest_home_water"] == 2.65  # 场内末价组
     ou1 = next(r for r in rows if r["market"] == "ou" and r["sid"] == "91001")
     assert ou1["bookmaker_id"] == "srct:ou:1"
-    assert ou1["open_line_raw"] == "2.5/3"  # 大小球线不归一（非盘口词）
-    assert ou1["open_line"] is None
-    assert report.bad_line_values == 9  # ou 3 行 × 3 线组——计数留痕行保留
+    assert ou1["open_line_raw"] == "2.5/3"  # 大小球线数值化（四分位中值）
+    assert ou1["open_line"] == 2.75
+    assert ou1["close_line"] == 2.5
+    assert report.bad_line_values == 0  # ah 盘口词/ou 数值线全可归一
     assert ah1["kickoff"] is not None  # fixture 冗余列
     # 视图可查
     path = corpus_duckdb.build_corpus_duckdb(store)
