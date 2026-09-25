@@ -37,6 +37,8 @@ OWNERS: dict[str, set[str]] = {
         "raw_artifacts",
         # 票 55 切片 13：夜班台账（日级状态 + 每夜摘要，同 checkpoint 库）
         "srct_day_status",
+        # 票 18：老季深度判定（同 checkpoint 库，跨夜不重探）
+        "srct_season_depth",
         # 票 55/56 切片 14/15：corpus.duckdb 银层四视图（data 包建视图并查询）
         "fixture_universe",
         "xg_observation",

@@ -102,6 +102,13 @@ MAX_RETRIES = 3
 NIGHT_REQUEST_CAP = 8000
 FAILURE_STREAK_CAP = 5
 
+# 采集深度（票 18 老季分层，Phase2/3 扩展批）：全深=每场三端点；
+# 浅深=只 日页+1x2 轨迹 两请求（跳过 asian_handicap/match_stats——
+# checkpoint 不记跳过端点，升深重跑天然只补这两类）。判定/持久/探针
+# 编排在 srct_night.py
+DEPTH_FULL = "full"
+DEPTH_SHALLOW = "shallow"
+
 # 伪 200/坏响应按内容判别的标记
 _CONTENT_404_MARKER = "error_404.gif"
 _HANDICAP_TITLE_MARKER = "亚赔变化表"
@@ -259,6 +266,8 @@ class SrctCollectStats:
     parsed_ok: int = 0
     parse_failed: dict[str, str] = field(default_factory=dict)
     xg_matches: int = 0  # 统计页解析成功且含 xG 的场数（coverage 摘要）
+    stats_nonempty: int = 0  # 统计页 stats 非空场数（票 18 老季深度探针证据）
+    handicap_nonempty: int = 0  # 亚盘 rows 非空场数（同上）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -495,10 +504,15 @@ class _EndpointSpec:
 
 
 def _endpoint_specs(
-    client: httpx.Client, settings: Settings
+    client: httpx.Client, settings: Settings, *, depth: str = DEPTH_FULL
 ) -> tuple[_EndpointSpec, ...]:
-    """ADR-0010 定案 2：每场三请求（轨迹 / 亚盘 / 47 键统计）。"""
-    return (
+    """
+    ADR-0010 定案 2：全深=每场三请求（轨迹 / 亚盘 / 47 键统计）。
+
+    浅深（票 18 老季）只打轨迹端点——跳过端点不记 checkpoint，升深重跑
+    只补亚盘/统计。
+    """
+    specs = (
         _EndpointSpec(
             ODDS_DATASET,
             ".js",
@@ -518,6 +532,9 @@ def _endpoint_specs(
             parse_stats_page,
         ),
     )
+    if depth == DEPTH_SHALLOW:
+        return tuple(spec for spec in specs if spec.dataset == ODDS_DATASET)
+    return specs
 
 
 def _bronze_row(
@@ -592,6 +609,16 @@ def _day_payload(body: bytes) -> dict[str, object]:
     }
 
 
+def _note_evidence(
+    dataset: str, payload: dict[str, object], stats: SrctCollectStats
+) -> None:
+    """票 18 探针证据计数：统计页 stats 非空 / 亚盘 rows 非空（新旧两路径共用）。"""
+    if dataset == STATS_DATASET and payload.get("stats"):
+        stats.stats_nonempty += 1
+    elif dataset == HANDICAP_DATASET and payload.get("rows"):
+        stats.handicap_nonempty += 1
+
+
 def _bronze_append(
     store: CorpusStore,
     dataset: str,
@@ -616,6 +643,7 @@ def _bronze_append(
     stats.parsed_ok += 1
     if dataset == STATS_DATASET and payload.get("has_xg"):
         stats.xg_matches += 1
+    _note_evidence(dataset, payload, stats)
     return True
 
 
@@ -630,10 +658,24 @@ def _handle_cached(
 ) -> None:
     """Raw 在缓存：bronze 齐则纯跳过；缺（中断窗口）则本地重解析回补，零重抓。"""
     if in_bronze:
+        if dataset in (HANDICAP_DATASET, STATS_DATASET):
+            # 票 18：中断探针日续传时，已落库深端点的证据要从缓存重放
+            # （宁可错升不错漏——漏=数据永久缺口）；xg_matches 不重复记
+            _note_evidence(
+                dataset,
+                parse(store.read_raw(SRCT_PROVIDER, dataset, key, ext=ext)),
+                stats,
+            )
         return
     page = store.read_raw(SRCT_PROVIDER, dataset, key, ext=ext)
     if _bronze_append(store, dataset, parse, key, page, utc_now_iso(), stats):
         stats.bronze_repaired += 1
+
+
+def day_page_sids(payload: dict[str, object]) -> list[str]:
+    """日页 bronze payload → CorpusScope sid 清单（票 18 升深补抓完整性判据）。"""
+    matches = cast("list[dict[str, object]]", payload.get("matches", []))
+    return [str(m["sid"]) for m in matches if m.get("sid") is not None]
 
 
 def _bronze_sids(store: CorpusStore, dataset: str) -> set[str]:
@@ -710,6 +752,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     rng: random.Random | None = None,
     rate_limiter: MovingWindowRateLimiter | None = None,
     budget: NightBudget | None = None,
+    depth: str = DEPTH_FULL,
 ) -> SrctCollectStats:
     """
     一日闭环：日页发现 sid → 每场三端点（轨迹/亚盘/统计）→ raw+bronze。
@@ -720,6 +763,9 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
 
     budget（夜班注入）：触顶/熔断不抛出——记 stats.stopped 后正常返回，
     中断点前的进度已全部落库，次夜按 checkpoint 续传。
+
+    depth（票 18）：shallow 只打 日页+1x2 轨迹（老季浅深）；跳过端点不记
+    checkpoint——升深重跑按缓存只补亚盘/统计，零重抓。
     """
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
@@ -734,7 +780,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     scope = filter_scope(parse_over_page(decode_day_page(body)))
     stats.scope_sids = [m.sid for m in scope]
     jitter_rng = random.Random() if rng is None else rng  # noqa: S311 抖动非加密用途
-    specs = _endpoint_specs(client, settings)
+    specs = _endpoint_specs(client, settings, depth=depth)
     bronze_sids = {spec.dataset: _bronze_sids(store, spec.dataset) for spec in specs}
     for match in scope:
         cached = 0
