@@ -52,11 +52,15 @@ ODDS_JS = (
     'game=Array("1129|1|X|3.2|3.4|2.1|27|26|47|88|2.9|3.1|2.2|30|27|43|88|'
     '0.85|0.85|0.93|t|");\ngameDetail=Array();\n'
 ).encode()
-HANDICAP_BYTES = (
-    "<html><head><title>亚赔变化表</title></head><body><table>"
-    "<TR align=center><TD>0.80</TD><TD>平手</TD><TD>1.05</TD>"
-    "<TD>10-01 19:29</TD><TD>即</TD></TR></table></body></html>"
-).encode("gb18030")
+ASIANODDS_BYTES = (
+    "<html><head><title>甲VS乙-亚指指数-新球体育</title></head><body><table>"
+    "<tr><td></td><td>书商8 封</td><td></td>"
+    "<td>0.90</td><td>受让半球</td><td>0.95</td>"
+    "<td>2.65</td><td>平手/半球</td><td>0.27</td>"
+    "<td>0.80</td><td>受让平手/半球</td><td>1.05</td>"
+    "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td>"
+    "</tr></table></body></html>"
+).encode()
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
     '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
@@ -71,7 +75,7 @@ def _settings(tmp_path: Path, db_path: Path | None = None) -> Settings:
         srct_day_url="https://srct.test/over/{date}.htm",
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
-        srct_handicap_url="https://srct.test/handicap/{sid}",
+        srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -83,8 +87,8 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"day:{path.removeprefix('/over/').removesuffix('.htm')}"
         elif path.startswith("/odds/"):
             key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
-        elif path.startswith("/handicap/"):
-            key = f"hdp:{path.removeprefix('/handicap/')}"
+        elif path.startswith("/asian/"):
+            key = f"ah:{path.removeprefix('/asian/')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -103,7 +107,7 @@ def _collect_bronze(tmp_path: Path) -> CorpusStore:
             200, content=_day_page(sid, label=label)
         )
         routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
-        routes[f"hdp:{sid}"] = httpx.Response(200, content=HANDICAP_BYTES)
+        routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)

@@ -329,6 +329,8 @@ def _cmd_srct_collect(
         "parse_failed": stats.parse_failed,
         "parse_success_rate": _parse_success_rate(stats),
         "xg_matches": stats.xg_matches,
+        "asian_odds_nonempty": stats.asian_odds_nonempty,
+        "asian_odds_books": stats.asian_odds_books,
         "bronze_repaired": stats.bronze_repaired,
         "failed": stats.failed,
         "parse_version": srct.PARSE_VERSION,

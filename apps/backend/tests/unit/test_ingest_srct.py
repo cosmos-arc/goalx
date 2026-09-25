@@ -75,33 +75,6 @@ SAMPLE_ODDS_JS = (
     '3.4|3.7|2.16|10-18 18:50|0.97|0.98|0.96|2025");\n'
 )
 
-# 亚盘变化表实测裁剪（2025-10-18 场 2789205，锚 cid=8；三形态行：封盘/临场/早盘）
-SAMPLE_HANDICAP_HTML = """<!DOCTYPE html>
-<html><HEAD><title>亚赔变化表</title>
-<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
-</HEAD><body>
-<span id="odds2"><TABLE cellSpacing=1><TR align=center bgColor=#E9F1FA height=22>
-<TD width=10%><b><FONT color=#282828>时间</FONT></b></TD>
-<TD width=10%><b><FONT color=#282828>比分</FONT></b></TD>
-<TD width=10%><b><FONT color=#282828>诺丁汉森林</FONT></b></TD>
-<TD width=10%><b><FONT color=#282828>盘</FONT></b></TD>
-<TD width=10%><b><FONT color=#282828>切尔西</FONT></b></TD>
-<TD width=10%><FONT color=#282828><B>变化时间</B></FONT></TD>
-<TD width=8%><B>状态</B></TD>
-</TR>
-<TR align=center bgColor=#fff4f4>
-<TD>92</TD><TD>0-3</TD><TD>封</TD><TD>10-18 21:21</TD>
-</TR>
-<TR align=center bgColor=#fff4f4>
-<TD>92</TD><TD>0-3</TD><TD>2.65</TD><TD>平手/半球</TD><TD>0.27</TD><TD>10-18 21:21</TD>
-</TR>
-<TR align=center bgColor=#F7F7F7>
-<TD>0.80</TD><TD>受让平手/半球</TD><TD>1.05</TD><TD>10-18 19:29</TD><TD>即</TD>
-</TR>
-</TABLE></span></body></html>
-"""
-SAMPLE_HANDICAP_BYTES = SAMPLE_HANDICAP_HTML.encode("gb18030")
-
 # 47 键统计页实测裁剪（键集两代：2025 含 xG / 2018 无 xG）
 SAMPLE_STATS_XG_HTML = (
     '<html><head><meta charset="utf-8"></head><body><script>var jsonData ='
@@ -124,6 +97,92 @@ SAMPLE_STATS_NOXG_HTML = (
     ']},"info":{}};</script></body></html>'
 )
 
+# 亚盘多庄页实测裁剪（2025-10-18 场 2789205，UTF-8；历史页 14 家取 3 家 5
+# 行；书商名打码=代称红线）。三组列=初/即时/终——2026-09-25 与存档 cid8
+# changeDetail 轨迹交叉验证：close=盘前末行逐值一致、latest=92' 临场行。
+_AH_ROW = (
+    "<tr align=center>"
+    "<td><input type=checkbox></td>"
+    "<td>{name}</td>"
+    "<td>{multi}</td>"
+    "<td>{h1}</td><td>{l1}</td><td>{a1}</td>"
+    "<td>{h2}</td><td>{l2}</td><td>{a2}</td>"
+    "<td>{h3}</td><td>{l3}</td><td>{a3}</td>"
+    "<td><a href=/changeDetail/handicap.aspx?id=2789205&companyID={cid}>详</a></td>"
+    "</tr>"
+)
+_AH_BOOKS = [
+    # (cid, 名+状态, 盘序, 初, 即时, 终)——值取自实测页原值
+    (
+        "1",
+        "书商1 封",
+        "",
+        ("0.93", "受让半球", "0.93"),
+        ("0.80", "平手", "1.02"),
+        ("0.80", "受让平手/半球", "1.06"),
+    ),
+    (
+        "1",
+        "",
+        "盘2",
+        ("1.23", "受让平手/半球", "0.63"),
+        ("1.18", "平手", "0.68"),
+        ("1.18", "平手", "0.68"),
+    ),
+    (
+        "3",
+        "书商3 封",
+        "",
+        ("0.82", "受让半球", "1.06"),
+        ("7.14", "平手/半球", "0.03"),
+        ("0.81", "受让平手/半球", "1.07"),
+    ),
+    (
+        "8",
+        "书商8 封",
+        "",
+        ("0.90", "受让半球", "0.95"),
+        ("2.65", "平手/半球", "0.27"),
+        ("0.80", "受让平手/半球", "1.05"),
+    ),
+    (
+        "8",
+        "",
+        "盘2",
+        ("1.10", "受让平手/半球", "0.70"),
+        ("5.00", "平手/半球", "0.12"),
+        ("1.20", "平手", "0.65"),
+    ),
+]
+SAMPLE_ASIANODDS_HTML = (
+    "<html><head><title>诺丁汉森林VS切尔西(2025-2026赛季英超)-亚指指数"
+    "-新球体育-球探体育</title></head><body><table>"
+    + "".join(
+        _AH_ROW.format(
+            cid=cid,
+            name=name,
+            multi=multi,
+            h1=g1[0],
+            l1=g1[1],
+            a1=g1[2],
+            h2=g2[0],
+            l2=g2[1],
+            a2=g2[2],
+            h3=g3[0],
+            l3=g3[1],
+            a3=g3[2],
+        )
+        for cid, name, multi, g1, g2, g3 in _AH_BOOKS
+    )
+    + "</table></body></html>"
+)
+SAMPLE_ASIANODDS_BYTES = SAMPLE_ASIANODDS_HTML.encode("utf-8")
+# 空表（页题在、零书商行）：老场无报价=合法空（定则 4 空≠无）
+SAMPLE_ASIANODDS_EMPTY_HTML = (
+    "<html><head><title>甲VS乙-亚指指数-新球体育</title></head>"
+    "<body><table></table></body></html>"
+)
+
 DATE = "2025-10-18"
 SCOPE_SIDS = ["2789205", "2711573", "2861202", "2862060"]
 # 统计页 xG 分布：挪超 2711573 用无 xG 样本（老键集），其余三家有 xG
@@ -136,13 +195,13 @@ def _settings(tmp_path: Path) -> Settings:
         srct_day_url="https://srct.test/over/{date}.htm",
         srct_odds_url="https://srct.test/odds/{sid}.js",
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
-        srct_handicap_url="https://srct.test/handicap/{sid}",
+        srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
 
 def _transport_spy() -> tuple[list[httpx.Request], dict[str, httpx.Response]]:
-    """请求记录器 + 可编程响应表（day + 每场三端点路径族）。"""
+    """请求记录器 + 可编程响应表（day + 每场端点路径族）。"""
     seen: list[httpx.Request] = []
     routes: dict[str, httpx.Response] = {
         "day": httpx.Response(200, content=SAMPLE_OVER_BYTES)
@@ -151,7 +210,7 @@ def _transport_spy() -> tuple[list[httpx.Request], dict[str, httpx.Response]]:
         routes[f"odds:{sid}"] = httpx.Response(
             200, content=SAMPLE_ODDS_JS.encode("utf-8")
         )
-        routes[f"hdp:{sid}"] = httpx.Response(200, content=SAMPLE_HANDICAP_BYTES)
+        routes[f"ah:{sid}"] = httpx.Response(200, content=SAMPLE_ASIANODDS_BYTES)
         stats_sample = (
             SAMPLE_STATS_XG_HTML if sid in STATS_XG_SIDS else SAMPLE_STATS_NOXG_HTML
         )
@@ -171,8 +230,8 @@ def _client(
             key = "day"
         elif path.startswith("/odds/"):
             key = f"odds:{path.removeprefix('/odds/').removesuffix('.js')}"
-        elif path.startswith("/handicap/"):
-            key = f"hdp:{path.removeprefix('/handicap/')}"
+        elif path.startswith("/asian/"):
+            key = f"ah:{path.removeprefix('/asian/')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -237,39 +296,55 @@ def test_parse_odds_page_missing_game_raises() -> None:
         srct.parse_odds_page(b"var x=1;")
 
 
-def test_parse_handicap_page_three_row_shapes() -> None:
-    payload = srct.parse_handicap_page(SAMPLE_HANDICAP_BYTES)
-    rows = payload["rows"]
-    assert len(rows) == 3  # 表头行不产数据
-    suspended, live, early = rows
-    assert (suspended["status"], suspended["minute"], suspended["score"]) == (
-        "封",
-        "92",
-        "0-3",
-    )
-    assert suspended["home_water"] is None
-    assert (live["home_water"], live["line"], live["away_water"]) == (
-        "2.65",
-        "平手/半球",
-        "0.27",
-    )
-    assert live["change_time"] == "10-18 21:21"
-    assert (
-        early["home_water"],
-        early["line"],
-        early["away_water"],
-        early["status"],
-    ) == (
-        "0.80",
-        "受让平手/半球",
-        "1.05",
-        "即",
-    )
+def test_parse_asianodds_page_groups_and_multi() -> None:
+    payload = srct.parse_asianodds_page(SAMPLE_ASIANODDS_BYTES)
+    books = payload["books"]
+    assert len(books) == 5  # 3 家 × 主盘 + 两家多盘第二行
+    assert sorted({b["cid"] for b in books}, key=int) == ["1", "3", "8"]
+    first = books[0]
+    assert (first["cid"], first["name_raw"], first["multi"]) == ("1", "书商1 封", "盘1")
+    assert first["initial"] == {
+        "home_water": "0.93",
+        "line": "受让半球",
+        "away_water": "0.93",
+    }
+    assert first["latest"] == {
+        "home_water": "0.80",
+        "line": "平手",
+        "away_water": "1.02",
+    }
+    assert first["close"] == {
+        "home_water": "0.80",
+        "line": "受让平手/半球",
+        "away_water": "1.06",
+    }
+    # cid8 主盘：close=存档 changeDetail 盘前末行 / latest=92' 临场行（交叉验证）
+    b8 = next(b for b in books if b["cid"] == "8" and b["multi"] == "盘1")
+    assert b8["close"] == {
+        "home_water": "0.80",
+        "line": "受让平手/半球",
+        "away_water": "1.05",
+    }
+    assert b8["latest"] == {
+        "home_water": "2.65",
+        "line": "平手/半球",
+        "away_water": "0.27",
+    }
+    assert b8["initial"]["line"] == "受让半球"
+    multi = next(b for b in books if b["cid"] == "8" and b["multi"] == "盘2")
+    assert multi["name_raw"] == ""  # 多盘行名格空（贴源）
+    assert multi["initial"]["line"] == "受让平手/半球"
 
 
-def test_parse_handicap_page_not_change_table_raises() -> None:
-    with pytest.raises(srct.SrctContentError, match="亚赔变化表"):
-        srct.parse_handicap_page("乱码".encode("gb18030"))
+def test_parse_asianodds_page_empty_table_valid() -> None:
+    """老场无报价=合法空表（空≠无，定则 4）；坏响应另测。"""
+    payload = srct.parse_asianodds_page(SAMPLE_ASIANODDS_EMPTY_HTML.encode("utf-8"))
+    assert payload["books"] == []
+
+
+def test_parse_asianodds_page_not_ah_page_raises() -> None:
+    with pytest.raises(srct.SrctContentError, match="非亚指多庄页"):
+        srct.parse_asianodds_page("<html><body>乱码</body></html>".encode())
 
 
 def test_parse_stats_page_xg_and_legacy_keysets() -> None:
@@ -312,6 +387,8 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
     assert stats.raw_new == 12
     assert stats.parsed_ok == 13  # 12 端点 + 1 日页 bronze 行（切片 14）
     assert stats.xg_matches == 3  # 挪超场无 xG（老键集），其余三家有
+    assert stats.asian_odds_nonempty == 4  # 老季深度探针证据面（票 59 起接管）
+    assert stats.asian_odds_books == 20  # 4 场 × 5 逐盘行
     assert stats.scope_sids == SCOPE_SIDS
     assert stats.failed == {}
     assert stats.parse_failed == {}
@@ -320,12 +397,12 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
     assert store.verify_raw("srct", "day_page", DATE, ext=".htm")
     for sid in SCOPE_SIDS:
         assert store.verify_raw("srct", "odds_1x2d", sid, ext=".js")
-        assert store.verify_raw("srct", "asian_handicap", sid, ext=".html")
+        assert store.verify_raw("srct", "asian_odds", sid, ext=".html")
         assert store.verify_raw("srct", "match_stats", sid, ext=".html")
     # bronze：信封字段齐全、raw_sha 回溯到 checkpoint 的 raw 件、按数据集分文件
     for dataset, count in (
         ("odds_1x2d", 4),
-        ("asian_handicap", 4),
+        ("asian_odds", 4),
         ("match_stats", 4),
     ):
         rows = store.read_bronze("srct", dataset)
@@ -336,6 +413,9 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
             assert row["sid"] in SCOPE_SIDS
             assert row["parser_version"] == srct.BRONZE_VERSIONS[dataset]
             assert isinstance(row["fetched_at"], str)
+    ah_rows = store.read_bronze("srct", "asian_odds")
+    assert len(ah_rows[0]["payload"]["books"]) == 5  # 家数/逐盘行 bronze 可查
+    assert {b["cid"] for b in ah_rows[0]["payload"]["books"]} == {"1", "3", "8"}
     odds_rows = store.read_bronze("srct", "odds_1x2d")
     first = odds_rows[0]
     sha_in_checkpoint = (
@@ -391,7 +471,7 @@ def test_collect_day_resume_zero_refetch(tmp_path: Path) -> None:
     assert stats.raw_new == 0
     assert stats.bronze_repaired == 0
     # append-only 守卫：重跑零追加（每数据集行数不变，无重复行）
-    for dataset in ("odds_1x2d", "asian_handicap", "match_stats"):
+    for dataset in ("odds_1x2d", "asian_odds", "match_stats"):
         assert len(store.read_bronze("srct", dataset)) == 4
 
 
@@ -413,7 +493,7 @@ def test_collect_day_backoff_retries_then_failed(tmp_path: Path) -> None:
     assert stats.raw_new == 11
     assert stats.parsed_ok == 12  # 端点 + 日页 bronze 行
     store = CorpusStore(_settings(tmp_path).corpus_root)
-    assert store.verify_raw("srct", "asian_handicap", "2789205", ext=".html")
+    assert store.verify_raw("srct", "asian_odds", "2789205", ext=".html")
     assert store.verify_raw("srct", "odds_1x2d", "2711573", ext=".js")
 
 
@@ -435,12 +515,12 @@ def test_parse_failed_raw_kept_no_bronze_row(tmp_path: Path) -> None:
     assert len(store.read_bronze("srct", "odds_1x2d")) == 3  # 失败场无 bronze 行
 
 
-def test_handicap_content_error_counted(tmp_path: Path) -> None:
-    """亚盘伪 200（非变化表页）同样走解析失败计数。"""
+def test_asianodds_content_error_counted(tmp_path: Path) -> None:
+    """亚盘多庄页伪 200（页题缺）同样走解析失败计数。"""
     seen, routes = _transport_spy()
-    routes["hdp:2861202"] = httpx.Response(200, content=b"<html>garbage</html>")
+    routes["ah:2861202"] = httpx.Response(200, content=b"<html>garbage</html>")
     stats, _ = _collect(tmp_path, seen, routes, jitter=None)
-    assert "亚赔变化表" in stats.parse_failed["2861202:asian_handicap"]
+    assert "非亚指多庄页" in stats.parse_failed["2861202:asian_odds"]
 
 
 def test_day_page_content_404_fails_run(tmp_path: Path) -> None:
@@ -474,7 +554,7 @@ def test_unconfigured_endpoints_raise(
         "GOALX_SRCT_DAY_URL",
         "GOALX_SRCT_ODDS_URL",
         "GOALX_SRCT_ODDS_REFERER",
-        "GOALX_SRCT_HANDICAP_URL",
+        "GOALX_SRCT_ASIANODDS_URL",
         "GOALX_SRCT_STATS_URL",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -577,7 +657,10 @@ def test_cli_three_endpoint_seam(
     assert payload["xg_matches"] == 1  # 英超场统计页含 xG
     assert payload["parse_success_rate"] == 1.0
     store = CorpusStore(_settings(tmp_path).corpus_root)
-    for dataset in ("odds_1x2d", "asian_handicap", "match_stats"):
+    for dataset in ("odds_1x2d", "asian_odds", "match_stats"):
         rows = store.read_bronze("srct", dataset)
         assert len(rows) == 1
         assert rows[0]["raw_sha"] == store.raw_sha("srct", dataset, "2789205")
+    ah = store.read_bronze("srct", "asian_odds")[0]["payload"]["books"]
+    assert len(ah) == 5  # 3 家 5 逐盘行（fixture 面）
+    assert {b["cid"] for b in ah} == {"1", "3", "8"}

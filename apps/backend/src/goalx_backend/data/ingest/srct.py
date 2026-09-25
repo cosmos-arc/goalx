@@ -1,21 +1,28 @@
 """
-源T（srct）轨迹语料采集·切片 11：CorpusStore 骨架上的第一夜最小闭环。
+源T（srct）轨迹语料采集：CorpusStore 上的按日闭环（规格 v2，票 59 起）。
 
-单命令按日闭环：Over 日页（GB18030）发现 CorpusScope 场次 sid → 逐场拉
-1x2d 轨迹 → 每响应 gzip+sha256 落 CorpusStore raw/ → checkpoint 断点可续。
-bronze 解析层与另两端点在切片 12；夜班调度/预算/熔断的编排层在
-srct_night.py（本模块持有 NightBudget 语义，避免反向依赖）。
+单命令按日闭环：Over 日页（GB18030）发现 CorpusScope 场次 sid → 逐场按
+端点注册表拉页 → 每响应 gzip+sha256 落 CorpusStore raw/ → checkpoint
+断点可续。夜班调度/预算/熔断的编排层在 srct_night.py（本模块持有
+NightBudget 语义，避免反向依赖）。
+
+**端点集数据驱动（票 59）**：SPEC_ENDPOINTS 是
+`.scratch/goalx-quant/collection-spec.md` §一规格表的机器面——先改表再
+改码，新端点=一行注册表 + 一对抓取/解析函数；测试 test_ingest_srct_spec
+钉死注册表与规格一致（防规格再漂移）。changeDetail 单书亚盘轨迹已按
+规格 v2 撤采（历史两端点多庄页即得、当期轨迹由当期班快照自建），数据集
+常量留档供存量 silver 口径引用。
 
 口径沿 zucai/srcb 模式：网络薄（固定桌面 UA+对应 Referer）、解析纯函数、
-实测样本裁剪单测。HTTP 访问套件（用户裁定 2026-09-23）：httpx 客户端 +
-tenacity 重试 + limits 滑动窗口限流（MemoryStorage，不依赖外部存储）。
-防封基线（research/20 §九 定案 4）：3s±1s 抖动（间距）、20/分钟滑动窗口
-（硬顶）、传输失败指数退避重试、单页失败不炸整跑。端点 URL 模板从 config
-注入（代称红线：实名/路径不落码库，真值进本地 .env）。
+实测样本裁剪单测（书商名一律打码，代称红线）。HTTP 访问套件（用户裁定
+2026-09-23）：httpx 客户端 + tenacity 重试 + limits 滑动窗口限流
+（MemoryStorage，不依赖外部存储）。防封基线（research/20 §九 定案 4）：
+3s±1s 抖动（间距）、20/分钟滑动窗口（硬顶）、传输失败指数退避重试、
+单页失败不炸整跑。端点 URL 模板从 config 注入（代称红线：实名/路径不落
+码库，真值进本地 .env）。
 
-三时间口径：changeTime→published_at 属解析层（切片 12）；本切片只记
-抓取时刻 fetched_at（observed_at 语义）。行不带 fixture_id——身份绑定
-后置（定则 1）。
+三时间口径：源页时间→published_at 属 silver 层；采集只记抓取时刻
+fetched_at（observed_at 语义）。行不带 fixture_id——身份绑定后置（定则 1）。
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import cast
 
 import httpx
@@ -50,16 +58,20 @@ PARSE_VERSION = "srct_day_v1"
 SRCT_PROVIDER = "srct"
 DAY_DATASET = "day_page"
 ODDS_DATASET = "odds_1x2d"
-HANDICAP_DATASET = "asian_handicap"  # 亚盘变化表（锚定书商 cid 走 URL 模板）
-STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进）
+ASIANODDS_DATASET = "asian_odds"  # 亚盘多庄页（规格 v2 端点 3；初/即时/终三组）
+STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进；票 66 撤切 detail）
+# 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
+# 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
+HANDICAP_DATASET = "asian_handicap"
 # 每解析器独立版本（spec story 8：记录可追溯到确切解析器版本；修一个只
 # 重物化其数据集）。day_page=PARSE_VERSION（srct_day_v1）：一行=一日
-# CorpusScope 完赛场清单，silver fixture_universe 的唯一输入（切片 14）
+# CorpusScope 完场清单，silver fixture_universe 的唯一输入（切片 14）
 BRONZE_VERSIONS: dict[str, str] = {
     DAY_DATASET: PARSE_VERSION,
     ODDS_DATASET: "srct_odds_v1",
-    HANDICAP_DATASET: "srct_hdp_v1",
+    ASIANODDS_DATASET: "srct_ah_multi_v1",
     STATS_DATASET: "srct_stats_v1",
+    HANDICAP_DATASET: "srct_hdp_v1",
 }
 
 # CorpusScope 15 项（ADR-0010 定案 1）：日页联赛名按字面量精确匹配。
@@ -102,16 +114,15 @@ MAX_RETRIES = 3
 NIGHT_REQUEST_CAP = 8000
 FAILURE_STREAK_CAP = 5
 
-# 采集深度（票 18 老季分层，Phase2/3 扩展批）：全深=每场三端点；
-# 浅深=只 日页+1x2 轨迹 两请求（跳过 asian_handicap/match_stats——
-# checkpoint 不记跳过端点，升深重跑天然只补这两类）。判定/持久/探针
+# 采集深度（票 18 老季分层，Phase2/3 扩展批）：全深=每场全端点；
+# 浅深=只 日页+1x2 轨迹 两请求（浅深成员见 SPEC_ENDPOINTS.in_shallow——
+# checkpoint 不记跳过端点，升深重跑天然只补深端点）。判定/持久/探针
 # 编排在 srct_night.py
 DEPTH_FULL = "full"
 DEPTH_SHALLOW = "shallow"
 
 # 伪 200/坏响应按内容判别的标记
 _CONTENT_404_MARKER = "error_404.gif"
-_HANDICAP_TITLE_MARKER = "亚赔变化表"
 _STATS_MARKER = "var jsonData"
 
 _SID_RE = re.compile(r"analysis\((\d+)\)")
@@ -121,14 +132,60 @@ _TEAMS_RE = re.compile(r"\|([^|]{2,20})\|(\d+)\|-\|(\d+)\|([^|]{2,20})\|")
 _RANK_RE = re.compile(r"\[[^\]]{1,10}\]")
 
 
-_TIME_CELL_RE = re.compile(r"\d{2}-\d{2} \d{2}:\d{2}")
-_SCORE_CELL_RE = re.compile(r"\d+-\d+")
-# 亚盘行列位语义（实测三形态：临场 6/7 格、早盘 5 格、封盘 4 格）
-_TIME_IDX_LIVE = 5  # 临场行时间列
-_TIME_IDX_EARLY = 3  # 早盘/封盘行时间列
-_MIN_EARLY_CELLS = 4  # 封盘最少格数（分/比分/封/时间）
-_LIVE_STATUS_CELLS = 7  # 临场行含状态列的格数
-_EARLY_STATUS_CELLS = 5  # 早盘行含状态列的格数
+# —— 端点规格注册表（票 59）：collection-spec.md §一 的机器面 ——
+# 先改表再改码：新端点=本表一行 + _ENDPOINT_WIRING 一对抓取/解析；
+# test_ingest_srct_spec 钉死本表与规格表一致（防漂移契约）。
+#
+# 状态：active=采集面；retired=撤采留档（数据集常量供存量 silver 引用，
+# 不再进采集循环/升深补抓）。票 66 落地后 match_stats 转 retired、
+# 四新端点（票 60/61/62）转 active——本表是唯一改动点。
+@dataclass(frozen=True)
+class SpecEndpoint:
+    """规格表一行：数据集 / raw 扩展名 / 深度与状态成员资格。"""
+
+    dataset: str
+    ext: str
+    per_day: bool = False  # 日页=按日一键（不进每场端点循环）
+    in_shallow: bool = False  # 浅深（老季两请求层）是否包含
+    status: str = "active"
+
+
+SPEC_ENDPOINTS: tuple[SpecEndpoint, ...] = (
+    SpecEndpoint(DAY_DATASET, ".htm", per_day=True),
+    SpecEndpoint(ODDS_DATASET, ".js", in_shallow=True),
+    SpecEndpoint(ASIANODDS_DATASET, ".html"),
+    SpecEndpoint(STATS_DATASET, ".html"),
+    SpecEndpoint(HANDICAP_DATASET, ".html", status="retired"),
+)
+
+
+def match_endpoint_datasets(depth: str = DEPTH_FULL) -> tuple[str, ...]:
+    """该深度的每场端点数据集（注册表序；浅深只含 in_shallow 成员）。"""
+    return tuple(
+        spec.dataset
+        for spec in SPEC_ENDPOINTS
+        if spec.status == "active"
+        and not spec.per_day
+        and (depth == DEPTH_FULL or spec.in_shallow)
+    )
+
+
+def deep_endpoint_datasets() -> tuple[str, ...]:
+    """全深独占的每场端点（浅深跳过）：升深补抓判据与中断证据重放集。"""
+    shallow = set(match_endpoint_datasets(DEPTH_SHALLOW))
+    return tuple(d for d in match_endpoint_datasets() if d not in shallow)
+
+
+def retired_endpoint_datasets() -> tuple[str, ...]:
+    """撤采留档数据集（不进采集循环；常量供存量 silver/对账引用）。"""
+    return tuple(spec.dataset for spec in SPEC_ENDPOINTS if spec.status == "retired")
+
+
+# 亚盘多庄页：每数据行自带 changeDetail 链接（companyID=cid，大小写混见）；
+# 页题标记用于真页判别（空表≠坏页，定则 4）
+_ASIANODDS_CID_RE = re.compile(r"companyID=(\d+)", re.I)
+_ASIANODDS_TITLE_MARKER = "亚指指数"
+_ASIANODDS_MIN_CELLS = 12  # 数据行 ≥12 格：勾选/名/盘序 + 初/即时/终三组 + 详情
 
 
 def _js_var(text: str, name: str) -> str | None:
@@ -145,46 +202,6 @@ def _js_array_rows(text: str, name: str) -> list[str] | None:
     if block is None:
         return None
     return re.findall(r'"([^"]*)"', block.group(1))
-
-
-def _handicap_row(cells: list[str]) -> dict[str, object] | None:
-    """按时间列位置归一一行（临场 6/7 格、早盘 5 格、封盘 4 格；未识别 None）。"""
-    time_idx = next(
-        (i for i, cell in enumerate(cells) if _TIME_CELL_RE.fullmatch(cell)), None
-    )
-    if time_idx == _TIME_IDX_LIVE:  # 临场：分/比分/水/盘/水/时间(/状态)
-        return {
-            "minute": cells[0],
-            "score": cells[1],
-            "home_water": cells[2],
-            "line": cells[3],
-            "away_water": cells[4],
-            "change_time": cells[_TIME_IDX_LIVE],
-            "status": cells[6] if len(cells) >= _LIVE_STATUS_CELLS else None,
-        }
-    if (
-        time_idx == _TIME_IDX_EARLY and len(cells) >= _MIN_EARLY_CELLS
-    ):  # 早盘（水/盘/水/时间/早）或封盘（分/比分/封/时间）
-        if _SCORE_CELL_RE.fullmatch(cells[1]):
-            return {
-                "minute": cells[0],
-                "score": cells[1],
-                "home_water": None,
-                "line": None,
-                "away_water": None,
-                "change_time": cells[_TIME_IDX_EARLY],
-                "status": cells[2],  # 封（暂停报价时点）
-            }
-        return {
-            "minute": None,
-            "score": None,
-            "home_water": cells[0],
-            "line": cells[1],
-            "away_water": cells[2],
-            "change_time": cells[_TIME_IDX_EARLY],
-            "status": cells[4] if len(cells) >= _EARLY_STATUS_CELLS else None,
-        }
-    return None
 
 
 class SrctContentError(Exception):
@@ -262,12 +279,13 @@ class SrctCollectStats:
     day_page_cached: bool = False
     requests: int = 0  # 全部线上请求（含重试）
     raw_new: int = 0
-    skipped: int = 0  # 三端点全缓存的场次
+    skipped: int = 0  # 全端点 raw 缓存的场次
     parsed_ok: int = 0
     parse_failed: dict[str, str] = field(default_factory=dict)
     xg_matches: int = 0  # 统计页解析成功且含 xG 的场数（coverage 摘要）
     stats_nonempty: int = 0  # 统计页 stats 非空场数（票 18 老季深度探针证据）
-    handicap_nonempty: int = 0  # 亚盘 rows 非空场数（同上）
+    asian_odds_nonempty: int = 0  # 亚盘多庄页有报价行场数（同上，票 59 起接管）
+    asian_odds_books: int = 0  # 亚盘多庄页逐盘行累计（书商×多盘；CLI 摘要）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -351,10 +369,10 @@ def fetch_odds_js(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     return response.content
 
 
-def fetch_handicap_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
-    """拉一场亚盘变化表原始字节（GBK；锚定书商 cid 在 URL 模板内）。"""
+def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场亚盘多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
     response = client.get(
-        settings.srct_handicap_url.format(sid=sid),
+        settings.srct_asianodds_url.format(sid=sid),
         headers={"User-Agent": DESKTOP_UA},
         timeout=30.0,
     )
@@ -399,27 +417,52 @@ def parse_odds_page(body: bytes) -> dict[str, object]:
     }
 
 
-def parse_handicap_page(body: bytes) -> dict[str, object]:
-    """
-    亚盘变化表（GB18030）→ 归一行数组（临场/早盘/封盘三形态）。
+def _asianodds_triple(cells: list[str], start: int) -> dict[str, str | None]:
+    """水|盘|水 三格 → 贴源报价组（值归一归 silver；空串为源页空格）。"""
+    keys = ("home_water", "line", "away_water")
+    return {keys[i]: cells[start + i].strip() or None for i in range(3)}
 
-    行字段：minute/score/home_water/line/away_water/change_time/status，
-    缺列 None（值保留原串，浮点归一归 silver）。书商无数据=0 行（有效）。
+
+def parse_asianodds_page(body: bytes) -> dict[str, object]:
     """
-    text = body.decode("gb18030", errors="replace")
-    if _HANDICAP_TITLE_MARKER not in text:
-        msg = "handicap: 非亚赔变化表页（伪 200 或改版）"
+    亚盘多庄页（UTF-8）→ 逐书商逐盘行（每行一 changeDetail 链接=一书一盘）。
+
+    行结构（2026-09-25 实测，历史完场 14 家/47 行）：勾选|公司名+状态|盘序
+    |初(水盘水)|即时(水盘水)|终(水盘水)|详情。三组贴源存原文——
+    - initial=初盘（页方口径，可能与 changeDetail 首行水位差一拍：后者有截断先例）；
+    - latest=抓取时点最新价（完场后=场内末价，2026-09-25 实测与存档 92' 临场行一致）；
+    - close=终盘（完场后=盘前末价，实测与 changeDetail 盘前末行逐值一致）。
+
+    内容判别（定则 4 空≠无）：页题标记在而零书商行=合法空表（老场无报价，
+    books=[] 照常入 bronze）；标记缺/伪 200 图=坏响应抛 SrctContentError。
+    公司名原串入 bronze（语料数据面；repo 侧一律代称/打码）。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _ASIANODDS_TITLE_MARKER not in text or is_content_404(text):
+        msg = "asianodds: 非亚指多庄页（伪 200 或改版）"
         raise SrctContentError(msg)
-    rows: list[dict[str, object]] = []
-    for chunk in re.findall(r"<TR align=center[^>]*>(.*?)</TR>", text, re.S):
+    books: list[dict[str, object]] = []
+    for chunk in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S | re.I):
+        cid = _ASIANODDS_CID_RE.search(chunk)
+        if cid is None:
+            continue
         cells = [
-            re.sub(r"<[^>]+>", "", cell).strip()
-            for cell in re.findall(r"<TD[^>]*>(.*?)</TD>", chunk, re.S)
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
+            for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", chunk, re.S | re.I)
         ]
-        row = _handicap_row(cells)
-        if row is not None:
-            rows.append(row)
-    return {"rows": rows}
+        if len(cells) < _ASIANODDS_MIN_CELLS:
+            continue
+        books.append(
+            {
+                "cid": cid.group(1),
+                "name_raw": cells[1],  # 公司名+封/即状态原串（silver 层代称化）
+                "multi": cells[2] or "盘1",  # 多盘标记（盘2/盘3/…；空=主盘）
+                "initial": _asianodds_triple(cells, 3),
+                "latest": _asianodds_triple(cells, 6),
+                "close": _asianodds_triple(cells, 9),
+            }
+        )
+    return {"books": books}
 
 
 def parse_stats_page(body: bytes) -> dict[str, object]:
@@ -476,14 +519,22 @@ def _retrying(sleeper: Callable[[float], None]) -> Retrying:
     )
 
 
+# 活跃端点 → 必配 settings 字段（URL 模板；1x2 轨迹另需 Referer）
+_ENDPOINT_SETTINGS: dict[str, tuple[str, ...]] = {
+    DAY_DATASET: ("srct_day_url",),
+    ODDS_DATASET: ("srct_odds_url", "srct_odds_referer"),
+    ASIANODDS_DATASET: ("srct_asianodds_url",),
+    STATS_DATASET: ("srct_stats_url",),
+}
+
+
 def _require_endpoints(settings: Settings) -> None:
-    required = (
-        "srct_day_url",
-        "srct_odds_url",
-        "srct_odds_referer",
-        "srct_handicap_url",
-        "srct_stats_url",
-    )
+    required = [
+        field
+        for spec in SPEC_ENDPOINTS
+        if spec.status == "active"
+        for field in _ENDPOINT_SETTINGS[spec.dataset]
+    ]
     missing = [f"GOALX_{f.upper()}" for f in required if not getattr(settings, f)]
     if missing:
         msg = (
@@ -493,6 +544,10 @@ def _require_endpoints(settings: Settings) -> None:
         raise RuntimeError(msg)
 
 
+_FetchFn = Callable[[httpx.Client, Settings, str], bytes]
+_ParseFn = Callable[[bytes], dict[str, object]]
+
+
 @dataclass(frozen=True)
 class _EndpointSpec:
     """一场一个端点：数据集名 / raw 扩展名 / 拉取 / 解析。"""
@@ -500,41 +555,46 @@ class _EndpointSpec:
     dataset: str
     ext: str
     fetch: Callable[[str], bytes]
-    parse: Callable[[bytes], dict[str, object]]
+    parse: _ParseFn
+
+
+# 每场端点接线表：数据集 → (抓取, 解析)。新端点入列 = 注册表一行 + 此一对
+# （retired 数据集不接线——撤采后永不回采集循环）
+_ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
+    ODDS_DATASET: (fetch_odds_js, parse_odds_page),
+    ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
+    STATS_DATASET: (fetch_stats_page, parse_stats_page),
+}
 
 
 def _endpoint_specs(
     client: httpx.Client, settings: Settings, *, depth: str = DEPTH_FULL
 ) -> tuple[_EndpointSpec, ...]:
     """
-    ADR-0010 定案 2：全深=每场三请求（轨迹 / 亚盘 / 47 键统计）。
+    注册表驱动的每场端点集（票 59 数据驱动化）。
 
-    浅深（票 18 老季）只打轨迹端点——跳过端点不记 checkpoint，升深重跑
-    只补亚盘/统计。
+    全深=全部 active 每场端点；浅深=仅 in_shallow 成员（老季两请求层）；
+    retired 永不进；日页 per_day 不进（按日单独走 `_load_day_page`）。
     """
-    specs = (
-        _EndpointSpec(
-            ODDS_DATASET,
-            ".js",
-            lambda sid: fetch_odds_js(client, settings, sid),
-            parse_odds_page,
-        ),
-        _EndpointSpec(
-            HANDICAP_DATASET,
-            ".html",
-            lambda sid: fetch_handicap_page(client, settings, sid),
-            parse_handicap_page,
-        ),
-        _EndpointSpec(
-            STATS_DATASET,
-            ".html",
-            lambda sid: fetch_stats_page(client, settings, sid),
-            parse_stats_page,
-        ),
-    )
-    if depth == DEPTH_SHALLOW:
-        return tuple(spec for spec in specs if spec.dataset == ODDS_DATASET)
-    return specs
+    specs: list[_EndpointSpec] = []
+    for spec in SPEC_ENDPOINTS:
+        wiring = _ENDPOINT_WIRING.get(spec.dataset)
+        if (
+            wiring is None
+            or spec.status != "active"
+            or spec.per_day
+            or (depth != DEPTH_FULL and not spec.in_shallow)
+        ):
+            continue
+        specs.append(
+            _EndpointSpec(
+                dataset=spec.dataset,
+                ext=spec.ext,
+                fetch=partial(wiring[0], client, settings),
+                parse=wiring[1],
+            )
+        )
+    return tuple(specs)
 
 
 def _bronze_row(
@@ -612,11 +672,12 @@ def _day_payload(body: bytes) -> dict[str, object]:
 def _note_evidence(
     dataset: str, payload: dict[str, object], stats: SrctCollectStats
 ) -> None:
-    """票 18 探针证据计数：统计页 stats 非空 / 亚盘 rows 非空（新旧两路径共用）。"""
+    """票 18 探针证据计数：统计页 stats 非空 / 亚盘多庄页有报价行（新旧两路径共用）。"""
     if dataset == STATS_DATASET and payload.get("stats"):
         stats.stats_nonempty += 1
-    elif dataset == HANDICAP_DATASET and payload.get("rows"):
-        stats.handicap_nonempty += 1
+    elif dataset == ASIANODDS_DATASET and payload.get("books"):
+        stats.asian_odds_nonempty += 1
+        stats.asian_odds_books += len(cast("list[object]", payload["books"]))
 
 
 def _bronze_append(
@@ -658,7 +719,7 @@ def _handle_cached(
 ) -> None:
     """Raw 在缓存：bronze 齐则纯跳过；缺（中断窗口）则本地重解析回补，零重抓。"""
     if in_bronze:
-        if dataset in (HANDICAP_DATASET, STATS_DATASET):
+        if dataset in deep_endpoint_datasets():
             # 票 18：中断探针日续传时，已落库深端点的证据要从缓存重放
             # （宁可错升不错漏——漏=数据永久缺口）；xg_matches 不重复记
             _note_evidence(
@@ -755,7 +816,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     depth: str = DEPTH_FULL,
 ) -> SrctCollectStats:
     """
-    一日闭环：日页发现 sid → 每场三端点（轨迹/亚盘/统计）→ raw+bronze。
+    一日闭环：日页发现 sid → 每场按注册表端点集 → raw+bronze。
 
     断点续传：日页与每场每端点以 (provider, dataset, key) 查 checkpoint，
     已完成零重抓（日页从 raw 本地重解析）。rate_limiter 缺省每次运行新建
@@ -765,7 +826,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     中断点前的进度已全部落库，次夜按 checkpoint 续传。
 
     depth（票 18）：shallow 只打 日页+1x2 轨迹（老季浅深）；跳过端点不记
-    checkpoint——升深重跑按缓存只补亚盘/统计，零重抓。
+    checkpoint——升深重跑按缓存只补深端点，零重抓（端点集见 SPEC_ENDPOINTS）。
     """
     datetime.strptime(date, "%Y-%m-%d")  # 键格式确定性
     _require_endpoints(settings)
@@ -814,7 +875,7 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
                     store, dataset, spec.parse, sid, page, utc_now_iso(), stats
                 )
             if cached == len(specs):
-                stats.skipped += 1  # 三端点 raw 全在缓存（回补不重抓）
+                stats.skipped += 1  # 全端点 raw 在缓存（回补不重抓）
             if budget is not None:
                 budget.note(len(stats.failed) > failed_before)
         except NightStop as stop:

@@ -21,10 +21,11 @@ checkpoint 库（srct_night_summaries，`goalx srct-night --list` 晨检）。
 熔断只对系统性故障（连续 5 次失败事件）生效。
 
 老季深度分层（票 18，Phase2/3 扩展批）：起始年 ≤2019 的季窗默认浅深
-（每场只打 日页+1x2 轨迹 两请求，跳过亚盘/统计——老场统计页大概率空，
-空页请求纯浪费）；每季首个 pending 日全深探针，统计/亚盘页非空即升全深
-（宁可错升不错漏）。判定落 checkpoint（srct_season_depth，跨夜不重探）；
-升深后浅深期 done 日自动重开三端点（day/odds 缓存命中，只补两新端点）。
+（每场只打 日页+1x2 轨迹 两请求，跳过深端点——老场深页大概率空，
+空页请求纯浪费）；每季首个 pending 日全深探针，统计/亚盘多庄页非空即
+升全深（宁可错升不错漏）。判定落 checkpoint（srct_season_depth，跨夜
+不重探）；升深后浅深期 done 日自动重开端点集（day/odds 缓存命中，只补
+深端点；端点集注册表驱动，票 59 起）。
 
 挂接：Prefect srct-night deployment 每日 01:00（schedules.py）；窗口逐日
 复判（越 08:00 当场收手），手工白天冒烟走 `--no-window`。
@@ -125,7 +126,7 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
     零证据须当日干净跑完且有场次才降浅深——中断/任一失败/解析失败/零场
     都留待次夜下一 pending 日重探（不重探指已断案的季，见 srct_season_depth）。
     """
-    if stats.stats_nonempty or stats.handicap_nonempty:
+    if stats.stats_nonempty or stats.asian_odds_nonempty:
         return srct.DEPTH_FULL
     if stats.stopped is not None or stats.failed or stats.parse_failed:
         return None
@@ -192,6 +193,7 @@ def _depth_backfill_dates(
         if payload is not None:
             day_sids[str(row["sid"])] = srct.day_page_sids(payload)
     done = store.day_status_dates("done")
+    deep_datasets = srct.deep_endpoint_datasets()  # 注册表驱动（票 59 起）
     backfill: list[tuple[str, str]] = []
     for season in old_full:
         for day in reversed(season_dates(season, today)):
@@ -200,7 +202,7 @@ def _depth_backfill_dates(
             if any(
                 not store.has(srct.SRCT_PROVIDER, dataset, sid)
                 for sid in day_sids.get(day, [])
-                for dataset in (srct.HANDICAP_DATASET, srct.STATS_DATASET)
+                for dataset in deep_datasets
             ):
                 backfill.append((season.label, day))
     return backfill
