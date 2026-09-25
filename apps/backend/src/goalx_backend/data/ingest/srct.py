@@ -60,6 +60,9 @@ DAY_DATASET = "day_page"
 ODDS_DATASET = "odds_1x2d"
 ASIANODDS_DATASET = "asian_odds"  # 亚盘多庄页（规格 v2 端点 3；初/即时/终三组）
 OVERDOWN_DATASET = "over_down"  # 大小球多庄页（规格 v2 端点 4；与亚盘多庄同构）
+DETAIL_DATASET = (
+    "match_detail"  # 详情页（规格 v2 端点 5；xG/阵容/事件/场地，票 66 撤 stats 切此）
+)
 STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演进；票 66 撤切 detail）
 # 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
 # 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
@@ -72,6 +75,7 @@ BRONZE_VERSIONS: dict[str, str] = {
     ODDS_DATASET: "srct_odds_v1",
     ASIANODDS_DATASET: "srct_ah_multi_v1",
     OVERDOWN_DATASET: "srct_ou_multi_v1",
+    DETAIL_DATASET: "srct_detail_v1",
     STATS_DATASET: "srct_stats_v1",
     HANDICAP_DATASET: "srct_hdp_v1",
 }
@@ -157,6 +161,7 @@ SPEC_ENDPOINTS: tuple[SpecEndpoint, ...] = (
     SpecEndpoint(ODDS_DATASET, ".js", in_shallow=True),
     SpecEndpoint(ASIANODDS_DATASET, ".html"),
     SpecEndpoint(OVERDOWN_DATASET, ".html"),
+    SpecEndpoint(DETAIL_DATASET, ".html"),
     SpecEndpoint(STATS_DATASET, ".html"),
     SpecEndpoint(HANDICAP_DATASET, ".html", status="retired"),
 )
@@ -194,11 +199,14 @@ _MULTI_BOOK_MIN_CELLS = 12
 
 
 def _js_var(text: str, name: str) -> str | None:
-    """`var name="value"` 或 `var name=数值` 取值（缺变量 None）。"""
-    found = re.search(rf'var {name}=("([^"]*)"|[^;]*);', text)
+    """`var name="v"` / `var name='v'` / `var name=数值` 取值（缺变量 None）。"""
+    found = re.search(rf'var {name}\s*=\s*("([^"]*)"|\'([^\']*)\'|[^;]*)', text)
     if found is None:
         return None
-    return found.group(2) if found.group(2) is not None else found.group(1).strip()
+    for group in (found.group(2), found.group(3)):
+        if group is not None:
+            return group
+    return found.group(1).strip() or None
 
 
 def _js_array_rows(text: str, name: str) -> list[str] | None:
@@ -293,6 +301,7 @@ class SrctCollectStats:
     asian_odds_books: int = 0  # 亚盘多庄页逐盘行累计（书商×多盘；CLI 摘要）
     over_down_nonempty: int = 0  # 大小球多庄页有报价行场数（票 60 起）
     over_down_books: int = 0  # 大小球多庄页逐盘行累计（CLI 摘要）
+    detail_nonempty: int = 0  # 详情页有技统/首发场数（票 61 起）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
@@ -391,6 +400,17 @@ def fetch_overdown_page(client: httpx.Client, settings: Settings, sid: str) -> b
     """拉一场大小球多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
     response = client.get(
         settings.srct_overdown_url.format(sid=sid),
+        headers={"User-Agent": DESKTOP_UA},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def fetch_detail_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
+    """拉一场详情页原始字节（live 主机，UTF-8；实测免 Referer，2026-09-25）。"""
+    response = client.get(
+        settings.srct_detail_url.format(sid=sid),
         headers={"User-Agent": DESKTOP_UA},
         timeout=30.0,
     )
@@ -501,6 +521,153 @@ def parse_overdown_page(body: bytes) -> dict[str, object]:
     return {"books": _parse_multi_book_page(body, _OVERDOWN_TITLE_MARKER, "overdown")}
 
 
+# detail 详情页（live 主机，UTF-8，规格 v2 端点 5）：页题标记=现场分析。
+# 分区结构（2026-09-25 实测历史页 2025-05）：技统条 li.lists>div.data 三
+# span（主/名/客，当期页含 xG 行）；事件 eventtable>li；阵容 homeN/guestN
+# 标题（队名+阵型+教练）+ plays>home/guest 首发块（em.num+名）+ 替补块
+# （name>i 号）；头部 场地/天气/温度。xG 历史页可缺（老页真无，非坏页）。
+_DETAIL_TITLE_MARKER = "现场分析"
+_DETAIL_TECH_MIN_SPANS = 3  # 技统条行最少 span 数（主/名/客）
+_DETAIL_KICKOFF_RE = re.compile(r"var strTime = '([^']+)'")
+_DETAIL_VENUE_RE = re.compile(r"场地：\s*(.+?)\s*天气：\s*(.+?)\s*温度：\s*(\S+)")
+_DETAIL_REFEREE_RE = re.compile(r"主裁判[:：]\s*([^\s<]+)")
+_DETAIL_FORMATION_RE = re.compile(r"\d+(?:-\d+)+")
+_DETAIL_COACH_RE = re.compile(r"主教练[:：]\s*([^)<]+)")
+
+
+def _clean_html(fragment: str) -> str:
+    """去标签压空白（事件/头部等贴源清洗共用）。"""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip()
+
+
+def _detail_tech(text: str) -> list[dict[str, str]]:
+    """技统条 li.lists → (home, name, away) 三元组（值贴源字符串）。"""
+    rows: list[dict[str, str]] = []
+    for data in re.findall(
+        r"<li class='lists'>.*?<div class='data'>(.*?)</div>", text, re.S
+    ):
+        cells = [
+            _clean_html(c) for c in re.findall(r"<span[^>]*>(.*?)</span>", data, re.S)
+        ]
+        cells = [c for c in cells if c]
+        if len(cells) >= _DETAIL_TECH_MIN_SPANS:
+            rows.append({"home": cells[0], "name": cells[1], "away": cells[2]})
+    return rows
+
+
+def _detail_lineup(text: str) -> dict[str, object]:
+    """
+    阵容区：首发（em.num 号 + 球员名 + pid + 队长标）与替补（name>i 号）。
+
+    主客归属=该条目之前最近一次 class="home"/"guest" 容器标记（骨架实测：
+    plays>home 首发块→guest 首发块→替补 home/guest 块顺序稳定）。pid 取
+    setImgUrl(pid) 的球员 id；队长标=紧邻条目前的 captain div。
+    """
+    start = text.find("首发阵容")
+    seg = text[start:] if start >= 0 else ""
+    markers = sorted(
+        (m.start(), cls)
+        for cls in ("home", "guest")
+        for m in re.finditer(rf'class="{cls}"', seg)
+    )
+    starters: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    bench: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    for m in re.finditer(r"<div class='play'[^>]*>(.*?)</span>", seg, re.S):
+        chunk = m.group(0)
+        side = next((cls for pos, cls in reversed(markers) if pos <= m.start()), "home")
+        entry: dict[str, object] = {
+            "pid": None,
+            # 队长标在 play 块内部（<div class="captain"> 先于球员 span）
+            "captain": 'class="captain"' in chunk,
+        }
+        pid = re.search(r"setImgUrl\((\d+)\)", chunk)
+        if pid is not None:
+            entry["pid"] = pid.group(1)
+        num = re.search(r'<em class="num">\s*(\d+)\s*</em>', chunk)
+        if num is not None:
+            name = re.search(r"class='name'><a[^>]*>([^<]+)</a>", chunk)
+            entry.update(num=num.group(1), name=name.group(1) if name else None)
+            starters[side].append(entry)
+            continue
+        bench_num = re.search(
+            r"<div class='name'><i>\s*(\d+)\s*</i><a[^>]*>([^<]+)</a>", chunk
+        )
+        if bench_num is not None:
+            entry.update(num=bench_num.group(1), name=bench_num.group(2))
+            bench[side].append(entry)
+    return {
+        "home_starters": starters["home"],
+        "away_starters": starters["guest"],
+        "home_bench": bench["home"],
+        "away_bench": bench["guest"],
+    }
+
+
+def parse_detail_page(body: bytes) -> dict[str, object]:
+    """
+    Detail 详情页（UTF-8）→ meta/tech/events/lineup 分区（bronze 贴源）。
+
+    分区缺=空（老页无 xG/裁判等，空≠无，定则 4）；页题标记缺/伪 200 图
+    =坏响应抛 SrctContentError。与旧 47 键 stats 端点并存（票 61 expand：
+    独立数据集 match_detail，撤切在票 66）。事件保留清洗串（进球/助攻/
+    换人原文），字段级解读归 silver。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _DETAIL_TITLE_MARKER not in text or is_content_404(text):
+        msg = "detail: 非详情分析页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    head_window = _clean_html(
+        text[: text.find("首发阵容") if "首发阵容" in text else 4000]
+    )
+    venue = _DETAIL_VENUE_RE.search(head_window)
+    referee = _DETAIL_REFEREE_RE.search(head_window)
+    formations: dict[str, str | None] = {}
+    coaches: dict[str, str | None] = {}
+    for side, cls in (("home", "homeN"), ("away", "guestN")):
+        block = re.search(rf'class="{cls}"[^>]*>(.*?)</div>', text, re.S)
+        if block is not None:
+            seg = block.group(1)
+            fmt = _DETAIL_FORMATION_RE.search(_clean_html(seg))
+            coach = _DETAIL_COACH_RE.search(seg)
+            formations[side] = fmt.group(0) if fmt else None
+            coaches[side] = coach.group(1).strip() if coach else None
+    event_start = text.find("eventtable")
+    events = (
+        [
+            _clean_html(li)
+            for li in re.findall(
+                r"<li[^>]*>(.*?)</li>", text[event_start : event_start + 12000], re.S
+            )
+            if _clean_html(li)
+        ]
+        if event_start >= 0
+        else []
+    )
+    tech = _detail_tech(text)
+    kickoff = _DETAIL_KICKOFF_RE.search(text)
+    return {
+        "meta": {
+            "home": _js_var(text, "homeTeamName"),
+            "away": _js_var(text, "guestTeamName"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+            "venue": venue.group(1).strip() if venue else None,
+            "weather": venue.group(2).strip() if venue else None,
+            "temperature": venue.group(3) if venue else None,
+            "referee": referee.group(1) if referee else None,
+            "home_formation": formations.get("home"),
+            "away_formation": formations.get("away"),
+            "home_coach": coaches.get("home"),
+            "away_coach": coaches.get("away"),
+        },
+        "tech": tech,
+        "has_xg": any(
+            "xg" in r["name"].lower() or "预期进球" in r["name"] for r in tech
+        ),
+        "events": events,
+        "lineup": _detail_lineup(text),
+    }
+
+
 def parse_stats_page(body: bytes) -> dict[str, object]:
     """
     47 键统计页（UTF-8）→ 键值数组 + xG coverage；缺键容忍（定则 4）。
@@ -561,6 +728,7 @@ _ENDPOINT_SETTINGS: dict[str, tuple[str, ...]] = {
     ODDS_DATASET: ("srct_odds_url", "srct_odds_referer"),
     ASIANODDS_DATASET: ("srct_asianodds_url",),
     OVERDOWN_DATASET: ("srct_overdown_url",),
+    DETAIL_DATASET: ("srct_detail_url",),
     STATS_DATASET: ("srct_stats_url",),
 }
 
@@ -601,6 +769,7 @@ _ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
     ODDS_DATASET: (fetch_odds_js, parse_odds_page),
     ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
     OVERDOWN_DATASET: (fetch_overdown_page, parse_overdown_page),
+    DETAIL_DATASET: (fetch_detail_page, parse_detail_page),
     STATS_DATASET: (fetch_stats_page, parse_stats_page),
 }
 
@@ -719,6 +888,11 @@ def _note_evidence(
     elif dataset == OVERDOWN_DATASET and payload.get("books"):
         stats.over_down_nonempty += 1
         stats.over_down_books += len(cast("list[object]", payload["books"]))
+    elif dataset == DETAIL_DATASET and (
+        payload.get("tech")
+        or cast("dict[str, object]", payload.get("lineup") or {}).get("home_starters")
+    ):
+        stats.detail_nonempty += 1
 
 
 def _bronze_append(

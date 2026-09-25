@@ -333,6 +333,7 @@ def _cmd_srct_collect(
         "asian_odds_books": stats.asian_odds_books,
         "over_down_nonempty": stats.over_down_nonempty,
         "over_down_books": stats.over_down_books,
+        "detail_nonempty": stats.detail_nonempty,
         "bronze_repaired": stats.bronze_repaired,
         "failed": stats.failed,
         "parse_version": srct.PARSE_VERSION,

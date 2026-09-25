@@ -145,6 +145,13 @@ OVERDOWN_HTML = (
     "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
     "</tr></table></body></html>"
 ).encode()
+# 详情页（票 61）：与旧 stats 并存（独立数据集）；tech 一行即有效页
+DETAIL_HTML = (
+    "<html><head><title>甲VS乙-现场分析-新球体育</title></head><body>"
+    "<ul><li class='lists'><div class='data'><span >3</span><span>角球</span>"
+    "<span >3</span></div></li></ul>"
+    "</body></html>"
+).encode()
 
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
@@ -162,6 +169,7 @@ def _settings(tmp_path: Path) -> Settings:
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
         srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_overdown_url="https://srct.test/overdown/{sid}",
+        srct_detail_url="https://srct.test/detail/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -177,6 +185,8 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"ah:{path.removeprefix('/asian/')}"
         elif path.startswith("/overdown/"):
             key = f"ou:{path.removeprefix('/overdown/')}"
+        elif path.startswith("/detail/"):
+            key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -193,6 +203,7 @@ def _odds_routes(sid: str, *, empty_odds: bool = False) -> dict[str, httpx.Respo
         ),
         f"ah:{sid}": httpx.Response(200, content=ASIANODDS_HTML),
         f"ou:{sid}": httpx.Response(200, content=OVERDOWN_HTML),
+        f"dt:{sid}": httpx.Response(200, content=DETAIL_HTML),
         f"stats:{sid}": httpx.Response(200, content=STATS_HTML),
     }
 
@@ -234,6 +245,7 @@ def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
     routes["odds:90011"] = httpx.Response(200, content=ODDS_JS_EMPTY)
     routes["ah:90011"] = httpx.Response(200, content=ASIANODDS_HTML)
     routes["ou:90011"] = httpx.Response(200, content=OVERDOWN_HTML)
+    routes["dt:90011"] = httpx.Response(200, content=DETAIL_HTML)
     routes["stats:90011"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)

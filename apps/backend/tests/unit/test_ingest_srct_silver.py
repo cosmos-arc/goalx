@@ -71,6 +71,13 @@ OVERDOWN_BYTES = (
     "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
     "</tr></table></body></html>"
 ).encode()
+# 详情页（票 61）：与旧 stats 并存（独立数据集）；tech 一行即有效页
+DETAIL_BYTES = (
+    "<html><head><title>甲VS乙-现场分析-新球体育</title></head><body>"
+    "<ul><li class='lists'><div class='data'><span >3</span><span>角球</span>"
+    "<span >3</span></div></li></ul>"
+    "</body></html>"
+).encode()
 STATS_HTML = (
     '<html><body><script>var jsonData = {"techStat":{"itemList":['
     '{"home":{"value":0.71},"away":{"value":1.68},"name":"预期进球",'
@@ -87,6 +94,7 @@ def _settings(tmp_path: Path, db_path: Path | None = None) -> Settings:
         srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
         srct_asianodds_url="https://srct.test/asian/{sid}",
         srct_overdown_url="https://srct.test/overdown/{sid}",
+        srct_detail_url="https://srct.test/detail/{sid}cn.htm",
         srct_stats_url="https://srct.test/shijian/{sid}.htm",
     )
 
@@ -102,6 +110,8 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
             key = f"ah:{path.removeprefix('/asian/')}"
         elif path.startswith("/overdown/"):
             key = f"ou:{path.removeprefix('/overdown/')}"
+        elif path.startswith("/detail/"):
+            key = f"dt:{path.removeprefix('/detail/').removesuffix('cn.htm')}"
         else:
             key = f"stats:{path.removeprefix('/shijian/').removesuffix('.htm')}"
         if key not in routes:
@@ -122,6 +132,7 @@ def _collect_bronze(tmp_path: Path) -> CorpusStore:
         routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_BYTES)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_BYTES)
+        routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_BYTES)
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
