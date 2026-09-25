@@ -38,8 +38,10 @@ ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议�
 
 from __future__ import annotations
 
+import argparse
 from typing import cast
 
+from loguru import logger
 from prefect import serve
 from prefect.deployments.runner import RunnerDeployment
 from prefect.schedules import Schedule
@@ -60,9 +62,32 @@ from goalx_backend.flows import (
     weekly_refresh_flow,
 )
 
+# deployment 注册表（--only 过滤键；票 63 停采期恢复用）
+DEPLOYMENTS: dict[str, str] = {
+    "daily-capture": "竞彩/预测/欧赔聚合双拍（停采中）",
+    "eu-odds-closing": "欧赔聚合收盘拍（已停用，票 63 前裁决）",
+    "draw-results-sync": "官方赛果同步（停采中）",
+    "draw-results-sweep": "官方赛果 08:00 补扫（停采中）",
+    "official-reconcile": "赛果日终审计（停采中）",
+    "odds-anchor-dense": "双锚临场采样（停采中）",
+    "srcb-collect": "源B 变化时序（已停用，票 63 前裁决）",
+    "srct-night": "源T 夜班回填（票 63 先行恢复）",
+    "understat-sync": "xG 特征同步（停采中）",
+    "daily-wrap": "结算批跑（停采中）",
+    "pool-snapshot": "彩池三拍（停采中）",
+    "intel-collect": "情报采集（停采中）",
+    "scout-line": "scout 概率（停采中）",
+    "weekly-refresh": "周刷新（停采中）",
+}
 
-def main() -> None:
-    """单进程服务协议 v1 的全部定时 deployment（随票累加）。"""
+
+def main(only: str | None = None) -> None:
+    """
+    单进程服务协议 v1 的定时 deployment（随票累加）。
+
+    only=逗号分隔 deployment 键——停采期只服务指定面（票 63：源T 夜班
+    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；缺省全量（原行为）。
+    """
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
         RunnerDeployment,
@@ -183,23 +208,48 @@ def main() -> None:
             schedule=Schedule(cron="10 6 * * 1", timezone="Asia/Shanghai"),
         ),
     )
+    deployments: dict[str, RunnerDeployment] = {
+        "daily-capture": daily,
+        "eu-odds-closing": closing,
+        "draw-results-sync": draw_sync,
+        "draw-results-sweep": draw_sync_sweep,
+        "official-reconcile": official_reconcile,
+        "understat-sync": understat,
+        "odds-anchor-dense": anchor_dense,
+        "srcb-collect": srcb_collect_deploy,
+        "srct-night": srct_night_deploy,
+        "weekly-refresh": weekly,
+        "daily-wrap": wrap,
+        "pool-snapshot": pool,
+        "intel-collect": intel,
+        "scout-line": scout,
+    }
+    selected = tuple(deployments.values())
+    if only:
+        wanted = {name.strip() for name in only.split(",") if name.strip()}
+        unknown = wanted - set(deployments)
+        if unknown:
+            known = sorted(deployments)
+            msg = f"--only 未知 deployment：{sorted(unknown)}（可用 {known}）"
+            raise SystemExit(msg)
+        selected = tuple(dep for key, dep in deployments.items() if key in wanted)
+        logger.info("schedules --only：{}（其余停采面不注册）", sorted(wanted))
     serve(
-        daily,
-        closing,
-        draw_sync,
-        draw_sync_sweep,
-        official_reconcile,
-        understat,
-        anchor_dense,
-        srcb_collect_deploy,
-        srct_night_deploy,
-        weekly,
-        wrap,
-        pool,
-        intel,
-        scout,
+        *selected,
     )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Prefect 调度入口（--only 停采期过滤）"
+    )
+    parser.add_argument(
+        "--only",
+        default="srct-night",
+        help=(
+            "逗号分隔要服务的 deployment 键"
+            "（缺省 srct-night=停采期票 63 口径；全量传 all）"
+        ),
+    )
+    args = parser.parse_args()
+    main(only=None if args.only == "all" else args.only)

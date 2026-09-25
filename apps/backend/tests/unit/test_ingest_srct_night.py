@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -593,6 +594,62 @@ def test_upgrade_backfill_refetches_only_deep_endpoints(tmp_path: Path) -> None:
     night3 = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)
     assert night3.requests == 0  # 补齐后零请求心跳（浅深完成日不再挂账）
     assert night3.dates_attempted == 0
+
+
+def test_phase1_done_day_backfills_new_spec_endpoints(tmp_path: Path) -> None:
+    """票 63：规格 v2 前完成的存量 done 日自动补新四端点（旧端点零重抓）。"""
+    seen, routes = _transport_spy()
+    _run(tmp_path, seen, routes)  # 夜1：六端点规格完成三日
+    wire_after_night1 = len(seen)
+    store = _store(tmp_path)
+    # 模拟旧三端点时代的存量日：抹去四新端点的 raw/checkpoint/bronze
+    for dataset in ("asian_odds", "over_down", "match_detail", "match_analysis"):
+        conn = store._checkpoint()
+        conn.execute(
+            "DELETE FROM raw_artifacts WHERE provider='srct' AND dataset=?",
+            (dataset,),
+        )
+        conn.commit()
+        shutil.rmtree(store.root / "raw" / "srct" / dataset, ignore_errors=True)
+        (store.root / "bronze" / "srct" / f"{dataset}.ndjson.gz").unlink(
+            missing_ok=True
+        )
+    store.close()
+    night2 = _run(tmp_path, seen, routes)
+    assert night2.pending_before == 0  # 无新 pending——纯补抓
+    assert night2.dates_done == 3  # 三 done 日全重开（day/odds/stats 缓存命中）
+    assert night2.requests == 3 * 4  # 每日只补 4 新端点
+    new_paths = {r.url.path for r in seen[wire_after_night1:]}
+    assert len(new_paths) == 12
+    assert all(
+        p.startswith(("/asian/", "/overdown/", "/detail/", "/analysis/"))
+        for p in new_paths
+    )
+    night3 = _run(tmp_path, seen, routes)
+    assert night3.requests == 0  # 补齐后零请求心跳（不再挂账）
+    assert night3.dates_attempted == 0
+
+
+def test_shallow_judged_old_season_not_reopened(tmp_path: Path) -> None:
+    """浅深判定季的 done 日不重开（深端点已判空，重开纯浪费）。"""
+    seen, routes = _transport_spy()
+    _old_day_routes(routes)
+    for sid in DATE_TO_SID.values():
+        routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
+        routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
+        routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    summary = _run(tmp_path, seen, routes, seasons=OLD_SEASONS)  # 夜1：全季浅深 done
+    assert summary.dates_done == 3
+    store = _store(tmp_path)
+    try:
+        backfill = srct_night._depth_backfill_dates(
+            store, TODAY, OLD_SEASONS, store.season_depths()
+        )
+    finally:
+        store.close()
+    assert backfill == []  # 浅深季零重开（对比：Phase1 日见上测）
 
 
 def test_probe_day_not_found_defers_decision(tmp_path: Path) -> None:
