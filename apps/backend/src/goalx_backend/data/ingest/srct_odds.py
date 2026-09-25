@@ -29,8 +29,10 @@
 - **写入**：分区流式（ParquetWriter 逐行组追加）——sid 按 (kickoff, sid)
   序流出、场内按 bookmaker_id/market/published/source_order 序到达，
   到达序即文件终序；禁止整表一次性物化（Phase1 ~80M 行量级）。输入侧
-  =所选轨迹原文常驻（§五 只约束事件行）——Phase1 全量重建前需落分块
-  选轨/外排，挂账见 design §八。
+  同样内存有界（票 19 外排）：选轨遍只记信封行号 → sid 按开球全局排序
+  连续切块（块序即输出全局序，排序契约不破）→ 载荷遍按块 spill 树内
+  暂存 NDJSON → 逐块加载转换逐块释放——内存峰值=单块，分块参数对输出
+  完全透明（design §八挂账已还）。
 """
 
 # pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
@@ -38,7 +40,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
 import statistics
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -46,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from itertools import pairwise
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol, TextIO, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -67,6 +71,10 @@ AH_ANCHOR_CID = "8"
 AH_ANCHOR_ID = f"srct:{SPACE_AH}:{AH_ANCHOR_CID}"
 # 流式写行组阈值（测试经 build_odds_change_events(chunk_rows=…) 注入）
 STREAM_CHUNK_ROWS = 200_000
+# 分块默认：内存峰值=单块，与语料总量无关（2026-09-25 真树实测 4.7K sid
+# 语料峰值 ~2.5GB vs 不分块 ~4.5GB；测试经 chunk_sids=… 注入，分块对输出
+# 完全透明——Phase1 15.5K sid 重建峰值仍由本值决定）
+STREAM_CHUNK_SIDS = 500
 _UNSORTABLE_MS = 1 << 62  # 不可解时间的排序垫底值（随后按 bad_time 跳行）
 
 _BEIJING = timezone(timedelta(hours=8))  # 中国无夏令时，固定偏移归一
@@ -156,6 +164,10 @@ class _BookEntry:
     last_ms: int = 0
     name_en: str | None = None
     name_zh: str | None = None
+    # 名字胜出轨迹键 (fetched_ms, sid)：流式按到达序吸收，等价于原
+    # sorted(decorated) 后行胜出（票 19 bookmaker 侧流式化，语义零变化）
+    en_key: tuple[int, str] | None = None
+    zh_key: tuple[int, str] | None = None
 
 
 _BOOKMAKER_SCHEMA = pa.schema(
@@ -496,7 +508,7 @@ class _EmitTracker:
 
 
 def _absorb_games(
-    bronze: dict[str, object], entries: dict[str, _BookEntry], fetched: int
+    bronze: dict[str, object], entries: dict[str, _BookEntry], fetched: int, sid: str
 ) -> None:
     """一场 1x2 轨迹的 game 数组聚合进字典条目（最新轨迹名胜出）。"""
     payload = bronze.get("payload")
@@ -505,6 +517,7 @@ def _absorb_games(
         if isinstance(payload, dict)
         else []
     )
+    key = (fetched, sid)
     for game in games:
         fields = str(game).split("|")
         if len(fields) <= _GAME_NAME_EN_IDX or not fields[0].strip():
@@ -514,10 +527,15 @@ def _absorb_games(
         entry.match_count += 1
         entry.first_ms = min(entry.first_ms, fetched)
         entry.last_ms = max(entry.last_ms, fetched)
-        if fields[_GAME_NAME_EN_IDX].strip():
-            entry.name_en = fields[_GAME_NAME_EN_IDX].strip()
-        if len(fields) > _GAME_NAME_ZH_IDX and fields[_GAME_NAME_ZH_IDX].strip():
-            entry.name_zh = fields[_GAME_NAME_ZH_IDX].strip()
+        name_en = fields[_GAME_NAME_EN_IDX].strip()
+        if name_en and (entry.en_key is None or key > entry.en_key):
+            entry.name_en = name_en
+            entry.en_key = key
+        if len(fields) > _GAME_NAME_ZH_IDX:
+            name_zh = fields[_GAME_NAME_ZH_IDX].strip()
+            if name_zh and (entry.zh_key is None or key > entry.zh_key):
+                entry.name_zh = name_zh
+                entry.zh_key = key
 
 
 def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
@@ -528,30 +546,36 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     + 覆盖画像（match_count 与语料内首/末观测时刻）。亚盘锚书商按
     `srct:ah:8` 登记仅当其有非空报价轨迹。**无 tier/is_core**（选书归
     模型/策略层，ADR-0011 决策 4 修订）。小表不分区、单文件。
+
+    输入路径流式（票 19）：选轨账本只记行号，载荷遍命中才物化单行——
+    内存=聚合条目，与轨迹总量无关（字典只需 game 数组与信封，无需 spill）。
     """
     report = SilverBookmakerReport(built_at=utc_now_iso())
     entries: dict[str, _BookEntry] = {}
-    trajectories = srct_silver.latest_bronze_rows(store, srct.ODDS_DATASET)
-    decorated = sorted(
-        (_fetched_ms(b.get("fetched_at")) or 0, sid, b)
-        for sid, b in trajectories.items()
-    )
-    for fetched, _, bronze in decorated:
-        _absorb_games(bronze, entries, fetched)
-    ah_seen: list[int] = []
-    for bronze in srct_silver.latest_bronze_rows(store, srct.HANDICAP_DATASET).values():
+    ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
+    for sid, bronze in srct_silver.iter_selected_rows(store, srct.ODDS_DATASET, ledger):
+        _absorb_games(bronze, entries, _fetched_ms(bronze.get("fetched_at")) or 0, sid)
+    ah_count = 0
+    ah_first = 0
+    ah_last = 0
+    hdp_ledger = srct_silver.latest_bronze_ledger(store, srct.HANDICAP_DATASET)
+    for _, bronze in srct_silver.iter_selected_rows(
+        store, srct.HANDICAP_DATASET, hdp_ledger
+    ):
         payload = bronze.get("payload")
         if isinstance(payload, dict) and payload.get("rows"):
             fetched = _fetched_ms(bronze.get("fetched_at"))
             if fetched is not None:
-                ah_seen.append(fetched)
+                ah_count += 1
+                ah_first = fetched if ah_count == 1 else min(ah_first, fetched)
+                ah_last = max(ah_last, fetched)
     # 锚书商独立成行：即便 1x2 联合空间真有同号 cid 也互不覆盖（前缀已隔离）
     anchor_book: _BookEntry | None = None
-    if ah_seen:
+    if ah_count:
         anchor_book = _BookEntry(
-            match_count=len(ah_seen),
-            first_ms=min(ah_seen),
-            last_ms=max(ah_seen),
+            match_count=ah_count,
+            first_ms=ah_first,
+            last_ms=ah_last,
             # 页面无名（design-15 §二），人工核名挂账
         )
         report.ah_anchor = True
@@ -589,7 +613,7 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     )
     tmp.replace(root / "data.parquet")
     report.rows = len(rows)
-    report.matches = len(trajectories)
+    report.matches = len(ledger)
     srct_silver.write_dataset_meta(
         root,
         {
@@ -835,11 +859,60 @@ def _emit_sid(
         )
 
 
+def _spill_name(chunk_idx: int) -> str:
+    return f"{chunk_idx:06d}.ndjson"
+
+
+def _spill_selected(
+    store: CorpusStore,
+    dataset: str,
+    ledger: dict[str, int],
+    chunk_of: dict[str, int],
+    spill_root: Path,
+) -> None:
+    """
+    载荷遍（票 19 spill 步）：单次流过 bronze，选中行按块写暂存 NDJSON。
+
+    与 iter_selected_rows 不同：原文透传零 json.loads——spill 保字节，
+    未选中行连解析都不付。
+    """
+    want = {lineno: sid for sid, lineno in ledger.items()}
+    handles: dict[int, TextIO] = {}
+    try:
+        for lineno, line in enumerate(
+            store.iter_bronze_lines(srct.SRCT_PROVIDER, dataset)
+        ):
+            sid = want.get(lineno)
+            if sid is None:
+                continue  # 旧版本/已被后行胜出的轨迹：不物化
+            idx = chunk_of[sid]
+            fh = handles.get(idx)
+            if fh is None:
+                # 追加模式：odds/hdp 两遍共用块文件（目录已先清空，首写即建）
+                fh = (spill_root / _spill_name(idx)).open("a", encoding="utf-8")
+                handles[idx] = fh
+            fh.write(line + "\n")
+    finally:
+        for fh in handles.values():
+            fh.close()
+
+
 def build_odds_change_events(
-    store: CorpusStore, *, chunk_rows: int = STREAM_CHUNK_ROWS
+    store: CorpusStore,
+    *,
+    chunk_rows: int = STREAM_CHUNK_ROWS,
+    chunk_sids: int = STREAM_CHUNK_SIDS,
 ) -> SilverOddsReport:
     """
     重物化 silver odds_change_event（幂等；两数据集 bronze 当前版本）。
+
+    输入路径内存有界（票 19 外排三步）：① 选轨遍只记信封行号；② sid 按
+    (kickoff, sid) 全局排序后连续切块——块内连续块间有序，**块序即输出
+    全局序**（排序契约不破），单次流过 bronze 把选中行按块 spill 树内
+    暂存 NDJSON；③ 逐块加载→现有转换逻辑逐场执行→分区 writer 跨块追加
+    →释放→下一块。内存峰值=单块，与语料总量无关；分块参数对输出完全
+    透明（字节级）。孤儿场排序垫后，天然归末块。暂存目录处理完即删，
+    异常残留由下次重建先行清空（重跑幂等）。
 
     流出序=文件终序：sid 按 (kickoff, sid)（孤儿垫后），场内先 1x2（cid
     升序）后 ah，书内 (published_at, source_order) 升序。分区取 fixture
@@ -847,8 +920,8 @@ def build_odds_change_events(
     """
     report = SilverOddsReport(built_at=utc_now_iso())
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
-    odds_traj = srct_silver.latest_bronze_rows(store, srct.ODDS_DATASET)
-    hdp_traj = srct_silver.latest_bronze_rows(store, srct.HANDICAP_DATASET)
+    odds_ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
+    hdp_ledger = srct_silver.latest_bronze_ledger(store, srct.HANDICAP_DATASET)
     root = store.root / "silver" / srct.SRCT_PROVIDER / ODDS_DATASET
     out = _StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
@@ -858,12 +931,37 @@ def build_odds_change_events(
         kickoff = cast("datetime", fixture["kickoff"]) if fixture else datetime.min
         return (fixture is None, kickoff, sid)
 
+    sids = sorted(set(odds_ledger) | set(hdp_ledger), key=_sid_sort_key)
+    size = max(1, chunk_sids)
+    chunks = [sids[start : start + size] for start in range(0, len(sids), size)]
+    chunk_of = {sid: idx for idx, part in enumerate(chunks) for sid in part}
+
+    spill_root = store.root / "tmp" / "srct_odds_spill"
+    if spill_root.exists():  # 上次异常退出的残留：先清再跑
+        shutil.rmtree(spill_root)
+    spill_root.mkdir(parents=True)
     try:
-        for sid in sorted(set(odds_traj) | set(hdp_traj), key=_sid_sort_key):
-            _emit_sid(
-                sid, meta, odds_traj.get(sid), hdp_traj.get(sid), report, out, tracker
-            )
+        for dataset, ledger in (
+            (srct.ODDS_DATASET, odds_ledger),
+            (srct.HANDICAP_DATASET, hdp_ledger),
+        ):
+            _spill_selected(store, dataset, ledger, chunk_of, spill_root)
+        for idx, part in enumerate(chunks):
+            odds_map: dict[str, dict[str, object]] = {}
+            hdp_map: dict[str, dict[str, object]] = {}
+            with (spill_root / _spill_name(idx)).open(encoding="utf-8") as fh:
+                for line in fh:
+                    row = json.loads(line)
+                    if row.get("dataset") == srct.HANDICAP_DATASET:
+                        hdp_map[str(row["sid"])] = row
+                    else:
+                        odds_map[str(row["sid"])] = row
+            for sid in part:  # 块内序=全局序切片：输出与不分块字节级一致
+                _emit_sid(
+                    sid, meta, odds_map.get(sid), hdp_map.get(sid), report, out, tracker
+                )
     finally:
+        shutil.rmtree(spill_root, ignore_errors=True)
         partitions, stale = out.close()
     report.partitions = partitions
     report.stale_partitions_removed = stale

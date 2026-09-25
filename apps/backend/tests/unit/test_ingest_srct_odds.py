@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ from goalx_backend.cli import _cmd_srct_odds
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import srct, srct_odds
+from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 
 
 @pytest.fixture(autouse=True)
@@ -532,3 +533,124 @@ def test_empty_corpus_builds_meta_only(tmp_path: Path) -> None:
     assert (
         store.root / "silver" / "srct" / srct_odds.ODDS_DATASET / "_meta.json"
     ).exists()
+
+
+# ---- 票 19：分块选轨 + 外排（输入侧内存有界化） ----
+
+
+def _report_payload(report: object) -> dict[str, Any]:
+    return {k: v for k, v in asdict(report).items() if k != "built_at"}
+
+
+def test_chunking_transparent_byte_identical(tmp_path: Path) -> None:
+    """分块透明性：块=大（现状等价单块）与块=极小（逐场多 spill）字节一致。"""
+    store, _ = _collect_bronze(tmp_path)
+    root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET
+    try:
+        single = srct_odds.build_odds_change_events(store, chunk_sids=10**6)
+        digest_single = _tree_digest(root)
+        tiny = srct_odds.build_odds_change_events(store, chunk_sids=1)
+        digest_tiny = _tree_digest(root)
+    finally:
+        store.close()
+    assert digest_tiny == digest_single
+    assert _report_payload(tiny) == _report_payload(single)  # 记账也零漂移
+
+
+def test_spill_dir_cleaned_and_crash_leftover_safe_rerun(tmp_path: Path) -> None:
+    store, _ = _collect_bronze(tmp_path)
+    root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET
+    spill_root = store.root / "tmp" / "srct_odds_spill"
+    try:
+        srct_odds.build_odds_change_events(store, chunk_sids=1)
+        digest = _tree_digest(root)
+        leftover = spill_root / "000000.ndjson"  # 模拟异常退出残留
+        leftover.parent.mkdir(parents=True)
+        leftover.write_text("garbage\n")
+        srct_odds.build_odds_change_events(store, chunk_sids=2)
+    finally:
+        store.close()
+    assert not spill_root.exists()  # 处理完即删；残留先清再跑
+    assert _tree_digest(root) == digest  # 重跑幂等不受残留影响
+
+
+def test_ledger_selects_latest_row_and_filters_old_version(tmp_path: Path) -> None:
+    """选轨遍只装信封账本（结构保证：值全 int）；后行胜出+旧版本不可见。"""
+    store, _ = _collect_bronze(tmp_path)
+    try:
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {  # 同 sid 重抓：700001 轨迹只剩首报一行
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90001",
+                    "fetched_at": "2026-09-25T00:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "1" * 64,
+                    "payload": {
+                        "meta": {},
+                        "game": [_ODDS_GAMES[0]],
+                        "game_detail": [
+                            "700001^1.30|5.50|8.50|10-01 10:00|0.93|0.97|0.84|2025;"
+                        ],
+                    },
+                },
+                {  # 旧 parser_version：即使行序在后也不可见
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90002",
+                    "fetched_at": "2026-09-26T00:00:00+00:00",
+                    "parser_version": "srct_odds_v0",
+                    "raw_sha": "2" * 64,
+                    "payload": {"meta": {}, "game": [], "game_detail": []},
+                },
+            ],
+        )
+        ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
+        report = srct_odds.build_odds_change_events(store)
+    finally:
+        store.close()
+    assert all(isinstance(v, int) for v in ledger.values())  # 零物化账本
+    rows_90001 = [
+        r
+        for r in _odds_rows(store)
+        if r["sid"] == "90001" and r["bookmaker_id"] == "srct:1x2:9001"
+    ]
+    assert len(rows_90001) == 1  # 重抓轨迹（后行）胜出：只余首报
+    assert report.unmapped_gameid_rows == 1  # 90001 新轨迹无 700099；90002 旧版不可见
+    assert report.unexplained_gap == 0
+
+
+def test_bookmaker_name_latest_trajectory_wins(tmp_path: Path) -> None:
+    """字典名胜出跨重抓仍取最新轨迹（流式化后语义零变化）。"""
+    store, _ = _collect_bronze(tmp_path)
+    try:
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90001",
+                    "fetched_at": "2030-01-01T00:00:00+00:00",  # 必晚于采集真值
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "3" * 64,
+                    "payload": {
+                        "meta": {},
+                        "game": ["9001|700001|TestRenamed|1.30|5.50|8.50|"],
+                        "game_detail": [],
+                    },
+                }
+            ],
+        )
+        srct_odds.build_bookmakers(store)
+    finally:
+        store.close()
+    by_id = {r["bookmaker_id"]: r for r in _book_rows(store)}
+    sharp = by_id["srct:1x2:9001"]
+    assert sharp["name_en"] == "TestRenamed"  # 最新轨迹英文名胜出
+    assert sharp["name_zh_masked"] == "测试甲*"  # 新轨迹无遮罩名：旧值独立保留
+    assert sharp["match_count"] == 2  # 每 sid 只计选中轨迹（90002 未重抓）

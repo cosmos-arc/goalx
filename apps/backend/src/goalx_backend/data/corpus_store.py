@@ -28,7 +28,7 @@ import gzip
 import hashlib
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -262,6 +262,21 @@ class CorpusStore:
             return []
         lines = gzip.decompress(path.read_bytes()).decode("utf-8").splitlines()
         return [json.loads(line) for line in lines if line]
+
+    def iter_bronze_lines(self, provider: str, dataset: str) -> Iterator[str]:
+        """
+        逐行流式读 bronze NDJSON 原文（内存有界遍历；文件不存在静默空）。
+
+        票 19 选轨/spill 遍用——只解 gzip 不落整表（多 member 追加对
+        顺序读取透明）。调用方自行 json.loads 需要的行。
+        """
+        path = self.bronze_path(provider, dataset)
+        if not path.exists():
+            return
+        with gzip.open(path, mode="rt", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    yield line.rstrip("\n")
 
     def set_day_status(self, date: str, status: str) -> None:
         """记/改一日状态（done / not_found；夜班台账，幂等覆盖）。"""
