@@ -285,6 +285,7 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
     jitter: tuple[float, float] | None = srct.JITTER_RANGE,
     sleeper: Callable[[float], None] | None = None,
     rng: random.Random | None = None,
+    jc_phase: bool = True,
 ) -> SrctNightSummary:
     """
     推进一夜 Phase1：pending 清单逐日 collect_day 至预算/熔断/清单尽。
@@ -380,7 +381,7 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
         summary.stop_reason = "completed"
     # JC 历史回填殿后相位（票 67）：源T 补欠优先，剩余预算推进十年回填
     # （官方域；预算尽/熔断已停则相位自然跳过——只在源T 干净跑完时挂）
-    if summary.stop_reason == "completed":
+    if jc_phase and summary.stop_reason == "completed":
         from goalx_backend.data.ingest import jc_backfill  # noqa: PLC0415 防环局部导入
 
         jc_stats = jc_backfill.night_backfill_phase(

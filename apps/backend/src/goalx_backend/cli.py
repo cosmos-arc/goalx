@@ -365,6 +365,7 @@ def _cmd_srct_night(
     now_fn: Callable[[], datetime] | None = None,
     sleeper: Callable[[float], None] | None = None,
     seasons: tuple[srct_night.SeasonWindow, ...] | None = None,
+    jc_phase: bool = True,
 ) -> None:
     """
     源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1；--list 只读查摘要。
@@ -395,6 +396,7 @@ def _cmd_srct_night(
                     request_cap=args.request_cap,
                     sleeper=sleeper,
                     seasons=seasons,
+                    jc_phase=jc_phase,
                 )
             payload = asdict(summary)
     finally:
