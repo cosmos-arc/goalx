@@ -295,7 +295,7 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     finally:
         store.close()
     rows = _book_rows(store)
-    assert report.rows == 3  # 两 1x2 书 + 亚盘锚
+    assert report.rows == 4  # 两 1x2 书 + 亚盘多庄锚 + 大小球多庄家（票 64）
     assert report.ah_anchor is True
     assert report.matches == 3
     fields = {
@@ -311,7 +311,7 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     assert "tier" not in fields  # 设计红线：无分层列
     assert "is_core" not in fields
     by_id = {r["bookmaker_id"]: r for r in rows}
-    assert set(by_id) == {"srct:1x2:9001", "srct:1x2:1129", "srct:ah:8"}
+    assert set(by_id) == {"srct:1x2:9001", "srct:1x2:1129", "srct:ah:8", "srct:ou:1"}
     sharp = by_id["srct:1x2:9001"]
     assert sharp["space"] == "1x2"
     assert sharp["cid"] == "9001"
@@ -321,8 +321,13 @@ def test_bookmaker_dictionary_shape_and_coverage(tmp_path: Path) -> None:
     assert sharp["first_seen"] <= sharp["last_seen"]
     anchor = by_id["srct:ah:8"]
     assert anchor["space"] == "ah"
-    assert anchor["name_en"] is None  # 页面无名
-    assert anchor["match_count"] == 3  # 三场亚盘均有报价轨迹
+    assert anchor["name_en"] is None  # 多庄页无 en 名
+    assert anchor["name_zh_masked"] == "书商8"  # 站点遮罩短名（票 64 代称化）
+    assert anchor["match_count"] == 6  # 多庄页 3 场 + 留档轨迹 3 场并集
+    ou_book = by_id["srct:ou:1"]
+    assert ou_book["space"] == "ou"
+    assert ou_book["name_zh_masked"] == "书商1"
+    assert ou_book["match_count"] == 3  # 三场大小球页各一书
 
 
 def test_odds_events_semantics_and_gate_accounting(tmp_path: Path) -> None:
@@ -546,7 +551,7 @@ def test_cli_srct_odds_payload(
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {"bookmaker", "odds", "duckdb"}
     assert payload["odds"]["unexplained_gap"] == 0
-    assert payload["bookmaker"]["rows"] == 3
+    assert payload["bookmaker"]["rows"] == 4
     assert payload["bookmaker"]["ah_anchor"] is True
     assert Path(payload["duckdb"]).exists()
 

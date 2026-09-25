@@ -261,12 +261,12 @@ class SilverOddsReport:
     built_at: str = ""
 
 
-def _beijing_ms(naive: datetime) -> int:
+def beijing_ms(naive: datetime) -> int:
     """北京墙钟 naive → epoch 毫秒（固定 UTC+8，不依赖机器时区）。"""
     return int(naive.replace(tzinfo=_BEIJING).timestamp() * 1000)
 
 
-def _fetched_ms(fetched_at: object) -> int | None:
+def fetched_ms(fetched_at: object) -> int | None:
     """信封 fetched_at（ISO 串）→ epoch 毫秒；不可解 None。"""
     try:
         return int(datetime.fromisoformat(str(fetched_at)).timestamp() * 1000)
@@ -288,7 +288,7 @@ def _nearest_year_ms(
         delta = abs((candidate - anchor).total_seconds())
         if best_delta is None or delta < best_delta:
             best_delta = delta
-            best_ms = _beijing_ms(candidate)
+            best_ms = beijing_ms(candidate)
     return best_ms
 
 
@@ -301,7 +301,7 @@ def _parse_detail_row(raw: str, source_order: int) -> _DetailRec:
         if found is not None and year.isdigit():
             month, day, hour, minute = (int(g) for g in found.groups())
             try:
-                published = _beijing_ms(datetime(int(year), month, day, hour, minute))
+                published = beijing_ms(datetime(int(year), month, day, hour, minute))
             except ValueError:
                 published = None
     prices = [srct_silver.to_float(v) for v in fields[0:3]]
@@ -402,7 +402,7 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-class _StreamingPartitions:
+class StreamingPartitions:
     """
     分区流式写（事件表专用）：buffer 达 chunk_rows 即落一行组。
 
@@ -420,6 +420,7 @@ class _StreamingPartitions:
         self.season_rows: Counter[str] = Counter()
 
     def append(self, season: str, competition: str, row: dict[str, object]) -> None:
+        """一行入缓冲（达 chunk_rows 落一行组；分区参数见类注释）。"""
         part = self._root / f"season={season}" / f"competition={competition}"
         buffer = self._buffers.setdefault(part, [])
         buffer.append(row)
@@ -523,7 +524,9 @@ def _absorb_games(
         if len(fields) <= _GAME_NAME_EN_IDX or not fields[0].strip():
             continue
         cid = fields[0].strip()
-        entry = entries.setdefault(cid, _BookEntry(first_ms=fetched, last_ms=fetched))
+        entry = entries.setdefault(
+            f"srct:{SPACE_1X2}:{cid}", _BookEntry(first_ms=fetched, last_ms=fetched)
+        )
         entry.match_count += 1
         entry.first_ms = min(entry.first_ms, fetched)
         entry.last_ms = max(entry.last_ms, fetched)
@@ -536,6 +539,50 @@ def _absorb_games(
             if name_zh and (entry.zh_key is None or key > entry.zh_key):
                 entry.name_zh = name_zh
                 entry.zh_key = key
+
+
+def _masked_name(name_raw: object) -> str | None:
+    """多庄页名格（"甲* 封"）→ 站点遮罩短名（剥状态尾巴；空 None）。"""
+    if not isinstance(name_raw, str) or not name_raw.strip():
+        return None
+    return name_raw.split()[0] or None
+
+
+def _absorb_market_books(store: CorpusStore, entries: dict[str, _BookEntry]) -> None:
+    """
+    多庄页（票 64）吸收进字典：ah/ou 两 companyID 空间的源身份+覆盖。
+
+    match_count 按 (sid, cid) 出现计（一家多盘同场只计一次）；站点遮罩
+    短名天然代称化——无 en 名条目落 name_zh_masked。
+    """
+    for space, dataset in (
+        (SPACE_AH, srct.ASIANODDS_DATASET),
+        ("ou", srct.OVERDOWN_DATASET),
+    ):
+        for sid, bronze in srct_silver.latest_bronze_rows(store, dataset).items():
+            payload = bronze.get("payload")
+            books = (
+                cast("list[dict[str, object]]", payload.get("books", []))
+                if isinstance(payload, dict)
+                else []
+            )
+            fetched = fetched_ms(bronze.get("fetched_at")) or 0
+            seen_cids: set[str] = set()
+            for book in books:
+                cid = str(book.get("cid"))
+                if cid in seen_cids:
+                    continue  # 多盘行同家同场只计一次
+                seen_cids.add(cid)
+                entry = entries.setdefault(
+                    f"srct:{space}:{cid}", _BookEntry(first_ms=fetched, last_ms=fetched)
+                )
+                entry.match_count += 1
+                entry.first_ms = min(entry.first_ms, fetched)
+                entry.last_ms = max(entry.last_ms, fetched)
+                name = _masked_name(book.get("name_raw"))
+                if name and entry.name_en is None:
+                    entry.name_zh = name
+                    entry.zh_key = (fetched, sid)
 
 
 def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
@@ -554,7 +601,8 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     entries: dict[str, _BookEntry] = {}
     ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
     for sid, bronze in srct_silver.iter_selected_rows(store, srct.ODDS_DATASET, ledger):
-        _absorb_games(bronze, entries, _fetched_ms(bronze.get("fetched_at")) or 0, sid)
+        _absorb_games(bronze, entries, fetched_ms(bronze.get("fetched_at")) or 0, sid)
+    _absorb_market_books(store, entries)
     ah_count = 0
     ah_first = 0
     ah_last = 0
@@ -564,47 +612,35 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     ):
         payload = bronze.get("payload")
         if isinstance(payload, dict) and payload.get("rows"):
-            fetched = _fetched_ms(bronze.get("fetched_at"))
+            fetched = fetched_ms(bronze.get("fetched_at"))
             if fetched is not None:
                 ah_count += 1
                 ah_first = fetched if ah_count == 1 else min(ah_first, fetched)
                 ah_last = max(ah_last, fetched)
-    # 锚书商独立成行：即便 1x2 联合空间真有同号 cid 也互不覆盖（前缀已隔离）
-    anchor_book: _BookEntry | None = None
+    # 撤采留档面（asian_handicap）轨迹在场数并入 ah:8 锚条目——多庄吸收
+    # 已建条目时合画像，未覆盖（纯留档语料）时兜底成行；页面无名则 name
+    # 留空（design-15 §二挂账，票 64 起多庄页可补遮罩名）
     if ah_count:
-        anchor_book = _BookEntry(
-            match_count=ah_count,
-            first_ms=ah_first,
-            last_ms=ah_last,
-            # 页面无名（design-15 §二），人工核名挂账
+        anchor = entries.setdefault(
+            AH_ANCHOR_ID, _BookEntry(first_ms=ah_first, last_ms=ah_last)
         )
+        anchor.match_count += ah_count
+        anchor.first_ms = min(anchor.first_ms, ah_first)
+        anchor.last_ms = max(anchor.last_ms, ah_last)
         report.ah_anchor = True
     rows: list[dict[str, object]] = [
         {
-            "bookmaker_id": f"srct:{SPACE_1X2}:{cid}",
-            "space": SPACE_1X2,
-            "cid": cid,
+            "bookmaker_id": bookmaker_id,
+            "space": bookmaker_id.split(":")[1],
+            "cid": bookmaker_id.split(":")[2],
             "name_en": entry.name_en,
             "name_zh_masked": entry.name_zh,
             "match_count": entry.match_count,
             "first_seen": entry.first_ms,
             "last_seen": entry.last_ms,
         }
-        for cid, entry in sorted(entries.items())
+        for bookmaker_id, entry in sorted(entries.items())
     ]
-    if anchor_book is not None:
-        rows.append(
-            {
-                "bookmaker_id": AH_ANCHOR_ID,
-                "space": SPACE_AH,
-                "cid": AH_ANCHOR_CID,
-                "name_en": anchor_book.name_en,
-                "name_zh_masked": anchor_book.name_zh,
-                "match_count": anchor_book.match_count,
-                "first_seen": anchor_book.first_ms,
-                "last_seen": anchor_book.last_ms,
-            }
-        )
     root = store.root / "silver" / srct.SRCT_PROVIDER / BOOKMAKER_DATASET
     root.mkdir(parents=True, exist_ok=True)
     tmp = root / "data.parquet.tmp"
@@ -635,7 +671,7 @@ def _append_1x2_rows(
     observed_ms: int | None,
     bookmaker_id: str,
     kept: list[_DetailRec],
-    out: _StreamingPartitions,
+    out: StreamingPartitions,
 ) -> None:
     """一书保留行 → 事件行（亚盘侧列全 None；行构造两 market 对称）。"""
     for rec in kept:
@@ -672,12 +708,12 @@ def _emit_1x2_events(
     partition: tuple[str, str],
     kickoff_ms: int | None,
     report: SilverOddsReport,
-    out: _StreamingPartitions,
+    out: StreamingPartitions,
 ) -> list[tuple[str, int]]:
     """一场 1x2 轨迹 → 变化事件；返回 (bookmaker_id, published) 保留行元数据。"""
     payload = bronze.get("payload")
     payload_dict = payload if isinstance(payload, dict) else {}
-    observed = _fetched_ms(bronze.get("fetched_at"))
+    observed = fetched_ms(bronze.get("fetched_at"))
     game_map: dict[str, str] = {}
     initials: dict[str, tuple[float, float, float] | None] = {}
     for game in cast("list[object]", payload_dict.get("game", [])):
@@ -733,7 +769,7 @@ def _emit_ah_events(
     kickoff_ms: int | None,
     anchor: datetime | None,
     report: SilverOddsReport,
-    out: _StreamingPartitions,
+    out: StreamingPartitions,
 ) -> list[tuple[str, int]]:
     """一场亚盘轨迹 → 变化事件（年份推断/线值归一/上下文列随行）。"""
     payload = bronze.get("payload")
@@ -750,7 +786,7 @@ def _emit_ah_events(
         # 无锚即无年可推：整场记坏时间行（留痕不丢账）
         report.bad_time_rows += len(raw_rows)
         return []
-    observed = _fetched_ms(bronze.get("fetched_at"))
+    observed = fetched_ms(bronze.get("fetched_at"))
     parsed: list[_AhRec] = []
     for idx, row in enumerate(cast("list[dict[str, object]]", raw_rows)):
         found = _TIME_RE.fullmatch(str(row.get("change_time") or "").strip())
@@ -827,7 +863,7 @@ def _emit_sid(
     odds_bronze: dict[str, object] | None,
     hdp_bronze: dict[str, object] | None,
     report: SilverOddsReport,
-    out: _StreamingPartitions,
+    out: StreamingPartitions,
     tracker: _EmitTracker,
 ) -> None:
     """一场 → 两 market 事件（分区/年份锚/记账注册；1x2 先 ah 后=文件序）。"""
@@ -839,7 +875,7 @@ def _emit_sid(
     else:
         kickoff = cast("datetime", fixture["kickoff"])
         partition = (srct_silver.season_of(kickoff), str(fixture["league"]))
-        kickoff_ms = _beijing_ms(kickoff)
+        kickoff_ms = beijing_ms(kickoff)
     if odds_bronze is not None:
         tracker.register(
             sid,
@@ -923,7 +959,7 @@ def build_odds_change_events(
     odds_ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
     hdp_ledger = srct_silver.latest_bronze_ledger(store, srct.HANDICAP_DATASET)
     root = store.root / "silver" / srct.SRCT_PROVIDER / ODDS_DATASET
-    out = _StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
+    out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
 
     def _sid_sort_key(sid: str) -> tuple[bool, datetime, str]:

@@ -57,6 +57,7 @@ from goalx_backend.data.ingest import (
     openfootball,
     sporttery,
     srct,
+    srct_market,
     srct_night,
     srct_odds,
     srct_silver,
@@ -461,6 +462,36 @@ def _cmd_srct_odds(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_market(
+    args: argparse.Namespace,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """
+    源T 规格v2 四新端点 silver 重物化 + DuckDB 桥（票 64）。
+
+    market_quote（asian_odds+over_down 两 bronze → 初/即时/终报价表）、
+    match_detail / match_analysis 按场摘要从 bronze 幂等重建，
+    corpus.duckdb 视图刷新（含三新视图）。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        market_report = srct_market.build_market_quotes(store)
+        detail_report = srct_market.build_detail_faces(store)
+        analysis_report = srct_market.build_analysis_faces(store)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {
+        "market": asdict(market_report),
+        "detail": asdict(detail_report),
+        "analysis": asdict(analysis_report),
+        "duckdb": str(duckdb_path),
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_srct_gate(
     args: argparse.Namespace,
     *,
@@ -756,6 +787,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="源T 赔率事件重物化(票56切片15;bookmaker 字典+odds_change_event 幂等重建)",
     )
     sub.add_parser(
+        "srct-market",
+        help="重物化 market_quote/detail/analysis silver + duckdb 桥（票 64）",
+    )
+    sub.add_parser(
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
     )
@@ -807,6 +842,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
+        "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
