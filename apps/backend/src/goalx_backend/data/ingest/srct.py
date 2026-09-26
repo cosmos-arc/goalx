@@ -392,10 +392,13 @@ def fetch_odds_js(client: httpx.Client, settings: Settings, sid: str) -> bytes:
 
 
 def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
-    """拉一场亚盘多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
+    """拉一场亚盘多庄页原始字节（UTF-8；vip 域 2026-09-26 起强制 Referer）。"""
     response = client.get(
         settings.srct_asianodds_url.format(sid=sid),
-        headers={"User-Agent": DESKTOP_UA},
+        headers={
+            "User-Agent": DESKTOP_UA,
+            "Referer": settings.srct_odds_referer.format(sid=sid),
+        },
         timeout=30.0,
     )
     response.raise_for_status()
@@ -403,10 +406,13 @@ def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> 
 
 
 def fetch_overdown_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
-    """拉一场大小球多庄页原始字节（UTF-8；实测免 Referer，2026-09-25）。"""
+    """拉一场大小球多庄页原始字节（UTF-8；vip 域 2026-09-26 起强制 Referer）。"""
     response = client.get(
         settings.srct_overdown_url.format(sid=sid),
-        headers={"User-Agent": DESKTOP_UA},
+        headers={
+            "User-Agent": DESKTOP_UA,
+            "Referer": settings.srct_odds_referer.format(sid=sid),
+        },
         timeout=30.0,
     )
     response.raise_for_status()
@@ -425,10 +431,13 @@ def fetch_detail_page(client: httpx.Client, settings: Settings, sid: str) -> byt
 
 
 def fetch_analysis_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
-    """拉一场分析页原始字节（zq 主机，UTF-8；实测免 Referer，2026-09-25）。"""
+    """拉一场分析页原始字节（zq 主机，UTF-8；zq 域 2026-09-26 起强制 Referer）。"""
     response = client.get(
         settings.srct_analysis_url.format(sid=sid),
-        headers={"User-Agent": DESKTOP_UA},
+        headers={
+            "User-Agent": DESKTOP_UA,
+            "Referer": settings.srct_odds_referer.format(sid=sid),
+        },
         timeout=30.0,
     )
     response.raise_for_status()
