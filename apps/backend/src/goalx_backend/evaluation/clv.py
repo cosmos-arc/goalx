@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -75,8 +77,6 @@ CLOSE_BASIS_NOTE = (
     "legacy = 分层前共识口径行(历史不重算)；mixed = 串关跨基准"
 )
 
-SRCT_PINNACLE_BOOK = "srct:1x2:177"  # 源T 1x2d 百家行主锚（bookmaker 字典 space=1x2）
-
 DuckCon = duckdb.DuckDBPyConnection
 
 
@@ -102,13 +102,24 @@ def _exchange_back_probs(
     return om.normalized_implied(effective)
 
 
-def open_corpus_anchor() -> DuckCon | None:
-    """打开 corpus.duckdb 只读连接（票 75 srct 收盘锚）；缺席优雅降级 None。"""
+@contextmanager
+def corpus_anchor() -> Generator[DuckCon | None]:
+    """
+    Srct 收盘锚连接的统一开关（票 75）；库缺席优雅降级 None。
+
+    生产调用方（daily-wrap / clv-reconcile CLI）一律走本上下文管理器，
+    打开与关闭不散落（评审修正：去两处 open/close 样板）。
+    """
     try:
-        return corpus_duckdb.connect(get_settings())
+        con: DuckCon | None = corpus_duckdb.connect(get_settings())
     except (duckdb.Error, OSError) as exc:
         logger.warning("clv srct anchor unavailable, degraded: {}", exc)
-        return None
+        con = None
+    try:
+        yield con
+    finally:
+        if con is not None:
+            con.close()
 
 
 def srct_closing_prob(
@@ -126,7 +137,7 @@ def srct_closing_prob(
     本层只做 Shin 去水与基准标注。匹配两步确定性键见该函数 docstring。
     """
     triplet = corpus_duckdb.srct_pinnacle_closing_triplet(
-        duck_con, home, away, kickoff_utc, bookmaker_id=SRCT_PINNACLE_BOOK
+        duck_con, home, away, kickoff_utc
     )
     if triplet is None:
         return None

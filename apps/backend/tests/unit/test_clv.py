@@ -7,6 +7,7 @@ import pytest
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting.bets import BetDraft, create_bet_with_legs
+from goalx_backend.data import corpus_duckdb
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation import clv
 from goalx_backend.models import BetMode, LegInput, SnapshotInput, Tier
@@ -683,7 +684,7 @@ def seed_duck(
         con.execute(
             "INSERT INTO odds_change_event VALUES"
             " (?, ?, '1x2', ?::TIMESTAMPTZ, ?, ?, ?)",
-            [sid, clv.SRCT_PINNACLE_BOOK, published, h, d, a],
+            [sid, corpus_duckdb.SRCT_PINNACLE_BOOK, published, h, d, a],
         )
     return con
 
@@ -790,3 +791,37 @@ def test_reconcile_uses_srct_anchor_when_odds_api_dead(db) -> None:
     assert row["close_source"] == "srct_1x2_closing"
     report = clv.clv_report(db)
     assert report["by_close_basis"]["srct_pinnacle"]["bets"] == 1
+
+
+def test_srct_anchor_degrades_when_views_missing(db) -> None:
+    """corpus 库在而银层视图缺席 → 降级 None 不打挂对账（票 75 验收 5）。"""
+    import duckdb
+
+    empty_con = duckdb.connect(":memory:")  # 无 fixture_universe/odds_change_event
+    fixture = seed_fixture(db)
+    assert clv._closing_prob(db, fixture, "h", duck_con=empty_con) is None
+
+
+def test_corpus_anchor_contextmanager_closes(monkeypatch) -> None:
+    """corpus_anchor 上下文管理器：正常路径关闭连接；缺席路径降级 None。"""
+    closed: list[bool] = []
+
+    class FakeCon:
+        def close(self) -> None:
+            closed.append(True)
+
+    import goalx_backend.evaluation.clv as clv_mod
+
+    fake = FakeCon()
+    monkeypatch.setattr(clv_mod.corpus_duckdb, "connect", lambda _s: fake)
+    with clv_mod.corpus_anchor() as anchor:
+        assert anchor is fake
+    assert closed == [True]
+
+    def boom(_s: object) -> object:
+        raise OSError("no corpus")
+
+    monkeypatch.setattr(clv_mod.corpus_duckdb, "connect", boom)
+    with clv_mod.corpus_anchor() as anchor:
+        assert anchor is None
+    assert closed == [True]  # 缺席路径无连接可关

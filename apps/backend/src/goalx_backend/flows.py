@@ -239,15 +239,11 @@ def daily_wrap_flow() -> dict[str, object]:
     m3 = tasks.m3_evaluation()
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
-        # （corpus.duckdb 缺席时 open_corpus_anchor 优雅降级 None）
-        anchor = clv_mod.open_corpus_anchor()
-        try:
+        # （corpus_anchor 库缺席降级 None，不打断对账）
+        with clv_mod.corpus_anchor() as anchor:
             clv_stats: dict[str, Any] = asdict(
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )
-        finally:
-            if anchor is not None:
-                anchor.close()
         findings = len(audit_ledger(conn)["manual_review"])
     logger.info(
         "daily wrap: settlement={}, clv={}, audit_findings={}, m3={}",

@@ -1180,39 +1180,12 @@ def _apply_v20(conn: sqlite3.Connection) -> None:
     v20（票 73 扩列）：hist_matches 增大小球/亚盘开收均值 + 比赛统计列。
 
     research/27 缺口矩阵 P0/P1：fdhist O/U（Avg>2.5 族，线固按 2.5）与 AH
-    （多书均值两端点，AHh/AHCh 为均值盘口线）与源T 单书全程轨迹互补；
-    半场/射门/角球/牌/裁判为判别层特征与 HT 拆分验证面。追加列不改既有行
-    （重导幂等回填，v19 同型）；老季文件缺列解析为 NULL。
+    （多书均值，AHh/AHCh 为均值盘口线）与源T 单书全程轨迹互补；半场/射门/
+    角球/牌/裁判为判别层特征与 HT 拆分验证面。追加列不改既有行（重导幂等
+    回填，v19 同型）；老季文件缺列解析为 NULL。列清单单一事实源 =
+    HIST_EXTENDED_COLUMNS（data/results 的 upsert 同源消费，防漂移）。
     """
-    columns: tuple[tuple[str, str], ...] = (
-        ("avg_ou_over", "REAL"),
-        ("avg_ou_under", "REAL"),
-        ("avgc_ou_over", "REAL"),
-        ("avgc_ou_under", "REAL"),
-        ("ah_line", "REAL"),
-        ("avg_ah_home", "REAL"),
-        ("avg_ah_away", "REAL"),
-        ("ahc_line", "REAL"),
-        ("avgc_ah_home", "REAL"),
-        ("avgc_ah_away", "REAL"),
-        ("hthg", "INTEGER"),
-        ("htag", "INTEGER"),
-        ("htr", "TEXT"),
-        ("referee", "TEXT"),
-        ("shots_home", "INTEGER"),
-        ("shots_away", "INTEGER"),
-        ("shots_on_target_home", "INTEGER"),
-        ("shots_on_target_away", "INTEGER"),
-        ("corners_home", "INTEGER"),
-        ("corners_away", "INTEGER"),
-        ("fouls_home", "INTEGER"),
-        ("fouls_away", "INTEGER"),
-        ("yellow_home", "INTEGER"),
-        ("yellow_away", "INTEGER"),
-        ("red_home", "INTEGER"),
-        ("red_away", "INTEGER"),
-    )
-    for column, kind in columns:
+    for column, kind in HIST_EXTENDED_COLUMNS:
         conn.execute(f"ALTER TABLE hist_matches ADD COLUMN {column} {kind}")
 
 
@@ -1289,6 +1262,38 @@ def _apply_v22(conn: sqlite3.Connection) -> None:
     )
     conn.execute("DROP TABLE clv_records")
     conn.execute("ALTER TABLE clv_records_v22 RENAME TO clv_records")
+
+
+# 票 73：hist_matches 扩列清单单一事实源（(列名, SQLite 类型)）——
+# data/results.upsert_hist_matches 同源消费（v20 DDL ↔ upsert 列防漂移）。
+HIST_EXTENDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("avg_ou_over", "REAL"),
+    ("avg_ou_under", "REAL"),
+    ("avgc_ou_over", "REAL"),
+    ("avgc_ou_under", "REAL"),
+    ("ah_line", "REAL"),
+    ("avg_ah_home", "REAL"),
+    ("avg_ah_away", "REAL"),
+    ("ahc_line", "REAL"),
+    ("avgc_ah_home", "REAL"),
+    ("avgc_ah_away", "REAL"),
+    ("hthg", "INTEGER"),
+    ("htag", "INTEGER"),
+    ("htr", "TEXT"),
+    ("referee", "TEXT"),
+    ("shots_home", "INTEGER"),
+    ("shots_away", "INTEGER"),
+    ("shots_on_target_home", "INTEGER"),
+    ("shots_on_target_away", "INTEGER"),
+    ("corners_home", "INTEGER"),
+    ("corners_away", "INTEGER"),
+    ("fouls_home", "INTEGER"),
+    ("fouls_away", "INTEGER"),
+    ("yellow_home", "INTEGER"),
+    ("yellow_away", "INTEGER"),
+    ("red_home", "INTEGER"),
+    ("red_away", "INTEGER"),
+)
 
 
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (

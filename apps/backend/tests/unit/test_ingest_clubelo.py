@@ -8,6 +8,7 @@ from datetime import date
 import httpx
 import pytest
 
+from goalx_backend.config import Settings
 from goalx_backend.data.ingest import clubelo
 
 SNAPSHOT_CSV = (
@@ -44,10 +45,10 @@ def test_sync_snapshot_upserts_idempotently(db) -> None:
         return httpx.Response(200, text=SNAPSHOT_CSV)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    first = clubelo.sync_snapshot(db, client, day)
+    first = clubelo.sync_snapshot(db, Settings(), client, day)
     assert first.snapshot_rows == 2
     assert first.written == 2
-    second = clubelo.sync_snapshot(db, client, day)  # 幂等重跑
+    second = clubelo.sync_snapshot(db, Settings(), client, day)  # 幂等重跑
     assert second.snapshot_rows == 2
     assert second.written == 2  # upsert 冲突更新（区间延长），不翻倍
     rows = db.execute("SELECT COUNT(*) AS n FROM elo_ratings").fetchone()
@@ -85,7 +86,7 @@ def test_backfill_history_walks_clubs(db) -> None:
         raise httpx.ConnectError("boom")  # Bayern 拉取失败
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    stats = clubelo.backfill_history(db, client, day)
+    stats = clubelo.backfill_history(db, Settings(), client, day)
     assert stats.failed_clubs == ["Bayern Munich"]
     assert stats.history_rows == 2
     row = db.execute(
@@ -105,6 +106,7 @@ def test_sync_snapshot_raises_on_site_down() -> None:
     with pytest.raises(httpx.ConnectError):
         clubelo.sync_snapshot(
             sqlite3.connect(":memory:"),
+            Settings(),
             client,
             date(2026, 9, 25),
         )

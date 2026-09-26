@@ -397,11 +397,12 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
     日拍 = 单请求当日全量快照（09:10 调度）；backfill=True 在快照后逐队
     拉全历史区间（一次性，不进调度）。站点不可达时抛出由调用方处置。
     """
+    settings = get_settings()
     with task_conn() as conn, polite_client() as client:
         if backfill:
-            stats = clubelo.backfill_history(conn, client, date.today())
+            stats = clubelo.backfill_history(conn, settings, client, date.today())
         else:
-            stats = clubelo.sync_snapshot(conn, client, date.today())
+            stats = clubelo.sync_snapshot(conn, settings, client, date.today())
     return clubelo.stats_dict(stats)
 
 

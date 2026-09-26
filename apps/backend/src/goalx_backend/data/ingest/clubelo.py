@@ -1,7 +1,7 @@
 """
 clubelo Elo 评级层采集（票 74；research/27 缺口矩阵 C 区 P0）。
 
-免费无钥 CSV API（http://api.clubelo.com）：
+免费无钥 CSV API（settings.clubelo_base_url，缺省 https://api.clubelo.com）：
 - ``GET /{YYYY-MM-DD}`` = 该日全部俱乐部评级快照（单请求，日拍）；
 - ``GET /{ClubName}`` = 该队全历史区间行（回填，当日快照取清单后逐队）。
 
@@ -29,7 +29,8 @@ from datetime import date
 import httpx
 from loguru import logger
 
-BASE_URL = "http://api.clubelo.com"
+from goalx_backend.config import Settings
+
 REQUEST_GAP_SECONDS = 0.3  # 回填逐队礼貌限速（~600 请求 ≈ 3 分钟）
 _HEADERS = {
     "User-Agent": (
@@ -118,11 +119,13 @@ def _fetch_text(client: httpx.Client, url: str) -> str:
 
 
 def sync_snapshot(
-    conn: sqlite3.Connection, client: httpx.Client, day: date
+    conn: sqlite3.Connection, settings: Settings, client: httpx.Client, day: date
 ) -> EloSyncStats:
     """日拍：单请求取当日全量快照并 upsert。"""
     stats = EloSyncStats()
-    rows = parse_ratings(_fetch_text(client, f"{BASE_URL}/{day.isoformat()}"))
+    rows = parse_ratings(
+        _fetch_text(client, f"{settings.clubelo_base_url}/{day.isoformat()}")
+    )
     stats.snapshot_rows = len(rows)
     stats.written = upsert_ratings(conn, rows)
     conn.commit()
@@ -130,14 +133,15 @@ def sync_snapshot(
 
 
 def backfill_history(
-    conn: sqlite3.Connection, client: httpx.Client, day: date
+    conn: sqlite3.Connection, settings: Settings, client: httpx.Client, day: date
 ) -> EloSyncStats:
     """
     回填：当日快照取俱乐部清单 → 逐队全历史区间（幂等可断点重跑）。
 
-    单队拉取失败计数跳过不中断（fdhist failed_files 同型）。
+    单队拉取失败计数跳过不中断（fdhist failed_files 同型）；逐队提交——
+    中断后重跑只补未落库的队（评审修正：兑现"断点"承诺）。
     """
-    stats = sync_snapshot(conn, client, day)  # 顺带落当日快照
+    stats = sync_snapshot(conn, settings, client, day)  # 顺带落当日快照
     clubs = [
         str(row["club"])
         for row in conn.execute(
@@ -147,16 +151,18 @@ def backfill_history(
     stats.clubs = clubs
     for index, club in enumerate(clubs):
         try:
-            rows = parse_ratings(_fetch_text(client, f"{BASE_URL}/{club}"))
+            rows = parse_ratings(
+                _fetch_text(client, f"{settings.clubelo_base_url}/{club}")
+            )
         except httpx.HTTPError as exc:
             stats.failed_clubs.append(club)
             logger.warning("clubelo backfill failed, skipped: {} ({})", club, exc)
             continue
         stats.history_rows += len(rows)
         stats.written += upsert_ratings(conn, rows)
+        conn.commit()  # 逐队提交：断点重跑从缺失队续起
         if index < len(clubs) - 1:
             time.sleep(REQUEST_GAP_SECONDS)
-    conn.commit()
     return stats
 
 
