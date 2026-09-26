@@ -65,7 +65,7 @@ def day_missing_mids(
     return missing, len(mids)
 
 
-def backfill_range(  # noqa: PLR0913 接缝参数随防封/预算/抽样累加
+def backfill_range(  # noqa: C901, PLR0912, PLR0913, PLR0915 日循环+日账+预算分支随护栏累加
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -83,12 +83,17 @@ def backfill_range(  # noqa: PLR0913 接缝参数随防封/预算/抽样累加
     day_cap：单日采集 mid 上限（抽样冒烟用；缺省全量）。
     """
     stats = JcBackfillStats(date_from=date_from, date_to=date_to)
+    done_days = store.jc_backfill_days("done")
     start = date.fromisoformat(date_to)
     end = date.fromisoformat(date_from)
     current = start
     while current >= end:
         day = current.isoformat()
         stats.days_attempted += 1
+        if day in done_days:
+            stats.days_done += 1  # 日账命中：零请求跳过（十年一轮后零心跳）
+            current -= timedelta(days=1)
+            continue
         try:
             budget.charge(1)  # 枚举（uniform 按日）也是线上请求
             missing, total = day_missing_mids(store, client, settings, day)
@@ -98,15 +103,21 @@ def backfill_range(  # noqa: PLR0913 接缝参数随防封/预算/抽样累加
         except (httpx.HTTPError, RuntimeError) as exc:
             stats.failed_days[day] = f"{type(exc).__name__}: {exc}"[:120]
             logger.warning("jc backfill {} 枚举失败（{}）", day, exc)
+            if sleep_seconds:
+                sleeper(sleep_seconds)  # 失败日也守间距（连败日不连发）
             current -= timedelta(days=1)
             continue
         stats.mids_seen += total
         if not missing:
             stats.days_done += 1
+            store.set_jc_backfill_day(day)  # 该日 mid 全采齐 → 入日账
+            if sleep_seconds:
+                sleeper(sleep_seconds)
             current -= timedelta(days=1)
             continue
         if day_cap is not None:
             missing = missing[:day_cap]
+        collected_all = True
         for mid in missing:
             before = jc.JcCollectStats()
             try:
@@ -114,13 +125,20 @@ def backfill_range(  # noqa: PLR0913 接缝参数随防封/预算/抽样累加
             except srct.NightStop as stop:
                 stats.stopped = stop.reason
                 return stats
-            budget.charge(before.requests)
+            try:
+                budget.charge(before.requests)  # 触顶=正常停（进度已落库）
+            except srct.NightStop as stop:
+                stats.stopped = stop.reason
+                return stats
             stats.matches_collected += before.bronze_new
             stats.empty += before.empty
             if before.failed:
+                collected_all = False  # 失败 mid 悬着：该日不入账（次夜续）
                 logger.warning("jc backfill {}:{} 失败 {}", day, mid, before.failed)
             if sleep_seconds:
                 sleeper(sleep_seconds)
+        if collected_all and (day_cap is None or len(missing) == total):
+            store.set_jc_backfill_day(day)  # 全量干净收齐才入账（day_cap 抽样不入）
         current -= timedelta(days=1)
     return stats
 
