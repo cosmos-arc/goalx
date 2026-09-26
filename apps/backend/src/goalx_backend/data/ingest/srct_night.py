@@ -271,7 +271,7 @@ def _absorb(summary: SrctNightSummary, stats: srct.SrctCollectStats) -> None:
     summary.failed.update(stats.failed)
 
 
-def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护栏/分层累加（同 collect_day 先例）
+def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分支随护栏/分层累加
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -384,9 +384,12 @@ def run_night(  # noqa: PLR0913, PLR0915, C901 接缝与逐日编排分支随护
     if jc_phase and summary.stop_reason == "completed":
         from goalx_backend.data.ingest import jc_backfill  # noqa: PLC0415 防环局部导入
 
-        jc_stats = jc_backfill.night_backfill_phase(
-            store, settings, client, budget, today=run_today, sleeper=sleep_fn
-        )
+        try:
+            jc_stats = jc_backfill.night_backfill_phase(
+                store, settings, client, budget, today=run_today, sleeper=sleep_fn
+            )
+        except srct.NightStop as stop:  # 预算尽=相位正常停（摘要照落，进度在库）
+            jc_stats = jc_backfill.JcBackfillStats(stopped=stop.reason)
         if jc_stats.stopped is not None:
             summary.stop_reason = f"jc_{jc_stats.stopped}"
         logger.info(

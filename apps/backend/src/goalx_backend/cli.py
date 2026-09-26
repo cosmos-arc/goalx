@@ -592,6 +592,8 @@ def _cmd_jc_backfill(
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
+    budget = srct.NightBudget(request_cap=args.request_cap)
+    stats = jc_backfill.JcBackfillStats(date_from=args.date_from, date_to=args.date_to)
     try:
         with httpx.Client() as client:
             stats = jc_backfill.backfill_range(
@@ -600,9 +602,11 @@ def _cmd_jc_backfill(
                 client,
                 date_to=args.date_to,
                 date_from=args.date_from,
-                budget=srct.NightBudget(request_cap=args.request_cap),
+                budget=budget,
                 day_cap=args.day_cap,
             )
+    except srct.NightStop as stop:
+        stats.stopped = stop.reason  # 预算尽=正常停（进度已落库，独立窗可续）
     finally:
         store.close()
     sys.stdout.write(json.dumps(asdict(stats), ensure_ascii=False, indent=2) + "\n")
