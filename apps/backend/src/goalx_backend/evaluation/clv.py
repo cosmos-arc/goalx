@@ -1,5 +1,5 @@
 """
-CLV 跟踪与收盘对账（票 32；票 34 重订纳入边界与口径；票 40 基准分层）。
+CLV 跟踪与收盘对账（票 32 起底座；34 口径边界、40 基准分层、75 srct 锚接管）。
 
 - CLV_proxy（概率域）= close_prob − 1/竞彩买入价；close 侧取 purpose=closing
   的 odds_api 快照（票 40 起三级取锚，基准来源随结果标注 close_basis）：
@@ -8,6 +8,14 @@ CLV 跟踪与收盘对账（票 32；票 34 重订纳入边界与口径；票 40
   3. fallback 多 book 完整三向共识 Shin（分层前唯一口径）。
   高 margin 书（如 1xBet/onexbet）只进共识、永不作锚（调研
   odds-consensus-methodology.md §5.2 建议 1）；
+- 票 75 第四级（前向主通路）：eu-odds-closing 面 2026-09-25 判死后，
+  odds_api 三级对新注单必然空手——srct:1x2:177（源T 百家行主锚，
+  corpus.duckdb odds_change_event 全轨迹）接管收盘锚，basis=srct_pinnacle。
+  场次匹配两步确定性键：竞彩中文队名+北京日期 → 兜底 kickoff 时刻精确+
+  主队名精确（解命名变体）；两步不中即诚实无锚（CorpusScope 外结构性）。
+  票 34 防前视边界的源语义适配：odds_api 行以 observed_at（本机观测）为
+  资格线，srct 行以 published_at（源自报时点）为资格线——约束同为
+  「信息时点严格早于开球」。
 - 纳入边界（票 34/handoff）：closing 必须实际在该腿开赛前观测——
   有效观测时间（observed_at，旧行按源解释）> kickoff 的迟到快照一律排除；
 - 口径（票 34）：
@@ -28,6 +36,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+import duckdb
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting import store as bt_store
@@ -53,13 +63,17 @@ BETFAIR_COMMISSION = 0.02  # back 价佣金率（调研 2–5%，默认取下沿
 BASIS_PINNACLE = "pinnacle"
 BASIS_BETFAIR = "betfair_ex"
 BASIS_CONSENSUS = "consensus"
+BASIS_SRCT_PINNACLE = "srct_pinnacle"  # 票 75：源T cid177 接管（odds_api 判死后前向）
 BASIS_LEGACY = "legacy"  # close_basis IS NULL 的分层前历史行（不重算）
 BASIS_MIXED = "mixed"  # 串关两腿基准不同（腿级见 clv_records.close_basis）
 
 CLOSE_BASIS_NOTE = (
     "pinnacle 主锚 → betfair_ex 辅(back 价扣佣金, 默认 2%) → consensus fallback；"
+    "srct_pinnacle = 源T cid177 收盘接管(odds_api 判死后前向主通路, 票 75)；"
     "legacy = 分层前共识口径行(历史不重算)；mixed = 串关跨基准"
 )
+
+DuckCon = duckdb.DuckDBPyConnection
 
 
 @dataclass
@@ -78,10 +92,33 @@ def _exchange_back_probs(
 
     交易所 back 价无 baked-in margin，摩擦是赢利侧佣金：按佣金调整
     有效赔率（赢时净收益 × (1−commission)），再归一化到和为 1。
-    佣金率参数化（默认 2%，调研区间 2–5%）。
+    佣金率参数化（默认 2%，调研区间 2-5%）。
     """
     effective = tuple(1.0 + (odds_i - 1.0) * (1.0 - commission) for odds_i in odds)
     return om.normalized_implied(effective)
+
+
+def srct_closing_prob(
+    duck_con: DuckCon,
+    home: str,
+    away: str,
+    kickoff_utc: str,
+    selection: str,
+) -> tuple[float, str, str] | None:
+    """
+    源T 主锚收盘概率（票 75 第四级，odds_api 判死后的前向主通路）。
+
+    场次匹配与事件资格线（published_at ≤ kickoff）在 data 包语料桥
+    `srct_pinnacle_closing_triplet`（ADR-0008：语料表查询归 data）；
+    本层只做 Shin 去水与基准标注。匹配两步确定性键见该函数 docstring。
+    """
+    triplet = quote_evidence.srct_pinnacle_closing_triplet(
+        duck_con, home, away, kickoff_utc
+    )
+    if triplet is None:
+        return None
+    probs = om.shin_implied(triplet)
+    return probs[SELECTIONS.index(selection)], "srct_1x2_closing", BASIS_SRCT_PINNACLE
 
 
 def _closing_prob(
@@ -90,14 +127,16 @@ def _closing_prob(
     selection: str,
     *,
     betfair_commission: float = BETFAIR_COMMISSION,
+    duck_con: DuckCon | None = None,
 ) -> tuple[float, str, str] | None:
     """
-    该场 had 选择的收盘公允概率 + 基准来源标注（票 40 三级取锚）。
+    该场 had 选择的收盘公允概率 + 基准来源标注（票 40 三级 + 票 75 第四级）。
 
     返回 ``(prob, close_source, close_basis)``；三级为 Pinnacle 主锚（单独
     Shin）→ Betfair 交易所辅锚（back 价扣佣金归一化，佣金率参数化默认 2%，
-    调研区间 2–5%）→ 多 book 完整三向共识 Shin fallback（分层前唯一口径）。
-    高 margin 书只进共识不做基准。
+    调研区间 2-5%）→ 多 book 完整三向共识 Shin fallback（分层前唯一口径）。
+    高 margin 书只进共识不做基准。三级空手且 duck_con 传入时走 srct:1x2:177
+    收盘接管（票 75；odds_api 判死后新注单的主通路）。
 
     有效快照 = 观测时间（observed_at，旧行按源解释为 captured_at）严格
     早于 kickoff 且在开球前 CLOSE_LOOKBACK_MINUTES 内——开赛后才查到的
@@ -116,7 +155,24 @@ def _closing_prob(
         max_age_seconds=CLOSE_LOOKBACK_MINUTES * 60,
     )
     if not books:
-        return None
+        if duck_con is None:
+            return None
+        info = fx_store.fixture_team_info(conn, fixture_id)  # 队名读取走 data 属主
+        if info is None:
+            return None
+        return srct_closing_prob(
+            duck_con, str(info["home_name"]), str(info["away_name"]), kickoff, selection
+        )
+    return _odds_api_close(books, selection, betfair_commission=betfair_commission)
+
+
+def _odds_api_close(
+    books: dict[str, dict[str, float]],
+    selection: str,
+    *,
+    betfair_commission: float,
+) -> tuple[float, str, str]:
+    """odds_api 三级取锚（票 40）：Pinnacle → Betfair 交易所 → 多书共识。"""
     idx = SELECTIONS.index(selection)
     if PINNACLE_SOURCE in books:
         # 主锚：~2% margin 的 sharp closing，Shin 与归一化差异极小（调研），
@@ -150,12 +206,15 @@ def _minutes_to_kickoff(placed_at: str | None, kickoff_utc: str) -> float | None
     return (kickoff - placed).total_seconds() / 60.0
 
 
-def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
+def reconcile_clv(
+    conn: sqlite3.Connection, *, duck_con: DuckCon | None = None
+) -> ReconcileStats:
     """
     已结算注单自动对账（幂等：UNIQUE(bet_id, fixture_id) 吸收重跑）。
 
     只处理 had 腿（v1 可映射口径）；串关逐腿写记录，票级指标在报表层聚合。
-    注单读取走 betting 共享口径（settled_purchased_bets）。
+    注单读取走 betting 共享口径（settled_purchased_bets）。duck_con 传入即
+    启用 srct 收盘锚（票 75；生产调用方经 tasks.corpus_anchor 打开）。
     """
     stats = ReconcileStats()
     kickoffs: dict[int, str] = {}
@@ -172,7 +231,9 @@ def reconcile_clv(conn: sqlite3.Connection) -> ReconcileStats:
                     continue
                 kickoff = str(fixture["kickoff_utc"])
                 kickoffs[fixture_id] = kickoff
-            close = _closing_prob(conn, fixture_id, leg.selection_code)
+            close = _closing_prob(
+                conn, fixture_id, leg.selection_code, duck_con=duck_con
+            )
             if close is None:
                 stats.skipped.append(f"no_pre_kickoff_close:bet={bet.bet_id}")
                 continue
@@ -380,7 +441,13 @@ def _basis_breakdown(
         basis = _record_basis(record)
         leg_counts[basis] = leg_counts.get(basis, 0) + 1
     out: dict[str, Any] = {}
-    for basis in (BASIS_PINNACLE, BASIS_BETFAIR, BASIS_CONSENSUS, BASIS_LEGACY):
+    for basis in (
+        BASIS_PINNACLE,
+        BASIS_BETFAIR,
+        BASIS_SRCT_PINNACLE,
+        BASIS_CONSENSUS,
+        BASIS_LEGACY,
+    ):
         bets = [v for v in unique if v.basis == basis]
         if not bets and leg_counts.get(basis, 0) == 0:
             continue

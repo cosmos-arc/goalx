@@ -29,6 +29,8 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   当季 ≈47K 请求）跑完后每夜零成本心跳
 - understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
+- clubelo-sync 09:10：Elo 评级日拍（票 74）——单请求全量快照，赶在
+  daily-capture 前
 - daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
 - pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 
@@ -47,6 +49,7 @@ from prefect.deployments.runner import RunnerDeployment
 from prefect.schedules import Schedule
 
 from goalx_backend.flows import (
+    clubelo_sync_flow,
     daily_capture_flow,
     daily_wrap_flow,
     draw_results_sync_flow,
@@ -158,6 +161,15 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="20 9 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # Elo 评级（票 74）：clubelo 日更一拍（单请求全量快照）；09:10 与
+    # understat 同窗逻辑，赶在 daily-capture 10:00 前
+    clubelo_deploy = cast(
+        RunnerDeployment,
+        clubelo_sync_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="10 9 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
@@ -207,6 +219,7 @@ def main(only: str | None = None) -> None:
         "draw-results-sweep": draw_sync_sweep,
         "official-reconcile": official_reconcile,
         "understat-sync": understat,
+        "clubelo-sync": clubelo_deploy,
         "odds-anchor-dense": anchor_dense,
         "srcb-collect": srcb_collect_deploy,
         "srct-night": srct_night_deploy,
@@ -242,6 +255,7 @@ RESUME_DEPLOYMENTS = (
     "srct-night",
     "srct-shift",
     "understat-sync",
+    "clubelo-sync",
     "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",

@@ -7,6 +7,11 @@ AvgC*（市场均值收盘）兜底；PSH*（Pinnacle 早期）开→收
 AvgC 自 1920 季起才有列——1617-1819 三季仅 PSC/PSH（票 51 报告按此
 标注覆盖）。日期格式 dd/mm/YY 或 dd/mm/YYYY，utf-8-sig。
 
+票 73 扩列（v20）：O/U 多书均值开/收（Avg>2.5 族，线固按 2.5）、
+亚盘多书均值两端点（AHh/AHCh 均值盘口线，主队视角）与源T 单书全程
+轨迹互补非重复（research/27 原判）；半场比分/射门/射正/角球/犯规/
+红黄牌/裁判同源捎带（老季文件缺列 → None）。
+
 覆盖实测（2026-09-20，票 46）：五大+N1 全季可得；扩联赛 E1 英冠/P1 葡超/
 T1 土超/B1 比甲/SC0 苏超均含 PSC 收盘列（2526 季 200 实测）。美职/巴甲/
 墨超/日职不在 fd.co.uk 标准季目录（404）——竞彩混编的美洲/日职场次收盘
@@ -95,6 +100,7 @@ def parse_csv(
         if not home or not away:
             skipped += 1
             continue
+        htr = (rec.get("HTR") or "").strip().upper()
         rows.append(
             {
                 "competition": competition,
@@ -114,6 +120,35 @@ def parse_csv(
                 "avgc_home": _parse_float(rec.get("AvgCH")),
                 "avgc_draw": _parse_float(rec.get("AvgCD")),
                 "avgc_away": _parse_float(rec.get("AvgCA")),
+                # 票 73 扩列：O/U 多书均值开/收（线固按 2.5，列名自带）
+                "avg_ou_over": _parse_float(rec.get("Avg>2.5")),
+                "avg_ou_under": _parse_float(rec.get("Avg<2.5")),
+                "avgc_ou_over": _parse_float(rec.get("AvgC>2.5")),
+                "avgc_ou_under": _parse_float(rec.get("AvgC<2.5")),
+                # 亚盘多书均值两端点（AHh/AHCh 为均值盘口线，主队视角）
+                "ah_line": _parse_float(rec.get("AHh")),
+                "avg_ah_home": _parse_float(rec.get("AvgAHH")),
+                "avg_ah_away": _parse_float(rec.get("AvgAHA")),
+                "ahc_line": _parse_float(rec.get("AHCh")),
+                "avgc_ah_home": _parse_float(rec.get("AvgCAHH")),
+                "avgc_ah_away": _parse_float(rec.get("AvgCAHA")),
+                # 半场/比赛统计（老季缺列 → None）
+                "hthg": _parse_int(rec.get("HTHG")),
+                "htag": _parse_int(rec.get("HTAG")),
+                "htr": htr if htr in ("H", "D", "A") else None,
+                "referee": (rec.get("Referee") or "").strip() or None,
+                "shots_home": _parse_int(rec.get("HS")),
+                "shots_away": _parse_int(rec.get("AS")),
+                "shots_on_target_home": _parse_int(rec.get("HST")),
+                "shots_on_target_away": _parse_int(rec.get("AST")),
+                "corners_home": _parse_int(rec.get("HC")),
+                "corners_away": _parse_int(rec.get("AC")),
+                "fouls_home": _parse_int(rec.get("HF")),
+                "fouls_away": _parse_int(rec.get("AF")),
+                "yellow_home": _parse_int(rec.get("HY")),
+                "yellow_away": _parse_int(rec.get("AY")),
+                "red_home": _parse_int(rec.get("HR")),
+                "red_away": _parse_int(rec.get("AR")),
             }
         )
     return rows, skipped

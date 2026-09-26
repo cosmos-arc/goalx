@@ -279,9 +279,10 @@ def _cmd_closing_snapshot() -> None:
 
 
 def _cmd_clv_reconcile() -> None:
-    """已结算注单 CLV 对账 + 报表。"""
+    """已结算注单 CLV 对账 + 报表（票 75 起 srct 收盘锚接管）。"""
     with task_conn() as conn:
-        stats = clv_mod.reconcile_clv(conn)
+        with tasks.corpus_anchor() as anchor:
+            stats = clv_mod.reconcile_clv(conn, duck_con=anchor)
         logger.info("recorded={} skipped={}", stats.recorded, len(stats.skipped))
         logger.info("report: {}", clv_mod.clv_report(conn))
 
@@ -291,6 +292,11 @@ def _cmd_understat_sync(args: argparse.Namespace) -> None:
     seasons = tuple(args.seasons) if args.seasons else None
     leagues = tuple(args.leagues) or None
     logger.info("understat sync: {}", tasks.understat_sync(seasons, leagues=leagues))
+
+
+def _cmd_clubelo_sync(args: argparse.Namespace) -> None:
+    """Clubelo Elo 同步（票 74）：日拍快照；--backfill 逐队拉全历史区间。"""
+    logger.info("clubelo sync: {}", tasks.clubelo_sync(backfill=args.backfill))
 
 
 def _cmd_xg_compare(args: argparse.Namespace) -> None:
@@ -877,6 +883,14 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=[],
         help="understat slug(默认五大;俄超按需传 rfpl)",
     )
+    clubelo = sub.add_parser(
+        "clubelo-sync", help="clubelo Elo 评级日拍(票 74;--backfill 全历史回填)"
+    )
+    clubelo.add_argument(
+        "--backfill",
+        action="store_true",
+        help="当日快照后逐队拉全历史区间(一次性,约 600 请求)",
+    )
     xgcmp = sub.add_parser(
         "xg-compare", help="xG 融合实证对比报告(票 45;语料先 understat-sync)"
     )
@@ -1049,6 +1063,7 @@ def main(argv: list[str] | None = None) -> int:
         "pool-sync": _cmd_pool_sync,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
         "understat-sync": lambda: _cmd_understat_sync(args),
+        "clubelo-sync": lambda: _cmd_clubelo_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),

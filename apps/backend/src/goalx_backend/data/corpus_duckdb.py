@@ -33,6 +33,7 @@ from goalx_backend.data.ingest import (
 )
 
 CORPUS_DUCKDB_NAME = "corpus.duckdb"
+# 源T 1x2d 百家行主锚（bookmaker 字典 space=1x2；消费方 evaluation/clv）
 # 运行面 ATTACH 别名（infra 常量，非表名）
 RUNNING_FACE_ALIAS = "goalx"
 # 银层视图清单（视图名, 语料树 silver 相对路径；随数据集逐张扩：

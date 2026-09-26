@@ -7,6 +7,7 @@ import sqlite3
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
+from goalx_backend.migrations import HIST_EXTENDED_COLUMNS
 from goalx_backend.models import DrawResultInput
 
 
@@ -96,48 +97,42 @@ def draw_results_for_fixtures(
 
 
 def upsert_hist_matches(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
-    """Upsert football-data.co.uk history rows (幂等重跑，票 21 验收)。"""
+    """
+    Upsert football-data.co.uk history rows (幂等重跑，票 21 验收；票 73 扩列)。
+
+    扩列清单单一事实源 = migrations.HIST_EXTENDED_COLUMNS（v20 DDL 同源，
+    防漂移）；老季/旧测试行缺键 → None。
+    """
+    required = (
+        "competition",
+        "season",
+        "match_date",
+        "home_team",
+        "away_team",
+        "fthg",
+        "ftag",
+        "ftr",
+        "psc_home",
+        "psc_draw",
+        "psc_away",
+        "avgc_home",
+        "avgc_draw",
+        "avgc_away",
+    )
+    optional = ("psh_home", "psh_draw", "psh_away")  # v19 早期列（老文件可缺）
+    conflict_keys = ("competition", "season", "match_date", "home_team", "away_team")
+    columns = required + optional + tuple(name for name, _ in HIST_EXTENDED_COLUMNS)
+    marks = ", ".join("?" for _ in columns)
+    updates = ", ".join(f"{c}=excluded.{c}" for c in columns if c not in conflict_keys)
+    sql = (
+        # 列名/占位符来自模块常量，非用户输入
+        f"INSERT INTO hist_matches ({', '.join(columns)}) VALUES ({marks}) "  # noqa: S608
+        + f"ON CONFLICT({', '.join(conflict_keys)}) DO UPDATE SET {updates}"
+    )
     count = 0
     for row in rows:
-        cur = conn.execute(
-            """
-                INSERT INTO hist_matches
-(competition, season, match_date, home_team,
-                away_team,
-fthg, ftag, ftr, psc_home, psc_draw, psc_away,
-psh_home,
-                psh_draw, psh_away, avgc_home,
-                avgc_draw, avgc_away)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(competition, season, match_date, home_team, away_team)
-DO
-                UPDATE SET fthg=excluded.fthg, ftag=excluded.ftag, ftr=excluded.ftr,
-                psc_home=excluded.psc_home, psc_draw=excluded.psc_draw,
-                psc_away=excluded.psc_away, psh_home=excluded.psh_home,
-                psh_draw=excluded.psh_draw, psh_away=excluded.psh_away,
-                avgc_home=excluded.avgc_home,
-                avgc_draw=excluded.avgc_draw, avgc_away=excluded.avgc_away
-            """,
-            (
-                row["competition"],
-                row["season"],
-                row["match_date"],
-                row["home_team"],
-                row["away_team"],
-                row["fthg"],
-                row["ftag"],
-                row["ftr"],
-                row["psc_home"],
-                row["psc_draw"],
-                row["psc_away"],
-                row.get("psh_home"),
-                row.get("psh_draw"),
-                row.get("psh_away"),
-                row["avgc_home"],
-                row["avgc_draw"],
-                row["avgc_away"],
-            ),
-        )
+        params = tuple(row[c] if c in required else row.get(c) for c in columns)
+        cur = conn.execute(sql, params)
         if cur.rowcount > 0:
             count += 1
     return count

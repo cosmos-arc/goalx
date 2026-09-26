@@ -15,19 +15,21 @@ import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
+import duckdb
 import httpx
 from loguru import logger
 
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
+from goalx_backend.data import corpus_duckdb, reconcile
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import reconcile
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     caiguo,
+    clubelo,
     fdhist,
     oddsapi,
     openfootball,
@@ -387,6 +389,37 @@ def understat_sync(
             leagues=leagues or rs.UNDERSTAT_DEFAULT_LEAGUES,
         )
     return understat.stats_dict(stats)
+
+
+@contextmanager
+def corpus_anchor() -> Generator[duckdb.DuckDBPyConnection | None]:
+    """Srct 收盘锚连接统一开关（票 75）：corpus_duckdb 只读连接，库缺席降级 None。"""
+    try:
+        con = corpus_duckdb.connect(get_settings())
+    except (duckdb.Error, OSError) as exc:
+        logger.warning("clv srct anchor unavailable, degraded: {}", exc)
+        con = None
+    try:
+        yield con
+    finally:
+        if con is not None:
+            con.close()
+
+
+def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
+    """
+    Clubelo Elo 评级同步（票 74）。
+
+    日拍 = 单请求当日全量快照（09:10 调度）；backfill=True 在快照后逐队
+    拉全历史区间（一次性，不进调度）。站点不可达时抛出由调用方处置。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        if backfill:
+            stats = clubelo.backfill_history(conn, settings, client, date.today())
+        else:
+            stats = clubelo.sync_snapshot(conn, settings, client, date.today())
+    return clubelo.stats_dict(stats)
 
 
 def pool_snapshot() -> zucai_official.PoolSyncStats:
