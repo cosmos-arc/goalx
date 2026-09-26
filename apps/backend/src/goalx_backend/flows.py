@@ -240,7 +240,7 @@ def daily_wrap_flow() -> dict[str, object]:
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
         # （corpus_anchor 库缺席降级 None，不打断对账）
-        with clv_mod.corpus_anchor() as anchor:
+        with tasks.corpus_anchor() as anchor:
             clv_stats: dict[str, Any] = asdict(
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )

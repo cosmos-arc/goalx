@@ -33,21 +33,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 import duckdb
-from loguru import logger
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.store import DecisionKey
-from goalx_backend.config import get_settings
-from goalx_backend.data import corpus_duckdb, quote_evidence
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -102,26 +98,6 @@ def _exchange_back_probs(
     return om.normalized_implied(effective)
 
 
-@contextmanager
-def corpus_anchor() -> Generator[DuckCon | None]:
-    """
-    Srct 收盘锚连接的统一开关（票 75）；库缺席优雅降级 None。
-
-    生产调用方（daily-wrap / clv-reconcile CLI）一律走本上下文管理器，
-    打开与关闭不散落（评审修正：去两处 open/close 样板）。
-    """
-    try:
-        con: DuckCon | None = corpus_duckdb.connect(get_settings())
-    except (duckdb.Error, OSError) as exc:
-        logger.warning("clv srct anchor unavailable, degraded: {}", exc)
-        con = None
-    try:
-        yield con
-    finally:
-        if con is not None:
-            con.close()
-
-
 def srct_closing_prob(
     duck_con: DuckCon,
     home: str,
@@ -136,7 +112,7 @@ def srct_closing_prob(
     `srct_pinnacle_closing_triplet`（ADR-0008：语料表查询归 data）；
     本层只做 Shin 去水与基准标注。匹配两步确定性键见该函数 docstring。
     """
-    triplet = corpus_duckdb.srct_pinnacle_closing_triplet(
+    triplet = quote_evidence.srct_pinnacle_closing_triplet(
         duck_con, home, away, kickoff_utc
     )
     if triplet is None:
@@ -238,7 +214,7 @@ def reconcile_clv(
 
     只处理 had 腿（v1 可映射口径）；串关逐腿写记录，票级指标在报表层聚合。
     注单读取走 betting 共享口径（settled_purchased_bets）。duck_con 传入即
-    启用 srct 收盘锚（票 75；生产调用方经 open_corpus_anchor 打开）。
+    启用 srct 收盘锚（票 75；生产调用方经 tasks.corpus_anchor 打开）。
     """
     stats = ReconcileStats()
     kickoffs: dict[int, str] = {}

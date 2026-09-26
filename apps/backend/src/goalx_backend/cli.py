@@ -281,7 +281,7 @@ def _cmd_closing_snapshot() -> None:
 def _cmd_clv_reconcile() -> None:
     """已结算注单 CLV 对账 + 报表（票 75 起 srct 收盘锚接管）。"""
     with task_conn() as conn:
-        with clv_mod.corpus_anchor() as anchor:
+        with tasks.corpus_anchor() as anchor:
             stats = clv_mod.reconcile_clv(conn, duck_con=anchor)
         logger.info("recorded={} skipped={}", stats.recorded, len(stats.skipped))
         logger.info("report: {}", clv_mod.clv_report(conn))

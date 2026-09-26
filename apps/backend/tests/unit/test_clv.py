@@ -7,8 +7,8 @@ import pytest
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting.bets import BetDraft, create_bet_with_legs
-from goalx_backend.data import corpus_duckdb
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
 from goalx_backend.evaluation import clv
 from goalx_backend.models import BetMode, LegInput, SnapshotInput, Tier
 
@@ -684,7 +684,7 @@ def seed_duck(
         con.execute(
             "INSERT INTO odds_change_event VALUES"
             " (?, ?, '1x2', ?::TIMESTAMPTZ, ?, ?, ?)",
-            [sid, corpus_duckdb.SRCT_PINNACLE_BOOK, published, h, d, a],
+            [sid, quote_evidence.SRCT_PINNACLE_BOOK, published, h, d, a],
         )
     return con
 
@@ -803,25 +803,25 @@ def test_srct_anchor_degrades_when_views_missing(db) -> None:
 
 
 def test_corpus_anchor_contextmanager_closes(monkeypatch) -> None:
-    """corpus_anchor 上下文管理器：正常路径关闭连接；缺席路径降级 None。"""
+    """tasks.corpus_anchor：正常路径关闭连接；缺席路径降级 None。"""
     closed: list[bool] = []
 
     class FakeCon:
         def close(self) -> None:
             closed.append(True)
 
-    import goalx_backend.evaluation.clv as clv_mod
+    import goalx_backend.tasks as tasks_mod
 
     fake = FakeCon()
-    monkeypatch.setattr(clv_mod.corpus_duckdb, "connect", lambda _s: fake)
-    with clv_mod.corpus_anchor() as anchor:
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "connect", lambda _s: fake)
+    with tasks_mod.corpus_anchor() as anchor:
         assert anchor is fake
     assert closed == [True]
 
     def boom(_s: object) -> object:
         raise OSError("no corpus")
 
-    monkeypatch.setattr(clv_mod.corpus_duckdb, "connect", boom)
-    with clv_mod.corpus_anchor() as anchor:
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "connect", boom)
+    with tasks_mod.corpus_anchor() as anchor:
         assert anchor is None
     assert closed == [True]  # 缺席路径无连接可关
