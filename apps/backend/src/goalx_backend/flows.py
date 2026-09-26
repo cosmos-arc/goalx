@@ -161,6 +161,14 @@ def understat_sync_flow() -> dict[str, object]:
     return stats
 
 
+@flow(name="clubelo-sync", log_prints=True)
+def clubelo_sync_flow() -> dict[str, object]:
+    """Clubelo Elo 评级日拍（票 74）：当日全量快照单请求，幂等。"""
+    stats = tasks.clubelo_sync()
+    logger.info("clubelo sync: {}", stats)
+    return stats
+
+
 @flow(name="pool-snapshot", log_prints=True)
 def pool_snapshot_flow() -> dict[str, object]:
     """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果（幂等）。"""
@@ -230,7 +238,16 @@ def daily_wrap_flow() -> dict[str, object]:
     settlement = settlement_flow()
     m3 = tasks.m3_evaluation()
     with tasks.task_conn() as conn:
-        clv_stats: dict[str, Any] = asdict(clv_mod.reconcile_clv(conn))
+        # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
+        # （corpus.duckdb 缺席时 open_corpus_anchor 优雅降级 None）
+        anchor = clv_mod.open_corpus_anchor()
+        try:
+            clv_stats: dict[str, Any] = asdict(
+                clv_mod.reconcile_clv(conn, duck_con=anchor)
+            )
+        finally:
+            if anchor is not None:
+                anchor.close()
         findings = len(audit_ledger(conn)["manual_review"])
     logger.info(
         "daily wrap: settlement={}, clv={}, audit_findings={}, m3={}",

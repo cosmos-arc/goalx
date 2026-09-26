@@ -129,3 +129,82 @@ def test_import_history_skips_failed_file(db) -> None:
     assert stats.failed_files == 1
     assert stats.written == 3  # D1 正常入库
     assert rs_store.hist_match_stats(db)["total"] == 3
+
+
+# --- 票 73 扩列：O/U、AH 开收均值 + 半场/比赛统计 ---
+
+EXTENDED_HEADER = (
+    ",HTHG,HTAG,HTR,Referee,HS,AS,HST,AST,HF,AF,HC,AC,HY,AY,HR,AR,"
+    "Avg>2.5,Avg<2.5,AvgC>2.5,AvgC<2.5,"
+    "AHh,AvgAHH,AvgAHA,AHCh,AvgCAHH,AvgCAHA"
+)
+EXTENDED_ROW = (
+    "E0,16/08/2024,Man United,Fulham,1,0,H,2.00,3.70,4.30,2.05,3.60,4.10,2.10,3.50,4.00"
+    ",1,0,H,Michael Oliver,15,7,6,2,11,9,7,3,2,3,0,0"
+    ",1.85,2.02,1.80,2.08"
+    ",0.5,1.98,1.92,0.5,1.95,1.95"
+)
+EXTENDED_CSV = CSV_TEXT.rstrip("\n") + EXTENDED_HEADER + "\n" + EXTENDED_ROW + "\n"
+
+
+def test_parse_csv_extended_columns() -> None:
+    rows, _ = fdhist.parse_csv(EXTENDED_CSV, "E0", "2425")
+    row = rows[0]
+    assert row["hthg"] == 1
+    assert row["htr"] == "H"
+    assert row["referee"] == "Michael Oliver"
+    assert row["shots_home"] == 15
+    assert row["shots_on_target_away"] == 2
+    assert row["corners_home"] == 7
+    assert row["yellow_away"] == 3
+    assert row["red_away"] == 0
+    assert row["avg_ou_over"] == 1.85
+    assert row["avgc_ou_under"] == 2.08
+    assert row["ah_line"] == 0.5
+    assert row["avgc_ah_home"] == 1.95
+
+
+def test_extended_columns_tolerate_missing_in_old_seasons(db) -> None:
+    """老季文件无新列（DictReader 缺键）→ 全 None 入库，不炸。"""
+    fdhist.import_history(
+        db,
+        Settings(),
+        None,
+        competitions=("E0",),
+        seasons=("1617",),
+        fetch=lambda url: CSV_TEXT + CSV_ROWS,  # 无任何票 73 列
+    )
+    row = db.execute(
+        "SELECT avg_ou_over, hthg, referee FROM hist_matches LIMIT 1"
+    ).fetchone()
+    assert row["avg_ou_over"] is None
+    assert row["hthg"] is None
+    assert row["referee"] is None
+
+
+def test_reimport_backfills_extended_columns(db) -> None:
+    """先旧列导入、再扩列重导 → 追加列回填既有行（v20 回填路径）。"""
+    fdhist.import_history(
+        db,
+        Settings(),
+        None,
+        competitions=("E0",),
+        seasons=("2425",),
+        fetch=lambda url: CSV_TEXT + CSV_ROWS,
+    )
+    fdhist.import_history(
+        db,
+        Settings(),
+        None,
+        competitions=("E0",),
+        seasons=("2425",),
+        fetch=lambda url: EXTENDED_CSV,
+    )
+    assert rs_store.hist_match_stats(db)["total"] == 3  # 幂等不翻倍
+    row = db.execute(
+        "SELECT avg_ou_over, ah_line, referee FROM hist_matches"
+        " WHERE home_team = 'Man United'"
+    ).fetchone()
+    assert row["avg_ou_over"] == 1.85
+    assert row["ah_line"] == 0.5
+    assert row["referee"] == "Michael Oliver"

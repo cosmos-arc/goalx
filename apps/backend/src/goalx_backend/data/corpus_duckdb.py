@@ -15,6 +15,7 @@ corpus.duckdb 本体只读打开同样拒绝（消费侧任何写路径被拒）
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -134,3 +135,58 @@ def hist_matches_count(con: duckdb.DuckDBPyConnection) -> int | None:
     except duckdb.Error:
         return None
     return int(row[0]) if row is not None else None
+
+
+def srct_pinnacle_closing_triplet(
+    con: duckdb.DuckDBPyConnection,
+    home: str,
+    away: str,
+    kickoff_utc: str,
+    *,
+    bookmaker_id: str = "srct:1x2:177",
+) -> tuple[float, float, float] | None:
+    """
+    竞彩场次 → 源T 主锚盘前三向收盘（票 75 CLV 收盘锚接管的数据面）。
+
+    场次匹配两步确定性键（禁自信合并，定则 1）：
+    ① home/away 中文队名 + 北京日期 == fixture_universe；
+    ② 兜底 kickoff 时刻精确（北京 naive）+ home 精确（解命名变体）；
+    两步不中返回 None（CorpusScope 外场结构性无锚，调用方诚实 skip）。
+    资格线 = published_at（源自报时点）≤ kickoff，取最新一笔。
+
+    ponytail: odds_change_event 为 3,000 万行级 parquet 视图、sid 无索引，
+    单查秒级内——日频对账×个位数腿可接受；腿数上量后按 sid 分区物化。
+    """
+    kickoff = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+    if kickoff.tzinfo is None:  # 防御：naive 串按 UTC 解释
+        kickoff = kickoff.replace(tzinfo=UTC)
+    beijing = kickoff.astimezone(UTC).replace(tzinfo=None) + timedelta(hours=8)
+    sid_row = con.execute(
+        """
+        SELECT sid FROM fixture_universe
+        WHERE home = ? AND away = ? AND CAST(kickoff AS DATE) = ?
+        ORDER BY sid LIMIT 1
+        """,
+        [home, away, beijing.date().isoformat()],
+    ).fetchone()
+    if sid_row is None:
+        sid_row = con.execute(
+            """
+            SELECT sid FROM fixture_universe
+            WHERE kickoff = ? AND home = ? ORDER BY sid LIMIT 1
+            """,
+            [beijing, home],
+        ).fetchone()
+    if sid_row is None:
+        return None
+    event = con.execute(
+        """
+        SELECT odds_home, odds_draw, odds_away FROM odds_change_event
+        WHERE sid = ? AND bookmaker_id = ? AND published_at <= ?
+        ORDER BY published_at DESC LIMIT 1
+        """,
+        [sid_row[0], bookmaker_id, kickoff],
+    ).fetchone()
+    if event is None or any(price is None for price in event):
+        return None
+    return float(event[0]), float(event[1]), float(event[2])

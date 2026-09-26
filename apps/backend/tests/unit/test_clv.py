@@ -645,3 +645,148 @@ def test_report_mixed_basis_parlay(db) -> None:
     assert by_basis["consensus"]["bets"] == 0
     # 主口径串关组照常计票
     assert report["parlay2"]["paper"]["n_bets"] == 1
+
+
+# --- 票 75：srct 收盘锚接管（odds_api 判死后的前向主通路） ---
+
+
+def seed_duck(
+    *,
+    home: str = "主队英超",
+    away: str = "客队英超",
+    sid: str = "2790001",
+    kickoff_bj: str = "2026-09-12 21:00:00",
+    events: tuple[tuple[str, float, float, float], ...] = (
+        ("2026-09-12 05:00:00+08:00", 2.0, 3.5, 3.5),
+    ),
+):
+    """内存 duckdb 假 corpus：fixture_universe + odds_change_event 最小面。"""
+    import duckdb
+
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE fixture_universe"
+        " (sid VARCHAR, league VARCHAR, kickoff TIMESTAMP, home VARCHAR,"
+        " away VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO fixture_universe VALUES (?, ?, ?::TIMESTAMP, ?, ?)",
+        [sid, "英超", kickoff_bj, home, away],
+    )
+    con.execute(
+        "CREATE TABLE odds_change_event"
+        " (sid VARCHAR, bookmaker_id VARCHAR, market VARCHAR,"
+        " published_at TIMESTAMPTZ, odds_home DOUBLE, odds_draw DOUBLE,"
+        " odds_away DOUBLE)"
+    )
+    for published, h, d, a in events:
+        con.execute(
+            "INSERT INTO odds_change_event VALUES"
+            " (?, ?, '1x2', ?::TIMESTAMPTZ, ?, ?, ?)",
+            [sid, clv.SRCT_PINNACLE_BOOK, published, h, d, a],
+        )
+    return con
+
+
+def test_srct_anchor_primary_key_match(db) -> None:
+    """中文队名+北京日期主键命中 → srct_pinnacle 基准（Shin 概率）。"""
+    duck_con = seed_duck()
+    fixture = seed_fixture(db)  # kickoff 2026-09-12T19:00Z = 北京 13 日 03:00?
+    # KICKOFF=19:00Z → 北京 09-13 03:00；假 corpus 按同口径重灌
+    duck_con.execute("DELETE FROM fixture_universe")
+    duck_con.execute(
+        "INSERT INTO fixture_universe VALUES"
+        " ('2790001', '英超', TIMESTAMP '2026-09-13 03:00:00', '主队英超', '客队英超')"
+    )
+    close = clv._closing_prob(db, fixture, "h", duck_con=duck_con)
+    assert close is not None
+    prob, source, basis = close
+    assert source == "srct_1x2_closing"
+    assert basis == "srct_pinnacle"
+    assert 0.45 < prob < 0.55  # (2.0, 3.5, 3.5) 均衡三向
+
+
+def test_srct_anchor_kickoff_fallback_for_name_variant(db) -> None:
+    """客队命名变体（赫拉克勒斯/赫拉克莱斯型）→ kickoff 精确+主队兜底命中。"""
+    duck_con = seed_duck(away="客队英超变体")
+    fixture = seed_fixture(db)
+    # 主键不中（away 不同）；兜底 kickoff 精确（北京 09-13 03:00）+ home 命中
+    duck_con.execute(
+        "UPDATE fixture_universe SET kickoff = TIMESTAMP '2026-09-13 03:00:00'"
+    )
+    close = clv._closing_prob(db, fixture, "h", duck_con=duck_con)
+    assert close is not None
+    assert close[2] == "srct_pinnacle"
+
+
+def test_srct_anchor_no_match_returns_none(db) -> None:
+    """两步键全不中（CorpusScope 外场）→ 诚实无锚。"""
+    duck_con = seed_duck(home="无关队", away="无关队")
+    fixture = seed_fixture(db)
+    assert clv._closing_prob(db, fixture, "h", duck_con=duck_con) is None
+
+
+def test_srct_anchor_excludes_post_kickoff_event(db) -> None:
+    """published_at > kickoff 的迟到事件不取（票 34 防前视，源语义适配）。"""
+    duck_con = seed_duck(
+        events=(
+            ("2026-09-12 05:00:00+08:00", 2.0, 3.5, 3.5),
+            ("2026-09-13 04:00:00+08:00", 1.5, 4.0, 6.0),  # 开球后的场内价
+        )
+    )
+    duck_con.execute(
+        "UPDATE fixture_universe SET kickoff = TIMESTAMP '2026-09-13 03:00:00'"
+    )
+    fixture = seed_fixture(db)
+    close = clv._closing_prob(db, fixture, "h", duck_con=duck_con)
+    assert close is not None
+    assert 0.45 < close[0] < 0.55  # 取盘前 2.0 一笔，非场内 1.5
+
+
+def test_srct_anchor_latest_pre_kickoff_wins(db) -> None:
+    """盘前多笔取最新（published_at 降序第一）。"""
+    duck_con = seed_duck(
+        events=(
+            ("2026-09-12 01:00:00+08:00", 2.2, 3.4, 3.2),
+            ("2026-09-12 20:30:00+08:00", 1.9, 3.6, 4.2),
+        )
+    )
+    duck_con.execute(
+        "UPDATE fixture_universe SET kickoff = TIMESTAMP '2026-09-13 03:00:00'"
+    )
+    fixture = seed_fixture(db)
+    close = clv._closing_prob(db, fixture, "a", duck_con=duck_con)
+    assert close is not None
+    assert close[0] < 0.35  # 4.2 客胜 → 客胜概率显著低
+
+
+def test_reconcile_uses_srct_anchor_when_odds_api_dead(db) -> None:
+    """odds_api 三级空手 + duck_con 传入 → srct 锚写 clv_records（端到端）。"""
+    duck_con = seed_duck()
+    duck_con.execute(
+        "UPDATE fixture_universe SET kickoff = TIMESTAMP '2026-09-13 03:00:00'"
+    )
+    fixture = seed_fixture(db)
+    bet = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode=BetMode.PAPER,
+            stake=2.0,
+            legs=[
+                LegInput(
+                    fixture_id=fixture,
+                    market_code="had",
+                    selection_code="h",
+                    locked_odds=2.5,
+                )
+            ],
+        ),
+    )
+    settle_bet(db, bet)
+    stats = clv.reconcile_clv(db, duck_con=duck_con)
+    assert stats.recorded == 1
+    row = db.execute("SELECT * FROM clv_records").fetchone()
+    assert row["close_basis"] == "srct_pinnacle"
+    assert row["close_source"] == "srct_1x2_closing"
+    report = clv.clv_report(db)
+    assert report["by_close_basis"]["srct_pinnacle"]["bets"] == 1

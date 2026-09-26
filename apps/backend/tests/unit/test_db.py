@@ -14,8 +14,8 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
     # v7..v17 = 票 40/41/42/43/09/11/13/44/45/48/50
-    assert db.migrate(conn) == 19
-    assert db.migrate(conn) == 19  # 重跑幂等
+    assert db.migrate(conn) == 22
+    assert db.migrate(conn) == 22  # 重跑幂等
     # v16（票 48）：ev_assessments 脚手架 DROP
     dropped = {
         row["name"]
@@ -183,7 +183,7 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 19
+    assert db.migrate(conn) == 22
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before

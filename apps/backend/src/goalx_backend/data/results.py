@@ -96,27 +96,46 @@ def draw_results_for_fixtures(
 
 
 def upsert_hist_matches(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
-    """Upsert football-data.co.uk history rows (幂等重跑，票 21 验收)。"""
+    """Upsert football-data.co.uk history rows (幂等重跑，票 21 验收；票 73 扩列)。"""
     count = 0
     for row in rows:
         cur = conn.execute(
             """
-                INSERT INTO hist_matches
-(competition, season, match_date, home_team,
-                away_team,
-fthg, ftag, ftr, psc_home, psc_draw, psc_away,
-psh_home,
-                psh_draw, psh_away, avgc_home,
-                avgc_draw, avgc_away)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(competition, season, match_date, home_team, away_team)
-DO
-                UPDATE SET fthg=excluded.fthg, ftag=excluded.ftag, ftr=excluded.ftr,
+            INSERT INTO hist_matches (
+                competition, season, match_date, home_team, away_team, fthg, ftag, ftr,
+                psc_home, psc_draw, psc_away, psh_home, psh_draw, psh_away, avgc_home,
+                avgc_draw, avgc_away, avg_ou_over, avg_ou_under, avgc_ou_over,
+                avgc_ou_under, ah_line, avg_ah_home, avg_ah_away, ahc_line,
+                avgc_ah_home, avgc_ah_away, hthg, htag, htr, referee, shots_home,
+                shots_away, shots_on_target_home, shots_on_target_away, corners_home,
+                corners_away, fouls_home, fouls_away, yellow_home, yellow_away,
+                red_home, red_away
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            ON CONFLICT(competition, season, match_date, home_team, away_team)
+            DO UPDATE SET
+                fthg=excluded.fthg, ftag=excluded.ftag, ftr=excluded.ftr,
                 psc_home=excluded.psc_home, psc_draw=excluded.psc_draw,
                 psc_away=excluded.psc_away, psh_home=excluded.psh_home,
                 psh_draw=excluded.psh_draw, psh_away=excluded.psh_away,
-                avgc_home=excluded.avgc_home,
-                avgc_draw=excluded.avgc_draw, avgc_away=excluded.avgc_away
+                avgc_home=excluded.avgc_home, avgc_draw=excluded.avgc_draw,
+                avgc_away=excluded.avgc_away, avg_ou_over=excluded.avg_ou_over,
+                avg_ou_under=excluded.avg_ou_under, avgc_ou_over=excluded.avgc_ou_over,
+                avgc_ou_under=excluded.avgc_ou_under, ah_line=excluded.ah_line,
+                avg_ah_home=excluded.avg_ah_home, avg_ah_away=excluded.avg_ah_away,
+                ahc_line=excluded.ahc_line, avgc_ah_home=excluded.avgc_ah_home,
+                avgc_ah_away=excluded.avgc_ah_away, hthg=excluded.hthg,
+                htag=excluded.htag, htr=excluded.htr, referee=excluded.referee,
+                shots_home=excluded.shots_home, shots_away=excluded.shots_away,
+                shots_on_target_home=excluded.shots_on_target_home,
+                shots_on_target_away=excluded.shots_on_target_away,
+                corners_home=excluded.corners_home, corners_away=excluded.corners_away,
+                fouls_home=excluded.fouls_home, fouls_away=excluded.fouls_away,
+                yellow_home=excluded.yellow_home, yellow_away=excluded.yellow_away,
+                red_home=excluded.red_home, red_away=excluded.red_away
             """,
             (
                 row["competition"],
@@ -136,6 +155,33 @@ DO
                 row["avgc_home"],
                 row["avgc_draw"],
                 row["avgc_away"],
+                # 票 73 扩列族（老季/旧测试行缺键 → None）
+                row.get("avg_ou_over"),
+                row.get("avg_ou_under"),
+                row.get("avgc_ou_over"),
+                row.get("avgc_ou_under"),
+                row.get("ah_line"),
+                row.get("avg_ah_home"),
+                row.get("avg_ah_away"),
+                row.get("ahc_line"),
+                row.get("avgc_ah_home"),
+                row.get("avgc_ah_away"),
+                row.get("hthg"),
+                row.get("htag"),
+                row.get("htr"),
+                row.get("referee"),
+                row.get("shots_home"),
+                row.get("shots_away"),
+                row.get("shots_on_target_home"),
+                row.get("shots_on_target_away"),
+                row.get("corners_home"),
+                row.get("corners_away"),
+                row.get("fouls_home"),
+                row.get("fouls_away"),
+                row.get("yellow_home"),
+                row.get("yellow_away"),
+                row.get("red_home"),
+                row.get("red_away"),
             ),
         )
         if cur.rowcount > 0:

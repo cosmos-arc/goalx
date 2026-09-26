@@ -29,6 +29,8 @@ OWNERS: dict[str, set[str]] = {
         # 票 45：Understat xG 特征层（ingest/understat.py）
         "understat_matches",
         "understat_sync_runs",
+        # 票 74：clubelo Elo 评级层（ingest/clubelo.py）
+        "elo_ratings",
         # 票 49 采集先行：源B欧指变化时序（ingest/srcb.py）
         "srcb_change_rows",
         "srcb_change_runs",

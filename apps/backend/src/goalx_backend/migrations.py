@@ -1175,6 +1175,122 @@ def _apply_v19(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE hist_matches ADD COLUMN {column} REAL")
 
 
+def _apply_v20(conn: sqlite3.Connection) -> None:
+    """
+    v20（票 73 扩列）：hist_matches 增大小球/亚盘开收均值 + 比赛统计列。
+
+    research/27 缺口矩阵 P0/P1：fdhist O/U（Avg>2.5 族，线固按 2.5）与 AH
+    （多书均值两端点，AHh/AHCh 为均值盘口线）与源T 单书全程轨迹互补；
+    半场/射门/角球/牌/裁判为判别层特征与 HT 拆分验证面。追加列不改既有行
+    （重导幂等回填，v19 同型）；老季文件缺列解析为 NULL。
+    """
+    columns: tuple[tuple[str, str], ...] = (
+        ("avg_ou_over", "REAL"),
+        ("avg_ou_under", "REAL"),
+        ("avgc_ou_over", "REAL"),
+        ("avgc_ou_under", "REAL"),
+        ("ah_line", "REAL"),
+        ("avg_ah_home", "REAL"),
+        ("avg_ah_away", "REAL"),
+        ("ahc_line", "REAL"),
+        ("avgc_ah_home", "REAL"),
+        ("avgc_ah_away", "REAL"),
+        ("hthg", "INTEGER"),
+        ("htag", "INTEGER"),
+        ("htr", "TEXT"),
+        ("referee", "TEXT"),
+        ("shots_home", "INTEGER"),
+        ("shots_away", "INTEGER"),
+        ("shots_on_target_home", "INTEGER"),
+        ("shots_on_target_away", "INTEGER"),
+        ("corners_home", "INTEGER"),
+        ("corners_away", "INTEGER"),
+        ("fouls_home", "INTEGER"),
+        ("fouls_away", "INTEGER"),
+        ("yellow_home", "INTEGER"),
+        ("yellow_away", "INTEGER"),
+        ("red_home", "INTEGER"),
+        ("red_away", "INTEGER"),
+    )
+    for column, kind in columns:
+        conn.execute(f"ALTER TABLE hist_matches ADD COLUMN {column} {kind}")
+
+
+def _apply_v21(conn: sqlite3.Connection) -> None:
+    """
+    v21（票 74）：clubelo Elo 评级层（判别层特征 ②⑦）。
+
+    clubelo 原生区间粒度：一行 = 一队一段连续同 Elo 的 [valid_from, valid_to]，
+    点时查询 From<=date<=To 与逐日快照等价且行数压缩（全历史约 600 队 ×
+    数百区间）。日拍/回填同一 upsert：冲突即延长 valid_to/更新评级。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS elo_ratings (
+            club TEXT NOT NULL,
+            country TEXT NOT NULL,
+            level INTEGER,
+            elo REAL NOT NULL,
+            valid_from TEXT NOT NULL,
+            valid_to TEXT,
+            UNIQUE (club, valid_from)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_elo_ratings_point_in_time
+        ON elo_ratings (club, valid_from)
+        """
+    )
+
+
+def _apply_v22(conn: sqlite3.Connection) -> None:
+    """
+    v22（票 75）：clv_records.close_source 枚举扩 'srct_1x2_closing'。
+
+    原枚举（odds_api_closing/fd_psc）挡住 srct 收盘锚接管——INSERT OR
+    IGNORE 对 CHECK 违规同样静默忽略（实测：行不落、无异常）。SQLite 不能
+    ALTER CHECK，重建表拷贝（clv_records 为对账派生面，可由 reconcile
+    重算，重建无损语义）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE clv_records_v22 (
+            id INTEGER PRIMARY KEY,
+            bet_id INTEGER NOT NULL REFERENCES bets(id),
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            market_code TEXT NOT NULL,
+            selection_code TEXT NOT NULL,
+            taken_odds REAL NOT NULL,
+            close_prob REAL NOT NULL,
+            clv_prob REAL NOT NULL,
+            close_source TEXT NOT NULL
+                CHECK (close_source IN ('odds_api_closing', 'fd_psc',
+                                        'srct_1x2_closing')),
+            minutes_to_kickoff REAL,
+            computed_at TEXT NOT NULL,
+            close_basis TEXT,
+            UNIQUE (bet_id, fixture_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO clv_records_v22
+        (id, bet_id, fixture_id, market_code, selection_code, taken_odds,
+         close_prob, clv_prob, close_source, minutes_to_kickoff, computed_at,
+         close_basis)
+        SELECT id, bet_id, fixture_id, market_code, selection_code, taken_odds,
+               close_prob, clv_prob, close_source, minutes_to_kickoff,
+               computed_at, close_basis
+        FROM clv_records
+        """
+    )
+    conn.execute("DROP TABLE clv_records")
+    conn.execute("ALTER TABLE clv_records_v22 RENAME TO clv_records")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1195,4 +1311,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (17, _apply_v17),
     (18, _apply_v18),
     (19, _apply_v19),
+    (20, _apply_v20),
+    (21, _apply_v21),
+    (22, _apply_v22),
 )
