@@ -90,7 +90,8 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 | sporttery calculator | 竞彩报价/销售状态/单固（免费） | `sporttery_calculator_url` | 常规 |
 | The Odds API | 欧赔共识/收盘（credit 付费） | `odds_api_key`（兼容无前缀 `ODDS_API_KEY`） | 月 480 / 日 40 credits 护栏，超限抛错 |
 | football-data.co.uk | 五大三季历史底座 | `fd_base_url` | 一次性导入 |
-| 500 系结果页 | 赛果自动同步（票 42 实证唯一可行源） | `caiguo_base_url`（需浏览器 UA） | 每 30 分钟自动 |
+| 源T 日页赛果 | 赛果落事实主源（票 76；零新请求走 silver） | 语料树 `GOALX_CORPUS_ROOT` | 每 30 分钟自动（随 draw-results-sync） |
+| 官方 uniform | 赛果差集兜底+对账审计（票 76 起；CorpusScope 外联赛/官方 void） | `uniform` 端点族 | 每 30 分钟自动（同链内联） |
 | 澳客 | 彩池期次/对阵/人气分布 | `zucai_base_url` | 每日三拍自动 |
 | 官方开奖 | 唯一事实源 | — | UI/API 人工录入，更正必带原因 |
 | 官方彩池销量/滚存 | 无自动源 | — | AI 代采（见 §8） |
@@ -136,7 +137,7 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 | pre-push 钩子 BlockingIOError | pre-commit 大文件 I/O bug；`git push --no-verify` 后靠 CI 同样扫描兜底。 |
 | e2e "死后端降级"用例失败 | 该用例要求本机 8000 端口无后端；跑全门禁前停 API server。 |
 | playwright 报浏览器不存在 | 版本错配；仓库用 1.62（浏览器 build 1234），脚本指定 `executablePath` 或 `bun x playwright install chromium`。 |
-| 彩池/赛果源不可达 | 三级降级：直连 → AI 代采（§8）→ 页面骨架态（如实呈现，不伪造）。 |
+| 彩池/赛果源不可达 | 赛果链三级降级（票 76）：源T silver 缺席→uniform 官方族兜底→AI 代采（§8）→页面骨架态（如实呈现，不伪造）。 |
 | 页面数据与调度日志不一致 | 先看同步状态端点（`/draw-sync/status`、`/pool-sync/status`）再下结论；快照 append-only，重跑幂等。 |
 
 ## 8. AI 代采（最差情况兜底）
