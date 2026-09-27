@@ -381,97 +381,73 @@ def decode_odds_js(body: bytes) -> str:
     return body.decode("utf-8-sig", errors="replace")
 
 
+def _fetch_bytes(
+    client: httpx.Client, url: str, *, referer: str | None = None
+) -> bytes:
+    """GET 原始字节（Mac-Chrome UA 常驻；vip/zq 域须带 Referer）。"""
+    headers = {"User-Agent": DESKTOP_UA}
+    if referer is not None:
+        headers["Referer"] = referer
+    response = client.get(url, headers=headers, timeout=30.0)
+    response.raise_for_status()
+    return response.content
+
+
 def fetch_day_page(client: httpx.Client, settings: Settings, date: str) -> bytes:
     """拉一日 Over 页原始字节；伪 200 抛 SrctContentError。"""
-    response = client.get(
-        settings.srct_day_url.format(date=date.replace("-", "")),
-        headers={"User-Agent": DESKTOP_UA},
-        timeout=30.0,
+    body = _fetch_bytes(
+        client, settings.srct_day_url.format(date=date.replace("-", ""))
     )
-    response.raise_for_status()
-    text = decode_day_page(response.content)
-    if is_content_404(text):
+    if is_content_404(decode_day_page(body)):
         msg = f"day page {date}: 伪 200（404 内容）"
         raise SrctContentError(msg)
-    return response.content
+    return body
 
 
 def fetch_odds_js(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场 1x2d 轨迹原始字节（内容判别在解析层）。"""
-    response = client.get(
+    return _fetch_bytes(
+        client,
         settings.srct_odds_url.format(sid=sid),
-        headers={
-            "User-Agent": DESKTOP_UA,
-            "Referer": settings.srct_odds_referer.format(sid=sid),
-        },
-        timeout=30.0,
+        referer=settings.srct_odds_referer.format(sid=sid),
     )
-    response.raise_for_status()
-    return response.content
 
 
 def fetch_asianodds_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场亚盘多庄页原始字节（UTF-8；vip 域 2026-09-26 起强制 Referer）。"""
-    response = client.get(
+    return _fetch_bytes(
+        client,
         settings.srct_asianodds_url.format(sid=sid),
-        headers={
-            "User-Agent": DESKTOP_UA,
-            "Referer": settings.srct_odds_referer.format(sid=sid),
-        },
-        timeout=30.0,
+        referer=settings.srct_odds_referer.format(sid=sid),
     )
-    response.raise_for_status()
-    return response.content
 
 
 def fetch_overdown_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场大小球多庄页原始字节（UTF-8；vip 域 2026-09-26 起强制 Referer）。"""
-    response = client.get(
+    return _fetch_bytes(
+        client,
         settings.srct_overdown_url.format(sid=sid),
-        headers={
-            "User-Agent": DESKTOP_UA,
-            "Referer": settings.srct_odds_referer.format(sid=sid),
-        },
-        timeout=30.0,
+        referer=settings.srct_odds_referer.format(sid=sid),
     )
-    response.raise_for_status()
-    return response.content
 
 
 def fetch_detail_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场详情页原始字节（live 主机，UTF-8；实测免 Referer，2026-09-25）。"""
-    response = client.get(
-        settings.srct_detail_url.format(sid=sid),
-        headers={"User-Agent": DESKTOP_UA},
-        timeout=30.0,
-    )
-    response.raise_for_status()
-    return response.content
+    return _fetch_bytes(client, settings.srct_detail_url.format(sid=sid))
 
 
 def fetch_analysis_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场分析页原始字节（zq 主机，UTF-8；zq 域 2026-09-26 起强制 Referer）。"""
-    response = client.get(
+    return _fetch_bytes(
+        client,
         settings.srct_analysis_url.format(sid=sid),
-        headers={
-            "User-Agent": DESKTOP_UA,
-            "Referer": settings.srct_odds_referer.format(sid=sid),
-        },
-        timeout=30.0,
+        referer=settings.srct_odds_referer.format(sid=sid),
     )
-    response.raise_for_status()
-    return response.content
 
 
 def fetch_stats_page(client: httpx.Client, settings: Settings, sid: str) -> bytes:
     """拉一场 47 键统计页原始字节（UTF-8；实测免 Referer）。"""
-    response = client.get(
-        settings.srct_stats_url.format(sid=sid),
-        headers={"User-Agent": DESKTOP_UA},
-        timeout=30.0,
-    )
-    response.raise_for_status()
-    return response.content
+    return _fetch_bytes(client, settings.srct_stats_url.format(sid=sid))
 
 
 def parse_odds_page(body: bytes) -> dict[str, object]:

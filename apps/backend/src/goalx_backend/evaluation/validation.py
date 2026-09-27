@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import deque
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -168,14 +169,12 @@ def _yield_curve(bets: list[Any]) -> list[YieldPoint]:
     points: list[YieldPoint] = []
     staked = 0.0
     profit = 0.0
-    window: list[tuple[float, float]] = []
+    window: deque[tuple[float, float]] = deque(maxlen=ROLLING_WINDOW)
     for i, bet in enumerate(bets, start=1):
         stake, bet_profit = bet.stake, bet.profit or 0.0
         staked += stake
         profit += bet_profit
         window.append((stake, bet_profit))
-        if len(window) > ROLLING_WINDOW:
-            window.pop(0)
         window_stake = sum(s for s, _ in window)
         rolling = sum(p for _, p in window) / window_stake if window_stake > 0 else None
         points.append(

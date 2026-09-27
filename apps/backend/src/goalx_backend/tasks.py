@@ -45,14 +45,13 @@ from goalx_backend.data.ingest import (
     zucai_official,
 )
 from goalx_backend.data.ingest.oddsapi import polite_client
-from goalx_backend.db import connect, migrate
+from goalx_backend.db import connect, migrate, utc_now_iso
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
 from goalx_backend.llm.gate import gate_stats_dict, gate_sweep
 from goalx_backend.llm.m3_report import m3_protocol_report
 from goalx_backend.llm.okooo_formation import collect_injury_intel, injury_stats_dict
-from goalx_backend.llm.protocol import record_control_events
 from goalx_backend.llm.review import enqueue_post_settle
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
@@ -564,6 +563,27 @@ def scout_line() -> dict[str, object]:
         gate = gate_stats_dict(gate_sweep(conn, settings))
         fused = fusion_stats_dict(fusion_sweep(conn, settings))
     return {**scout, "gate": gate, "fusion": fused}
+
+
+_CONTROL_CATEGORY = "m3_control"
+
+
+def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[str]:
+    """M3 证伪控制事件（票 13）：关闭的开关每日记一行（同 note 24h 内不重复）。"""
+    events: list[str] = []
+    disabled: list[str] = []
+    if not settings.m3_analyst_enabled:
+        disabled.append("analyst_disabled")
+    if not settings.m3_fusion_enabled:
+        disabled.append("fused_disabled")
+    day_start = utc_now_iso()[:11] + "00:00:00+00:00"
+    for note in disabled:
+        if not rs.category_note_count(conn, _CONTROL_CATEGORY, note, day_start):
+            rs.record_cost(
+                conn, _CONTROL_CATEGORY, units=0.0, amount_cny=0.0, note=note
+            )
+            events.append(note)
+    return events
 
 
 def m3_evaluation() -> dict[str, object]:

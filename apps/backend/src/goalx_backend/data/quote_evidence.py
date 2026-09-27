@@ -34,14 +34,15 @@ REJECTED = "rejected"
 UNKNOWN = "unknown"
 
 
-def _parse_ts(value: str) -> datetime:
+def parse_ts(value: str) -> datetime:
     """ISO 时间串 → aware datetime（naive 按 UTC 解释）。"""
-    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    moment = datetime.fromisoformat(value)
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
-def _seconds_between(later: str, earlier: str) -> float:
-    return (_parse_ts(later) - _parse_ts(earlier)).total_seconds()
+def seconds_between(later: str, earlier: str) -> float:
+    """两 ISO 串的秒差（later − earlier；naive 按 UTC 解释）。"""
+    return (parse_ts(later) - parse_ts(earlier)).total_seconds()
 
 
 def effective_observed_at(row: sqlite3.Row) -> str | None:
@@ -158,7 +159,7 @@ def books_complete_asof(
             continue
         if (
             max_age_seconds is not None
-            and _seconds_between(as_of, observed) > max_age_seconds
+            and seconds_between(as_of, observed) > max_age_seconds
         ):
             continue
         by_book.setdefault(str(row["source"]), []).append(row)
@@ -233,7 +234,7 @@ def adjudicate_had_quote(
     if fixture is None:
         verdict.reject("fixture_not_found")
         return verdict
-    if _parse_ts(as_of) >= _parse_ts(kickoff or ""):
+    if parse_ts(as_of) >= parse_ts(kickoff or ""):
         verdict.reject("kickoff_passed")
         return verdict
 
@@ -294,7 +295,7 @@ def _adjudicate_jc(
         verdict.mark_unknown("jc_source_time_unknown")
         return
     verdict.jc_source_updated_at = max(source_times)
-    age = _seconds_between(as_of, verdict.jc_source_updated_at)
+    age = seconds_between(as_of, verdict.jc_source_updated_at)
     verdict.jc_age_seconds = age
     if age > freshness_seconds:
         verdict.reject("stale_source")
@@ -323,7 +324,7 @@ def _book_asof(
         return None, None, f"{book}:source_time_unknown"
     book_time = max(source_times)
     if jc_source_updated_at is not None:
-        gap = abs(_seconds_between(book_time, jc_source_updated_at))
+        gap = abs(seconds_between(book_time, jc_source_updated_at))
         if gap > max_pair_gap_seconds:
             return None, book_time, f"{book}:pair_gap_exceeded"
     return (
@@ -357,7 +358,7 @@ def _collect_valid_books(
         if prices is None or book_time is None:
             continue
         if verdict.jc_source_updated_at is not None:
-            gap = abs(_seconds_between(book_time, verdict.jc_source_updated_at))
+            gap = abs(seconds_between(book_time, verdict.jc_source_updated_at))
             if verdict.pair_gap_seconds is None or gap > verdict.pair_gap_seconds:
                 verdict.pair_gap_seconds = gap
         valid_books[book] = prices
@@ -506,7 +507,7 @@ def stale_line_signal(
     signal = StaleLineSignal(
         as_of=as_of,
         jc_last_move=jc_last_move,
-        minutes_since_move=max(0, int(_seconds_between(as_of, jc_last_move) // 60)),
+        minutes_since_move=max(0, int(seconds_between(as_of, jc_last_move) // 60)),
     )
     frozen = _sharp_probs_asof(
         conn,
@@ -572,9 +573,7 @@ def _srct_pinnacle_closing(
     sid: str | None = None,
 ) -> tuple[float, float, float] | None:
     """srct_pinnacle_closing_triplet 的查询体（异常不兜，由外层统一降级）。"""
-    kickoff = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
-    if kickoff.tzinfo is None:  # 防御：naive 串按 UTC 解释
-        kickoff = kickoff.replace(tzinfo=UTC)
+    kickoff = parse_ts(kickoff_utc)
     beijing = fx_store.beijing_naive(kickoff_utc)
     if sid is None:
         sid = _resolve_sid_fallback(con, home, away, beijing)

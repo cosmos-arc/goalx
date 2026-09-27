@@ -6,10 +6,10 @@ import sqlite3
 
 import httpx
 
+from goalx_backend.cli import completeness_report
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import openfootball as of
-from goalx_backend.evaluation.corpus import completeness_report
 
 
 def _seed_hist(db: sqlite3.Connection) -> None:

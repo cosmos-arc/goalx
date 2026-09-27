@@ -19,12 +19,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from statistics import median_low, quantiles
 from typing import Any
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import quote_evidence
-from goalx_backend.data.quote_evidence import effective_observed_at
+from goalx_backend.data.quote_evidence import effective_observed_at, seconds_between
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -173,18 +173,10 @@ def _books_asof(
             for observed in (effective_observed_at(r) for r in latest.values())
             if observed is not None
         )
-        if _seconds_between(pair_time, newest_observed) > max_pair_gap_seconds:
+        if seconds_between(pair_time, newest_observed) > max_pair_gap_seconds:
             continue  # 配对时差超窗
         books[book] = {sel: float(r["odds"]) for sel, r in latest.items()}
     return books
-
-
-def _seconds_between(later: str, earlier: str) -> float:
-    def parse(value: str) -> datetime:
-        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-
-    return (parse(later) - parse(earlier)).total_seconds()
 
 
 def method_sensitivity(samples: list[HaircutSample]) -> dict[str, dict[str, float]]:
@@ -202,26 +194,19 @@ def method_sensitivity(samples: list[HaircutSample]) -> dict[str, dict[str, floa
                 SELECTIONS.index(sample.selection)
             ]
             values.append(1.0 - sample.jc_odds / fair)
-        values.sort()
-        median = values[len(values) // 2] if values else 0.0
+        # 偶数样本保持下中位数（median_low = 原 values[len//2] 口径）
+        median = median_low(values) if values else 0.0
         report[method] = {"median_haircut": round(median, 6), "n": float(len(values))}
     return report
 
 
 def _quartiles(values: list[float]) -> list[float]:
-    """升序四分位（线性插值）；空列表返回 [0,0,0]。"""
+    """升序四分位（inclusive 线性插值）；空列表返回 [0,0,0]。"""
     if not values:
         return [0.0, 0.0, 0.0]
-    ordered = sorted(values)
-
-    def quantile(q: float) -> float:
-        pos = q * (len(ordered) - 1)
-        low = int(pos)
-        high = min(low + 1, len(ordered) - 1)
-        frac = pos - low
-        return ordered[low] * (1 - frac) + ordered[high] * frac
-
-    return [quantile(0.25), quantile(0.5), quantile(0.75)]
+    if len(values) == 1:
+        return [values[0]] * 3
+    return [float(q) for q in quantiles(values, n=4, method="inclusive")]
 
 
 def calibrate_haircuts(

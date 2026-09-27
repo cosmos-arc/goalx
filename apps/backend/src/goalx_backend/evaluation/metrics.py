@@ -21,6 +21,7 @@ import json
 import math
 import sqlite3
 from collections.abc import Sequence
+from statistics import fmean, pvariance, stdev
 from typing import Any
 
 from scipy.stats import norm
@@ -105,9 +106,8 @@ def diebold_mariano(
     n = len(loss_diffs)
     if n < MIN_DM_SAMPLES:
         return 0.0, 1.0
-    mean = sum(loss_diffs) / n
-    gamma0 = sum((d - mean) ** 2 for d in loss_diffs) / n
-    variance = gamma0
+    mean = fmean(loss_diffs)
+    variance = pvariance(loss_diffs)  # gamma0：样本方差（除 n）
     for lag_index in range(1, min(lag, n - 1) + 1):
         gamma_l = (
             sum(
@@ -139,7 +139,7 @@ def flat_stake_stats(
     n = len(returns)
     staked = sum(s for _, s in pairs)
     profit = sum(p for p, _ in pairs)
-    mean = sum(returns) / n
+    mean = fmean(returns)
     weighted = profit / staked if staked > 0 else 0.0
     if n < MIN_TSTAT_SAMPLES:
         return {
@@ -148,8 +148,7 @@ def flat_stake_stats(
             "roi_stake_weighted": weighted,
             "t_stat": 0.0,
         }
-    variance = sum((r - mean) ** 2 for r in returns) / (n - 1)
-    std = math.sqrt(variance)
+    std = stdev(returns)  # 样本标准差（除 n-1）
     t_stat = mean / (std / math.sqrt(n)) if std > 0 else 0.0
     return {"n": n, "roi": mean, "roi_stake_weighted": weighted, "t_stat": t_stat}
 
@@ -186,7 +185,7 @@ def evaluate_predictions(
         market_losses["logloss"].append(log_loss(market_vec, outcome))
 
     def mean(values: list[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
+        return fmean(values) if values else 0.0
 
     dm, dm_p = diebold_mariano(
         [m - f for m, f in zip(model_losses["rps"], market_losses["rps"], strict=True)]

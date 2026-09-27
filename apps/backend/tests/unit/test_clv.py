@@ -825,3 +825,21 @@ def test_corpus_anchor_contextmanager_closes(monkeypatch) -> None:
     with tasks_mod.corpus_anchor() as anchor:
         assert anchor is None
     assert closed == [True]  # 缺席路径无连接可关
+
+
+def test_golden_ols_slope() -> None:
+    """金标值断言（lean-audit 票 02）：换装 scipy.stats.linregress 前钉死。"""
+    xs = [0.5, -1.2, 2.3, 0.0, 1.7, -0.4, 2.9, 0.8, 1.1, -1.5]
+    ys = [1.2, -0.3, 2.1, 0.4, 1.6, 0.0, 2.6, 0.9, 1.3, -0.8]
+    assert clv._ols_slope(xs, ys) == pytest.approx(
+        (0.7391955498502354, 0.9766426863222039), abs=1e-12
+    )
+    # sxx=0（xs 全同）守卫：None/None
+    assert clv._ols_slope([1.0] * 8, [1.0, 2.0, 3.0, 1.5, 2.5, 0.5, 3.5, 2.0]) == (
+        None,
+        None,
+    )
+    # syy=0（ys 全同）退化：斜率为 0，R²=None（原行为保持）
+    assert clv._ols_slope([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2.0] * 6) == (0.0, None)
+    # n<MIN 守卫
+    assert clv._ols_slope([1.0], [1.0]) == (None, None)

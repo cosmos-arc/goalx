@@ -1,8 +1,14 @@
 """赔率数学：隐含概率归一、Shin 去晦与 EV 计算（spec §2 方向 A 基准）。"""
 
+# scipy 的类型存根不完整，以下规则的第三方 unknown 在本文件放宽（同 metrics.py）。
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
+
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import cast
+
+from scipy.optimize import brentq
 
 _MIN_OUTCOMES = 2
 
@@ -28,14 +34,15 @@ def power_implied(odds: tuple[float, ...]) -> tuple[float, ...]:
     def total(z: float) -> float:
         return sum(p**z for p in raw)
 
-    low, high = 0.5, 2.0
-    for _ in range(80):
-        mid = (low + high) / 2.0
-        if total(mid) > 1.0:
-            low = mid
-        else:
-            high = mid
-    z = (low + high) / 2.0
+    def residual(z: float) -> float:
+        return total(z) - 1.0
+
+    # 原二分区间 [0.5, 2.0]；区间内无根的病态盘口取上界（原二分的极限行为）
+    z = (
+        2.0
+        if total(2.0) > 1.0
+        else cast("float", brentq(residual, 0.5, 2.0, xtol=1e-15))
+    )
     probs = tuple(p**z for p in raw)
     scale = sum(probs)
     return tuple(p / scale for p in probs)
@@ -60,14 +67,16 @@ def shin_implied(odds: tuple[float, ...]) -> tuple[float, ...]:
     def total_prob(z: float) -> float:
         return sum(_shin_probabilities(z, raw))
 
-    low, high = 0.0, 0.9999
-    for _ in range(60):
-        mid = (low + high) / 2.0
-        if total_prob(mid) > 1.0:
-            low = mid
-        else:
-            high = mid
-    probs = _shin_probabilities((low + high) / 2.0, raw)
+    def residual(z: float) -> float:
+        return total_prob(z) - 1.0
+
+    # 原二分区间 [0.0, 0.9999]；区间内无根的病态盘口取上界（原二分的极限行为）
+    z = (
+        0.9999
+        if total_prob(0.9999) > 1.0
+        else cast("float", brentq(residual, 0.0, 0.9999, xtol=1e-15))
+    )
+    probs = _shin_probabilities(z, raw)
     scale = sum(probs)
     return tuple(p / scale for p in probs)
 

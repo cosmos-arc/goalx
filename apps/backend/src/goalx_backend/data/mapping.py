@@ -351,7 +351,7 @@ def _align_kickoff(
     内回滚该次，标记冲突不动全局事务。
     """
     target_utc = universe_bj.replace(tzinfo=_BEIJING).astimezone(UTC)
-    current = datetime.fromisoformat(current_utc.replace("Z", "+00:00"))
+    current = datetime.fromisoformat(current_utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     drift = (target_utc - current).total_seconds()
@@ -514,10 +514,9 @@ def pending_srct_results(
     （unlinked 场 sid 为 NULL——CorpusScope 外差集，uniform 兜底通道的口径）。
     窗口语义与 uniform.candidate_business_dates 同源（票 44 待出推导）。
     """
-    floor = (
-        datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
-        - timedelta(days=lookback_days)
-    ).isoformat(timespec="seconds")
+    floor = (datetime.fromisoformat(now_iso) - timedelta(days=lookback_days)).isoformat(
+        timespec="seconds"
+    )
     return conn.execute(
         """
         SELECT f.id AS fixture_id, f.kickoff_utc,

@@ -283,3 +283,15 @@ def test_method_sensitivity_reproducible_and_recorded(db) -> None:
     assert len({row["median_haircut"] for row in first.values()}) >= 2
     # 固定方法版本是 shin_mean_v1
     assert hc.HAIRCUT_METHOD_VERSION == "shin_mean_v1"
+
+
+def test_golden_quartiles() -> None:
+    """金标值断言（lean-audit 票 02）：statistics.quantiles 换装前钉死。"""
+    odd = [3.2, 1.1, 2.4, 5.6, 4.0, 2.9, 3.7]
+    even = [3.2, 1.1, 2.4, 5.6, 4.0, 2.9, 3.7, 0.6]
+    assert hc._quartiles(odd) == pytest.approx([2.65, 3.2, 3.85], abs=1e-12)
+    assert hc._quartiles(even) == pytest.approx(
+        [2.0749999999999997, 3.05, 3.7750000000000004], abs=1e-12
+    )
+    assert hc._quartiles([]) == [0.0, 0.0, 0.0]
+    assert hc._quartiles([1.25]) == [1.25, 1.25, 1.25]

@@ -281,7 +281,7 @@ def parse_events(
 
 def _event_commence_utc(event: ParsedEvent) -> datetime:
     """事件的 kickoff datetime（Odds API 返回 ISO UTC）。"""
-    return datetime.fromisoformat(event.commence_utc.replace("Z", "+00:00"))
+    return datetime.fromisoformat(event.commence_utc)
 
 
 def store_events(

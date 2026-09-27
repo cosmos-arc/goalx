@@ -221,3 +221,53 @@ def test_report_shape_stages_and_determinism(db) -> None:
         db, competitions=("E0",), seasons=("2324", "2425")
     )
     assert json.dumps(again, sort_keys=False) == json.dumps(report, sort_keys=False)
+
+
+def test_golden_percentiles() -> None:
+    """金标值断言（lean-audit 票 02）：statistics.quantiles 换装前钉死。"""
+    vals = [
+        0.13,
+        2.71,
+        -1.5,
+        0.92,
+        3.33,
+        1.02,
+        2.64,
+        0.55,
+        1.87,
+        3.1,
+        0.01,
+        2.2,
+        1.45,
+        0.78,
+        2.99,
+        1.66,
+        0.34,
+        2.05,
+        1.23,
+        0.6,
+        2.88,
+        1.74,
+        0.09,
+    ]
+    assert pool_replay.percentiles(vals) == {
+        "p50": 1.45,
+        "p90": 2.968,
+        "p99": 3.2794,
+        "max": 3.33,
+        "min": -1.5,
+    }
+    assert pool_replay.percentiles([1.618]) == {
+        "p50": 1.618,
+        "p90": 1.618,
+        "p99": 1.618,
+        "max": 1.618,
+        "min": 1.618,
+    }
+    assert pool_replay.percentiles([]) == {
+        "p50": None,
+        "p90": None,
+        "p99": None,
+        "max": None,
+        "min": None,
+    }
