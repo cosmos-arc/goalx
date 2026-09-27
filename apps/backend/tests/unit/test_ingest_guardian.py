@@ -392,3 +392,62 @@ def test_safe_error_redacts_query_string() -> None:
     cleaned = guardian._safe_error(exc)
     assert "SECRET" not in cleaned
     assert cleaned.endswith("search")
+
+
+def test_persisted_boundary_survives_process_restart(tmp_path: Path) -> None:
+    """跨进程撞上限：checkpoint 持久 boundary 生效（不退化为 +1 日爬行）。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    win_p1 = page_payload(pages=5, page=1, ids=["a1", "a2"])
+    win_p1["response"]["results"] = [
+        dict(
+            cast("dict[str, object]", win_p1["response"]["results"][0]),
+            webPublicationDate="2001-06-10T00:00:00Z",
+        ),
+        dict(
+            cast("dict[str, object]", win_p1["response"]["results"][1]),
+            webPublicationDate="2001-06-15T00:00:00Z",
+        ),
+    ]
+    win_b = page_payload(pages=1, page=1, ids=["b1"])
+
+    calls: list[dict[str, str | int]] = []
+
+    def respond(params: dict[str, str | int]) -> httpx.Response:
+        calls.append(dict(params))
+        if str(params["from-date"]) == "1999-01-01":
+            if int(str(params["page"])) == 1:
+                return httpx.Response(
+                    200,
+                    text=json.dumps(win_p1),
+                    request=httpx.Request("GET", "https://x"),
+                )
+            return _cap_response()
+        return httpx.Response(
+            200, text=json.dumps(win_b), request=httpx.Request("GET", "https://x")
+        )
+
+    class C:
+        def get(
+            self, url: str, *, params: dict[str, str | int], timeout: float
+        ) -> httpx.Response:
+            del url, timeout
+            return respond(params)
+
+    # 进程 1：page1 成功后按单次上限停下（boundary 已随游标持久化）
+    guardian.sync_guardian(
+        store, settings, C(), now=NOW, request_cap=1, sleeper=lambda _: None
+    )
+    persisted = store.guardian_state()
+    assert persisted["boundary"] == "2001-06-15"
+    store.close()
+
+    # 进程 2：游标 page2 撞上限 → 用持久 boundary（内存 last_boundary 为空）
+    store2 = CorpusStore(settings.corpus_root)
+    stats = guardian.sync_guardian(
+        store2, settings, C(), now=NOW, sleeper=lambda _: None
+    )
+    store2.close()
+    assert stats.completed
+    assert str(calls[-1]["from-date"]) == "2001-06-15"  # 非 +1 日（1999-01-02）

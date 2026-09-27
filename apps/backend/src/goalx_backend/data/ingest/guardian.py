@@ -89,6 +89,11 @@ def _as_str(value: object) -> str:
     return str(cast("str", value))
 
 
+def _optional_str(value: object) -> str | None:
+    """可空值取型（object → str | None；checkpoint 行）。"""
+    return None if value is None else _as_str(value)
+
+
 def fetch_search_page(
     client: httpx.Client,
     settings: Settings,
@@ -259,11 +264,17 @@ def _pull_page(
     )
 
 
-def _advance_window(state: State, current_from: str, boundary: str | None) -> State:
-    """深翻页上限后的窗口推进：from_date 跳到末篇发布日（无/+0 则 +1 日）。"""
+def _advance_window(state: State, current_from: str, in_memory: str | None) -> State:
+    """
+    深翻页上限后的窗口推进：from_date 跳到末篇发布日（无/+0 则 +1 日）。
+
+    boundary 优先取本进程末篇，回落 checkpoint 持久值（跨进程续跑）；
+    消费后置 None——已切窗，防陈旧值在下次撞限误用。
+    """
+    boundary = in_memory or _optional_str(state.get("boundary"))
     nxt = boundary if boundary and boundary > current_from else None
     nxt = nxt or (date.fromisoformat(current_from) + timedelta(days=1)).isoformat()
-    return {**state, "from_date": nxt, "page": 1}
+    return {**state, "from_date": nxt, "page": 1, "boundary": None}
 
 
 def _skip_reason(state: State, settings: Settings, today: date) -> str | None:
@@ -302,6 +313,7 @@ def _converged_state(window: tuple[str, str, int, bool], total: int) -> State:
         "page": 1,
         "last_completed_date": to_date,
         "total_articles": total,
+        "boundary": None,
     }
 
 
@@ -310,8 +322,9 @@ def _cursor_state(
     window: tuple[str, str, int, bool],
     total: int,
     last_completed: object,
+    boundary: str | None,
 ) -> State:
-    """翻页中游标态（下一页；completed 原样透传）。"""
+    """翻页中游标态（下一页 + 持久化 boundary；completed 原样透传）。"""
     from_date, to_date, page, _ = window
     return {
         "phase": phase,
@@ -320,6 +333,7 @@ def _cursor_state(
         "page": page + 1,
         "last_completed_date": last_completed,
         "total_articles": total,
+        "boundary": boundary,
     }
 
 
@@ -370,8 +384,8 @@ def sync_guardian(
                 store, settings, client, window, stats.observed_at, budget_day
             )
         except PagingCapReached:
-            # 深翻页上限：切窗口（末篇发布日优先，无则 +1 日），page 归 1；
-            # 该次尝试已耗预算，记账不打断推进
+            # 深翻页上限：切窗口（helper 内取本进程末篇或 checkpoint 持久值
+            # ——跨进程续跑不退化为 +1 日爬行；消费后清空防陈旧值误用）
             state = _advance_window(state, window[0], last_boundary)
             store.upsert_guardian_state(state)
             stats.requests += 1
@@ -390,7 +404,11 @@ def sync_guardian(
             stats.phase = PHASE_DAILY
             break
         state = _cursor_state(
-            stats.phase, window, total, state.get("last_completed_date")
+            stats.phase,
+            window,
+            total,
+            state.get("last_completed_date"),
+            pull.boundary,
         )
         store.upsert_guardian_state(state)
         if pull.total_pages > 1:
