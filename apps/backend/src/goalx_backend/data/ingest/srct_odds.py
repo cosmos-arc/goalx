@@ -48,7 +48,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from itertools import pairwise
+from itertools import batched, pairwise
 from pathlib import Path
 from typing import Protocol, TextIO, cast
 
@@ -969,7 +969,7 @@ def build_odds_change_events(
 
     sids = sorted(set(odds_ledger) | set(hdp_ledger), key=_sid_sort_key)
     size = max(1, chunk_sids)
-    chunks = [sids[start : start + size] for start in range(0, len(sids), size)]
+    chunks = [list(part) for part in batched(sids, size, strict=False)]
     chunk_of = {sid: idx for idx, part in enumerate(chunks) for sid in part}
 
     spill_root = store.root / "tmp" / "srct_odds_spill"

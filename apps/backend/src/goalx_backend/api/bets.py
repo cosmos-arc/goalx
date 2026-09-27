@@ -186,7 +186,7 @@ async def stake_advice(payload: StakeAdviceRequest) -> StakeSuggestion:
 
 def _parse_ts(value: str) -> datetime:
     """ISO 串 → aware datetime（naive 按 UTC；仅复盘比较用）。"""
-    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    moment = datetime.fromisoformat(value)
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 

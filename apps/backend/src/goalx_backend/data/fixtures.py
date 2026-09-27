@@ -31,7 +31,7 @@ def beijing_naive(kickoff_utc: str) -> datetime:
 
     naive 输入按 UTC 解释（防御：运行面 kickoff 恒带偏移，银层墙钟恒 naive）。
     """
-    parsed = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(kickoff_utc)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(CST).replace(tzinfo=None)

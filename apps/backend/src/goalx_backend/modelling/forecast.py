@@ -25,10 +25,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from statistics import geometric_mean
 from typing import Any
 
 from goalx_backend.data import fixtures as fx_store
@@ -144,11 +144,6 @@ def _blend_grid(
     )
 
 
-def _geometric_mean(*values: float) -> float:
-    """几何均值（blend 的 λ 语义：Poisson 对数池保持可分解）。"""
-    return math.exp(sum(math.log(v) for v in values) / len(values))
-
-
 def build_forecast_payload(
     run: TrainingRun,
     *,
@@ -175,8 +170,8 @@ def build_forecast_payload(
         xg_matrix = xg_side.artifact.predict(xg_side.home_title, xg_side.away_title)
         xg_had = xg_matrix.had()
         grid = _blend_grid(matrix.grid, xg_matrix.grid)
-        lam_home = _geometric_mean(lam_home, xg_matrix.lam_home)
-        lam_away = _geometric_mean(lam_away, xg_matrix.lam_away)
+        lam_home = geometric_mean((lam_home, xg_matrix.lam_home))
+        lam_away = geometric_mean((lam_away, xg_matrix.lam_away))
         matrix = ScoreMatrix(grid, lam_home=lam_home, lam_away=lam_away)
         rho = XG_BLEND_WEIGHT * rho + (1.0 - XG_BLEND_WEIGHT) * xg_side.artifact.rho
         had_samples = [

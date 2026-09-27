@@ -251,7 +251,10 @@ def test_idempotent_rebuild_byte_identical(tmp_path: Path) -> None:
         ds: _tree_digest(root / ds)
         for ds in ("market_quote", "match_detail", "match_analysis")
     }
-    assert asdict(first) == asdict(second)  # 记账零漂移
+    # 记账零漂移：built_at 是活钟戳，两次重建跨秒即差 1s（负载下偶发），剔除后全比
+    first_fields = {k: v for k, v in asdict(first).items() if k != "built_at"}
+    second_fields = {k: v for k, v in asdict(second).items() if k != "built_at"}
+    assert first_fields == second_fields
 
 
 def _tree_digest(root: Path) -> str:

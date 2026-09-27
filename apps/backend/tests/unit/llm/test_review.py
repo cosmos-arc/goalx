@@ -8,7 +8,6 @@ import pytest
 
 from goalx_backend.config import Settings
 from goalx_backend.data.results import DrawResultInput, upsert_draw_result
-from goalx_backend.llm.protocol import record_control_events
 from goalx_backend.llm.review import (
     enqueue_post_settle,
     open_reviews,
@@ -16,6 +15,7 @@ from goalx_backend.llm.review import (
     record_verdict,
 )
 from goalx_backend.modelling.forecast import insert_forecast
+from goalx_backend.tasks import record_control_events
 
 _KICKOFF = "2026-09-20T19:00:00+00:00"
 

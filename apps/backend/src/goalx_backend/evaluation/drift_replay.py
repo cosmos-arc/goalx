@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from statistics import fmean
 from typing import Any
 
 from goalx_backend import odds_math as om
@@ -131,7 +132,7 @@ def collect_drift_rows(
 
 
 def _mean(values: list[float]) -> float | None:
-    return sum(values) / len(values) if values else None
+    return fmean(values) if values else None
 
 
 def _roi(rows: list[_DriftRow], *, early: bool) -> float | None:

@@ -112,9 +112,7 @@ def _iso_to_seconds(value: object) -> str | None:
         return None
     try:
         return (
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
-            .astimezone(UTC)
-            .isoformat(timespec="seconds")
+            datetime.fromisoformat(value).astimezone(UTC).isoformat(timespec="seconds")
         )
     except ValueError:
         return None
@@ -426,7 +424,7 @@ def store_events(
 
 def _event_commence_utc(event: ParsedEvent) -> datetime:
     """事件的 kickoff datetime（PropLine 返回 ISO UTC）。"""
-    return datetime.fromisoformat(event.commence_utc.replace("Z", "+00:00"))
+    return datetime.fromisoformat(event.commence_utc)
 
 
 def join_fixtures(conn: sqlite3.Connection, events: list[ParsedEvent]) -> JoinReport:

@@ -25,6 +25,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from statistics import quantiles
 from typing import Any
 
 from goalx_backend import odds_math as om
@@ -162,24 +163,19 @@ def collect_candidates(
 
 
 def percentiles(values: list[float]) -> dict[str, float | None]:
-    """确定性分位数（排序 + 线性插值，inclusive 口径）。"""
+    """确定性分位数（inclusive 线性插值口径）。"""
     if not values:
         return {"p50": None, "p90": None, "p99": None, "max": None, "min": None}
-    xs = sorted(values)
-
-    def pct(q: float) -> float:
-        pos = q * (len(xs) - 1)
-        lo = int(pos)
-        hi = min(lo + 1, len(xs) - 1)
-        frac = pos - lo
-        return xs[lo] * (1 - frac) + xs[hi] * frac
-
+    if len(values) == 1:
+        only = round(values[0], 4)
+        return {"p50": only, "p90": only, "p99": only, "max": only, "min": only}
+    cuts = quantiles(values, n=100, method="inclusive")
     return {
-        "p50": round(pct(0.50), 4),
-        "p90": round(pct(0.90), 4),
-        "p99": round(pct(0.99), 4),
-        "max": round(xs[-1], 4),
-        "min": round(xs[0], 4),
+        "p50": round(cuts[49], 4),
+        "p90": round(cuts[89], 4),
+        "p99": round(cuts[98], 4),
+        "max": round(max(values), 4),
+        "min": round(min(values), 4),
     }
 
 

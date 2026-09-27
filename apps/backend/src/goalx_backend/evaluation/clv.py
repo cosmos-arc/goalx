@@ -29,14 +29,19 @@ CLV 跟踪与收盘对账（票 32 起底座；34 口径边界、40 基准分层
   一个窗口期（建议至下一整轮销售周结束，待人追认）。
 """
 
+# scipy 的类型存根不完整，以下规则的第三方 unknown 在本文件放宽（同 metrics.py）。
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
+from statistics import pvariance
 from typing import Any
 
 import duckdb
+from scipy.stats import linregress
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting import store as bt_store
@@ -544,17 +549,11 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _ols_slope(xs: list[float], ys: list[float]) -> tuple[float | None, float | None]:
-    """一元 OLS 斜率与 R²（样本不足返回 None）。"""
-    n = len(xs)
-    if n < MIN_REGRESSION_SAMPLES:
+    """一元 OLS 斜率与 R²（样本不足或 xs 全同返回 None；ys 全同 R²=None）。"""
+    if len(xs) < MIN_REGRESSION_SAMPLES:
         return None, None
-    mean_x = sum(xs) / n
-    mean_y = sum(ys) / n
-    sxx = sum((x - mean_x) ** 2 for x in xs)
-    if sxx == 0:
+    if len(set(xs)) == 1:  # sxx=0：xs 全同，斜率无定义
         return None, None
-    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
-    slope = sxy / sxx
-    syy = sum((y - mean_y) ** 2 for y in ys)
-    r_squared = (sxy**2 / (sxx * syy)) if syy > 0 else None
-    return slope, r_squared
+    fit: Any = linregress(xs, ys)  # scipy 无存根，返回类型未知（文件头放宽）
+    r_squared = float(fit.rvalue) ** 2 if pvariance(ys) > 0 else None
+    return float(fit.slope), r_squared

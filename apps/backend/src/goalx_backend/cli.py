@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import httpx
@@ -79,7 +81,6 @@ from goalx_backend.evaluation import baseline
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
-from goalx_backend.evaluation.corpus import completeness_report
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
@@ -785,6 +786,40 @@ def _cmd_archive_538(
         store.close()
     payload = {**asdict(report), "duckdb": str(duckdb_path)}
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def completeness_report(
+    conn: sqlite3.Connection,
+    *,
+    competitions: tuple[str, ...],
+    seasons: tuple[str, ...],
+) -> dict[str, Any]:
+    """Fdhist 语料完整性：每联赛每季行数/收盘缺口；缺季即缺口（显式列出）。"""
+    coverage = {
+        (str(row["competition"]), str(row["season"])): row
+        for row in rs_store.hist_season_coverage(conn, competitions)
+    }
+    per_competition: dict[str, dict[str, dict[str, int]]] = {}
+    total_rows = 0
+    for competition in competitions:
+        entry: dict[str, dict[str, int]] = {}
+        for season in seasons:
+            row = coverage.get((competition, season))
+            if row is None:
+                entry[season] = {"rows": 0}
+                continue
+            total_rows += int(row["rows"])
+            entry[season] = {
+                "rows": int(row["rows"]),
+                "psc_missing": int(row["psc_missing"]),
+                "avgc_missing": int(row["avgc_missing"]),
+            }
+        per_competition[competition] = entry
+    return {
+        "seasons": list(seasons),
+        "total_rows": total_rows,
+        "per_competition": per_competition,
+    }
 
 
 def _cmd_corpus_report(args: argparse.Namespace) -> None:
