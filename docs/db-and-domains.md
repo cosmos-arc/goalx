@@ -230,6 +230,9 @@ erDiagram
     source_coverage {
         INTEGER id PK
     }
+    source_match_links {
+        INTEGER id PK
+    }
     srcb_change_rows {
         INTEGER id PK
     }
@@ -294,6 +297,7 @@ erDiagram
     settlement_revisions }|--|| settlements : settlement_id
     settlements }o--|| bet_slips : slip_id
     settlements }o--|| bets : bet_id
+    source_match_links }|--|| fixtures : fixture_id
     team_aliases }|--|| teams : team_id
     understat_matches }o--|| fixtures : fixture_id
     uniform_result_observations }o--|| fixtures : fixture_id
@@ -366,6 +370,24 @@ erDiagram
 
 唯一键 `UNIQUE(`kind`, `business_date`, `code`)`
 <!-- schema-doc:END:table:match_codes -->
+
+<!-- schema-doc:BEGIN:table:source_match_links -->
+#### `source_match_links`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `fixture_id` | INTEGER | NOT NULL，FK→fixtures.id |
+| `source` | TEXT | NOT NULL |
+| `source_match_id` | TEXT | — |
+| `method` | TEXT | — |
+| `status` | TEXT | NOT NULL |
+| `meta` | TEXT | — |
+| `mapped_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`fixture_id`, `source`)`
+<!-- schema-doc:END:table:source_match_links -->
+
 <!-- schema-doc:BEGIN:table:odds_snapshots -->
 #### `odds_snapshots`
 

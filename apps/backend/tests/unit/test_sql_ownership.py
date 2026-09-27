@@ -39,6 +39,8 @@ SQL_KEYWORDS = {
     "where",
     "from",
     "by",
+    "desc",
+    "asc",
 }
 
 

@@ -43,7 +43,7 @@ from goalx_backend import odds_math as om
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.store import DecisionKey
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -104,16 +104,19 @@ def srct_closing_prob(
     away: str,
     kickoff_utc: str,
     selection: str,
+    *,
+    sid: str | None = None,
 ) -> tuple[float, str, str] | None:
     """
     源T 主锚收盘概率（票 75 第四级，odds_api 判死后的前向主通路）。
 
     场次匹配与事件资格线（published_at ≤ kickoff）在 data 包语料桥
     `srct_pinnacle_closing_triplet`（ADR-0008：语料表查询归 data）；
-    本层只做 Shin 去水与基准标注。匹配两步确定性键见该函数 docstring。
+    本层只做 Shin 去水与基准标注。票 77 起优先传物化链 sid
+    （source_match_links），无链时语料桥内兜底两步法（语义不变）。
     """
     triplet = quote_evidence.srct_pinnacle_closing_triplet(
-        duck_con, home, away, kickoff_utc
+        duck_con, home, away, kickoff_utc, sid=sid
     )
     if triplet is None:
         return None
@@ -161,7 +164,12 @@ def _closing_prob(
         if info is None:
             return None
         return srct_closing_prob(
-            duck_con, str(info["home_name"]), str(info["away_name"]), kickoff, selection
+            duck_con,
+            str(info["home_name"]),
+            str(info["away_name"]),
+            kickoff,
+            selection,
+            sid=mapping.srct_sid_for_fixture(conn, fixture_id),  # 票 77 物化链优先
         )
     return _odds_api_close(books, selection, betfair_commission=betfair_commission)
 

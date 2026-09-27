@@ -23,7 +23,7 @@ from loguru import logger
 
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, reconcile
+from goalx_backend.data import corpus_duckdb, mapping, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
@@ -56,7 +56,15 @@ from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
 from goalx_backend.modelling.forecast import generate_forecasts
-from goalx_backend.modelling.team_align import alias_index
+from goalx_backend.modelling.team_align import (
+    alias_index,
+    clubelo_alias_for_team,
+    record_srct_aliases,
+    sync_clubelo_aliases,
+)
+from goalx_backend.modelling.team_align import (
+    srct_alias_sets as team_align_srct_sets,
+)
 
 
 @contextmanager
@@ -404,6 +412,56 @@ def corpus_anchor() -> Generator[duckdb.DuckDBPyConnection | None]:
     finally:
         if con is not None:
             con.close()
+
+
+def mapping_sync() -> dict[str, object]:
+    """
+    跨源映射同步（票 77）：链物化 + kickoff 校准 + 别名补源。
+
+    物化 fixture↔源T sid 链、kickoff canonical 校准、srct/clubelo 别名
+    补源。语料桥缺席（首夜 silver 落地前/库未建）降级零动作不抛错——
+    与 CLV 收盘锚同款降级哲学。别名落库走属主（modelling/team_align）。
+    """
+    with task_conn() as conn, corpus_anchor() as duck_con:
+        stats = mapping.sync_fixture_links(
+            conn, duck_con, team_aliases=team_align_srct_sets(conn)
+        )
+        aliases = record_srct_aliases(conn, stats.srct_alias_pairs)
+        clubelo_report = sync_clubelo_aliases(conn, clubelo.distinct_clubs(conn))
+    return {
+        **stats.as_dict(),
+        "srct_aliases_added": aliases,
+        "clubelo": clubelo_report.as_dict(),
+    }
+
+
+def mapping_audit() -> dict[str, object]:
+    """映射审计报告（票 77）：分桶未映射/歧义率 + 歧义队列 + 起步门。"""
+    with task_conn() as conn:
+        return mapping.audit_mapping(conn)
+
+
+def clubelo_elo_for_team(canonical_name: str, on_date: date) -> dict[str, object]:
+    """
+    点时 Elo 查询按中文 canonical 队名走通（票 77 验收）：别名桥 → 评级区间。
+
+    未接通（无 clubelo 别名/区间不覆盖）各态诚实返回，不猜值。
+    """
+    with task_conn() as conn:
+        team = fx_store.find_team_by_name(conn, canonical_name)
+        if team is None:
+            return {"team": canonical_name, "status": "team_unknown"}
+        alias = clubelo_alias_for_team(conn, int(team["id"]))
+        if alias is None:
+            return {"team": canonical_name, "status": "alias_unmapped"}
+        elo = clubelo.rating_at(conn, alias, on_date)
+        return {
+            "team": canonical_name,
+            "club": alias,
+            "date": on_date.isoformat(),
+            "elo": elo,
+            "status": "ok" if elo is not None else "rating_uncovered",
+        }
 
 
 def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:

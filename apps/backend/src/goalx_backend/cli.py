@@ -38,7 +38,7 @@ import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import duckdb
@@ -48,7 +48,7 @@ from loguru import logger
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, corpus_gate, reconcile
+from goalx_backend.data import corpus_duckdb, corpus_gate, mapping, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
@@ -83,7 +83,13 @@ from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
-from goalx_backend.tasks import task_conn
+from goalx_backend.tasks import (
+    clubelo_elo_for_team,
+    corpus_anchor,
+    mapping_audit,
+    mapping_sync,
+    task_conn,
+)
 
 
 def _cmd_migrate() -> None:
@@ -665,16 +671,42 @@ def _cmd_jc_silver(
 
     变化事件流语义与书商层 odds_change_event 同构（心跳丢/A→B→A 保留/
     同刻并列规则）；报告含门④记账（unexplained_gap 须为 0）。
+    kickoff 冗余列优先注入源T canonical 覆写（票 77 映射链；旧桥缺席/
+    无链场次回退 jc 台账值）。
     """
     resolved = settings if settings is not None else get_settings()
+    with task_conn() as conn, corpus_anchor() as duck_con:
+        overrides = mapping.srct_kickoff_overrides(conn, duck_con)
     store = CorpusStore(resolved.corpus_root)
     try:
-        report = jc_silver.build_sp_change_events(store)
+        report = jc_silver.build_sp_change_events(store, kickoff_overrides=overrides)
         duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     finally:
         store.close()
-    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+    payload = {
+        **asdict(report),
+        "duckdb": str(duckdb_path),
+        "kickoff_overrides": len(overrides),
+    }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_mapping_sync(args: argparse.Namespace) -> None:
+    """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
+    report = mapping_sync()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_mapping_audit(args: argparse.Namespace) -> None:
+    """映射审计报告（票 77）：分桶未映射/歧义率 + 起步门。"""
+    report = mapping_audit()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_clubelo_elo(args: argparse.Namespace) -> None:
+    """点时 Elo 按中文 canonical 队名查询（票 77 别名桥验收）。"""
+    report = clubelo_elo_for_team(args.team, date.fromisoformat(args.date))
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
 def _cmd_archive_538(
@@ -891,6 +923,20 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="当日快照后逐队拉全历史区间(一次性,约 600 请求)",
     )
+    elo_query = sub.add_parser(
+        "clubelo-elo",
+        help="点时 Elo 按中文 canonical 队名查询(票 77 别名桥)",
+    )
+    elo_query.add_argument("--team", required=True, help="canonical 中文队名")
+    elo_query.add_argument("--date", required=True, help="查询日 YYYY-MM-DD")
+    sub.add_parser(
+        "mapping-sync",
+        help="跨源映射同步:fixture↔源T sid 链+kickoff 校准+别名补源(票 77)",
+    )
+    sub.add_parser(
+        "mapping-audit",
+        help="映射审计:分桶未映射/歧义率+起步门(票 77)",
+    )
     xgcmp = sub.add_parser(
         "xg-compare", help="xG 融合实证对比报告(票 45;语料先 understat-sync)"
     )
@@ -1079,6 +1125,9 @@ def main(argv: list[str] | None = None) -> int:
         "jc-silver": lambda: _cmd_jc_silver(args),
         "jc-backfill": lambda: _cmd_jc_backfill(args),
         "jc-audit": lambda: _cmd_jc_audit(args),
+        "mapping-sync": lambda: _cmd_mapping_sync(args),
+        "mapping-audit": lambda: _cmd_mapping_audit(args),
+        "clubelo-elo": lambda: _cmd_clubelo_elo(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }

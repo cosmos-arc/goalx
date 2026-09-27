@@ -333,3 +333,34 @@ def test_meta_written(tmp_path: Path) -> None:
     meta = json.loads(meta_path.read_text())
     assert meta["silver_version"] == jc_silver.SILVER_VERSION
     assert meta["unexplained_gap"] == 0
+
+
+def test_kickoff_overrides_take_precedence(tmp_path: Path) -> None:
+    """票 77：注入的源T canonical kickoff 覆写优先，jc 台账值兜底。"""
+    store = _store_with(
+        tmp_path, [_bronze_row("100", [_had("2.0", "3.0", "3.5")], [], [])]
+    )
+    store.upsert_jc_shift_match(
+        {
+            "match_id": "100",
+            "league": "国际赛",
+            "home": "中国",
+            "away": "新西兰",
+            "kickoff_utc": "2026-09-26T19:00:00+00:00",
+            "beats": 1,
+            "finalized": 0,
+        }
+    )
+    override_ms = 1_800_000_000_000  # 2027 年远值，与台账必可区分
+    jc_silver.build_sp_change_events(store, kickoff_overrides={"100": override_ms})
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(
+        store.root
+        / "silver"
+        / jc.JC_PROVIDER
+        / jc_silver.SP_EVENT_DATASET
+        / "data.parquet"
+    )
+    store.close()
+    assert int(table.to_pylist()[0]["kickoff"].timestamp() * 1000) == override_ms

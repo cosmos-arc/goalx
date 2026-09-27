@@ -26,7 +26,7 @@ bronze 身份字段（历史回填场 kickoff 可空）。
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import cast
@@ -267,12 +267,19 @@ def _sort_key(row: dict[str, object]) -> tuple[object, ...]:
     )
 
 
-def build_sp_change_events(store: CorpusStore) -> SilverJcSpReport:
+def build_sp_change_events(
+    store: CorpusStore,
+    *,
+    kickoff_overrides: Mapping[str, int] | None = None,
+) -> SilverJcSpReport:
     """
     重物化 silver jc_sp_change_event（幂等；bronze sp_history latest 行）。
 
     latest-per-matchId：拍/收口行同 sid 共存，文件后行胜出（收口全量
     轨迹天然覆盖在售期拍）。had→hhad→ttg 流出序即文件终序。
+    kickoff 冗余列优先用注入的源T canonical 覆写（票 77 映射层
+    ``srct_kickoff_overrides``：matchId → epoch ms），jc 台账值兜底；
+    不注入时口径与票 72 一致（台账可缺，历史回填场 kickoff 可空）。
     """
     report = SilverJcSpReport(built_at=utc_now_iso())
     latest: dict[str, dict[str, object]] = {}
@@ -281,6 +288,8 @@ def build_sp_change_events(store: CorpusStore) -> SilverJcSpReport:
             continue
         latest[str(row["sid"])] = row  # append-only 后行胜出
     kickoffs = _kickoff_ms(store)
+    if kickoff_overrides:
+        kickoffs.update(kickoff_overrides)
     had_rows: list[dict[str, object]] = []
     hhad_rows: list[dict[str, object]] = []
     ttg_rows: list[dict[str, object]] = []
