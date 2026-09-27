@@ -7,7 +7,6 @@ import {
 	fetchBets,
 	fetchCostSummary,
 	fetchDrawResults,
-	fetchFixtureOdds,
 	fetchGoalsMarket,
 	fetchSlips,
 	fetchTodayFixtures,
@@ -34,9 +33,6 @@ test("fetchers round-trip against msw handlers", async () => {
 	expect(goals[0]?.model_version).toBeNull(); // 无模型场概率/EV 置空
 	expect(goals[0]?.ttg?.selections?.[0]?.probability).toBeNull();
 	expect(goals[2]?.ttg?.sale_state).toBe("stopped");
-
-	const odds = await fetchFixtureOdds(1);
-	expect(odds[0]?.source).toBe("sporttery");
 
 	const bets = await fetchBets({ mode: "paper", only_open: false });
 	expect(bets).toHaveLength(4);

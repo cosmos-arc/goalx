@@ -1,19 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import {
-	fetchBankroll,
-	fetchBets,
-	fetchDrawResults,
-	fetchTodayFixtures,
-	fetchValidationProgress,
-	type TodayFixture,
-} from "../api/goalx";
+import { fetchBankroll, fetchBets, fetchDrawResults, fetchTodayFixtures, fetchValidationProgress } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
+import { isPickable } from "../components/had-quote-ui";
 import { Badge } from "../components/ui/badge";
-import { TABULAR_NUMS } from "../lib/ui";
+import { pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 15：总览 Dashboard（票 05 定稿 = 唯一事实源）。总览 = 分诊（票 03）：
@@ -43,17 +37,6 @@ type TodoItem = {
 	actionLabel?: string;
 };
 
-function pnlClass(value: number | null): string {
-	if (value === null || value === 0) {
-		return "text-muted-foreground";
-	}
-	return value > 0 ? "text-profit" : "text-loss";
-}
-
-function signedCny(value: number): string {
-	return `${value >= 0 ? "+" : "-"}¥${Math.abs(value).toFixed(2)}`;
-}
-
 function signedPct(value: number): string {
 	return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 }
@@ -66,16 +49,6 @@ function startOfLocalDay(ms: number): number {
 function isSameLocalDay(iso: string, now: number): boolean {
 	const at = new Date(iso).getTime();
 	return !Number.isNaN(at) && startOfLocalDay(at) === startOfLocalDay(now);
-}
-
-/** 可投 = 判定 valid + 在售 + 未开赛（与今日页 isPickable 同口径）。 */
-function isPickable(fixture: TodayFixture, now: number): boolean {
-	const quote = fixture.had_quote;
-	if (quote?.status !== "valid" || quote.sale_state !== "on_sale") {
-		return false;
-	}
-	const kickoff = new Date(fixture.kickoff_utc).getTime();
-	return !Number.isNaN(kickoff) && kickoff > now;
 }
 
 /** 待办行：状态点 + 一句话 + （琥珀紧迫/就地指引）+ 动作链接。 */
@@ -348,7 +321,7 @@ export function OverviewPage() {
 														data-testid="live-pnl-today"
 														className={`${TABULAR_NUMS} font-medium ${pnlClass(todayLivePnl)}`}
 													>
-														{todayLivePnl === null ? "—" : signedCny(todayLivePnl)}
+														{todayLivePnl === null ? "—" : signedCnyAlways(todayLivePnl)}
 													</span>
 													{todayLivePnl === null ? "（今日无真金投注流水）" : ""}
 												</p>
@@ -407,7 +380,7 @@ export function OverviewPage() {
 										<div data-testid="card-paper-pnl">
 											<p className="text-xs text-muted-foreground">今日纸面盈亏</p>
 											<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(todayPaperPnl)}`}>
-												{todayPaperPnl === null ? "—" : signedCny(todayPaperPnl)}
+												{todayPaperPnl === null ? "—" : signedCnyAlways(todayPaperPnl)}
 											</p>
 											<p className="mt-1 text-xs text-muted-foreground">
 												{todayPaperPnl === null

@@ -9,7 +9,7 @@ import {
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
-import { TABULAR_NUMS } from "../lib/ui";
+import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 14：复核页点亮（复核闭环人工面 + 盲评入口目的地）。
@@ -31,14 +31,6 @@ function biweekCycle(now = new Date()): string {
 	const start = Date.UTC(now.getUTCFullYear(), 0, 1);
 	const day = Math.floor((now.getTime() - start) / 86_400_000);
 	return `${now.getUTCFullYear()}-B${Math.floor(day / 14) + 1}`;
-}
-
-function shortTime(iso: string): string {
-	return iso ? iso.slice(5, 16).replace("T", " ") : "—";
-}
-
-function pct(value: number | null | undefined): string {
-	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(0)}%`;
 }
 
 function QueueRow({ item }: { item: ReviewQueueItem }) {

@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { type FixtureEvidence, fetchFixtureEvidence, type IntelItem, type TrackTriple } from "../api/goalx";
-import { TABULAR_NUMS } from "../lib/ui";
+import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { AskAnalystPanel } from "./ask-analyst";
 import { EmptyState } from "./empty-state";
 
@@ -22,14 +22,6 @@ const VERDICT_LABELS: Record<string, string> = {
 	irrelevant: "情报无关",
 	misleading: "情报误导",
 };
-
-function pct(value: number | null | undefined): string {
-	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
-}
-
-function shortTime(iso: string): string {
-	return iso.slice(5, 16).replace("T", " ");
-}
 
 function IntelRow({ intel }: { intel: IntelItem }) {
 	return (
@@ -53,9 +45,9 @@ function TrackRow({ track }: { track: TrackTriple }) {
 				{TRACK_LABELS[track.track] ?? track.track}
 				{track.analyst ? <span className="ml-1 rounded bg-info/10 px-1 text-xs text-info">复核</span> : null}
 			</TableCell>
-			<TableCell className={TABULAR_NUMS}>{pct(track.h)}</TableCell>
-			<TableCell className={TABULAR_NUMS}>{pct(track.d)}</TableCell>
-			<TableCell className={TABULAR_NUMS}>{pct(track.a)}</TableCell>
+			<TableCell className={TABULAR_NUMS}>{pct(track.h, 1)}</TableCell>
+			<TableCell className={TABULAR_NUMS}>{pct(track.d, 1)}</TableCell>
+			<TableCell className={TABULAR_NUMS}>{pct(track.a, 1)}</TableCell>
 			<TableCell className="text-xs text-muted-foreground">{shortTime(track.issued_at)}</TableCell>
 		</tr>
 	);

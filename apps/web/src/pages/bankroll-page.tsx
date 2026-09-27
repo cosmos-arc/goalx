@@ -14,7 +14,7 @@ import { useECharts } from "../components/charts/use-echarts";
 import { EmptyState } from "../components/empty-state";
 import { Button } from "../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { errorText, TABULAR_NUMS } from "../lib/ui";
+import { cssVar, errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 20：资金页重设计落地（票 09 定稿 = 唯一事实源）。
@@ -95,12 +95,6 @@ export function balanceCurveOption(points: BalancePoint[], lineColor: string, ax
 			},
 		],
 	};
-}
-
-/** canvas 取不到 CSS 变量，option 构建时解析语义 token（与验证/历史页同法）。 */
-function cssVar(name: string, fallback: string): string {
-	const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-	return raw === "" ? fallback : raw;
 }
 
 /**
