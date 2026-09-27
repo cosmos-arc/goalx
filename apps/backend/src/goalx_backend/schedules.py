@@ -54,6 +54,7 @@ from goalx_backend.flows import (
     daily_wrap_flow,
     draw_results_sync_flow,
     eu_odds_closing_flow,
+    guardian_sync_flow,
     intel_collect_flow,
     odds_anchor_dense_flow,
     official_reconcile_flow,
@@ -170,6 +171,15 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="10 9 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # 卫报新闻语料（票 79）：日拍 09:40——回填期翻页至预算尽，日增量 1-2 请求；
+    # 与 clubelo/understat 晨窗错峰，抢在 daily-capture 10:00 前
+    guardian_deploy = cast(
+        RunnerDeployment,
+        guardian_sync_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="40 9 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
@@ -220,6 +230,7 @@ def main(only: str | None = None) -> None:
         "official-reconcile": official_reconcile,
         "understat-sync": understat,
         "clubelo-sync": clubelo_deploy,
+        "guardian-sync": guardian_deploy,
         "odds-anchor-dense": anchor_dense,
         "srcb-collect": srcb_collect_deploy,
         "srct-night": srct_night_deploy,
@@ -256,6 +267,7 @@ RESUME_DEPLOYMENTS = (
     "srct-shift",
     "understat-sync",
     "clubelo-sync",
+    "guardian-sync",
     "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",

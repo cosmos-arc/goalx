@@ -91,6 +91,7 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 | The Odds API | 欧赔共识/收盘（credit 付费） | `odds_api_key`（兼容无前缀 `ODDS_API_KEY`） | 月 480 / 日 40 credits 护栏，超限抛错 |
 | football-data.co.uk | 五大三季历史底座 | `fd_base_url` | 一次性导入 |
 | 源T 日页赛果 | 赛果落事实主源（票 76；零新请求走 silver） | 语料树 `GOALX_CORPUS_ROOT` | 每 30 分钟自动（随 draw-results-sync） |
+| 卫报 open platform | 新闻语料（票 79；football 段 ~20 万篇） | `guardian_api_key`（免费 500 请求/日） | 09:40 日拍（回填期翻页至预算尽，断点续跑） |
 | 官方 uniform | 赛果差集兜底+对账审计（票 76 起；CorpusScope 外联赛/官方 void） | `uniform` 端点族 | 每 30 分钟自动（同链内联） |
 | 澳客 | 彩池期次/对阵/人气分布 | `zucai_base_url` | 每日三拍自动 |
 | 官方开奖 | 唯一事实源 | — | UI/API 人工录入，更正必带原因 |
