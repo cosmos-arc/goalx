@@ -52,7 +52,6 @@
     "@vitest/coverage-v8": "4.1.11",
     "jsdom": "^29.0.1",
     "msw": "^2.12.14",
-    "playwright": "1.62.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.2",
     "vite": "^8.0.2",

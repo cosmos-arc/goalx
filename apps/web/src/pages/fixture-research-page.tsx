@@ -34,7 +34,7 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { errorText, pct, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-02：单场研究页 `/fixtures/$id`。研究动线 = 公司间定价分歧 → 去水共识 →
@@ -56,10 +56,6 @@ function bookName(source: string): string {
 /** 单书归一化隐含概率（去水位按等比例归一——只用于偏差方向判读，不做共识）。 */
 function normalizedImplied(odds: number): number {
 	return odds > 1 ? 1 / odds : 0;
-}
-
-function pct(value: number | null | undefined, digits = 0): string {
-	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(digits)}%`;
 }
 
 export function FixtureResearchPage() {

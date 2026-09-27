@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { type EvidenceMatch, fetchPoolEvidenceSummary, type IntelItem } from "../api/goalx";
-import { TABULAR_NUMS } from "../lib/ui";
+import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { EmptyState } from "./empty-state";
 
 /**
@@ -20,14 +20,6 @@ const STATE_LABELS: Record<string, string> = {
 	no_forecast: "有情报暂无 LLM 概率产出（宁缺毋假）",
 	no_intel: "无情报无产出",
 };
-
-function pct(value: number | null | undefined): string {
-	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(0)}%`;
-}
-
-function shortTime(iso: string): string {
-	return iso.slice(5, 16).replace("T", " ");
-}
 
 /** 一条情报：kind + 文本 + 来源/时点徽章。 */
 function IntelLine({ intel }: { intel: IntelItem }) {

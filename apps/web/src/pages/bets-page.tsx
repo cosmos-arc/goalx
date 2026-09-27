@@ -14,6 +14,7 @@ import {
 	runSettlement,
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
+import { StatusBadge } from "../components/status-badge";
 import { Badge } from "../components/ui/badge";
 import {
 	Drawer,
@@ -25,7 +26,7 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { errorText, legText, pnlClass, SELECTION_LABELS, shortTime, stakeText, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 16：投注生命周期落地（票 06 定稿 = 唯一事实源）。
@@ -40,14 +41,6 @@ import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * 零 contract 变更；服务器校验仍为唯一权威。
  */
 
-const STATUS_META: Record<string, { label: string; className: string }> = {
-	open: { label: "未结", className: "bg-muted text-muted-foreground" },
-	won: { label: "胜", className: "bg-profit/10 text-foreground" },
-	lost: { label: "负", className: "bg-loss/10 text-foreground" },
-	void: { label: "退款", className: "bg-muted text-muted-foreground" },
-	partial: { label: "部分", className: "bg-warning/10 text-foreground" },
-};
-
 const FORWARD_LABELS: Record<string, string> = {
 	included: "前瞻纳入",
 	excluded_unlocked: "未锁定, 排除",
@@ -56,14 +49,6 @@ const FORWARD_LABELS: Record<string, string> = {
 	missing_closing: "缺 closing",
 	unknown: "资格未知",
 };
-
-/** 盈亏数字永远只按正负红绿（票 02 钱层编码，正负号为主承载）。 */
-function pnlClass(value: number | null): string {
-	if (value === null || value === 0) {
-		return "text-muted-foreground";
-	}
-	return value > 0 ? "text-profit" : "text-loss";
-}
 
 function ModeBadge({ mode }: { mode: string }) {
 	return mode === "live" ? (
@@ -77,45 +62,8 @@ function ModeBadge({ mode }: { mode: string }) {
 	);
 }
 
-function StatusBadge({ status }: { status: string }) {
-	const meta = STATUS_META[status];
-	if (!meta) {
-		return <span className="text-xs text-muted-foreground">{status}</span>;
-	}
-	return (
-		<Badge variant="outline" className={`border-transparent ${meta.className}`}>
-			{meta.label}
-		</Badge>
-	);
-}
-
-function legText(bet: Bet): string {
-	return bet.legs
-		.map((leg) => {
-			const odds =
-				leg.actual_odds !== null && leg.actual_odds !== undefined
-					? `${leg.locked_odds.toFixed(2)}→${leg.actual_odds.toFixed(2)}`
-					: leg.locked_odds.toFixed(2);
-			return `#${leg.fixture_id} ${leg.market_code === "hhad" ? `让球${leg.goal_line ?? "?"} ` : ""}${
-				SELECTION_LABELS[leg.selection_code] ?? leg.selection_code
-			}@${odds}`;
-		})
-		.join(" × ");
-}
-
-function stakeText(bet: Bet): string {
-	if (bet.actual_stake === null || bet.actual_stake === undefined) {
-		return `¥${bet.stake.toFixed(2)}`;
-	}
-	return `¥${bet.stake.toFixed(2)}→¥${bet.actual_stake.toFixed(2)}`;
-}
-
 function reviewText(bet: Bet): string {
 	return bet.review ? (FORWARD_LABELS[bet.review.forward] ?? bet.review.forward) : "—";
-}
-
-function shortTime(iso: string | null): string {
-	return iso ? iso.slice(5, 16).replace("T", " ") : "—";
 }
 
 /** 各段的"时间"取该阶段事实时点，倒序即最近动作在前。 */

@@ -9,7 +9,7 @@ import { GlossaryTerm } from "../components/glossary-term";
 import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import type { GlossaryId } from "../lib/glossary";
-import { TABULAR_NUMS } from "../lib/ui";
+import { cssVar, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 19：验证页重设计落地（票 09 定稿 = 唯一事实源）。
@@ -158,12 +158,6 @@ export function yieldCurveOption(
 			},
 		],
 	};
-}
-
-/** canvas 取不到 CSS 变量，option 构建时解析语义 token（与历史页同法，解析失败退回近似色）。 */
-function cssVar(name: string, fallback: string): string {
-	const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-	return raw === "" ? fallback : raw;
 }
 
 /**

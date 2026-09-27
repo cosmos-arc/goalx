@@ -7,9 +7,9 @@ import type { EChartsOption } from "../components/charts/echarts";
 import { useECharts } from "../components/charts/use-echarts";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
-import { Badge } from "../components/ui/badge";
+import { StatusBadge } from "../components/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { cssVar, legText, pnlClass, shortTime, signedCny, stakeText, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 17：历史复盘页落地（票 07 定稿 = 唯一事实源）。分析优先：五指标卡 + 盈亏累计
@@ -54,68 +54,6 @@ const STATUS_OPTIONS = [
 	{ value: "partial", label: "部分" },
 	{ value: "void", label: "退款" },
 ] as const;
-
-const STATUS_META: Record<string, { label: string; className: string }> = {
-	won: { label: "胜", className: "bg-profit/10 text-foreground" },
-	lost: { label: "负", className: "bg-loss/10 text-foreground" },
-	void: { label: "退款", className: "bg-muted text-muted-foreground" },
-	partial: { label: "部分", className: "bg-warning/10 text-foreground" },
-};
-
-/** 盈亏数字永远只按正负红绿（票 02 钱层编码，正负号为主承载）。 */
-function pnlClass(value: number | null): string {
-	if (value === null || value === 0) {
-		return "text-muted-foreground";
-	}
-	return value > 0 ? "text-profit" : "text-loss";
-}
-
-function signedCny(value: number): string {
-	return `${value > 0 ? "+" : value < 0 ? "-" : ""}¥${Math.abs(value).toFixed(2)}`;
-}
-
-function shortTime(iso: string | null): string {
-	return iso ? iso.slice(5, 16).replace("T", " ") : "—";
-}
-
-function legText(bet: Bet): string {
-	return bet.legs
-		.map((leg) => {
-			const odds =
-				leg.actual_odds !== null && leg.actual_odds !== undefined
-					? `${leg.locked_odds.toFixed(2)}→${leg.actual_odds.toFixed(2)}`
-					: leg.locked_odds.toFixed(2);
-			return `#${leg.fixture_id} ${leg.market_code === "hhad" ? `让球${leg.goal_line ?? "?"} ` : ""}${
-				SELECTION_LABELS[leg.selection_code] ?? leg.selection_code
-			}@${odds}`;
-		})
-		.join(" × ");
-}
-
-function stakeText(bet: Bet): string {
-	if (bet.actual_stake === null || bet.actual_stake === undefined) {
-		return `¥${bet.stake.toFixed(2)}`;
-	}
-	return `¥${bet.stake.toFixed(2)}→¥${bet.actual_stake.toFixed(2)}`;
-}
-
-function StatusBadge({ status }: { status: string }) {
-	const meta = STATUS_META[status];
-	if (!meta) {
-		return <span className="text-xs text-muted-foreground">{status}</span>;
-	}
-	return (
-		<Badge variant="outline" className={`border-transparent ${meta.className}`}>
-			{meta.label}
-		</Badge>
-	);
-}
-
-/** canvas 取不到 CSS 变量，option 构建时解析语义 token（解析失败退回近似色）。 */
-function cssVar(name: string, fallback: string): string {
-	const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-	return raw === "" ? fallback : raw;
-}
 
 /** 结算时点升序的累计盈亏点（每注一个点；profit 缺失按 0 接力，不做断点）。 */
 export function buildCumulativePoints(bets: Bet[]): Array<{ label: string; value: number }> {

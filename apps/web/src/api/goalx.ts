@@ -5,8 +5,6 @@ type Schemas = components["schemas"];
 export type TodayFixture = Schemas["TodayFixtureView"];
 export type HadQuoteStatus = Schemas["HadQuoteStatus"];
 export type FixtureResearch = Schemas["FixtureResearchView"];
-export type BookQuote = Schemas["BookQuoteView"];
-export type OddsSnapshot = Schemas["OddsSnapshotView"];
 export type GoalsFixture = Schemas["GoalsFixtureView"];
 export type GoalsMarketBlock = Schemas["GoalsMarketBlock"];
 export type GoalsSelection = Schemas["GoalsSelectionView"];
@@ -18,8 +16,6 @@ export type Slip = Schemas["SlipView"];
 export type DrawResultView = Schemas["DrawResultView"];
 export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];
 export type DrawSyncStatus = Schemas["DrawSyncStatusView"];
-export type DrawSyncRun = Schemas["DrawSyncRunView"];
-export type DrawSyncPendingItem = Schemas["DrawSyncPendingItem"];
 export type SettlementRun = Schemas["SettlementRunResponse"];
 export type Bankroll = Schemas["BankrollResponse"];
 export type BankrollEvent = Schemas["BankrollEventView"];
@@ -65,14 +61,6 @@ export function fetchGoalsMarket(date?: string, days?: number): Promise<GoalsFix
 	return unwrap(
 		client.GET("/api/v1/markets/goals", {
 			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
-		}),
-	);
-}
-
-export function fetchFixtureOdds(fixtureId: number, market = "had"): Promise<OddsSnapshot[]> {
-	return unwrap(
-		client.GET("/api/v1/fixtures/{fixture_id}/odds", {
-			params: { path: { fixture_id: fixtureId }, query: { market } },
 		}),
 	);
 }
@@ -190,7 +178,6 @@ export type PoolPeriodDetail = Schemas["PoolPeriodDetailView"];
 export type PoolMatch = Schemas["PoolMatchView"];
 export type PoolSelection = Schemas["PoolSelectionView"];
 export type PoolSyncStatus = Schemas["PoolSyncStatusView"];
-export type PoolStateImportInput = Schemas["PoolStateImportPayload"];
 
 /**
  * 彩池期次列表（票 43）：期次/对阵/分布来自源B 同步；销量列仅 AI 代采可得。
@@ -222,7 +209,7 @@ export function fetchPoolSyncStatus(): Promise<PoolSyncStatus> {
 	return unwrap(client.GET("/api/v1/pool-sync/status"));
 }
 
-export type ColdVariantsInput = Schemas["ColdVariantsPayload"];
+type ColdVariantsInput = Schemas["ColdVariantsPayload"];
 export type ColdVariants = Schemas["ColdVariantsView"];
 
 /**
@@ -233,7 +220,7 @@ export function generateColdVariants(payload: ColdVariantsInput): Promise<ColdVa
 	return unwrap(client.POST("/api/v1/pool/cold-variants", { body: payload }));
 }
 
-export type TargetPlanInput = Schemas["TargetPlanPayload"];
+type TargetPlanInput = Schemas["TargetPlanPayload"];
 export type TargetPlan = Schemas["TargetPlanView"];
 
 /**
@@ -247,13 +234,6 @@ export function buildTargetPlan(payload: TargetPlanInput): Promise<TargetPlan> {
 /** 触发一次彩池同步（票 43：源B 期次/对阵/人气；幂等）。 */
 export function runPoolSync(): Promise<PoolSyncStatus> {
 	return unwrap(client.POST("/api/v1/pool-sync/run"));
-}
-
-/**
- * AI 代采导入（票 43 兜底层）：官方销量/滚存经代理结构化提交（幂等，source=agent）。
- */
-export function importPoolState(payload: PoolStateImportInput): Promise<{ period_no: string; imported: boolean }> {
-	return unwrap(client.POST("/api/v1/pool-states", { body: payload }));
 }
 
 export type PoolSlipCreateInput = Schemas["PoolSlipCreate"];
@@ -275,7 +255,7 @@ export type IntelItem = Schemas["IntelItemView"];
 export type FixtureEvidence = Schemas["FixtureEvidenceView"];
 export type ReviewItem = Schemas["ReviewItemView"];
 export type ReviewQueueItem = Schemas["ReviewQueueItemView"];
-export type VerdictInput = Schemas["VerdictPayload"];
+type VerdictInput = Schemas["VerdictPayload"];
 export type BlindReviewInput = Schemas["BlindReviewPayload"];
 
 /** 彩池期次证据卡汇总（V1 证据卡一 fetch 渲染整期）。 */
