@@ -95,6 +95,9 @@ logs/
 # 本地 SQLite 数据库（goalx 运行数据不入库）
 /data/
 
+# ZCode ponytail 会话模式标记（本地工具状态）
+.mode
+
 # 相对 cwd 陷阱：从子目录跑 CLI 会误建库（RUNBOOK §3）
 apps/backend/data/
 apps/web/data/
