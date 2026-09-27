@@ -112,16 +112,3 @@ exclude: |
     apps/web/playwright-report/|
     \.scratch/
   )$
-
-# ==========================================================
-# CI 集成配置
-# ==========================================================
-ci:
-  skip:
-    # CI 中跳过这些（由 GitHub Actions 单独运行）
-    - ruff-lint-fix
-    - ruff-format
-    - pytest-fast
-    - gitleaks
-  autoupdate_schedule: monthly
-  autoupdate_commit_msg: "chore(deps): update pre-commit hooks"

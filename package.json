@@ -9,10 +9,6 @@
   ],
   "trustedDependencies": [],
   "scripts": {
-    "web:lint": "bun run --cwd apps/web lint",
-    "web:type": "bun run --cwd apps/web type",
-    "web:test": "bun run --cwd apps/web test:unit",
-    "web:build": "bun run --cwd apps/web build",
     "contract:codegen": "bash apps/web/scripts/gen-api.sh",
     "contract:lint": "bun x @redocly/cli lint goalx@v1"
   },

@@ -12,11 +12,6 @@ _MIN_OUTCOMES = 2
 LOW_CONFIDENCE_BOOK_THRESHOLD = 4
 
 
-def raw_implied(odds: float) -> float:
-    """Overround-inclusive implied probability ``1/odds``."""
-    return 1.0 / odds
-
-
 def normalized_implied(odds: tuple[float, ...]) -> tuple[float, ...]:
     """Naive de-vig: scale raw implied probabilities to sum to one."""
     raw = [1.0 / o for o in odds]

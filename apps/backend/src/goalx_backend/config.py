@@ -74,10 +74,6 @@ class Settings(BaseSettings):
     odds_api_key: str = Field(
         default="", validation_alias=AliasChoices("GOALX_ODDS_API_KEY", "ODDS_API_KEY")
     )
-    api_football_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("GOALX_API_FOOTBALL_KEY", "API_FOOTBALL_KEY"),
-    )
     fd_base_url: str = "https://www.football-data.co.uk/mmz4281"
     # clubelo 免费 Elo API（票 74；https 可用，http 为站点故障期备路）
     clubelo_base_url: str = "https://api.clubelo.com"
@@ -114,12 +110,6 @@ class Settings(BaseSettings):
     zucai_base_url: str = "https://www.okooo.com"
     # 源B 移动端（票 49 采集先行）：欧指变化时序（三步预热 Referer 链）
     srcb_mobile_base: str = "https://m.okooo.com"
-    # football-data.org 免费档（票 09：12 项 standings；免费注册，无 key 时跳过）
-    fdorg_base_url: str = "https://api.football-data.org"
-    fdorg_api_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("GOALX_FDORG_API_KEY", "FDORG_API_KEY"),
-    )
 
     # --- The Odds API credit 预算护栏（票 20：免费档 500/月） ---
     odds_api_daily_credit_budget: float = 40.0

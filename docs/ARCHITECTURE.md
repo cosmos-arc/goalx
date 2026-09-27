@@ -78,7 +78,6 @@ Web（`apps/web/`）：TanStack Router 六页——今日 `/`、复核 `/review`
 
 - **开发**：`task server`（API）+ `task dev`（web，/api 代理）；数据落 `data/goalx.db`（gitignored）。
 - **连续运行（票 37 协议 v1）**：`task serve-schedules` 单进程常驻，无需 Prefect server——daily-capture 10:00/19:00（竞彩→预测→范围内欧赔）、eu-odds-closing 每 30 分钟（无窗口场次零成本跳过）、daily-wrap 23:30（结算批跑+CLV 对账+账务核查）。节奏口径冻结于 [run-protocol-v1](plans/goalx-quant/run-protocol-v1.md) §3。
-- **备选**：Prefect server + worker 按 `prefect.yaml` 注册 deployments（同一批 flows）。
 
 ## 决策索引
 

@@ -31,7 +31,6 @@ CLV 跟踪与收盘对账（票 32 起底座；34 口径边界、40 基准分层
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -559,8 +558,3 @@ def _ols_slope(xs: list[float], ys: list[float]) -> tuple[float | None, float | 
     syy = sum((y - mean_y) ** 2 for y in ys)
     r_squared = (sxy**2 / (sxx * syy)) if syy > 0 else None
     return slope, r_squared
-
-
-def clv_json(conn: sqlite3.Connection) -> str:
-    """报表 JSON 序列化（API/CLI 展示用）。"""
-    return json.dumps(clv_report(conn), ensure_ascii=False, indent=2)

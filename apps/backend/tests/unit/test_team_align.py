@@ -79,7 +79,7 @@ def test_index_subset_direction_both_ways() -> None:
     assert index.resolve("Aston Villa") is None
 
 
-def test_resolve_hist_team_and_manual_override(db) -> None:
+def test_alias_index_resolve_and_manual_override(db) -> None:
     ids = seed_teams_with_aliases(
         db,
         [
@@ -87,17 +87,18 @@ def test_resolve_hist_team_and_manual_override(db) -> None:
             ("曼城", [("odds_api", "Manchester City")]),
         ],
     )
-    assert ta.resolve_hist_team(db, "Man United") == ids["曼联"]
-    assert ta.resolve_hist_team(db, "Man City") == ids["曼城"]
+    index = ta.alias_index(db)
+    assert index.resolve("Man United") == ids["曼联"]
+    assert index.resolve("Man City") == ids["曼城"]
     # 无别名球队解析不到
-    assert ta.resolve_hist_team(db, "Liverpool") is None
+    assert index.resolve("Liverpool") is None
     # 人工覆盖即时生效：直接插 manual 别名
     db.execute(
         "INSERT INTO team_aliases (team_id, source, alias) VALUES (?, 'manual', ?)",
         (ids["曼联"], "Man Utd"),
     )
     db.commit()
-    assert ta.resolve_hist_team(db, "Man Utd") == ids["曼联"]
+    assert ta.alias_index(db).resolve("Man Utd") == ids["曼联"]
 
 
 def test_match_model_team_reverse_mapping() -> None:
@@ -173,7 +174,7 @@ def test_backfill_aliases_from_events(db) -> None:
     events = [("evt1", "Arsenal", "Chelsea")]
     added = ta.backfill_aliases_from_events(db, events)
     assert added == 2
-    assert ta.resolve_hist_team(db, "Arsenal") == home
+    assert ta.alias_index(db).resolve("Arsenal") == home
     # 幂等：重复回填不新增
     assert ta.backfill_aliases_from_events(db, events) == 0
     assert ta.backfill_aliases_from_events(db, []) == 0

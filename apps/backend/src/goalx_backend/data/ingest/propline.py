@@ -278,14 +278,6 @@ def discover_sport_keys(conn: sqlite3.Connection, settings: Settings) -> list[st
     return [str(row["odds_api_sport_key"]) for row in rows]
 
 
-def fetch_freshness(settings: Settings, client: httpx.Client) -> dict[str, Any]:
-    """免鉴权健康检查（单人运营兜底）：per-book staleness 全景。"""
-    response = client.get(f"{settings.propline_base_url}/freshness", timeout=15.0)
-    response.raise_for_status()
-    data: dict[str, Any] = response.json()
-    return data
-
-
 def _error_code(response: httpx.Response) -> str | None:
     """PropLine 结构化错误码（{"detail": {"error": ...}}）；非结构化为 None。"""
     try:

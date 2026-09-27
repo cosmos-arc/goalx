@@ -49,11 +49,10 @@ class LlmKeyMissing(RuntimeError):
 
 
 class ModelTier(StrEnum):
-    """调用档位（票 02：scout 轻量 / analyst 旗舰 / fallback 免费）。"""
+    """调用档位（票 02：scout 轻量 / analyst 旗舰）。"""
 
     SCOUT = "scout"
     ANALYST = "analyst"
-    FALLBACK = "fallback"
 
 
 class Purpose(StrEnum):
