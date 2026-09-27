@@ -162,6 +162,20 @@ def hist_rows_through(
     ).fetchall()
 
 
+def hist_result_rows(
+    conn: sqlite3.Connection, *, as_of: str | None = None
+) -> list[sqlite3.Row]:
+    """全部联赛赛果行（票 78 Elo 热身输入；as_of 上界可选）。"""
+    base = """
+        SELECT competition, match_date, home_team, away_team, fthg, ftag
+        FROM hist_matches
+    """
+    order = " ORDER BY match_date, competition, home_team"
+    if as_of is None:
+        return conn.execute(base + order).fetchall()
+    return conn.execute(base + " WHERE match_date <= ?" + order, (as_of,)).fetchall()
+
+
 def settled_jingcai_fixtures(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """已结算（非无效）的竞彩场次：前瞻评分集合的底盘（票 34）。"""
     return conn.execute(

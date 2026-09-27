@@ -55,6 +55,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     archive538,
     caiguo,
+    elo_silver,
     fdhist,
     jc,
     jc_audit,
@@ -705,6 +706,30 @@ def _cmd_srct_results(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_elo_build(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    自算 Elo 全量重算 + silver 物化 + DuckDB 桥（票 78，幂等零请求）。
+
+    fd hist 热身（英文名空间）→ 重叠期配对桥 → fixture_universe 折叠
+    （中文名空间）→ elo_self 数据集；报告含逐留出季 RPS 对照与头部排名。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with task_conn() as conn, corpus_anchor() as duck_con:
+            if duck_con is None:
+                sys.stderr.write("corpus.duckdb unavailable, cannot build\n")
+                raise SystemExit(2)
+            report = elo_silver.build_elo_self(store, conn, duck_con)
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_mapping_sync(args: argparse.Namespace) -> None:
     """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
     report = mapping_sync()
@@ -1002,6 +1027,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="只出竞彩待出×源T覆盖差集报告,不落事实",
     )
+    sub.add_parser(
+        "elo-build",
+        help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
+    )
     srct_night_parser = sub.add_parser(
         "srct-night",
         help="源T夜班推进Phase1回填(票55切片13;预算/熔断/断点续传,摘要落库)",
@@ -1139,6 +1168,7 @@ def main(argv: list[str] | None = None) -> int:
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-results": lambda: _cmd_srct_results(args),
+        "elo-build": lambda: _cmd_elo_build(args),
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
