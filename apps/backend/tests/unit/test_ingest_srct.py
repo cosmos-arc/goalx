@@ -362,6 +362,12 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
+def _sid_of(req: httpx.Request) -> str:
+    """请求路径尾提取 sid（.js/.htm/cn 后缀全剥，odds 与 detail/analysis 共用）。"""
+    tail = req.url.path.rsplit("/", 1)[-1]
+    return tail.removesuffix(".js").removesuffix(".htm").removesuffix("cn")
+
+
 def _transport_spy() -> tuple[list[httpx.Request], dict[str, httpx.Response]]:
     """请求记录器 + 可编程响应表（day + 每场端点路径族）。"""
     seen: list[httpx.Request] = []
@@ -733,13 +739,14 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
     for sub in ("raw", "bronze", "silver", "gold", "duckdb"):
         assert (tmp_path / "corpus" / sub).is_dir()
     assert (tmp_path / "corpus" / "checkpoint.db").is_file()
-    # 防封：固定 UA；odds 带对应 Referer，handicap/stats 仅 UA
+    # 防封：固定 UA；odds/asian/overdown/analysis 带 odds Referer（vip/zq 域
+    # 2026-09-26 起强制校验），day/detail 仍仅 UA
     day_req = seen[0]
     assert day_req.headers["User-Agent"] == srct.DESKTOP_UA
     for req in seen[1:]:
         assert req.headers["User-Agent"] == srct.DESKTOP_UA
-        sid = req.url.path.rsplit("/", 1)[-1].removesuffix(".js").removesuffix(".htm")
-        if req.url.path.startswith("/odds/"):
+        sid = _sid_of(req)
+        if req.url.path.startswith(("/odds/", "/asian/", "/overdown/", "/analysis/")):
             assert req.headers["Referer"] == f"https://srct.test/oddslist/{sid}.htm"
         else:
             assert "Referer" not in req.headers
