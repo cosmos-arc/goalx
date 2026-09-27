@@ -36,6 +36,7 @@ from goalx_backend.data.ingest import (
     propline,
     sporttery,
     srcb,
+    srct,
     srct_night,
     srct_results,
     srct_shift,
@@ -309,7 +310,7 @@ def srct_night_run() -> dict[str, object]:
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
     try:
-        with httpx.Client() as client:
+        with httpx.Client(verify=srct.browser_ssl_context()) as client:
             summary = srct_night.run_night(store, settings, client)
     finally:
         store.close()
@@ -329,7 +330,7 @@ def srct_shift_run() -> dict[str, object]:
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
     try:
-        with httpx.Client() as client:
+        with httpx.Client(verify=srct.browser_ssl_context()) as client:
             stats = srct_shift.run_shift(store, settings, client)
     finally:
         store.close()
@@ -484,7 +485,7 @@ def guardian_sync(*, request_cap: int | None = None) -> dict[str, object]:
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
     try:
-        with httpx.Client() as client:
+        with httpx.Client(verify=srct.browser_ssl_context()) as client:
             stats = guardian.sync_guardian(
                 store, settings, client, request_cap=request_cap
             )
@@ -512,14 +513,14 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
 def pool_snapshot() -> zucai_official.PoolSyncStats:
     """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果 → pool 域表。"""
     settings = get_settings()
-    with task_conn() as conn, httpx.Client() as client:
+    with task_conn() as conn, httpx.Client(verify=srct.browser_ssl_context()) as client:
         return zucai_official.sync_current(conn, settings, client)
 
 
 def pool_backfill(periods: int = 20) -> dict[str, object]:
     """彩池历史彩果回填（票 68）：V2 逐期倒查官方注数/奖池/销量。"""
     settings = get_settings()
-    with task_conn() as conn, httpx.Client() as client:
+    with task_conn() as conn, httpx.Client(verify=srct.browser_ssl_context()) as client:
         stats = zucai_official.backfill_draws(conn, settings, client, periods=periods)
     return zucai_official.stats_dict(stats)
 
@@ -534,14 +535,20 @@ def intel_collection() -> dict[str, object]:
         stats = collect_pool_intel(conn)
     injury: dict[str, object] = {}
     try:
-        with task_conn() as conn, httpx.Client() as client:
+        with (
+            task_conn() as conn,
+            httpx.Client(verify=srct.browser_ssl_context()) as client,
+        ):
             injury = injury_stats_dict(collect_injury_intel(conn, client))
     except httpx.HTTPError as exc:
         logger.warning("澳客伤停采集整体失败（推导情报不受影响）: {}", exc)
         injury = {"error": str(exc)}
     sina: dict[str, object] = {}
     try:
-        with task_conn() as conn, httpx.Client() as client:
+        with (
+            task_conn() as conn,
+            httpx.Client(verify=srct.browser_ssl_context()) as client,
+        ):
             sina = sina_stats_dict(collect_sina_injury_intel(conn, client))
     except httpx.HTTPError as exc:
         logger.warning("新浪伤停采集整体失败（其余情报不受影响）: {}", exc)
