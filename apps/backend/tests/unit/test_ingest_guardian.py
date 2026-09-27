@@ -275,7 +275,10 @@ def test_fetch_failure_counts_budget_on_404(tmp_path: Path) -> None:
     settings = make_settings(tmp_path, budget=2)
     store = CorpusStore(settings.corpus_root)
     store.ensure_tree()
-    client = FakeClient({1: httpx.HTTPStatusError("500", request=None, response=None)})
+    resp_500 = httpx.Response(500, request=httpx.Request("GET", "https://x"))
+    client = FakeClient(
+        {1: httpx.HTTPStatusError("500", request=resp_500.request, response=resp_500)}
+    )
     stats = guardian.sync_guardian(store, settings, client, now=NOW)
     store.close()
     assert stats.requests == 0
@@ -303,3 +306,89 @@ def test_date_helpers() -> None:
     daily_window = guardian._daily_window
     assert daily_window(state, today) == ("2026-09-26", "2026-09-27")
     assert daily_window({}, today) == ("2026-09-27", "2026-09-27")
+
+
+def _cap_response() -> httpx.Response:
+    """深翻页上限的 400 响应（真实文案驱动窗口切换分支）。"""
+    message = (
+        "Content API does not support paging this far. Please change page"
+        " or page-size or consider filtering using a date range."
+    )
+    return httpx.Response(
+        400,
+        json={"response": {"status": "error", "message": message}},
+        request=httpx.Request("GET", "https://x"),
+    )
+
+
+def test_paging_cap_advances_date_window(tmp_path: Path) -> None:
+    """深翻页 400 → from_date 切到末篇发布日、page 归 1 继续到完。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    # 窗口 A（1999 起）：page1 成功（末篇发布日 2001-06-15），page2 触上限
+    win_a_p1 = page_payload(pages=5, page=1, ids=["a1", "a2"])
+    win_a_p1["response"]["results"] = [
+        dict(
+            cast("dict[str, object]", win_a_p1["response"]["results"][0]),
+            webPublicationDate="2001-06-10T00:00:00Z",
+        ),
+        dict(
+            cast("dict[str, object]", win_a_p1["response"]["results"][1]),
+            webPublicationDate="2001-06-15T00:00:00Z",
+        ),
+    ]
+    # 窗口 B（2001-06-15 起）：单页到尾
+    win_b_p1 = page_payload(pages=1, page=1, ids=["b1"])
+
+    class CapClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str | int]] = []
+
+        def get(
+            self, url: str, *, params: dict[str, str | int], timeout: float
+        ) -> httpx.Response:
+            del url, timeout
+            self.calls.append(dict(params))
+            if str(params["from-date"]) == "1999-01-01":
+                if int(str(params["page"])) == 1:
+                    return httpx.Response(
+                        200,
+                        text=json.dumps(win_a_p1),
+                        request=httpx.Request("GET", "https://x"),
+                    )
+                return _cap_response()
+            return httpx.Response(
+                200,
+                text=json.dumps(win_b_p1),
+                request=httpx.Request("GET", "https://x"),
+            )
+
+    client = CapClient()
+    stats = guardian.sync_guardian(
+        store, settings, client, now=NOW, sleeper=lambda _: None
+    )
+    store.close()
+    assert stats.completed
+    assert stats.requests == 3  # 2 成功 + 1 次上限尝试（已记账）
+    assert stats.pages == 2
+    # 窗口 B 的 from-date = 窗口 A 末篇发布日
+    assert str(client.calls[2]["from-date"]) == "2001-06-15"
+    assert stats.state["phase"] == "daily"
+    # bronze：a1/a2/b1 各一行（后行胜出约定，无删行）
+    sids = {
+        row["sid"] for row in store.read_bronze(guardian.PROVIDER, guardian.DATASET)
+    }
+    assert sids == {"a1", "a2", "b1"}
+
+
+def test_safe_error_redacts_query_string() -> None:
+    """异常文本脱敏：问号后（含 api-key）一律截断。"""
+    exc = httpx.HTTPStatusError(
+        "Client error '400 Bad Request' for url 'https://content.guardianapis.com/search?api-key=SECRET&page=191'",
+        request=httpx.Request("GET", "https://x"),
+        response=httpx.Response(400, request=httpx.Request("GET", "https://x")),
+    )
+    cleaned = guardian._safe_error(exc)
+    assert "SECRET" not in cleaned
+    assert cleaned.endswith("search")
