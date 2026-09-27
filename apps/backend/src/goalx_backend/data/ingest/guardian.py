@@ -6,10 +6,13 @@ open-platform 免费 developer 档：~500 请求/日、~1 rps、非商用。foot
 约 2 日拉完；之后日增量 1-2 请求。直连可用（fake-ip TUN 放行，无需代理
 env），与源T 体系不同主机零共享限流。
 
-分页稳定性：搜索默认新→旧排序，回填期间新文插入会把后续页整体前推
-（漂移=缺页/重页）——回填态锚定 ``to-date``（首跑冻结）+ ``order-by=oldest``
-（旧→新），新增内容落在锚之后不扰动；日增量态窗口 1-2 页无漂移问题，
-新→旧直取。
+分页稳定性（两层）：搜索默认新→旧排序，回填期间新文插入会把后续页整体
+前推（漂移=缺页/重页）——回填态锚定 ``to-date``（首跑冻结）+
+``order-by=oldest``（旧→新），新增内容落在锚之后不扰动；日增量态窗口
+1-2 页无漂移，新→旧直取。**深翻页上限**（2026-09-27 实测：page 191×200
+起 400 "does not support paging this far"，官方建议日期范围过滤）——
+吃到该错即切日期窗口：from_date 推进到上一成功页末篇发布日（同日少量
+重采，bronze 后行胜出天然去重）、page 归 1，窗口内偏移量随之变小。
 
 - raw-first：响应 JSON gzip+sha（``raw/guardian/search/``，许可=key 持有者
   自用、raw 本地、禁再分发——同源T 政策不进 repo）；
@@ -47,6 +50,8 @@ PAGE_SIZE = 200
 REQUEST_GAP_SECONDS = 1.0  # 票面 1 rps 礼貌间距
 PHASE_BACKFILL = "backfill"
 PHASE_DAILY = "daily"
+_HTTP_BAD_REQUEST = 400  # 深翻页上限的载体状态码（body 文案判别）
+_ISO_DATE_LEN = 10  # YYYY-MM-DD
 
 State = dict[str, object]
 
@@ -166,6 +171,10 @@ def _window(state: State, today: date, phase: str) -> tuple[str, str, int, bool]
     return from_date, to_date, page, False
 
 
+class PagingCapReached(Exception):
+    """Content API 深翻页上限（400 "paging this far"）——需切日期窗口。"""
+
+
 @dataclass(frozen=True)
 class _PagePull:
     """一次成功拉页的结果（失败不产生本类型——游标不进）。"""
@@ -173,6 +182,12 @@ class _PagePull:
     total_pages: int
     articles: int
     raw_bytes: int
+    boundary: str | None = None  # 末篇发布日（YYYY-MM-DD；窗口推进用）
+
+
+def _safe_error(exc: Exception) -> str:
+    """异常文本脱敏（URL query 含 api-key——问号后一律截断）。"""
+    return str(exc).split("?")[0]
 
 
 def _pull_page(
@@ -183,7 +198,12 @@ def _pull_page(
     observed_at: str,
     budget_day: str,
 ) -> _PagePull | None:
-    """拉一页并落 raw+bronze+记账；HTTP 失败记账返回 None（断点原地续）。"""
+    """
+    拉一页并落 raw+bronze+记账；HTTP 失败记账返回 None（断点原地续）。
+
+    深翻页上限（400 "paging this far"）抛 :class:`PagingCapReached` 由
+    调用方切窗口——不是故障，是分页协议的一部分。
+    """
     from_date, to_date, page, oldest_first = window
     try:
         payload = fetch_search_page(
@@ -194,13 +214,23 @@ def _pull_page(
             page=page,
             oldest_first=oldest_first,
         )
+    except httpx.HTTPStatusError as exc:
+        store.increment_guardian_requests(budget_day)
+        if (
+            exc.response.status_code == _HTTP_BAD_REQUEST
+            and "paging this far" in exc.response.text
+        ):
+            raise PagingCapReached(page) from None
+        logger.warning("guardian page {} failed: {}", page, _safe_error(exc))
+        return None
     except httpx.HTTPError as exc:
         store.increment_guardian_requests(budget_day)
-        logger.warning("guardian page fetch failed at page {}: {}", page, exc)
+        logger.warning("guardian page {} failed: {}", page, _safe_error(exc))
         return None
     store.increment_guardian_requests(budget_day)
     body = json.dumps(payload, ensure_ascii=False).encode()
     raw = store.ingest_raw(PROVIDER, RAW_DATASET, _raw_key(from_date, page), body)
+    parsed = parse_articles(payload)
     rows: list[dict[str, object]] = [
         {
             "provider": PROVIDER,
@@ -211,15 +241,86 @@ def _pull_page(
             "raw_sha": raw.sha256,
             "payload": article,
         }
-        for article in parse_articles(payload)
+        for article in parsed
     ]
     store.append_bronze(PROVIDER, DATASET, rows)
     response = cast("dict[str, object]", payload.get("response") or {})
+    boundary = None
+    if parsed:
+        last_date = _as_str(parsed[-1]["webPublicationDate"])
+        boundary = (
+            last_date[:_ISO_DATE_LEN] if len(last_date) >= _ISO_DATE_LEN else None
+        )
     return _PagePull(
         total_pages=_as_int(response.get("pages") or 0),
         articles=len(rows),
         raw_bytes=raw.byte_size,
+        boundary=boundary,
     )
+
+
+def _advance_window(state: State, current_from: str, boundary: str | None) -> State:
+    """深翻页上限后的窗口推进：from_date 跳到末篇发布日（无/+0 则 +1 日）。"""
+    nxt = boundary if boundary and boundary > current_from else None
+    nxt = nxt or (date.fromisoformat(current_from) + timedelta(days=1)).isoformat()
+    return {**state, "from_date": nxt, "page": 1}
+
+
+def _skip_reason(state: State, settings: Settings, today: date) -> str | None:
+    """开跑前的诚实跳过原因（无 key / daily 态当日已完成零请求心跳）。"""
+    if not settings.guardian_api_key:
+        return "api_key_missing"
+    done = state.get("last_completed_date") == today.isoformat()
+    if _as_str(state["phase"]) == PHASE_DAILY and done:
+        return "daily_done_today"
+    return None
+
+
+def _apply_skip(stats: GuardianSyncStats, reason: str) -> None:
+    """诚实跳过置位（daily 当日已完成心跳 / key 缺失告警）。"""
+    if reason == "daily_done_today":
+        stats.skipped_done_today = True
+    else:
+        logger.warning("guardian-sync skipped: api key 未配置")
+
+
+def _state_view(state: State) -> dict[str, object]:
+    """游标视图（stats.state 五键）。"""
+    return {
+        key: state[key]
+        for key in ("phase", "from_date", "to_date", "page", "last_completed_date")
+    }
+
+
+def _converged_state(window: tuple[str, str, int, bool], total: int) -> State:
+    """到尾收敛态（回填锚定日收口/日增量窗口拉完同构——都转 daily）。"""
+    from_date, to_date, _, _ = window
+    return {
+        "phase": PHASE_DAILY,
+        "from_date": from_date,
+        "to_date": to_date,
+        "page": 1,
+        "last_completed_date": to_date,
+        "total_articles": total,
+    }
+
+
+def _cursor_state(
+    phase: str,
+    window: tuple[str, str, int, bool],
+    total: int,
+    last_completed: object,
+) -> State:
+    """翻页中游标态（下一页；completed 原样透传）。"""
+    from_date, to_date, page, _ = window
+    return {
+        "phase": phase,
+        "from_date": from_date,
+        "to_date": to_date,
+        "page": page + 1,
+        "last_completed_date": last_completed,
+        "total_articles": total,
+    }
 
 
 def sync_guardian(
@@ -246,18 +347,15 @@ def sync_guardian(
     stats = GuardianSyncStats(observed_at=utc_now_iso())
     state = store.guardian_state()
     stats.phase = _as_str(state["phase"])
-    if not settings.guardian_api_key:
-        stats.state = state
-        logger.warning("guardian-sync skipped: api key 未配置")
-        return stats
-    done_today = state.get("last_completed_date") == today.isoformat()
-    if stats.phase == PHASE_DAILY and done_today:
-        stats.skipped_done_today = True
+    reason = _skip_reason(state, settings, today)
+    if reason is not None:
+        _apply_skip(stats, reason)
         stats.state = state
         return stats
     if stats.phase == PHASE_BACKFILL and not state["to_date"]:
         # 锚定日：回填期冻结（新文落在锚后，oldest-first 翻页不漂移）
         state = {**state, "to_date": today.isoformat()}
+    last_boundary: str | None = None
     while True:
         used = store.guardian_requests(budget_day)
         if used >= settings.guardian_daily_request_budget:
@@ -267,45 +365,37 @@ def sync_guardian(
             stats.request_capped = True
             break
         window = _window(state, today, stats.phase)
-        pull = _pull_page(
-            store, settings, client, window, stats.observed_at, budget_day
-        )
+        try:
+            pull = _pull_page(
+                store, settings, client, window, stats.observed_at, budget_day
+            )
+        except PagingCapReached:
+            # 深翻页上限：切窗口（末篇发布日优先，无则 +1 日），page 归 1；
+            # 该次尝试已耗预算，记账不打断推进
+            state = _advance_window(state, window[0], last_boundary)
+            store.upsert_guardian_state(state)
+            stats.requests += 1
+            continue
         if pull is None:
             break
-        from_date, to_date, page, _ = window
+        last_boundary = pull.boundary
         stats.requests += 1
         stats.pages += 1
         stats.articles += pull.articles
         stats.raw_bytes += pull.raw_bytes
         total = _as_int(state["total_articles"]) + pull.articles
-        if page >= pull.total_pages:
-            # 回填到尾（锚定日收口）或日增量窗口拉完——都收敛进 daily 形态
-            state = {
-                "phase": PHASE_DAILY,
-                "from_date": from_date,
-                "to_date": to_date,
-                "page": 1,
-                "last_completed_date": to_date,
-                "total_articles": total,
-            }
+        if window[2] >= pull.total_pages:
+            state = _converged_state(window, total)
             stats.completed = True
             stats.phase = PHASE_DAILY
             break
-        state = {
-            "phase": stats.phase,
-            "from_date": from_date,
-            "to_date": to_date,
-            "page": page + 1,
-            "last_completed_date": state.get("last_completed_date"),
-            "total_articles": total,
-        }
+        state = _cursor_state(
+            stats.phase, window, total, state.get("last_completed_date")
+        )
         store.upsert_guardian_state(state)
         if pull.total_pages > 1:
             sleeper(REQUEST_GAP_SECONDS)
     store.upsert_guardian_state(state)
     stats.total_articles = _as_int(state["total_articles"])
-    stats.state = {
-        key: state[key]
-        for key in ("phase", "from_date", "to_date", "page", "last_completed_date")
-    }
+    stats.state = _state_view(state)
     return stats
