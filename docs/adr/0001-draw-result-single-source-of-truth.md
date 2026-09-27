@@ -9,3 +9,18 @@ DrawResult是**开奖与结算**事实源，不代表手工导入未经核验就
 快照区分源更新时间、本机观测时间与入库时间；历史回放保留返回的实际时点，不冒充实时观测。内容哈希不证明系统在某时刻已知数据，正式Forecast仍须在开赛前生成并校验训练窗口。
 
 实施状态：开奖更正审计、事务重算及差额冲正已随[结算生命周期修复](https://github.com/cosmos-arc/goalx/pull/4)合并；快照时间及前瞻资格仍待实施，不能因更正路径完成而视为全部约束已落地。剩余交接见[可信纸面实施安排](../plans/trusted-paper-handoff.md)。
+
+## 2026-09-27 事实源载体切换（票 76）
+
+DrawResult 作为开奖与结算唯一事实源的定位不变；**载体**从官方 uniform 端点
+切到源T 日页物化（用户裁决：源T 比赛覆盖是超集，数据面统一以源T 为脊柱）。
+官方 uniform 降为审计+差集兜底——源T 已覆盖场由链序（源T 先落）+
+no-冲正规则天然排除 uniform 落库，差集场（CorpusScope 外联赛/映射未达）
+与官方 void 观测仍由 uniform 兜底。审计面同步收敛：源D/caiguo 退役
+（与 uniform 同属官方发布族，第三份对账冗余），保留 uniform（随同步内联
+对账）+ openfootball（票 76 起 official-reconcile 仅此一件）。
+
+口径：日页无半场——half 置空不冲正（对账半场比较仅双侧有值时生效）；
+published_at 不伪造（silver 无源发布时刻，bronze fetched_at 是本机抓取
+时间，ADR-0010 三时间不合）。kickoff 事实时刻以源T 为 canonical
+（票 77 映射层校准）。

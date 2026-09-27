@@ -16,8 +16,10 @@ Prefect server 调度（见 README「运行采集」）。
 - weekly_train_flow：DC 分池周训练（Tier1 五大，票 26）
 - forecast_daily_flow：每日在售场次 ML Forecast 生成（票 27）
 - settlement_flow：开奖后结算批跑（每日数次）
-- draw_results_sync_flow：官方赛果自动同步（票 42 源D 起；票 44 切换 uniform）
-- official_reconcile_flow：赛果日终审计（票 44：源D+openfootball 对账）
+- draw_results_sync_flow：赛果自动同步（票 42 源D 起；票 44 切 uniform；
+  票 76 起源T 物化落事实+uniform 兜底/审计）
+- official_reconcile_flow：赛果日终审计（票 76 收敛：openfootball 对账；
+  源D 退役、uniform 段随同步内联）
 - understat_sync_flow：Understat xG 特征同步（票 45：每日 6 请求 ≤10 上限）
 """
 

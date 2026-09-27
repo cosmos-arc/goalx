@@ -66,6 +66,7 @@ from goalx_backend.data.ingest import (
     srct_market,
     srct_night,
     srct_odds,
+    srct_results,
     srct_shift,
     srct_silver,
     uniform,
@@ -691,6 +692,19 @@ def _cmd_jc_silver(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_results(args: argparse.Namespace) -> None:
+    """源T 日页赛果物化 + 覆盖差集报告（票 76，零新请求）。"""
+    payload: dict[str, object]
+    with task_conn() as conn, corpus_anchor() as duck_con:
+        coverage = srct_results.coverage_diff_report(conn, duck_con)
+        if args.coverage_only:
+            payload = {"coverage": coverage}
+        else:
+            stats = srct_results.materialize_results(conn, duck_con)
+            payload = {**stats.as_dict(), "coverage_after": coverage}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_mapping_sync(args: argparse.Namespace) -> None:
     """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
     report = mapping_sync()
@@ -979,6 +993,15 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="源T轨迹语料按日采集(票55切片11;端点模板须进本地.env,断点可续)",
     )
     srct_collect.add_argument("--date", required=True, help="业务日 YYYY-MM-DD")
+    srct_results_parser = sub.add_parser(
+        "srct-results",
+        help="源T日页赛果物化+覆盖差集报告(票76;零新请求,--coverage-only只读)",
+    )
+    srct_results_parser.add_argument(
+        "--coverage-only",
+        action="store_true",
+        help="只出竞彩待出×源T覆盖差集报告,不落事实",
+    )
     srct_night_parser = sub.add_parser(
         "srct-night",
         help="源T夜班推进Phase1回填(票55切片13;预算/熔断/断点续传,摘要落库)",
@@ -1115,6 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
         "srct-collect": lambda: _cmd_srct_collect(args),
+        "srct-results": lambda: _cmd_srct_results(args),
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),

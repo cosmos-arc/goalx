@@ -461,6 +461,43 @@ def srct_sid_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> str | Non
     return str(row["source_match_id"]) if row else None
 
 
+def pending_srct_results(
+    conn: sqlite3.Connection,
+    now_iso: str,
+    *,
+    lookback_days: int = 7,
+) -> list[sqlite3.Row]:
+    """
+    待出赛果场次（已开赛、无开奖、近 N 天）× 源T 链状态（票 76 物化输入）。
+
+    返回行带 fixture_id/kickoff_utc/主客 canonical 名/联赛与 sid
+    （unlinked 场 sid 为 NULL——CorpusScope 外差集，uniform 兜底通道的口径）。
+    窗口语义与 uniform.candidate_business_dates 同源（票 44 待出推导）。
+    """
+    floor = (
+        datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        - timedelta(days=lookback_days)
+    ).isoformat(timespec="seconds")
+    return conn.execute(
+        """
+        SELECT f.id AS fixture_id, f.kickoff_utc,
+               th.canonical_name AS home_name, ta.canonical_name AS away_name,
+               c.name AS competition_name, c.tier AS competition_tier,
+               l.source_match_id AS sid
+        FROM fixtures f
+        JOIN teams th ON th.id = f.home_team_id
+        JOIN teams ta ON ta.id = f.away_team_id
+        JOIN competitions c ON c.id = f.competition_id
+        LEFT JOIN draw_results d ON d.fixture_id = f.id
+        LEFT JOIN source_match_links l
+            ON l.fixture_id = f.id AND l.source = 'srct' AND l.status = 'linked'
+        WHERE f.kickoff_utc <= ? AND f.kickoff_utc >= ? AND d.id IS NULL
+        ORDER BY f.kickoff_utc
+        """,
+        (now_iso, floor),
+    ).fetchall()
+
+
 def srct_kickoff_overrides(
     conn: sqlite3.Connection, duck_con: DuckCon | None
 ) -> dict[str, int]:

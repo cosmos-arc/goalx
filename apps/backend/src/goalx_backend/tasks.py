@@ -28,7 +28,6 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
-    caiguo,
     clubelo,
     fdhist,
     oddsapi,
@@ -37,6 +36,7 @@ from goalx_backend.data.ingest import (
     sporttery,
     srcb,
     srct_night,
+    srct_results,
     srct_shift,
     understat,
     uniform,
@@ -343,36 +343,50 @@ def settlement_sweep() -> dict[str, int]:
 
 def draw_results_sync() -> dict[str, object]:
     """
-    赛果自动同步（票 44 切换后为官方 uniform 源，终态落事实）。
+    赛果自动同步（票 76 切换：源T 日页物化落事实，官方 uniform 兜底+审计）。
 
-    票 42 时代为源D 页面导入；候选业务日由库内待出赛果推导，
-    无待出赛果时不发任何请求（零成本跳过，与 eu-odds-closing 同模式）。
-    源D 降为审计源（official_results_reconcile）。
+    链序即分工：映射链刷新（票 77，kickoff canonical 顺带校准）→ 源T
+    物化（零请求，已覆盖场落事实）→ uniform 同步（no-冲正规则天然把它
+    限制在差集场与官方 void 观测——审计源顺手救兜底）。语料桥缺席 →
+    源T 段降级跳过，uniform 独走（票 44 行为不变）。无待出赛果时
+    uniform 零请求跳过（零成本，与 eu-odds-closing 同模式）。
     """
     settings = get_settings()
-    with task_conn() as conn, polite_client() as client:
-        stats, _rec = uniform.sync_uniform_results(conn, settings, client)
-    return uniform.stats_dict(stats)
+    with (
+        task_conn() as conn,
+        corpus_anchor() as duck_con,
+        polite_client() as client,
+    ):
+        links: mapping.MappingSyncStats | None = None
+        if duck_con is not None:
+            links = mapping.sync_fixture_links(
+                conn, duck_con, team_aliases=team_align_srct_sets(conn)
+            )
+        srct_stats = srct_results.materialize_results(conn, duck_con)
+        stats, rec = uniform.sync_uniform_results(conn, settings, client)
+    return {
+        "links": links.as_dict() if links else None,
+        "srct": srct_stats.as_dict(),
+        "uniform": uniform.stats_dict(stats),
+        "uniform_reconcile": reconcile.stats_dict(rec),
+    }
 
 
 def official_results_reconcile() -> dict[str, object]:
     """
-    赛果日终审计（票 44）：源D 页面对账 + openfootball 比分对账，不落事实。
+    赛果日终审计（票 76 收敛）：openfootball 比分对账，不落事实。
 
-    官方 uniform 同步（draw-results-sync）负责落库；本任务只交叉核对：
-    源D 审计窗口为近 7 天已开赛场次（含已落果日），openfootball 为窗口内
-    已映射联赛。
+    审计面收敛史：票 44 起 uniform 落事实 + 源D(caiguo)/openfootball 双
+    审计；票 76 起源T 物化落事实，uniform 转审计（对账段随
+    draw-results-sync 内联运行，draw_sync_runs 留痕），源D 退役——与
+    uniform 同属官方发布族，第三份对账冗余（模块留档作备用源）。
     """
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
-        caiguo_rec = caiguo.audit_draw_results(conn, settings, client)
         of_rec = openfootball.reconcile_openfootball(
             conn, settings, client, alias_index=alias_index(conn)
         )
-    return {
-        "caiguo": reconcile.stats_dict(caiguo_rec),
-        "openfootball": reconcile.stats_dict(of_rec),
-    }
+    return {"openfootball": reconcile.stats_dict(of_rec)}
 
 
 def understat_sync(
