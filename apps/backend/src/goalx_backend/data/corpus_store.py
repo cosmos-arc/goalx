@@ -138,9 +138,23 @@ CREATE TABLE IF NOT EXISTS guardian_sync_state (
     page INTEGER NOT NULL DEFAULT 1,
     last_completed_date TEXT,
     total_articles INTEGER NOT NULL DEFAULT 0,
+    boundary TEXT,
     updated_at TEXT NOT NULL
 )
 """
+# 2026-09-27 追加列（跨进程断点续跑需要持久化末篇发布日；存量表 ALTER 补列）
+_GUARDIAN_BOUNDARY_ALTER_SQL = (
+    "ALTER TABLE guardian_sync_state ADD COLUMN boundary TEXT"
+)
+
+
+def _ensure_boundary_column(conn: sqlite3.Connection) -> None:
+    """幂等补齐 boundary 列（PRAGMA 探测，老 checkpoint 库升级）。"""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(guardian_sync_state)")}
+    if "boundary" not in cols:
+        conn.execute(_GUARDIAN_BOUNDARY_ALTER_SQL)
+
+
 _GUARDIAN_REQUEST_DAYS_SQL = """
 CREATE TABLE IF NOT EXISTS guardian_request_days (
     day TEXT PRIMARY KEY,
@@ -204,6 +218,7 @@ class CorpusStore:
         conn.execute(_JC_SHIFT_MATCHES_SQL)
         conn.execute(_JC_BACKFILL_DAYS_SQL)
         conn.execute(_GUARDIAN_SYNC_STATE_SQL)
+        _ensure_boundary_column(conn)
         conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
         conn.commit()
 
@@ -221,6 +236,7 @@ class CorpusStore:
             self._conn.execute(_JC_SHIFT_MATCHES_SQL)
             self._conn.execute(_JC_BACKFILL_DAYS_SQL)
             self._conn.execute(_GUARDIAN_SYNC_STATE_SQL)
+            _ensure_boundary_column(self._conn)
             self._conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
             self._conn.commit()
         return self._conn
@@ -503,6 +519,7 @@ class CorpusStore:
                 "page": 1,
                 "last_completed_date": None,
                 "total_articles": 0,
+                "boundary": None,
             }
         return dict(row)
 
@@ -515,6 +532,7 @@ class CorpusStore:
             "page",
             "last_completed_date",
             "total_articles",
+            "boundary",
         )
         self._checkpoint().execute(
             # 列名来自模块常量，非用户输入
@@ -524,7 +542,7 @@ class CorpusStore:
             + " ON CONFLICT(id) DO UPDATE SET "
             + ",".join(f"{c}=excluded.{c}" for c in columns)
             + ",updated_at=excluded.updated_at",
-            (*tuple(row[c] for c in columns), utc_now_iso()),
+            (*tuple(row.get(c) for c in columns), utc_now_iso()),
         )
         self._checkpoint().commit()
 
