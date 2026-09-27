@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     fd_base_url: str = "https://www.football-data.co.uk/mmz4281"
     # clubelo 免费 Elo API（票 74；https 可用，http 为站点故障期备路）
     clubelo_base_url: str = "https://api.clubelo.com"
+    # 卫报 open platform（票 79）：免费 developer 档 ~500 请求/日、~1 rps
+    guardian_base_url: str = "https://content.guardianapis.com"
+    guardian_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOALX_GUARDIAN_API_KEY", "GUARDIAN_API_KEY"),
+    )
+    guardian_daily_request_budget: int = 500  # 免费层上限，404 也记 1（propline 同型）
     # 源D 结果页（票 42 实证：访问限制仅要求浏览器 UA；?e=业务日）
     caiguo_base_url: str = "https://live.500.com/jczq.php"
     # uniform 族官方赛果（票 44 实测直通：jc 族 403 是端点级，本端点同域同头可用）

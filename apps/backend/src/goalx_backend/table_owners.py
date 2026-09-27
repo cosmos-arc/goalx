@@ -57,6 +57,9 @@ OWNERS: dict[str, set[str]] = {
         "srct_night_summaries",
         # 票 78：自算 Elo 逐场赛前值（ingest/elo_silver.py 物化）
         "elo_self",
+        # 票 79：卫报语料游标状态机 + 500/日请求账本（checkpoint 库）
+        "guardian_sync_state",
+        "guardian_request_days",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

@@ -21,6 +21,7 @@ Prefect server 调度（见 README「运行采集」）。
 - official_reconcile_flow：赛果日终审计（票 76 收敛：openfootball 对账；
   源D 退役、uniform 段随同步内联）
 - understat_sync_flow：Understat xG 特征同步（票 45：每日 6 请求 ≤10 上限）
+- guardian_sync_flow：卫报新闻语料同步（票 79：回填 ~2 日@500/日，之后日增量 1-2 请求）
 """
 
 from __future__ import annotations
@@ -168,6 +169,14 @@ def clubelo_sync_flow() -> dict[str, object]:
     """Clubelo Elo 评级日拍（票 74）：当日全量快照单请求，幂等。"""
     stats = tasks.clubelo_sync()
     logger.info("clubelo sync: {}", stats)
+    return stats
+
+
+@flow(name="guardian-sync", log_prints=True)
+def guardian_sync_flow() -> dict[str, object]:
+    """卫报新闻语料同步（票 79）：回填翻页/日增量，断点续跑幂等。"""
+    stats = tasks.guardian_sync()
+    logger.info("guardian sync: {}", stats)
     return stats
 
 

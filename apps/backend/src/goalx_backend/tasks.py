@@ -30,6 +30,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     clubelo,
     fdhist,
+    guardian,
     oddsapi,
     openfootball,
     propline,
@@ -476,6 +477,20 @@ def clubelo_elo_for_team(canonical_name: str, on_date: date) -> dict[str, object
             "elo": elo,
             "status": "ok" if elo is not None else "rating_uncovered",
         }
+
+
+def guardian_sync(*, request_cap: int | None = None) -> dict[str, object]:
+    """卫报新闻语料同步（票 79）：回填翻页/日增量，断点续跑幂等（直连）。"""
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    try:
+        with httpx.Client() as client:
+            stats = guardian.sync_guardian(
+                store, settings, client, request_cap=request_cap
+            )
+    finally:
+        store.close()
+    return guardian.stats_dict(stats)
 
 
 def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:

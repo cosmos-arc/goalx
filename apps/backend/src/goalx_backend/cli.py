@@ -88,6 +88,7 @@ from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.tasks import (
     clubelo_elo_for_team,
     corpus_anchor,
+    guardian_sync,
     mapping_audit,
     mapping_sync,
     task_conn,
@@ -730,6 +731,12 @@ def _cmd_elo_build(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_guardian_sync(args: argparse.Namespace) -> None:
+    """卫报新闻语料同步（票 79）：回填翻页/日增量，断点续跑幂等。"""
+    report = guardian_sync(request_cap=args.request_cap)
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_mapping_sync(args: argparse.Namespace) -> None:
     """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
     report = mapping_sync()
@@ -1027,6 +1034,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="只出竞彩待出×源T覆盖差集报告,不落事实",
     )
+    guardian_parser = sub.add_parser(
+        "guardian-sync",
+        help="卫报新闻语料同步(票79;回填~2日@500/日,断点续跑幂等)",
+    )
+    guardian_parser.add_argument(
+        "--request-cap",
+        type=int,
+        default=None,
+        help="单次请求上限(默认=当日剩余预算全部)",
+    )
     sub.add_parser(
         "elo-build",
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
@@ -1169,6 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-results": lambda: _cmd_srct_results(args),
         "elo-build": lambda: _cmd_elo_build(args),
+        "guardian-sync": lambda: _cmd_guardian_sync(args),
         "srct-night": lambda: _cmd_srct_night(args),
         "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),

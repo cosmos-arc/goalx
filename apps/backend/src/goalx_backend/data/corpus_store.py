@@ -127,6 +127,26 @@ CREATE TABLE IF NOT EXISTS srct_shift_matches (
     last_beat_at TEXT
 )
 """
+# 票 79 卫报语料：游标断点（单行状态机：backfill 深翻页锚定 to-date
+# 防新文插入漂移；daily 日增量）+ 免费层 500/日请求账本（404 也记 1）
+_GUARDIAN_SYNC_STATE_SQL = """
+CREATE TABLE IF NOT EXISTS guardian_sync_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    phase TEXT NOT NULL DEFAULT 'backfill',
+    from_date TEXT NOT NULL DEFAULT '1999-01-01',
+    to_date TEXT NOT NULL DEFAULT '',
+    page INTEGER NOT NULL DEFAULT 1,
+    last_completed_date TEXT,
+    total_articles INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+)
+"""
+_GUARDIAN_REQUEST_DAYS_SQL = """
+CREATE TABLE IF NOT EXISTS guardian_request_days (
+    day TEXT PRIMARY KEY,
+    requests INTEGER NOT NULL DEFAULT 0
+)
+"""
 _NIGHT_SUMMARY_COLUMNS = (
     "night_date",
     "started_at",
@@ -183,6 +203,8 @@ class CorpusStore:
         conn.execute(_SRCT_SHIFT_MATCHES_SQL)
         conn.execute(_JC_SHIFT_MATCHES_SQL)
         conn.execute(_JC_BACKFILL_DAYS_SQL)
+        conn.execute(_GUARDIAN_SYNC_STATE_SQL)
+        conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
         conn.commit()
 
     def _checkpoint(self) -> sqlite3.Connection:
@@ -198,6 +220,8 @@ class CorpusStore:
             self._conn.execute(_SRCT_SHIFT_MATCHES_SQL)
             self._conn.execute(_JC_SHIFT_MATCHES_SQL)
             self._conn.execute(_JC_BACKFILL_DAYS_SQL)
+            self._conn.execute(_GUARDIAN_SYNC_STATE_SQL)
+            self._conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
             self._conn.commit()
         return self._conn
 
@@ -463,6 +487,68 @@ class CorpusStore:
             (limit,),
         )
         return [dict(row) for row in rows]
+
+    def guardian_state(self) -> dict[str, object]:
+        """卫报语料游标状态（无行=初生默认：backfill 自 1999-01-01 起）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT * FROM guardian_sync_state WHERE id = 1")
+            .fetchone()
+        )
+        if row is None:
+            return {
+                "phase": "backfill",
+                "from_date": "1999-01-01",
+                "to_date": "",
+                "page": 1,
+                "last_completed_date": None,
+                "total_articles": 0,
+            }
+        return dict(row)
+
+    def upsert_guardian_state(self, row: Mapping[str, object]) -> None:
+        """整行覆写游标状态（票 79；键集与 guardian_state 默认行一致）。"""
+        columns = (
+            "phase",
+            "from_date",
+            "to_date",
+            "page",
+            "last_completed_date",
+            "total_articles",
+        )
+        self._checkpoint().execute(
+            # 列名来自模块常量，非用户输入
+            "INSERT INTO guardian_sync_state (id,"  # noqa: S608
+            + f"{','.join(columns)},updated_at)"
+            + f" VALUES (1,{','.join('?' for _ in columns)},?)"
+            + " ON CONFLICT(id) DO UPDATE SET "
+            + ",".join(f"{c}=excluded.{c}" for c in columns)
+            + ",updated_at=excluded.updated_at",
+            (*tuple(row[c] for c in columns), utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def guardian_requests(self, day: str) -> int:
+        """该 UTC 日已用请求数（预算闸门查询）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT requests FROM guardian_request_days WHERE day = ?", (day,))
+            .fetchone()
+        )
+        return int(row["requests"]) if row else 0
+
+    def increment_guardian_requests(self, day: str) -> int:
+        """记账 +1 并返回当日新计数（404 也记 1，propline 同型）。"""
+        cur = self._checkpoint().execute(
+            """
+            INSERT INTO guardian_request_days (day, requests) VALUES (?, 1)
+            ON CONFLICT(day) DO UPDATE SET requests = requests + 1
+            """,
+            (day,),
+        )
+        self._checkpoint().commit()
+        del cur
+        return self.guardian_requests(day)
 
     def close(self) -> None:
         """关 checkpoint 连接（树文件保留）。"""
