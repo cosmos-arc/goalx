@@ -24,6 +24,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import (
     archive538,
+    elo_silver,
     jc,
     jc_silver,
     srct,
@@ -74,6 +75,11 @@ _SILVER_VIEWS: tuple[tuple[str, str], ...] = (
     (
         jc_silver.SP_EVENT_DATASET,
         f"{jc.JC_PROVIDER}/{jc_silver.SP_EVENT_DATASET}",
+    ),
+    # 票 78：自算 Elo 逐场赛前值（消费即 join fixture_universe，零跨源映射）
+    (
+        elo_silver.DATASET,
+        f"{elo_silver.PROVIDER}/{elo_silver.DATASET}",
     ),
 )
 

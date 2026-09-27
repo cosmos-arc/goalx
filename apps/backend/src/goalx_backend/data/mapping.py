@@ -211,6 +211,46 @@ def _as_beijing_naive(value: object) -> datetime | None:
     return value.astimezone(_BEIJING).replace(tzinfo=None)
 
 
+@dataclass(frozen=True)
+class UniverseResultRow:
+    """fixture_universe 赛果投影行（票 78 Elo/对账消费；比分可缺）。"""
+
+    sid: str
+    league: str
+    home: str
+    away: str
+    kickoff_bj: datetime  # 北京墙钟 naive
+    home_goals: int | None
+    away_goals: int | None
+
+
+def load_universe_results(con: DuckCon) -> list[UniverseResultRow]:
+    """fixture_universe 全量赛果行（视图缺席抛 duckdb.Error，调用方降级）。"""
+    rows = con.execute(
+        """
+        SELECT sid, league, home, away, kickoff, home_goals, away_goals
+        FROM fixture_universe
+        """
+    ).fetchall()
+    out: list[UniverseResultRow] = []
+    for sid, league, home, away, kickoff, home_goals, away_goals in rows:
+        moment = _as_beijing_naive(kickoff)
+        if moment is None:
+            continue
+        out.append(
+            UniverseResultRow(
+                sid=str(sid),
+                league=str(league),
+                home=str(home),
+                away=str(away),
+                kickoff_bj=moment,
+                home_goals=None if home_goals is None else int(home_goals),
+                away_goals=None if away_goals is None else int(away_goals),
+            )
+        )
+    return out
+
+
 @dataclass
 class MappingSyncStats:
     """一次映射同步的统计（degraded 非空 = 语料桥缺席，本次零动作）。"""

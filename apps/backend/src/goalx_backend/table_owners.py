@@ -55,6 +55,8 @@ OWNERS: dict[str, set[str]] = {
         "odds_change_event",
         "bookmaker",
         "srct_night_summaries",
+        # 票 78：自算 Elo 逐场赛前值（ingest/elo_silver.py 物化）
+        "elo_self",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {
