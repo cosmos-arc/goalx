@@ -16,6 +16,8 @@ from goalx_backend.llm.store import (
 )
 
 _KICKOFF = "2026-09-26T19:00:00+00:00"
+# 当期判定钉钟：collect 按真实 now 过滤已截止期次，不钉则随日历腐化
+_FROZEN_NOW = "2026-09-27T20:00:00+00:00"
 
 
 def _seed_fixture(
@@ -114,7 +116,7 @@ def test_collect_pool_intel_full_path(db: sqlite3.Connection) -> None:
     fixture_id = _seed_fixture(db, sport_key="soccer_epl", home="阿森纳", away="切尔西")
     _seed_pool(db)
 
-    stats = collect_pool_intel(db)
+    stats = collect_pool_intel(db, now=_FROZEN_NOW)
     assert stats.periods == 1
     assert stats.matches_seen == 1
     assert stats.with_fixture == 1
@@ -132,7 +134,7 @@ def test_collect_pool_intel_full_path(db: sqlite3.Connection) -> None:
     )
 
     # 幂等：同内容重跑零新行
-    again = collect_pool_intel(db)
+    again = collect_pool_intel(db, now=_FROZEN_NOW)
     assert again.inserted == 0
     assert len(intel_for_fixture(db, fixture_id)) == 3
 
@@ -141,7 +143,7 @@ def test_collect_skips_unmapped_league(db: sqlite3.Connection) -> None:
     _seed_hist(db)
     _seed_fixture(db, sport_key=None, home="阿森纳", away="切尔西")  # 巴西甲等非六联赛
     _seed_pool(db)
-    stats = collect_pool_intel(db)
+    stats = collect_pool_intel(db, now=_FROZEN_NOW)
     assert stats.with_fixture == 1
     assert stats.inserted == 0
     assert stats.unmapped_league == 1
@@ -150,7 +152,7 @@ def test_collect_skips_unmapped_league(db: sqlite3.Connection) -> None:
 def test_collect_skips_no_fixture_bridge(db: sqlite3.Connection) -> None:
     _seed_hist(db)
     _seed_pool(db, home="皇家马德里", away="巴塞罗那")  # 无对应竞彩 fixture
-    stats = collect_pool_intel(db)
+    stats = collect_pool_intel(db, now=_FROZEN_NOW)
     assert stats.with_fixture == 0
     assert stats.inserted == 0
 

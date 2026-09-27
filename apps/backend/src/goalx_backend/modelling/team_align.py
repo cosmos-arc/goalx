@@ -144,11 +144,6 @@ def alias_index(conn: sqlite3.Connection) -> NameIndex:
     return NameIndex.build(names)
 
 
-def resolve_hist_team(conn: sqlite3.Connection, hist_name: str) -> int | None:
-    """把 fd hist 队名解析到当前 team（无/歧义返回 None）。"""
-    return alias_index(conn).resolve(hist_name)
-
-
 def match_model_team(model_teams: list[str], aliases: list[str]) -> str | None:
     """
     反向映射：fixture 的别名列表 → 模型工件中的训练域队名。

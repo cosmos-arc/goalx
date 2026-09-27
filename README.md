@@ -101,19 +101,6 @@ sporttery 的调盘时间=源更新时间，The Odds API 的 `last_update`=源�
 有效/未知/拒绝判定、原因、age、两源时差与单固资格（新鲜度/配对时差
 默认各 300s，可查询参数调整）——锁定与验证共用这一判定。
 
-销售期高频轮询走 Prefect（ADR 0005），部署定义见 `prefect.yaml`：
-
-```bash
-uv run prefect server start                             # 本地 server
-uv run prefect work-pool create goalx-local --type process
-uv run prefect deploy --all                             # 按 prefect.yaml 注册
-uv run prefect worker start --pool goalx-local
-```
-
-flows：`jingcai-snapshot` / `eu-odds-snapshot` / `eu-odds-closing` /
-`fd-history-import` / `weekly-train` / `forecast-daily` / `settlement-sweep`。
-欧赔类部署每次运行 ≈8 credits，默认 cron 合计 ≤3 次/日（日预算 40）。
-
 ### 纸面流程（目标与当前缺口）
 
 1. 今日页（`task dev` → `/`）：竞彩 vs 欧洲共识（Shin 去晦）、EV、books、调盘时点；

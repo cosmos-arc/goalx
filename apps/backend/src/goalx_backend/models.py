@@ -12,7 +12,6 @@ class Tier(StrEnum):
 
     TIER1 = "tier1"
     TIER2 = "tier2"
-    EXCLUDED = "excluded"
 
 
 class MarketKind(StrEnum):
@@ -44,7 +43,6 @@ class SnapshotPurpose(StrEnum):
 
     LIVE_CAPTURE = "live_capture"
     CLOSING = "closing"
-    BACKTEST = "backtest"
 
 
 # --- 赛程域 ---
@@ -119,7 +117,6 @@ class ObservationPurpose(StrEnum):
     """一次报价观测的获取模式（票 35：实时观测与历史查询分开）。"""
 
     LIVE = "live"
-    HISTORICAL = "historical"
 
 
 class QuoteObservation(BaseModel):

@@ -1,4 +1,4 @@
-"""表→归属域的规范登记（ADR-0008）：执法测试与 schema 文档导出共用。"""
+"""表→归属域的规范登记（ADR-0008）：SQL 归属执法测试消费。"""
 
 from __future__ import annotations
 
@@ -83,9 +83,6 @@ OWNERS: dict[str, set[str]] = {
     # 票 09/11：LLM 线域（M3）——divergences 脚手架表移交 llm
     "llm": {"intel_observations", "divergences", "review_items", "blind_reviews"},
 }
-
-# 文档呈现顺序（按数据→模型→情报→投注→评测的管线方向）
-DOMAIN_ORDER: tuple[str, ...] = ("data", "modelling", "llm", "betting", "evaluation")
 
 # 未登记表 = migrations 播种（markets/selections 种子），无归属包写它们；
 # ev_assessments 脚手架已 DROP（票 48：派生信号不落表）。

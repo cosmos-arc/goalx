@@ -114,7 +114,6 @@ def test_resolve_model_downgrades() -> None:
     assert resolve_model(settings, ModelTier.ANALYST, 3) == "glm-4.7-flash"
     assert resolve_model(settings, ModelTier.SCOUT, 0) == "glm-5.3-flash"
     assert resolve_model(settings, ModelTier.SCOUT, 3) == "glm-4.7-flash"
-    assert resolve_model(settings, ModelTier.FALLBACK, 0) == "glm-4.7-flash"
 
 
 # --- 记账与月支出 ---

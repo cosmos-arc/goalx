@@ -281,13 +281,6 @@ FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id
     ).fetchone()
 
 
-def mark_purchased(conn: sqlite3.Connection, bet_id: int, placed_at: str) -> None:
-    """回录：标记建议注为实际购买。"""
-    conn.execute(
-        "UPDATE bets SET purchased = 1, placed_at = ? WHERE id = ?", (placed_at, bet_id)
-    )
-
-
 def create_slip(
     conn: sqlite3.Connection,
     mode: BetMode,

@@ -110,7 +110,7 @@ def test_settlement_updates_bet_and_upserts(db: sqlite3.Connection) -> None:
     assert count == 1  # upsert 而非重复行
 
 
-def test_slip_attach_and_mark_purchased(db: sqlite3.Connection) -> None:
+def test_slip_attach_sets_purchased(db: sqlite3.Connection) -> None:
     suggestion = bt.create_bet(db, BetMode.PAPER, MarketKind.FIXED, 2.0)
     other = bt.create_bet(db, BetMode.PAPER, MarketKind.FIXED, 4.0)
     slip = bt.create_slip(db, BetMode.PAPER, placed_at=None, note="周六")

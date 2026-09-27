@@ -23,14 +23,6 @@ tasks:
     cmds:
       - uv sync --locked --all-packages {{.CLI_ARGS}}
 
-  python-environment-check:
-    preconditions:
-      - sh: 'test -f "{{.VENV_PYTHON}}"'
-        msg: Python environment is missing; run task python-install explicitly.
-    cmds:
-      - uv lock --check --offline
-      - uv sync --check --locked --offline --all-packages
-
   bun-install:
     desc: Install the locked Bun workspace
     cmds:
