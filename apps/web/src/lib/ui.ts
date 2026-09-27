@@ -4,6 +4,8 @@
  * 数字场景工具类（票 12，票 02 裁决）：等宽数字。盈亏/赔率列的颜色只是辅助，
  * 等宽数字 + 正负号才是可读性主承载（红绿色弱可读）。
  */
+import type { Bet } from "../api/goalx";
+
 export const TABULAR_NUMS = "tabular-nums";
 
 export const SELECTION_LABELS: Record<string, string> = {
@@ -74,8 +76,6 @@ export function errorText(error: unknown): string {
 }
 
 // ---- 展示口径助手（lean-audit 票 03 收敛：此前散落 9 文件的逐字/同语义副本） ----
-
-import type { Bet } from "../api/goalx";
 
 /** 盈亏数字永远只按正负红绿（票 02 钱层编码，正负号为主承载）。 */
 export function pnlClass(value: number | null): string {
