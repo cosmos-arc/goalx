@@ -25,6 +25,18 @@ def beijing_business_date(now: datetime | None = None) -> str:
     return (now or datetime.now(UTC)).astimezone(CST).strftime("%Y-%m-%d")
 
 
+def beijing_naive(kickoff_utc: str) -> datetime:
+    """
+    ISO 串（含偏移或 Z）→ 北京墙钟 naive（票 75 兜底/票 77 映射共用）。
+
+    naive 输入按 UTC 解释（防御：运行面 kickoff 恒带偏移，银层墙钟恒 naive）。
+    """
+    parsed = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(CST).replace(tzinfo=None)
+
+
 def _lookup_id(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> int:
     """Fetch an id by natural key; raises LookupError when absent."""
     row = conn.execute(sql, params).fetchone()
@@ -607,6 +619,24 @@ def fixture_id_for_match_code(conn: sqlite3.Connection, code: str) -> int | None
         (code,),
     ).fetchone()
     return int(row["fixture_id"]) if row else None
+
+
+def fixtures_with_teams(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """全部场次 + 主客队 id/名称 + 联赛（票 77 映射同步的左侧面）。"""
+    return conn.execute(
+        """
+        SELECT f.id AS fixture_id, f.kickoff_utc,
+               f.home_team_id, f.away_team_id,
+               th.canonical_name AS home_name,
+               ta.canonical_name AS away_name,
+               c.name AS competition_name, c.tier AS competition_tier
+        FROM fixtures f
+        JOIN teams th ON th.id = f.home_team_id
+        JOIN teams ta ON ta.id = f.away_team_id
+        JOIN competitions c ON c.id = f.competition_id
+        ORDER BY f.id
+        """
+    ).fetchall()
 
 
 def fixture_team_info(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from goalx_backend.data import fixtures as fx_store
@@ -280,6 +281,112 @@ def record_propline_alias(conn: sqlite3.Connection, team_id: int, alias: str) ->
         """,
         (team_id, alias),
     )
+
+
+def record_srct_aliases(
+    conn: sqlite3.Connection, pairs: Sequence[tuple[int, str]]
+) -> int:
+    """
+    映射同步产出的 (team_id, 源T队名) 对落 source='srct'（票 77；幂等）。
+
+    源T 中文名与竞彩 canonical 大体同语但存在命名变体——落别名行后，
+    后续源T侧名字（阵容/情报/轨迹）可经统一索引解析到同一 team。
+    """
+    added = 0
+    for team_id, alias in pairs:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+            VALUES (?, 'srct', ?)
+            """,
+            (team_id, alias),
+        )
+        if cur.rowcount > 0:
+            added += 1
+    conn.commit()
+    return added
+
+
+def srct_alias_sets(conn: sqlite3.Connection) -> dict[int, set[str]]:
+    """team_id → 源侧已知别名集（srct/manual 行；票 77 变体组解析输入）。"""
+    out: dict[int, set[str]] = {}
+    for row in conn.execute(
+        "SELECT team_id, alias FROM team_aliases WHERE source IN ('srct', 'manual')"
+    ):
+        out.setdefault(int(row["team_id"]), set()).add(str(row["alias"]))
+    return out
+
+
+@dataclass
+class ClubeloAliasReport:
+    """clubelo 英文俱乐部名 ↔ 现有英文别名桥的对齐报告（票 77）。"""
+
+    clubs_total: int = 0
+    matched: int = 0
+    added: int = 0
+    unmatched: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, object]:
+        """报告 → 日志/CLI 字典（未匹配清单全列，人工补线用）。"""
+        return {
+            "clubs_total": self.clubs_total,
+            "matched": self.matched,
+            "added": self.added,
+            "unmatched": self.unmatched,
+        }
+
+
+def sync_clubelo_aliases(
+    conn: sqlite3.Connection, clubs: Sequence[str]
+) -> ClubeloAliasReport:
+    """
+    Clubelo 英文俱乐部名 → 中文 canonical team 的别名桥（票 77 消费侧）。
+
+    clubelo 与竞彩不同语，不能字符串直配；但 odds_api/propline join 年代
+    已沉淀英文别名——以英文别名建三级索引解析 clubelo 俱乐部名，唯一命中
+    即落 team_aliases(source='clubelo')。未命中（低级别队/别名未覆盖）
+    进报告人工队列，不硬配（定则 1）。
+    """
+    names: dict[str, int] = {}
+    rows = conn.execute(
+        """
+        SELECT team_id, alias FROM team_aliases
+        WHERE source IN ('odds_api', 'propline') ORDER BY id
+        """
+    ).fetchall()
+    for row in rows:
+        names.setdefault(str(row["alias"]), int(row["team_id"]))
+    index = NameIndex.build(names)
+    report = ClubeloAliasReport(clubs_total=len(clubs))
+    for club in clubs:
+        team_id = index.resolve(club)
+        if team_id is None:
+            report.unmatched.append(club)
+            continue
+        report.matched += 1
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+            VALUES (?, 'clubelo', ?)
+            """,
+            (team_id, club),
+        )
+        if cur.rowcount > 0:
+            report.added += 1
+    conn.commit()
+    return report
+
+
+def clubelo_alias_for_team(conn: sqlite3.Connection, team_id: int) -> str | None:
+    """该 team 的 clubelo 侧俱乐部名（未接通返回 None）。"""
+    row = conn.execute(
+        """
+        SELECT alias FROM team_aliases
+        WHERE team_id = ? AND source = 'clubelo' ORDER BY id LIMIT 1
+        """,
+        (team_id,),
+    ).fetchone()
+    return str(row["alias"]) if row else None
 
 
 def english_aliases_for_team(conn: sqlite3.Connection, team_id: int) -> set[str]:

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import duckdb
 from loguru import logger
@@ -531,7 +531,6 @@ def stale_line_signal(
 # --- 源T 主锚收盘证据（票 75 CLV 收盘锚接管；corpus.duckdb 只读面） ---
 
 SRCT_PINNACLE_BOOK = "srct:1x2:177"  # 源T 1x2d 百家行主锚（bookmaker 字典 space=1x2）
-_BEIJING = timezone(timedelta(hours=8))
 
 
 def srct_pinnacle_closing_triplet(
@@ -539,11 +538,14 @@ def srct_pinnacle_closing_triplet(
     home: str,
     away: str,
     kickoff_utc: str,
+    *,
+    sid: str | None = None,
 ) -> tuple[float, float, float] | None:
     """
     竞彩场次 → 源T 主锚盘前三向收盘（票 75 CLV 收盘锚接管的数据面）。
 
-    场次匹配两步确定性键（禁自信合并，定则 1）：
+    场次匹配优先走物化链（票 77 source_match_links，``sid`` 直传即跳过
+    匹配）；无链时兜底两步确定性键（禁自信合并，定则 1）：
     ① home/away 中文队名 + 北京日期 == fixture_universe；
     ② 兜底 kickoff 时刻精确（北京 naive）+ home 精确（解命名变体）；
     两步不中返回 None（CorpusScope 外场结构性无锚，调用方诚实 skip）。
@@ -556,7 +558,7 @@ def srct_pinnacle_closing_triplet(
     单查秒级内——日频对账×个位数腿可接受；腿数上量后按 sid 分区物化。
     """
     try:
-        return _srct_pinnacle_closing(con, home, away, kickoff_utc)
+        return _srct_pinnacle_closing(con, home, away, kickoff_utc, sid)
     except duckdb.Error as exc:  # CatalogException=视图缺席等，降级不打挂
         logger.warning("srct 收盘锚查询降级: {}", exc)
         return None
@@ -567,12 +569,38 @@ def _srct_pinnacle_closing(
     home: str,
     away: str,
     kickoff_utc: str,
+    sid: str | None = None,
 ) -> tuple[float, float, float] | None:
     """srct_pinnacle_closing_triplet 的查询体（异常不兜，由外层统一降级）。"""
     kickoff = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
     if kickoff.tzinfo is None:  # 防御：naive 串按 UTC 解释
         kickoff = kickoff.replace(tzinfo=UTC)
-    beijing = kickoff.astimezone(_BEIJING).replace(tzinfo=None)
+    beijing = fx_store.beijing_naive(kickoff_utc)
+    if sid is None:
+        sid = _resolve_sid_fallback(con, home, away, beijing)
+    if sid is None:
+        return None
+    event = con.execute(
+        """
+        SELECT odds_home, odds_draw, odds_away FROM odds_change_event
+        WHERE sid = ? AND bookmaker_id = ? AND published_at <= ?
+        ORDER BY published_at DESC LIMIT 1
+        """,
+        [sid, SRCT_PINNACLE_BOOK, kickoff],
+    ).fetchone()
+    if event is None or any(price is None for price in event):
+        return None
+    return float(event[0]), float(event[1]), float(event[2])
+
+
+def _resolve_sid_fallback(
+    con: duckdb.DuckDBPyConnection, home: str, away: str, beijing: datetime
+) -> str | None:
+    """
+    无链兜底：两步确定性键查询（票 75 语义保持——多命中取 sid 首行）。
+
+    命名注记：这是确定性精确匹配的兜底路径，非模糊匹配（词条 _Avoid_）。
+    """
     sid_row = con.execute(
         """
         SELECT sid FROM fixture_universe
@@ -589,16 +617,4 @@ def _srct_pinnacle_closing(
             """,
             [beijing, home],
         ).fetchone()
-    if sid_row is None:
-        return None
-    event = con.execute(
-        """
-        SELECT odds_home, odds_draw, odds_away FROM odds_change_event
-        WHERE sid = ? AND bookmaker_id = ? AND published_at <= ?
-        ORDER BY published_at DESC LIMIT 1
-        """,
-        [sid_row[0], SRCT_PINNACLE_BOOK, kickoff],
-    ).fetchone()
-    if event is None or any(price is None for price in event):
-        return None
-    return float(event[0]), float(event[1]), float(event[2])
+    return str(sid_row[0]) if sid_row else None

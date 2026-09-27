@@ -166,6 +166,34 @@ def backfill_history(
     return stats
 
 
+def distinct_clubs(conn: sqlite3.Connection) -> list[str]:
+    """已落库俱乐部清单（票 77 别名桥输入；读走属主包）。"""
+    return [
+        str(row["club"])
+        for row in conn.execute("SELECT DISTINCT club FROM elo_ratings ORDER BY club")
+    ]
+
+
+def rating_at(conn: sqlite3.Connection, club: str, on_date: date) -> float | None:
+    """
+    点时评级：valid_from ≤ on_date ≤ valid_to（开区间行 valid_to 空）最新行。
+
+    区间语义与逐日快照等价（v21 迁移注记）；无覆盖区间返回 None
+    （队未参赛/快照缺席，调用方诚实留空）。
+    """
+    iso = on_date.isoformat()
+    row = conn.execute(
+        """
+        SELECT elo FROM elo_ratings
+        WHERE club = ? AND valid_from <= ?
+          AND (valid_to IS NULL OR valid_to >= ?)
+        ORDER BY valid_from DESC LIMIT 1
+        """,
+        (club, iso, iso),
+    ).fetchone()
+    return float(row["elo"]) if row else None
+
+
 def stats_dict(stats: EloSyncStats) -> dict[str, object]:
     """统计 → 日志/CLI 友好字典（clubs 全清单不回显，只给计数）。"""
     return {

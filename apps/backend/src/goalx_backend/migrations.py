@@ -1264,6 +1264,43 @@ def _apply_v22(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE clv_records_v22 RENAME TO clv_records")
 
 
+def _apply_v23(conn: sqlite3.Connection) -> None:
+    """
+    v23（票 77）：跨源场次映射物化 source_match_links（定则 1 转正）。
+
+    一行 = fixture × 源 一条链：linked 行带 source_match_id 与命中方法
+    （两步确定性键的哪一步 / manual 人工覆写）；ambiguous 行多候选不硬配
+    （候选进 meta JSON，人工裁决后 manual 覆写）。manual 行永不被自动
+    同步覆写；同步未解析的历史链会撤除（镜像真值，见 data/mapping.py）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_match_links (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            source TEXT NOT NULL,
+            source_match_id TEXT,
+            method TEXT
+                CHECK (method IN ('primary_key', 'kickoff_exact', 'manual')),
+            status TEXT NOT NULL CHECK (status IN ('linked', 'ambiguous')),
+            meta TEXT,
+            mapped_at TEXT NOT NULL,
+            UNIQUE (fixture_id, source),
+            CHECK (
+                (status = 'linked')
+                = (source_match_id IS NOT NULL AND method IS NOT NULL)
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_source_match_links_source_id
+        ON source_match_links (source, source_match_id)
+        """
+    )
+
+
 # 票 73：hist_matches 扩列清单单一事实源（(列名, SQLite 类型)）——
 # data/results.upsert_hist_matches 同源消费（v20 DDL ↔ upsert 列防漂移）。
 HIST_EXTENDED_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -1319,4 +1356,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (20, _apply_v20),
     (21, _apply_v21),
     (22, _apply_v22),
+    (23, _apply_v23),
 )

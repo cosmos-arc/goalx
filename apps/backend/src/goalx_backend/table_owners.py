@@ -8,6 +8,8 @@ OWNERS: dict[str, set[str]] = {
         "teams",
         "competitions",
         "match_codes",
+        # 票 77：跨源场次映射物化（data/mapping.py）
+        "source_match_links",
         "odds_snapshots",
         "sale_statuses",
         "quote_observations",
