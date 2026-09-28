@@ -656,8 +656,8 @@ export interface paths {
          *
          *     - CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；
          *     - 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），
-         *       不读取任何历史回测 run；
-         *     - 复核：无记录 = 未评估（不做真空通过）；
+         *       不读取任何历史回测 run，只认部署版本（票 09 裁决）；
+         *     - 复核：误导率 ≤10% 且 ≥10 条（counts 在 api 层取——evaluation 不引 llm）；
          *     - 整赛季：独立显示，未验收前不通过。
          */
         get: operations["get_validation_progress_api_v1_validation_progress_get"];
