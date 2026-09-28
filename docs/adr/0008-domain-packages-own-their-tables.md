@@ -34,6 +34,9 @@ odds_snapshots。两条约定都付了成本，哪条都无法在 review 中执�
 - 2026-09-28 补：`tasks` 独立成层降至 `api/server` 之下——api 触发端点
   与 cli/flows 同为 tasks 的 adapter（ADR-0005 语义），api→tasks 合法、
   tasks→api 违约。源起 deepen-20260928 票 01（同步按钮接线 tasks）。
+  同日票 02 再补 `datasets` 层（api/server 与 tasks 之间）：定拍数据集
+  注册表持 tasks 函数引用、推导 cli/flow/deployment/RESUME，cli/flows/
+  schedules 消费——声明在实现之上、在交付之下。
 - **表归属**：`test_sql_ownership.py` 扫全部 SQL 字符串字面量，表名必须
   登记在归属包；新表落地时同步登记 OWNERS。
 - 顺带裁决：`team_aliases` 归 modelling（对齐域）；data 侧死代码

@@ -468,11 +468,13 @@ def test_cli_run_and_list_seam(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from goalx_backend import cli
+    from goalx_backend import tasks as tasks_mod
 
     seen, routes = _transport_spy()
-    args = cli.build_parser().parse_args(["srct-night", "--request-cap", "30"])
-    cli._cmd_srct_night(
-        args,
+    # cli 子命令形状仍可解析（dispatch 由注册表推导，票 02）；运行缝在 tasks
+    cli.build_parser().parse_args(["srct-night", "--request-cap", "30"])
+    payload = tasks_mod.srct_night_run(
+        request_cap=30,
         settings=_settings(tmp_path),
         client=_client(seen, routes),
         now_fn=lambda: NOW_IN_WINDOW,
@@ -480,15 +482,14 @@ def test_cli_run_and_list_seam(
         seasons=TEST_SEASONS,
         jc_phase=False,
     )
-    payload = json.loads(capsys.readouterr().out)
     assert payload["stop_reason"] == "completed"
     assert payload["requests"] == 21
     assert payload["dates_done"] == 3
     assert payload["failed"] == {}
 
-    list_args = cli.build_parser().parse_args(["srct-night", "--list"])
-    cli._cmd_srct_night(list_args, settings=_settings(tmp_path))
-    nights = json.loads(capsys.readouterr().out)["nights"]
+    cli.build_parser().parse_args(["srct-night", "--list"])
+    listed = tasks_mod.srct_night_run(list_mode=True, settings=_settings(tmp_path))
+    nights = listed["nights"]
     assert len(nights) == 1
     assert nights[0]["stop_reason"] == "completed"
     assert nights[0]["dates_done"] == 3

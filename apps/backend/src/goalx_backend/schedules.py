@@ -49,32 +49,29 @@ from prefect import serve
 from prefect.deployments.runner import RunnerDeployment
 from prefect.schedules import Schedule
 
+from goalx_backend import datasets
 from goalx_backend.flows import (
     clubelo_sync_flow,
     daily_capture_flow,
     daily_wrap_flow,
     draw_results_sync_flow,
     eu_odds_closing_flow,
-    guardian_sync_flow,
     intel_collect_flow,
     odds_anchor_dense_flow,
     official_reconcile_flow,
-    pool_snapshot_flow,
     scout_line_flow,
     srcb_collect_flow,
-    srct_night_flow,
     srct_shift_flow,
     understat_sync_flow,
     weekly_refresh_flow,
 )
 
 
-def main(only: str | None = None) -> None:
+def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    单进程服务协议 v1 的定时 deployment（随票累加）。
+    全量 deployment 装配：手写编排面 + 注册表推导面（票 02 起首批三数据集）。
 
-    only=逗号分隔 deployment 键——停采期只服务指定面（票 63：源T 夜班
-    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；缺省全量（原行为）。
+    纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
     # to_deployment 经 async_dispatch 在同步路径返回 RunnerDeployment（stub 联合类型）
     daily = cast(
@@ -144,16 +141,6 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="*/30 8-23,0 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # 源T夜班（票 55 切片 13）：家宽低峰窗口开工，~8K 请求/日预算推进
-    # Phase1 回填；窗口 01:00-08:00 = 7h ≈ 8.4K 请求（3s 均值抖动），预算
-    # 与窗口天然咬合；跑完 Phase1 后每夜零请求心跳（断点续传零重抓）
-    srct_night_deploy = cast(
-        RunnerDeployment,
-        srct_night_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="0 1 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
     # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
     # 累计）；09:20 赶在 daily-capture 10:00 前，当日预测决策时点最新鲜
     understat = cast(
@@ -172,29 +159,11 @@ def main(only: str | None = None) -> None:
             schedule=Schedule(cron="10 9 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # 卫报新闻语料（票 79）：日拍 09:40——回填期翻页至预算尽，日增量 1-2 请求；
-    # 与 clubelo/understat 晨窗错峰，抢在 daily-capture 10:00 前
-    guardian_deploy = cast(
-        RunnerDeployment,
-        guardian_sync_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="40 9 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
             name="protocol-v1",
             schedule=Schedule(cron="30 23 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # 彩池（票 68 官方化）：体彩官方在售对阵+上期彩果，三拍节奏不变
-    # （源B 时代拍位沿袭；历史彩果回填走 pool-backfill CLI 手动批）
-    pool = cast(
-        RunnerDeployment,
-        pool_snapshot_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="20 10,16,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
     # 情报（票 09）：跟在 10:20/22:20 彩池同步与 10:00 采集之后（幂等增量）
@@ -231,17 +200,27 @@ def main(only: str | None = None) -> None:
         "official-reconcile": official_reconcile,
         "understat-sync": understat,
         "clubelo-sync": clubelo_deploy,
-        "guardian-sync": guardian_deploy,
         "odds-anchor-dense": anchor_dense,
         "srcb-collect": srcb_collect_deploy,
-        "srct-night": srct_night_deploy,
         "srct-shift": srct_shift_deploy,
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
-        "pool-snapshot": pool,
         "intel-collect": intel,
         "scout-line": scout,
     }
+    # 注册表面（票 02 首批：guardian-sync / pool-snapshot / srct-night）
+    deployments.update(datasets.build_deployments())
+    return deployments
+
+
+def main(only: str | None = None) -> None:
+    """
+    单进程服务协议 v1 的定时 deployment（随票累加）。
+
+    only=逗号分隔 deployment 键——停采期只服务指定面（票 63：源T 夜班
+    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；缺省全量（原行为）。
+    """
+    deployments = build_deployments()
     # 全程班模式闸门（2026-09-28）：手动连续窗期间摘除 srct-night 定拍触发，
     # 防双进程叠加；恢复=不带此环境变量重启栈。须在 selected 固化前摘除
     # （工作区原稿插在固化后属无效位，重建时修正）。
@@ -264,23 +243,24 @@ def main(only: str | None = None) -> None:
 
 
 # 2026-09-25 恢复清单（用户裁决"相关采集任务一起调整"）：除两个判死面
-# （eu-odds-closing 欧赔聚合 / srcb-collect 源B，国际赔率全走源T）外全量
+# （eu-odds-closing 欧赔聚合 / srcb-collect 源B，国际赔率全走源T）外全量。
+# 判死面例外表显式列出（票 03 注册表全量后并入 DatasetSpec.resume=False 形状）；
+# 注册数据集部分自注册表推导（票 02 起），手写余量随票 03 搬迁归零。
+DEAD_DEPLOYMENTS = ("eu-odds-closing", "srcb-collect")
 RESUME_DEPLOYMENTS = (
     "daily-capture",
     "draw-results-sync",
     "draw-results-sweep",
     "official-reconcile",
-    "srct-night",
     "srct-shift",
     "understat-sync",
     "clubelo-sync",
-    "guardian-sync",
     "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",
-    "pool-snapshot",
     "intel-collect",
     "scout-line",
+    *datasets.resume_names(),
 )
 
 
