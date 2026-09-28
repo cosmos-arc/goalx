@@ -6,7 +6,6 @@ flows 共用（票 35 证据契约因此不可能再漂移）；deployment 由�
 Prefect server 调度（见 README「运行采集」）。
 
 - jingcai_snapshot_flow：竞彩全玩法快照（销售期高频，如每 30 分钟）
-- eu_odds_snapshot_flow：欧赔快照 + join + credit 记账（均匀轮询）
 - odds_anchor_dense_flow：双锚临场定向采样（票 47 修正设计）——决策锚=
   停售迁移检出后立即拉取（meta anchor=sale_stop）、评估锚=开球前 5 分钟
   桶拉取（meta anchor=kickoff）；替代本文件早先"−30/−10/−1 加密"的愿望
@@ -50,24 +49,6 @@ def jingcai_snapshot_flow() -> dict[str, int]:
         stats.duplicate_snapshots,
     )
     return {"matches": stats.matches, "snapshots": stats.snapshots}
-
-
-@flow(name="eu-odds-snapshot", log_prints=True)
-def eu_odds_snapshot_flow() -> dict[str, int]:
-    """欧赔采集 + 竞彩 join + 逐请求 credit 记账（超预算抛 CreditBudgetExceeded）。"""
-    stats = tasks.eu_odds_snapshot()
-    logger.info(
-        "eu odds: {} events, {} snapshots, credits={}, unmatched={}",
-        stats.events,
-        stats.snapshots,
-        stats.credits_used,
-        stats.unmatched,
-    )
-    return {
-        "events": stats.events,
-        "snapshots": stats.snapshots,
-        "credits_used": stats.credits_used,
-    }
 
 
 @flow(name="eu-odds-closing", log_prints=True)
@@ -221,22 +202,15 @@ def srct_night_flow() -> dict[str, object]:
     return stats
 
 
-@flow(name="propline-snapshot", log_prints=True)
-def propline_snapshot_flow() -> dict[str, object]:
-    """PropLine 互备采集（票 50）：与欧赔快照双跑；降级零统计不炸整跑。"""
-    stats = tasks.propline_snapshot()
-    logger.info("propline snapshot: {}", stats)
-    return stats
-
-
 @flow(name="daily-capture", log_prints=True)
 def daily_capture_flow() -> dict[str, object]:
     """
     销售日两拍采集（票 37 协议 v1；2026-09-25 停采重整后改段）：竞彩→预测。
 
     欧赔聚合段与 PropLine 互备拍已按 2026-09-25 裁决摘除（国际书商
-    赔率全走源T 六端点，欧赔聚合无存在必要）；残留函数保留仅供
-    手工调用。竞彩官方 SP 历史与赛前实时拍归语料层（票 65/67）。
+    赔率全走源T 六端点，欧赔聚合无存在必要；死包装函数随
+    review-20260928 票 04 清除）。竞彩官方 SP 历史与赛前实时拍归
+    语料层（票 65/67）。
     """
     jingcai = jingcai_snapshot_flow()
     forecast = forecast_daily_flow()
