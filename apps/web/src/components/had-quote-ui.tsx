@@ -1,5 +1,5 @@
 import type { HadQuoteStatus, TodayFixture } from "../api/goalx";
-import { SELECTION_LABELS, SELECTIONS, type Selection, TABULAR_NUMS } from "../lib/ui";
+import { localTime, SELECTION_LABELS, SELECTIONS, type Selection, TABULAR_NUMS } from "../lib/ui";
 import { GlossaryTerm } from "./glossary-term";
 import { Badge } from "./ui/badge";
 
@@ -74,13 +74,8 @@ export function evText(value: number): string {
 	return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 }
 
-export function localTime(utc: string): string {
-	const date = new Date(utc);
-	if (Number.isNaN(date.getTime())) {
-		return "—";
-	}
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
+// 本地 HH:MM 格式化正典在 lib/ui（review-20260928 票 08）：转发供既有导入方
+export { localTime };
 
 /** 开赛倒计时（前端可推导，不加 API 字段）：已开赛/分钟（<2h 琥珀紧迫）/小时。 */
 export function kickoffInfo(utc: string, now: number): { passed: boolean; text: string; urgent: boolean } {

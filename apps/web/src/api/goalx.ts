@@ -6,7 +6,6 @@ export type TodayFixture = Schemas["TodayFixtureView"];
 export type HadQuoteStatus = Schemas["HadQuoteStatus"];
 export type FixtureResearch = Schemas["FixtureResearchView"];
 export type GoalsFixture = Schemas["GoalsFixtureView"];
-export type GoalsMarketBlock = Schemas["GoalsMarketBlock"];
 export type GoalsSelection = Schemas["GoalsSelectionView"];
 export type Bet = Schemas["BetView"];
 export type BetLeg = Schemas["BetLegView"];
@@ -28,7 +27,6 @@ export type StakeAdviceInput = Schemas["StakeAdviceRequest"];
 export type StakeAdvice = Schemas["StakeSuggestion"];
 export type DrawResultImportInput = Schemas["DrawResultImport"];
 export type BacktestRun = Schemas["BacktestRunView"];
-export type BacktestRunDetail = Schemas["BacktestRunDetailView"];
 export type ValidationProgress = Schemas["ValidationProgressView"];
 
 type FetchResult<T> = { data: T; error?: never } | { data?: never; error: unknown };
@@ -159,14 +157,6 @@ export function createDeposit(payload: DepositInput): Promise<DepositCreated> {
 
 export function fetchBacktestRuns(): Promise<BacktestRun[]> {
 	return unwrap(client.GET("/api/v1/backtest/runs"));
-}
-
-export function fetchBacktestRun(runId: number): Promise<BacktestRunDetail> {
-	return unwrap(
-		client.GET("/api/v1/backtest/runs/{run_id}", {
-			params: { path: { run_id: runId } },
-		}),
-	);
 }
 
 export function fetchValidationProgress(): Promise<ValidationProgress> {

@@ -26,7 +26,16 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { errorText, legText, pnlClass, SELECTION_LABELS, shortTime, stakeText, TABULAR_NUMS } from "../lib/ui";
+import {
+	errorText,
+	legText,
+	localTime,
+	pnlClass,
+	SELECTION_LABELS,
+	shortTime,
+	stakeText,
+	TABULAR_NUMS,
+} from "../lib/ui";
 
 /**
  * 票 16：投注生命周期落地（票 06 定稿 = 唯一事实源）。
@@ -151,14 +160,6 @@ const EMPTY_DRAW_FORM: DrawForm = {
 	voidReason: "",
 	correctionReason: "",
 };
-
-function localClock(utc: string): string {
-	const date = new Date(utc);
-	if (Number.isNaN(date.getTime())) {
-		return "—";
-	}
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
 
 export function BetsPage() {
 	const queryClient = useQueryClient();
@@ -620,7 +621,7 @@ export function BetsPage() {
 											{fixture.home_team} vs {fixture.away_team}
 										</span>
 										<span className={`${TABULAR_NUMS} text-xs text-muted-foreground`}>
-											{localClock(fixture.kickoff_utc)} 开赛
+											{localTime(fixture.kickoff_utc)} 开赛
 										</span>
 										{openFixtureIds.has(fixture.fixture_id) ? (
 											<span className="rounded bg-warning/10 px-1.5 py-0.5 text-xs text-foreground">挂未结注</span>

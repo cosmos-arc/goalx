@@ -100,6 +100,22 @@ export function shortTime(iso: string | null): string {
 	return iso ? iso.slice(5, 16).replace("T", " ") : "—";
 }
 
+/** UTC 时刻 → 本地 HH:MM（非法 → "—"）；had-quote-ui 与 bets 页同口径（review-20260928 票 08 收敛）。 */
+export function localTime(utc: string): string {
+	const date = new Date(utc);
+	if (Number.isNaN(date.getTime())) {
+		return "—";
+	}
+	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 跨日标签（推荐流跨 3 日窗口）：业务日非今天时给"明天/后天"提示，今天 → undefined。 */
+export function dayNoteOf(businessDate: string | null | undefined, now: number): string | undefined {
+	const today = beijingBusinessDate(now);
+	const day = businessDate ?? today;
+	return day === today ? undefined : dayLabel(day, now);
+}
+
 /** 概率小数 → 百分比（digits 位小数）；空值 → "—"。 */
 export function pct(value: number | null | undefined, digits = 0): string {
 	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(digits)}%`;

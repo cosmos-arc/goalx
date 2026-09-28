@@ -18,6 +18,7 @@ import {
 	OddsButton,
 	SELECTIONS,
 } from "../components/had-quote-ui";
+import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { addDays, beijingBusinessDate, dayLabel, TABULAR_NUMS } from "../lib/ui";
 
@@ -111,15 +112,7 @@ export function FixturesPage() {
 					</p>
 				</header>
 
-				{message ? (
-					<div
-						role="status"
-						data-testid="fixtures-message"
-						className="fixed inset-x-0 bottom-16 z-50 mx-auto w-fit max-w-[min(92vw,42rem)] rounded-md bg-muted px-3 py-1.5 text-sm text-foreground shadow-sm"
-					>
-						{message}
-					</div>
-				) : null}
+				{message ? <StatusToast testid="fixtures-message">{message}</StatusToast> : null}
 
 				{fixturesQuery.isPending ? (
 					// 加载骨架（票 14 验收）：形状与信息分层同构，sr-only 文本给读屏

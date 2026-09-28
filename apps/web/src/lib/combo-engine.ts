@@ -73,7 +73,6 @@ export type ComboPick = {
 export type ComboResult = {
 	picks: ComboPick[];
 	/** 推荐流排序：最优向 score 降序在前；无正 EV 场沉底按开赛时间升序。 */
-	feedOrder: TodayFixture[];
 	totalStake: number;
 	/** Σ EV×注额（共识口径，卡片标注）。 */
 	expectedProfit: number;
@@ -151,7 +150,7 @@ export function rankFixturesForFeed(
  *
  * @example
  * buildHadCombo({ candidates: [{ fixture, pickable: true }], bankroll: 1000 })
- * // → { picks: [...], feedOrder: [...], expectedProfit, notes, bankrollNote }
+ * // → { picks: [...], expectedProfit, notes, bankrollNote }
  */
 export function buildHadCombo(input: {
 	candidates: ComboCandidate[];
@@ -208,12 +207,6 @@ export function buildHadCombo(input: {
 		picks.push({ ...cand, stake: stakeInfo.stake, expectedProfit: cand.ev * stakeInfo.stake });
 	}
 
-	// 3) 推荐流：全部场次按最优向 score 降序；无正 EV 场沉底按开赛时间。
-	const feedOrder = rankFixturesForFeed(
-		candidates.map((candidate) => candidate.fixture),
-		config.confidenceBooks,
-	);
-
 	const notes = [
 		`排序：EV × 置信（置信 = books/${config.confidenceBooks} 截断 1），取前 ${config.maxPicks} 条`,
 		`单注注额：flat 档 = bankroll ${(config.stake.flatFraction * 100).toFixed(0)}%（区间 ${(config.stake.minFraction * 100).toFixed(0)}–${(config.stake.maxFraction * 100).toFixed(0)}%，竞彩最低 ¥${config.stake.minStakeCny}）——纸面期一律 flat，仓位细化随票 06`,
@@ -224,7 +217,6 @@ export function buildHadCombo(input: {
 
 	return {
 		picks,
-		feedOrder,
 		totalStake: Math.round(picks.length * stakeInfo.stake * 100) / 100,
 		expectedProfit: Math.round(picks.reduce((sum, pick) => sum + pick.expectedProfit, 0) * 100) / 100,
 		notes,
@@ -262,7 +254,6 @@ export type GoalsPick = {
 export type GoalsComboResult = {
 	picks: GoalsPick[];
 	/** 推荐流：最优选项 score 降序在前；无模型场沉底按开赛时间。 */
-	feedOrder: GoalsFixture[];
 	totalStake: number;
 	expectedProfit: number;
 	notes: string[];
@@ -316,7 +307,7 @@ export function rankGoalsFixturesForFeed(fixtures: GoalsFixture[]): GoalsFixture
  *
  * @example
  * buildGoalsCombo({ rows, bankroll: 1000, now: Date.now() })
- * // → { picks: [...], feedOrder: [...], expectedProfit, notes, bankrollNote }
+ * // → { picks: [...], expectedProfit, notes, bankrollNote }
  */
 export function buildGoalsCombo(input: {
 	rows: GoalsFixture[];
@@ -390,7 +381,6 @@ export function buildGoalsCombo(input: {
 
 	return {
 		picks,
-		feedOrder: rankGoalsFixturesForFeed(rows),
 		totalStake: Math.round(picks.length * stakeInfo.stake * 100) / 100,
 		expectedProfit: Math.round(picks.reduce((sum, pick) => sum + pick.expectedProfit, 0) * 100) / 100,
 		notes,

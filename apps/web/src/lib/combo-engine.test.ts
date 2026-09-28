@@ -6,6 +6,7 @@ import {
 	GOALS_COMBO_CONFIG,
 	HAD_COMBO_CONFIG,
 	isGoalsPickable,
+	rankFixturesForFeed,
 	rankGoalsFixturesForFeed,
 } from "./combo-engine";
 
@@ -158,7 +159,6 @@ describe("buildHadCombo 约束", () => {
 		});
 		const result = buildHadCombo({ candidates: [{ fixture: parlayOnly, pickable: true }], bankroll: 1000 });
 		expect(result.picks).toHaveLength(0);
-		expect(result.feedOrder).toHaveLength(1);
 	});
 
 	test("books=0（无共识样本）不入组合", () => {
@@ -220,10 +220,9 @@ describe("buildHadCombo 档位（flat）与边界", () => {
 		expect(result.bankrollNote).toContain("超出 5% 上限");
 	});
 
-	test("空输入：picks/feedOrder/收益全空，约束说明仍给出", () => {
+	test("空输入：picks/收益全空，约束说明仍给出", () => {
 		const result = buildHadCombo({ candidates: [], bankroll: 1000 });
 		expect(result.picks).toEqual([]);
-		expect(result.feedOrder).toEqual([]);
 		expect(result.expectedProfit).toBe(0);
 		expect(result.notes.length).toBeGreaterThanOrEqual(5);
 	});
@@ -270,16 +269,10 @@ describe("buildHadCombo 口径输出", () => {
 			kickoff_utc: new Date(Date.now() + 6 * 3_600_000).toISOString(),
 			ev: null,
 		});
-		const result = buildHadCombo({
-			candidates: [
-				{ fixture: negativeLater, pickable: false },
-				{ fixture: weak, pickable: true },
-				{ fixture: negativeSoon, pickable: true },
-				{ fixture: strong, pickable: true },
-			],
-			bankroll: 1000,
-		});
-		expect(result.feedOrder.map((f) => f.fixture_id)).toEqual([1, 2, 3, 4]);
+		// 排序逻辑在 rankFixturesForFeed 本体（票 review-20260928/08 起组合结果
+		// 不再冗余携带 feedOrder，两页直接调排序函数）
+		const ranked = rankFixturesForFeed([weak, negativeLater, strong, negativeSoon], 4);
+		expect(ranked.map((f) => f.fixture_id)).toEqual([1, 2, 3, 4]);
 	});
 });
 
@@ -351,7 +344,6 @@ describe("buildGoalsCombo 排序与约束（单关为主）", () => {
 			now: Date.now(),
 		});
 		expect(result.picks).toHaveLength(0);
-		expect(result.feedOrder).toHaveLength(2);
 	});
 
 	test("停售 / 非单固 / 已开赛的场不入组合（isGoalsPickable 同构 had 口径）", () => {
