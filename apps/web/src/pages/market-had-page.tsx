@@ -7,8 +7,9 @@ import { BasketBar, BasketDrawer, useHadBasket } from "../components/had-basket"
 import { EligibleCard, evClass, evText, isPickable, MAX_LEGS, makeLeg } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
+import { StatusToast } from "../components/status-toast";
 import { buildHadCombo, HAD_COMBO_CONFIG, rankFixturesForFeed } from "../lib/combo-engine";
-import { beijingBusinessDate, dayLabel, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-03：胜平负玩法页 `/markets/had`——玩法轴第一页。
@@ -34,11 +35,6 @@ export function MarketHadPage() {
 	const fixtures = fixturesQuery.data ?? [];
 	const basket = useHadBasket(now, fixtures);
 	const { legs, message, pick } = basket;
-	/** 跨日标签：推荐流跨 3 日窗口，非今天的场次给"明天/后天"提示。 */
-	function dayNoteOf(businessDate: string | null | undefined): string | undefined {
-		const day = businessDate ?? beijingBusinessDate(now);
-		return day === beijingBusinessDate(now) ? undefined : dayLabel(day, now);
-	}
 
 	// 推荐流只依赖场次（资金池未就绪也能先看排序）；组合注额需 bankroll 到位才给建议
 	const feedOrder = fixturesQuery.data !== undefined ? rankFixturesForFeed(fixtures) : [];
@@ -101,15 +97,7 @@ export function MarketHadPage() {
 					</p>
 				</header>
 
-				{message ? (
-					<div
-						role="status"
-						data-testid="market-message"
-						className="fixed inset-x-0 bottom-16 z-50 mx-auto w-fit max-w-[min(92vw,42rem)] rounded-md bg-muted px-3 py-1.5 text-sm text-foreground shadow-sm"
-					>
-						{message}
-					</div>
-				) : null}
+				{message ? <StatusToast testid="market-message">{message}</StatusToast> : null}
 
 				{fixturesQuery.isPending ? (
 					<div data-testid="market-loading" className="space-y-4">
@@ -282,7 +270,7 @@ export function MarketHadPage() {
 										onPick={pick}
 										testidBase="market-card"
 										pickTestidBase="market-pick"
-										dayNote={dayNoteOf(fixture.business_date)}
+										dayNote={dayNoteOf(fixture.business_date, now)}
 									/>
 								))}
 							</div>

@@ -1,7 +1,5 @@
 import createClient from "openapi-fetch";
-import type { components, paths } from "./generated/schema";
-
-export type Status = components["schemas"]["StatusResponse"];
+import type { paths } from "./generated/schema";
 
 // Same-origin by default: in dev the Vite server proxies /api to the backend.
 // jsdom tests get an absolute base automatically (Node fetch rejects relative

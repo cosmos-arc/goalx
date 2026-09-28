@@ -18,6 +18,7 @@ import {
 	oddsText,
 	SELECTIONS,
 } from "../components/had-quote-ui";
+import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { pct, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
@@ -79,15 +80,7 @@ export function FixtureResearchPage() {
 					</Link>
 				</nav>
 
-				{basket.message ? (
-					<div
-						role="status"
-						data-testid="fixtures-message"
-						className="fixed inset-x-0 bottom-16 z-50 mx-auto w-fit max-w-[min(92vw,42rem)] rounded-md bg-muted px-3 py-1.5 text-sm text-foreground shadow-sm"
-					>
-						{basket.message}
-					</div>
-				) : null}
+				{basket.message ? <StatusToast testid="fixtures-message">{basket.message}</StatusToast> : null}
 
 				{research.isPending ? (
 					<div data-testid="research-loading" className="space-y-4">

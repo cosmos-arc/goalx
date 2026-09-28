@@ -1,5 +1,7 @@
 import { HttpResponse, http } from "msw";
 
+import { beijingBusinessDate } from "../lib/ui";
+
 export const statusFixture = {
 	app_name: "goalx-backend",
 	app_version: "0.1.0",
@@ -16,11 +18,6 @@ function minutesAgoIso(minutes: number): string {
 
 function daysAgoIso(days: number): string {
 	return new Date(Date.now() - days * 86_400_000).toISOString();
-}
-
-/** 北京时区业务日（与后端 beijing_business_date 同口径）。 */
-function beijingBusinessDate(now: number): string {
-	return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -427,18 +424,6 @@ export const handlers = [
 	}),
 ];
 
-export const oddsFixture = [
-	{
-		id: 1,
-		fixture_id: 1,
-		market_code: "had",
-		selection_code: "h",
-		source: "sporttery",
-		odds: 6.6,
-		captured_at: "2026-09-12T14:29:36+00:00",
-	},
-] as const;
-
 export const slipsFixture = [
 	{
 		id: 1,
@@ -796,7 +781,6 @@ export const validationProgressFixture = {
 } as const;
 
 handlers.push(
-	http.get("*/api/v1/fixtures/1/odds", () => HttpResponse.json(oddsFixture)),
 	// 票 wb-05：进球玩法读模型（与今日页同口径——单日默认、days>1 放行全窗）
 	http.get("*/api/v1/markets/goals", () => HttpResponse.json(goalsMarketFixture)),
 	// 票 wb-02：研究页读模型（fixture 1 有逐书/共识/模型；其他 id 404）
@@ -1129,10 +1113,6 @@ handlers.push(
 			note: `${risk === "bold" ? "搏" : "中"}档：任9 贪心选场${swaps.length ? " + 1 处冷替换抬派彩" : ""}。`,
 			caliber: "估计派彩随最终池变，不承诺目标达成。",
 		});
-	}),
-	http.post("*/api/v1/pool-states", async ({ request }) => {
-		const body = (await request.json()) as { period_no?: string };
-		return HttpResponse.json({ period_no: body.period_no ?? "26999", imported: true }, { status: 201 });
 	}),
 	http.post("*/api/v1/pool-slips", () =>
 		HttpResponse.json(

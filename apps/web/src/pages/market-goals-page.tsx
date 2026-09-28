@@ -10,6 +10,7 @@ import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-
 import { evClass } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { StakeAdviceNote } from "../components/stake-advice";
+import { StatusToast } from "../components/status-toast";
 import {
 	Drawer,
 	DrawerClose,
@@ -20,7 +21,7 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
-import { beijingBusinessDate, dayLabel, errorText, TABULAR_NUMS } from "../lib/ui";
+import { dayNoteOf, errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-05：进球玩法页 `/markets/goals`——玩法轴第二页（ttg/crs）。
@@ -73,12 +74,6 @@ export function MarketGoalsPage() {
 		ev: bestLeg?.ev ?? null,
 		odds: bestLeg?.odds ?? null,
 	} as const;
-
-	/** 跨日标签（推荐流跨 3 日窗口）。 */
-	function dayNoteOf(businessDate: string): string | undefined {
-		const day = businessDate ?? beijingBusinessDate(now);
-		return day === beijingBusinessDate(now) ? undefined : dayLabel(day, now);
-	}
 
 	/** 选注规则：同选项再点=移除；上限=行内提示；独立单关允许同场多注。 */
 	function pick(fixture: GoalsFixture, pickedMarket: GoalsMarket, selection: GoalsSelection) {
@@ -207,15 +202,7 @@ export function MarketGoalsPage() {
 					</p>
 				</header>
 
-				{message ? (
-					<div
-						role="status"
-						data-testid="goals-market-message"
-						className="fixed inset-x-0 bottom-16 z-50 mx-auto w-fit max-w-[min(92vw,42rem)] rounded-md bg-muted px-3 py-1.5 text-sm text-foreground shadow-sm"
-					>
-						{message}
-					</div>
-				) : null}
+				{message ? <StatusToast testid="goals-market-message">{message}</StatusToast> : null}
 
 				{goalsQuery.isPending ? (
 					<div data-testid="goals-loading" className="space-y-4">
@@ -414,7 +401,7 @@ export function MarketGoalsPage() {
 										now={now}
 										legs={legs}
 										onPick={(f, m, sel) => pick(f, m, sel)}
-										dayNote={dayNoteOf(fixture.business_date)}
+										dayNote={dayNoteOf(fixture.business_date, now)}
 									/>
 								))}
 							</div>
