@@ -91,7 +91,7 @@ function confidenceFor(books: number, confidenceBooks: number): number {
 }
 
 /** 开赛时间排序键：不可解析的时间戳沉底（不炸排序）。 */
-function kickoffMs(fixture: TodayFixture): number {
+function kickoffMs(fixture: { kickoff_utc: string }): number {
 	const at = new Date(fixture.kickoff_utc).getTime();
 	return Number.isNaN(at) ? Number.MAX_SAFE_INTEGER : at;
 }
@@ -270,11 +270,6 @@ export function isGoalsPickable(fixture: GoalsFixture, market: GoalsMarket, now:
 	return !Number.isNaN(kickoff) && kickoff > now;
 }
 
-function goalsKickoffMs(fixture: GoalsFixture): number {
-	const at = new Date(fixture.kickoff_utc).getTime();
-	return Number.isNaN(at) ? Number.MAX_SAFE_INTEGER : at;
-}
-
 /** 一场一个玩法里的最优选项得分（>0 才排前；无模型/无正 EV = 0）。 */
 function bestGoalsScore(fixture: GoalsFixture, market: GoalsMarket): number {
 	const block = market === "ttg" ? fixture.ttg : fixture.crs;
@@ -293,7 +288,7 @@ export function rankGoalsFixturesForFeed(fixtures: GoalsFixture[]): GoalsFixture
 		const diff =
 			Math.max(bestGoalsScore(b, "ttg"), bestGoalsScore(b, "crs")) -
 			Math.max(bestGoalsScore(a, "ttg"), bestGoalsScore(a, "crs"));
-		return diff !== 0 ? diff : goalsKickoffMs(a) - goalsKickoffMs(b);
+		return diff !== 0 ? diff : kickoffMs(a) - kickoffMs(b);
 	});
 }
 
@@ -355,7 +350,7 @@ export function buildGoalsCombo(input: {
 			}
 		}
 	}
-	expanded.sort((a, b) => b.score - a.score || goalsKickoffMs(a.fixture) - goalsKickoffMs(b.fixture));
+	expanded.sort((a, b) => b.score - a.score || kickoffMs(a.fixture) - kickoffMs(b.fixture));
 
 	// 2) top-N 贪心：同场不重复（一场只取最优一注，独立单关不重叠场次）
 	const stakeInfo = flatStake(bankroll, config.stake);

@@ -142,6 +142,30 @@ export function legText(bet: Bet): string {
 		.join(" × ");
 }
 
+/** 腿集合里可解析的最早开赛时刻（ms）；全缺/不可解析 → null（overview 与 bets 同口径，票 08 批二收敛）。 */
+export function earliestKickoffMs(
+	legs: ReadonlyArray<{ fixture_id: number }>,
+	kickoffById: ReadonlyMap<number, string>,
+): number | null {
+	let earliest: number | null = null;
+	for (const leg of legs) {
+		const iso = kickoffById.get(leg.fixture_id);
+		if (!iso) {
+			continue;
+		}
+		const at = new Date(iso).getTime();
+		if (!Number.isNaN(at) && (earliest === null || at < earliest)) {
+			earliest = at;
+		}
+	}
+	return earliest;
+}
+
+/** 未结（open）注全部腿的场次 id 集。 */
+export function openBetFixtureIds(bets: readonly Bet[]): Set<number> {
+	return new Set(bets.filter((bet) => bet.status === "open").flatMap((bet) => bet.legs.map((leg) => leg.fixture_id)));
+}
+
 /** 注的金额：实际金额差异时 ¥建议→¥实际。 */
 export function stakeText(bet: Bet): string {
 	if (bet.actual_stake === null || bet.actual_stake === undefined) {

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { type EvidenceMatch, fetchPoolEvidenceSummary, type IntelItem } from "../api/goalx";
+import { type EvidenceMatch, fetchPoolEvidenceSummary } from "../api/goalx";
 import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { EmptyState } from "./empty-state";
+import { IntelLine } from "./intel-line";
 
 /**
  * 票 14 V1 证据卡：彩池页"AI 证据总结"存量渲染。
@@ -20,22 +21,6 @@ const STATE_LABELS: Record<string, string> = {
 	no_forecast: "有情报暂无 LLM 概率产出（宁缺毋假）",
 	no_intel: "无情报无产出",
 };
-
-/** 一条情报：kind + 文本 + 来源/时点徽章。 */
-function IntelLine({ intel }: { intel: IntelItem }) {
-	return (
-		<li className="border-l-2 border-info/40 pl-2.5" data-testid="evidence-intel">
-			<span className="mr-1.5 rounded border border-border px-1 text-xs text-muted-foreground">{intel.kind}</span>
-			{intel.text}
-			<span className="ml-2 inline-flex gap-1 align-baseline">
-				<span className="rounded bg-info/10 px-1 text-xs text-info">{intel.source}</span>
-				<span className="rounded border border-border px-1 text-xs text-muted-foreground">
-					采集 {shortTime(intel.collected_at)}
-				</span>
-			</span>
-		</li>
-	);
-}
 
 /** 一场的展开式证据卡。 */
 function MatchEvidenceCard({ match }: { match: EvidenceMatch }) {
@@ -84,7 +69,11 @@ function MatchEvidenceCard({ match }: { match: EvidenceMatch }) {
 					) : (
 						<ul className="space-y-1.5 text-xs">
 							{(match.intels ?? []).map((intel) => (
-								<IntelLine key={`${intel.kind}-${intel.collected_at}-${intel.text}`} intel={intel} />
+								<IntelLine
+									key={`${intel.kind}-${intel.collected_at}-${intel.text}`}
+									intel={intel}
+									testid="evidence-intel"
+								/>
 							))}
 						</ul>
 					)}

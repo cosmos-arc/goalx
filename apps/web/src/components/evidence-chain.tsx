@@ -2,10 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { type FixtureEvidence, fetchFixtureEvidence, type IntelItem, type TrackTriple } from "../api/goalx";
+import { type FixtureEvidence, fetchFixtureEvidence, type TrackTriple } from "../api/goalx";
 import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { AskAnalystPanel } from "./ask-analyst";
 import { EmptyState } from "./empty-state";
+import { IntelLine } from "./intel-line";
 
 /**
  * 票 14 V2 证据链区块：挂 fixture-research 页底部（方案 A，票 06 定案）。
@@ -22,21 +23,6 @@ const VERDICT_LABELS: Record<string, string> = {
 	irrelevant: "情报无关",
 	misleading: "情报误导",
 };
-
-function IntelRow({ intel }: { intel: IntelItem }) {
-	return (
-		<li className="border-l-2 border-info/40 pl-2.5 text-xs" data-testid="chain-intel">
-			<span className="mr-1.5 rounded border border-border px-1 text-muted-foreground">{intel.kind}</span>
-			{intel.text}
-			<span className="ml-2 inline-flex gap-1 align-baseline">
-				<span className="rounded bg-info/10 px-1 text-info">{intel.source}</span>
-				<span className="rounded border border-border px-1 text-muted-foreground">
-					采集 {shortTime(intel.collected_at)}
-				</span>
-			</span>
-		</li>
-	);
-}
 
 function TrackRow({ track }: { track: TrackTriple }) {
 	return (
@@ -164,7 +150,7 @@ function ChainBody({ data }: { data: FixtureEvidence }) {
 				) : (
 					<ul className="space-y-1.5" data-testid="chain-intels">
 						{intels.map((intel) => (
-							<IntelRow key={`${intel.kind}-${intel.collected_at}-${intel.text}`} intel={intel} />
+							<IntelLine key={`${intel.kind}-${intel.collected_at}-${intel.text}`} intel={intel} testid="chain-intel" />
 						))}
 					</ul>
 				)}

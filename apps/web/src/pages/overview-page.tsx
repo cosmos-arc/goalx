@@ -7,7 +7,7 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { isPickable } from "../components/had-quote-ui";
 import { Badge } from "../components/ui/badge";
-import { pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
+import { earliestKickoffMs, openBetFixtureIds, pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 15：总览 Dashboard（票 05 定稿 = 唯一事实源）。总览 = 分诊（票 03）：
@@ -103,19 +103,10 @@ export function OverviewPage() {
 	// ① 未锁定建议：最早开赛 <2h 琥珀紧迫倒计时 → /fixtures（票 wb-01 起路径）
 	const suggestions = bets.filter((bet) => !bet.purchased);
 	const kickoffById = new Map(fixtures.map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));
-	let earliest: number | null = null;
-	for (const bet of suggestions) {
-		for (const leg of bet.legs) {
-			const iso = kickoffById.get(leg.fixture_id);
-			if (!iso) {
-				continue;
-			}
-			const at = new Date(iso).getTime();
-			if (!Number.isNaN(at) && (earliest === null || at < earliest)) {
-				earliest = at;
-			}
-		}
-	}
+	const earliest = earliestKickoffMs(
+		suggestions.flatMap((bet) => bet.legs),
+		kickoffById,
+	);
 	if (suggestions.length > 0) {
 		const minutes = earliest === null ? null : Math.round((earliest - now) / 60_000);
 		todos.push({
@@ -136,15 +127,13 @@ export function OverviewPage() {
 	}
 
 	// ② 待录赛果：已过开赛 + 挂着未结注 + 无开奖的今日场次 → /bets
-	const openBetFixtureIds = new Set(
-		bets.filter((bet) => bet.status === "open").flatMap((bet) => bet.legs.map((leg) => leg.fixture_id)),
-	);
+	const openBetIds = openBetFixtureIds(bets);
 	const pendingResultCount = fixtures.filter((fixture) => {
 		const kickoff = new Date(fixture.kickoff_utc).getTime();
 		return (
 			!Number.isNaN(kickoff) &&
 			kickoff <= now &&
-			openBetFixtureIds.has(fixture.fixture_id) &&
+			openBetIds.has(fixture.fixture_id) &&
 			!resultIds.has(fixture.fixture_id)
 		);
 	}).length;

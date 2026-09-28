@@ -27,9 +27,11 @@ import {
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import {
+	earliestKickoffMs,
 	errorText,
 	legText,
 	localTime,
+	openBetFixtureIds,
 	pnlClass,
 	SELECTION_LABELS,
 	shortTime,
@@ -211,17 +213,7 @@ export function BetsPage() {
 
 	// ---- 规则前置（票 06 补充）：锁定时段最早开赛 <5 分钟（或已开赛）先警示 ----
 	function kickoffWarning(bet: Bet): string | null {
-		let earliest: number | null = null;
-		for (const leg of bet.legs) {
-			const iso = kickoffById.get(leg.fixture_id);
-			if (!iso) {
-				continue;
-			}
-			const at = new Date(iso).getTime();
-			if (!Number.isNaN(at) && (earliest === null || at < earliest)) {
-				earliest = at;
-			}
-		}
+		const earliest = earliestKickoffMs(bet.legs, kickoffById);
 		if (earliest === null) {
 			return null;
 		}
@@ -303,9 +295,7 @@ export function BetsPage() {
 
 	// ---- 赛果同步面板（06 预裁决 = 同步优先；本票降级态 + 人工兜底通道） ----
 	const resultIds = new Set((drawResults.data ?? []).map((row) => row.fixture_id));
-	const openFixtureIds = new Set(
-		allBets.filter((bet) => bet.status === "open").flatMap((bet) => bet.legs.map((leg) => leg.fixture_id)),
-	);
+	const openFixtureIds = openBetFixtureIds(allBets);
 	const pendingFixtures = (today.data ?? []).filter((fixture) => {
 		const kickoff = new Date(fixture.kickoff_utc).getTime();
 		return !Number.isNaN(kickoff) && kickoff <= now && !resultIds.has(fixture.fixture_id);
@@ -376,10 +366,10 @@ export function BetsPage() {
 		value: fixture.fixture_id,
 		label: `${fixture.match_code} ${fixture.home_team} vs ${fixture.away_team}`,
 	}));
-	const openBetFixtureIds: number[] = Array.from(
-		new Set(allBets.filter((bet) => bet.status === "open").flatMap((bet) => bet.legs.map((leg) => leg.fixture_id))),
-	).filter((fixtureId) => !fixtureOptions.some((option) => option.value === fixtureId));
-	const openBetFixtures = openBetFixtureIds.map((fixtureId) => ({
+	const staleOpenFixtureIds: number[] = Array.from(openBetFixtureIds(allBets)).filter(
+		(fixtureId) => !fixtureOptions.some((option) => option.value === fixtureId),
+	);
+	const openBetFixtures = staleOpenFixtureIds.map((fixtureId) => ({
 		value: fixtureId,
 		label: `#${fixtureId}（未在今日列表）`,
 	}));
