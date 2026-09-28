@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
-from typing import Any
+
+from pydantic import BaseModel
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation.forward_validation import (
     ForwardSample,
+    ForwardSkillReport,
     build_forward_samples,
     forward_skill_report,
 )
@@ -47,7 +49,59 @@ def _sample_rps(sample: ForwardSample, probs: dict[str, float]) -> float:
     return rps(ordered, outcome)
 
 
-def paired_fused_vs_ml(conn: sqlite3.Connection) -> dict[str, Any]:
+class PairedFusedVsMl(BaseModel):
+    """同场双轨配对统计：fused vs ml 的 RPS 对照 + DM。"""
+
+    pairs: int
+    fused_win_rate: float | None
+    mean_rps_delta: float | None
+    dm_stat: float
+    dm_p: float
+    span_weeks: int
+
+
+class TierStatus(BaseModel):
+    """一档达标状态行（阈值冻结，票 05）。"""
+
+    checks: dict[str, bool]
+    verdict: str
+    dm_p_reported: float | None = None  # Tier A 透传
+
+
+class IntelQuality(BaseModel):
+    """情报质量列（报告列不设门槛）。"""
+
+    covered: int
+    coverage: float | None
+    median_hours_to_kickoff: float | None
+    avg_sources: float | None
+
+
+class BlindReviewSummary(BaseModel):
+    """盲评参考列（统计力弱不作证明支柱）。"""
+
+    total: int
+    counts: dict[str, int]
+    llm_share: float | None
+
+
+class M3ProtocolReport(BaseModel):
+    """M3 评测协议总报告（契约载荷，票 06 键集冻结）。"""
+
+    rule: str
+    tracks: dict[str, ForwardSkillReport]
+    paired_fused_vs_ml: PairedFusedVsMl
+    tier_a: TierStatus
+    tier_b: TierStatus
+    llm_ece_clean: bool | None
+    review_clean: bool | None
+    intel_quality: IntelQuality
+    blind_review: BlindReviewSummary
+    note: str
+    generated_at: str
+
+
+def paired_fused_vs_ml(conn: sqlite3.Connection) -> PairedFusedVsMl:
     """配对统计：同场双轨（fused vs ml，冻结赛前样本）的 RPS 对照 + DM。"""
     ml_samples = {s.fixture_id: s for s in build_forward_samples(conn, track="ml")[0]}
     fused_samples = {
@@ -67,14 +121,14 @@ def paired_fused_vs_ml(conn: sqlite3.Connection) -> dict[str, Any]:
     win_rate = wins / len(common) if common else None
     dm_stat, dm_p = diebold_mariano(loss_diffs) if loss_diffs else (0.0, 1.0)
     weeks = _span_weeks(common, ml_samples, fused_samples)
-    return {
-        "pairs": len(common),
-        "fused_win_rate": win_rate,
-        "mean_rps_delta": (sum(loss_diffs) / len(loss_diffs) if loss_diffs else None),
-        "dm_stat": dm_stat,
-        "dm_p": dm_p,
-        "span_weeks": weeks,
-    }
+    return PairedFusedVsMl(
+        pairs=len(common),
+        fused_win_rate=win_rate,
+        mean_rps_delta=(sum(loss_diffs) / len(loss_diffs) if loss_diffs else None),
+        dm_stat=dm_stat,
+        dm_p=dm_p,
+        span_weeks=weeks,
+    )
 
 
 def _span_weeks(
@@ -94,12 +148,12 @@ def _span_weeks(
     return int(span_seconds // (7 * 24 * 3600))
 
 
-def _tier_a(paired: dict[str, Any], ece_clean: bool | None) -> dict[str, Any]:
+def _tier_a(paired: PairedFusedVsMl, ece_clean: bool | None) -> TierStatus:
     """Tier A 达标状态行（融合线去留；阈值冻结）。"""
     checks = {
-        "pairs_ge_200": paired["pairs"] >= TIER_A_MIN_PAIRS,
-        "weeks_ge_6": paired["span_weeks"] >= TIER_A_MIN_WEEKS,
-        "win_rate_ge_52": (paired["fused_win_rate"] or 0) >= TIER_A_MIN_WIN_RATE,
+        "pairs_ge_200": paired.pairs >= TIER_A_MIN_PAIRS,
+        "weeks_ge_6": paired.span_weeks >= TIER_A_MIN_WEEKS,
+        "win_rate_ge_52": (paired.fused_win_rate or 0) >= TIER_A_MIN_WIN_RATE,
         "ece_no_degradation": ece_clean is True,
     }
     sufficient = checks["pairs_ge_200"] and checks["weeks_ge_6"]
@@ -110,15 +164,15 @@ def _tier_a(paired: dict[str, Any], ece_clean: bool | None) -> dict[str, Any]:
         verdict = "达标（融合线保留）"
     else:
         verdict = "未达标（继续观察或证伪路径）"
-    return {"checks": checks, "verdict": verdict, "dm_p_reported": paired["dm_p"]}
+    return TierStatus(checks=checks, verdict=verdict, dm_p_reported=paired.dm_p)
 
 
-def _tier_b(paired: dict[str, Any], review_clean: bool | None) -> dict[str, Any]:
+def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
     """Tier B 达标状态行（真钱切换；缺一不可）。"""
     checks = {
-        "full_season": paired["span_weeks"] >= _SEASON_MIN_WEEKS,
-        "pairs_ge_500": paired["pairs"] >= TIER_B_MIN_PAIRS,
-        "dm_p_lt_005": paired["dm_p"] < TIER_B_MAX_DM_P,
+        "full_season": paired.span_weeks >= _SEASON_MIN_WEEKS,
+        "pairs_ge_500": paired.pairs >= TIER_B_MIN_PAIRS,
+        "dm_p_lt_005": paired.dm_p < TIER_B_MAX_DM_P,
         "review_no_systematic_error": review_clean is True,
     }
     sufficient = checks["pairs_ge_500"]
@@ -127,15 +181,15 @@ def _tier_b(paired: dict[str, Any], review_clean: bool | None) -> dict[str, Any]
         if not sufficient
         else ("达标候选（须用户显式裁决切换）" if all(checks.values()) else "未达标")
     )
-    return {"checks": checks, "verdict": verdict}
+    return TierStatus(checks=checks, verdict=verdict)
 
 
 def _ece_clean(conn: sqlite3.Connection) -> bool | None:
     """LLM 轨 ECE 无劣化：与 ML 同分母比较（样本不足 None=未知）。"""
     ml = forward_skill_report(conn, track="ml")
     llm = forward_skill_report(conn, track="llm")
-    ml_n = sum(g["n_fixtures"] for g in ml["groups"].values())
-    llm_n = sum(g["n_fixtures"] for g in llm["groups"].values())
+    ml_n = sum(g.n_fixtures for g in ml.groups.values())
+    llm_n = sum(g.n_fixtures for g in llm.groups.values())
     if llm_n < _REVIEW_MIN_SAMPLES * 3 or ml_n < _REVIEW_MIN_SAMPLES * 3:
         return None
     ml_ece = _mean_ece(ml)
@@ -145,31 +199,31 @@ def _ece_clean(conn: sqlite3.Connection) -> bool | None:
     return llm_ece <= ml_ece * 1.10  # 10% 容差内的口径噪声
 
 
-def _mean_ece(report: dict[str, Any]) -> float | None:
-    """报告组内 ECE 加权平均（缺指标 None）。"""
-    total_n = 0
-    acc = 0.0
-    for group in report["groups"].values():
-        ece = group.get("ece")
-        n = group.get("n_fixtures", 0)
-        if isinstance(ece, (int, float)) and n:
-            acc += float(ece) * n
-            total_n += n
-    return acc / total_n if total_n else None
+def _mean_ece(report: ForwardSkillReport) -> float | None:
+    """
+    报告组内 ECE 加权平均（缺指标 None）。
+
+    票 06 记录（类型化揭出）：组指标自 ece 拆为 ece_h/ece_d/ece_a 后，
+    本函数取 'ece' 恒缺 → 恒 None（Tier A 的 ece_no_degradation 检查
+    长期为 False）。显式返回 None 保历史行为；重建该检查（如三键加权）
+    属另票——勿在此静默复活。
+    """
+    _ = report
+    return None
 
 
-def intel_quality(conn: sqlite3.Connection) -> dict[str, Any]:
+def intel_quality(conn: sqlite3.Connection) -> IntelQuality:
     """情报质量列：覆盖率/时点新鲜度中位数/来源多样性（报告列不设门槛）。"""
     fixtures_with_forecast = {
         int(r["fixture_id"]) for r in forecasts_for_track(conn, "llm")
     }
     if not fixtures_with_forecast:
-        return {
-            "covered": 0,
-            "coverage": None,
-            "median_hours_to_kickoff": None,
-            "avg_sources": None,
-        }
+        return IntelQuality(
+            covered=0,
+            coverage=None,
+            median_hours_to_kickoff=None,
+            avg_sources=None,
+        )
     summaries = intel_summary_by_fixture(conn, sorted(fixtures_with_forecast))
     covered = 0
     hours: list[float] = []
@@ -195,27 +249,27 @@ def intel_quality(conn: sqlite3.Connection) -> dict[str, Any]:
                 hours.append(delta / 3600)
     hours.sort()
     median = hours[len(hours) // 2] if hours else None
-    return {
-        "covered": covered,
-        "coverage": covered / len(fixtures_with_forecast),
-        "median_hours_to_kickoff": median,
-        "avg_sources": (
+    return IntelQuality(
+        covered=covered,
+        coverage=covered / len(fixtures_with_forecast),
+        median_hours_to_kickoff=median,
+        avg_sources=(
             sum(sources_per_fixture) / len(sources_per_fixture)
             if sources_per_fixture
             else None
         ),
-    }
+    )
 
 
-def review_blind_summary(conn: sqlite3.Connection) -> dict[str, Any]:
+def review_blind_summary(conn: sqlite3.Connection) -> BlindReviewSummary:
     """盲评参考列（双周匿名二选一；统计力弱不作证明支柱）。"""
     counts = blind_review_counts(conn)
     total = sum(counts.values())
-    return {
-        "total": total,
-        "counts": counts,
-        "llm_share": counts.get("llm", 0) / total if total else None,
-    }
+    return BlindReviewSummary(
+        total=total,
+        counts=counts,
+        llm_share=counts.get("llm", 0) / total if total else None,
+    )
 
 
 _REVIEW_MIN_SAMPLES = 10  # 复核结论低于此数视为未知
@@ -232,42 +286,42 @@ def _review_systematic_error(conn: sqlite3.Connection) -> bool | None:
     return counts.get("misleading", 0) / total <= _MISLEADING_MAX_SHARE
 
 
-def m3_protocol_report(conn: sqlite3.Connection) -> dict[str, Any]:
+def m3_protocol_report(conn: sqlite3.Connection) -> M3ProtocolReport:
     """M3 评测协议总报告（三列参考 + 两档达标状态 + 情报/盲评列）。"""
     paired = paired_fused_vs_ml(conn)
     ece_clean = _ece_clean(conn)
     review_clean = _review_systematic_error(conn)
-    return {
-        "rule": "m3_protocol_v1（票 05 冻结阈值，不得放宽）",
-        "tracks": {
+    return M3ProtocolReport(
+        rule="m3_protocol_v1（票 05 冻结阈值，不得放宽）",
+        tracks={
             track: forward_skill_report(conn, track=track)
             for track in ("ml", "llm", "fused")
         },
-        "paired_fused_vs_ml": paired,
-        "tier_a": _tier_a(paired, ece_clean),
-        "tier_b": _tier_b(paired, review_clean),
-        "llm_ece_clean": ece_clean,
-        "review_clean": review_clean,
-        "intel_quality": intel_quality(conn),
-        "blind_review": review_blind_summary(conn),
-        "note": "LLM/Fused 为参考列；真钱资格只读 ML 轨（票 04 冻结）",
-        "generated_at": datetime.now(UTC).isoformat(),
-    }
+        paired_fused_vs_ml=paired,
+        tier_a=_tier_a(paired, ece_clean),
+        tier_b=_tier_b(paired, review_clean),
+        llm_ece_clean=ece_clean,
+        review_clean=review_clean,
+        intel_quality=intel_quality(conn),
+        blind_review=review_blind_summary(conn),
+        note="LLM/Fused 为参考列；真钱资格只读 ML 轨（票 04 冻结）",
+        generated_at=datetime.now(UTC).isoformat(),
+    )
 
 
-def report_summary(report: dict[str, Any]) -> str:
+def report_summary(report: M3ProtocolReport) -> str:
     """报告一行摘要（flow 日志用）。"""
-    paired = report["paired_fused_vs_ml"]
-    win_rate = paired["fused_win_rate"]
+    paired = report.paired_fused_vs_ml
+    win_rate = paired.fused_win_rate
     head = "M3 报告：配对 {pairs} 场 / 胜率 {wr} / DM p={dm:.3f}".format(
-        pairs=paired["pairs"],
+        pairs=paired.pairs,
         wr=f"{win_rate:.1%}" if win_rate is not None else "n/a",
-        dm=paired["dm_p"],
+        dm=paired.dm_p,
     )
     tail = " | ".join(
         (
-            "Tier A: " + str(report["tier_a"]["verdict"]),
-            "Tier B: " + str(report["tier_b"]["verdict"]),
+            "Tier A: " + report.tier_a.verdict,
+            "Tier B: " + report.tier_b.verdict,
         )
     )
     return head + " | " + tail

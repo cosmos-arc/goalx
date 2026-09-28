@@ -41,6 +41,7 @@ from statistics import pvariance
 from typing import Any
 
 import duckdb
+from pydantic import BaseModel, Field
 from scipy.stats import linregress
 
 from goalx_backend import odds_math as om
@@ -425,22 +426,82 @@ def _dedup_by_decision(
     return sorted(seen.values(), key=lambda v: v.bet_id), duplicates
 
 
-def _group_stats(group: list[_BetView]) -> dict[str, Any]:
+class ClvGroupStats(BaseModel):
+    """一组（单关/2串1 × paper/live）的 beat/CLV 汇总（票级口径）。"""
+
+    n_bets: int = 0
+    beat_rate: float | None = None
+    avg_clv: float | None = None
+
+
+class ClvDenominator(BaseModel):
+    """报表分母：采集面四计 + 去重面五计（键集冻结，票 06）。"""
+
+    settled_bets: int
+    legs: int
+    no_close_bets: int
+    unsupported_bets: int
+    raw_bets: int
+    reconciled_bets: int
+    unique_bets: int
+    deduped_duplicates: int
+    fixtures: int
+
+
+class ClvBucketStats(BaseModel):
+    """距开赛分桶（单关）的 beat 汇总。"""
+
+    n: int
+    beat_rate: float
+
+
+class ClvBasisEntry(BaseModel):
+    """by_close_basis 一级：腿数/唯一注数 + 同构分组（mixed 无分组仅注数）。"""
+
+    legs: int = 0
+    bets: int
+    groups: dict[str, dict[str, ClvGroupStats]] = Field(default_factory=dict)
+    note: str | None = None
+
+
+class ClvRegression(BaseModel):
+    """单关 CLV → 盈亏 OLS 回归。"""
+
+    n: int
+    slope: float | None
+    r_squared: float | None
+    note: str
+
+
+class ClvReport(BaseModel):
+    """票级 CLV 报表（契约载荷，票 06 键集冻结）。"""
+
+    singles: dict[str, ClvGroupStats]
+    parlay2: dict[str, ClvGroupStats]
+    independence_assumed: bool
+    close_basis_note: str
+    by_close_basis: dict[str, ClvBasisEntry]
+    denominator: ClvDenominator
+    by_minutes_bucket_single: dict[str, ClvBucketStats]
+    regression: ClvRegression
+
+
+def _group_stats(group: list[_BetView]) -> ClvGroupStats:
     """一组的 beat/CLV 汇总（票级口径）。"""
     if not group:
-        return {"n_bets": 0, "beat_rate": None, "avg_clv": None}
+        return ClvGroupStats()
     clvs = [v.clv_ticket for v in group]
     beats = sum(1 for c in clvs if c > 0)
-    return {
-        "n_bets": len(group),
-        "beat_rate": beats / len(clvs),
-        "avg_clv": sum(clvs) / len(clvs),
-    }
+    return ClvGroupStats(
+        n_bets=len(group),
+        beat_rate=beats / len(clvs),
+        avg_clv=sum(clvs) / len(clvs),
+    )
 
 
 def _basis_breakdown(
     unique: list[_BetView], records: dict[tuple[int, int], sqlite3.Row]
-) -> dict[str, Any]:
+) -> dict[str, ClvBasisEntry]:
     """
     基准来源分层报表（票 40 窗口期新旧口径并行呈现）。
 
@@ -452,7 +513,7 @@ def _basis_breakdown(
     for record in records.values():
         basis = _record_basis(record)
         leg_counts[basis] = leg_counts.get(basis, 0) + 1
-    out: dict[str, Any] = {}
+    out: dict[str, ClvBasisEntry] = {}
     for basis in (
         BASIS_PINNACLE,
         BASIS_BETFAIR,
@@ -463,32 +524,32 @@ def _basis_breakdown(
         bets = [v for v in unique if v.basis == basis]
         if not bets and leg_counts.get(basis, 0) == 0:
             continue
-        sections: dict[str, dict[str, Any]] = {}
+        sections: dict[str, dict[str, ClvGroupStats]] = {}
         for kind in ("single", "parlay2"):
-            per_kind: dict[str, Any] = {}
+            per_kind: dict[str, ClvGroupStats] = {}
             for mode in ("paper", "live"):
                 stats = _group_stats(
                     [v for v in bets if v.kind == kind and v.mode == mode]
                 )
-                if stats["n_bets"]:
+                if stats.n_bets:
                     per_kind[mode] = stats
             if per_kind:
                 sections[kind] = per_kind
-        out[basis] = {
-            "legs": leg_counts.get(basis, 0),
-            "bets": len(bets),
-            "groups": sections,
-        }
+        out[basis] = ClvBasisEntry(
+            legs=leg_counts.get(basis, 0),
+            bets=len(bets),
+            groups=sections,
+        )
     mixed = [v for v in unique if v.basis == BASIS_MIXED]
     if mixed:
-        out[BASIS_MIXED] = {
-            "bets": len(mixed),
-            "note": "串关两腿基准不同，腿级见 clv_records.close_basis",
-        }
+        out[BASIS_MIXED] = ClvBasisEntry(
+            bets=len(mixed),
+            note="串关两腿基准不同，腿级见 clv_records.close_basis",
+        )
     return out
 
 
-def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
+def clv_report(conn: sqlite3.Connection) -> ClvReport:
     """
     票级 CLV 报表：单关/2串1 × paper/live 分组 + 去重分母 + 单关回归。
 
@@ -498,20 +559,21 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
     """
     views, denom = _collect_bets(conn)
     unique, duplicates = _dedup_by_decision(views)
-    denom |= {
-        "raw_bets": len(views) + duplicates,
-        "reconciled_bets": len(views),
-        "unique_bets": len(unique),
-        "deduped_duplicates": duplicates,
-        "fixtures": len({fx for v in unique for fx, *_ in v.legs}),
-    }
-    groups: dict[str, dict[str, dict[str, Any]]] = {"single": {}, "parlay2": {}}
+    denominator = ClvDenominator(
+        **denom,
+        raw_bets=len(views) + duplicates,
+        reconciled_bets=len(views),
+        unique_bets=len(unique),
+        deduped_duplicates=duplicates,
+        fixtures=len({fx for v in unique for fx, *_ in v.legs}),
+    )
+    groups: dict[str, dict[str, ClvGroupStats]] = {"single": {}, "parlay2": {}}
     for kind, sections in groups.items():
         for mode in ("paper", "live"):
             sections[mode] = _group_stats(
                 [v for v in unique if v.kind == kind and v.mode == mode]
             )
-    buckets: dict[str, dict[str, float]] = {}
+    buckets: dict[str, dict[str, int]] = {}
     for view in (v for v in unique if v.kind == "single"):
         key = _bucket_minutes(view.minutes_to_kickoff)
         entry = buckets.setdefault(key, {"n": 0, "beats": 0})
@@ -525,27 +587,27 @@ def clv_report(conn: sqlite3.Connection) -> dict[str, Any]:
     slope, r_squared = _ols_slope(
         [clv for clv, _ in singles], [float(profit) for _, profit in singles]
     )
-    return {
-        "singles": groups["single"],
-        "parlay2": groups["parlay2"],
+    return ClvReport(
+        singles=groups["single"],
+        parlay2=groups["parlay2"],
         # 串关票级联合概率按两腿独立连乘（票 34：声明假设，不作回归样本）
-        "independence_assumed": True,
+        independence_assumed=True,
         # 基准分层标注（票 40）：窗口期新旧口径并行判读用
-        "close_basis_note": CLOSE_BASIS_NOTE,
-        "by_close_basis": _basis_breakdown(unique, _close_records(conn)),
-        "denominator": denom,
-        "by_minutes_bucket_single": {
-            key: {"n": int(v["n"]), "beat_rate": v["beats"] / v["n"]}
+        close_basis_note=CLOSE_BASIS_NOTE,
+        by_close_basis=_basis_breakdown(unique, _close_records(conn)),
+        denominator=denominator,
+        by_minutes_bucket_single={
+            key: ClvBucketStats(n=int(v["n"]), beat_rate=v["beats"] / v["n"])
             for key, v in sorted(buckets.items())
             if v["n"]
         },
-        "regression": {
-            "n": len(singles),
-            "slope": slope,
-            "r_squared": r_squared,
-            "note": "singles only",
-        },
-    }
+        regression=ClvRegression(
+            n=len(singles),
+            slope=slope,
+            r_squared=r_squared,
+            note="singles only",
+        ),
+    )
 
 
 def _ols_slope(xs: list[float], ys: list[float]) -> tuple[float | None, float | None]:

@@ -252,7 +252,9 @@ def _cmd_baseline_compare() -> None:
     with task_conn() as conn:
         sys.stdout.write(
             json.dumps(
-                baseline.baseline_quality_report(conn), ensure_ascii=False, indent=2
+                baseline.baseline_quality_report(conn).model_dump(),
+                ensure_ascii=False,
+                indent=2,
             )
             + "\n"
         )
@@ -280,7 +282,7 @@ def _cmd_clv_reconcile() -> None:
         with tasks.corpus_anchor() as anchor:
             stats = clv_mod.reconcile_clv(conn, duck_con=anchor)
         logger.info("recorded={} skipped={}", stats.recorded, len(stats.skipped))
-        logger.info("report: {}", clv_mod.clv_report(conn))
+        logger.info("report: {}", clv_mod.clv_report(conn).model_dump())
 
 
 def _cmd_xg_compare(args: argparse.Namespace) -> None:

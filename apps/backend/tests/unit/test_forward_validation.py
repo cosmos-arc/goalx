@@ -81,7 +81,7 @@ def test_pre_kickoff_forecast_scored_with_baseline(db) -> None:
     add_eu_consensus(db, fixture, "2026-09-13T10:00:00+00:00")
     add_forecast(db, fixture, "2026-09-13T11:00:00+00:00", model_version="dc-a")
     add_result(db, fixture)
-    report = fwd.forward_skill_report(db)
+    report = fwd.forward_skill_report(db).model_dump()
     assert report["coverage"]["scored"] == 1
     assert report["coverage"]["settled_fixtures"] == 1
     metrics = report["groups"]["dc-a"]
@@ -96,7 +96,7 @@ def test_post_kickoff_forecast_is_replay_only(db) -> None:
     add_eu_consensus(db, fixture, "2026-09-13T10:00:00+00:00")
     add_forecast(db, fixture, "2026-09-13T19:00:00+00:00")  # kickoff 之后
     add_result(db, fixture)
-    report = fwd.forward_skill_report(db)
+    report = fwd.forward_skill_report(db).model_dump()
     assert report["coverage"]["post_kickoff_only"] == 1
     assert report["coverage"]["scored"] == 0
     assert report["groups"] == {}
@@ -107,7 +107,7 @@ def test_unsettled_and_unforecast_fixtures_counted_honestly(db) -> None:
     add_forecast(db, fixture, "2026-09-13T11:00:00+00:00")
     other = seed_fixture(db, league="西甲")
     add_result(db, other)  # 已结但无预测
-    report = fwd.forward_skill_report(db)
+    report = fwd.forward_skill_report(db).model_dump()
     assert report["coverage"]["settled_fixtures"] == 1
     assert report["coverage"]["no_forecast"] == 1
     assert report["coverage"]["scored"] == 0
@@ -120,7 +120,7 @@ def test_duplicate_forecasts_freeze_latest_pre_kickoff(db) -> None:
     add_forecast(db, fixture, "2026-09-13T10:00:00+00:00", tag=0)
     add_forecast(db, fixture, "2026-09-13T12:00:00+00:00", tag=5)
     add_result(db, fixture)
-    report = fwd.forward_skill_report(db)
+    report = fwd.forward_skill_report(db).model_dump()
     assert report["coverage"]["scored"] == 1  # 一场一个样本
     (metrics,) = report["groups"].values()
     assert metrics["n"] == 1
@@ -157,7 +157,7 @@ def test_groups_split_by_model_version(db) -> None:
         add_result(db, fixture)
     add_forecast(db, f1, "2026-09-13T10:00:00+00:00", model_version="dc-a")
     add_forecast(db, f2, "2026-09-13T10:00:00+00:00", model_version="dc-b")
-    report = fwd.forward_skill_report(db)
+    report = fwd.forward_skill_report(db).model_dump()
     assert set(report["groups"]) == {"dc-a", "dc-b"}
     assert all(m["n"] == 1 for m in report["groups"].values())
     assert all(m["insufficient_samples"] for m in report["groups"].values())

@@ -357,22 +357,28 @@ class VerdictPayload(BaseModel):
     note: str | None = None
 
 
+class RecordedView(BaseModel):
+    """落库结果（幂等语义化：recorded=false = 重复提交被吸收）。"""
+
+    recorded: bool
+
+
 @router.post(
     "/api/v1/review/items/{item_id}/verdict",
     summary="提交复核结论(三分类,open→done)",
-    response_model=dict[str, bool],
+    response_model=RecordedView,
     responses={404: {"description": "复核项不存在或已裁决"}},
 )
 async def submit_review_verdict(
     item_id: int, payload: VerdictPayload, db: DbDep
-) -> dict[str, bool]:
+) -> RecordedView:
     """结论三分类落库（不改任何预测工件）。"""
     if not record_verdict(db, item_id, payload.classification, note=payload.note):
         raise HTTPException(
             status_code=404, detail="review item not found or already decided"
         )
     db.commit()
-    return {"recorded": True}
+    return RecordedView(recorded=True)
 
 
 class BlindReviewPayload(BaseModel):
@@ -387,11 +393,9 @@ class BlindReviewPayload(BaseModel):
 @router.post(
     "/api/v1/blind-reviews",
     summary="提交盲评(双周匿名二选一,幂等)",
-    response_model=dict[str, bool],
+    response_model=RecordedView,
 )
-async def submit_blind_review(
-    payload: BlindReviewPayload, db: DbDep
-) -> dict[str, bool]:
+async def submit_blind_review(payload: BlindReviewPayload, db: DbDep) -> RecordedView:
     """同周期同场次重复提交被吸收（recorded=false 语义化返回）。"""
     recorded = record_blind_review(
         db,
@@ -401,7 +405,7 @@ async def submit_blind_review(
         note=payload.note,
     )
     db.commit()
-    return {"recorded": recorded}
+    return RecordedView(recorded=recorded)
 
 
 @router.post(

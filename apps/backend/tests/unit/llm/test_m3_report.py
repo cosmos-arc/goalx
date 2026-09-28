@@ -160,14 +160,15 @@ def test_paired_stats_and_tiers_small_sample(db: sqlite3.Connection) -> None:
         home_goals=0,
         away_goals=1,
     )
-    paired = paired_fused_vs_ml(db)
+    paired = paired_fused_vs_ml(db).model_dump()
     assert paired["pairs"] == 2
     assert paired["fused_win_rate"] == 0.5  # 一胜一负
-    report = m3_protocol_report(db)
+    report_model = m3_protocol_report(db)
+    report = report_model.model_dump()
     assert report["tier_a"]["verdict"] == "未证明（样本不足）"  # 2 < 200
     assert report["tier_b"]["verdict"] == "未证明（样本不足）"
     assert report["tier_a"]["checks"]["pairs_ge_200"] is False
-    assert "配对 2 场" in report_summary(report)
+    assert "配对 2 场" in report_summary(report_model)
 
 
 def test_tier_threshold_constants_frozen() -> None:
@@ -196,7 +197,7 @@ def test_intel_quality_columns(db: sqlite3.Connection) -> None:
         away_goals=1,
         intel=False,
     )
-    q = intel_quality(db)
+    q = intel_quality(db).model_dump()
     assert q["covered"] == 1
     assert q["coverage"] == 0.5
     assert q["median_hours_to_kickoff"] is not None
@@ -215,6 +216,6 @@ def test_blind_summary_in_report(db: sqlite3.Connection) -> None:
         away_goals=0,
     )
     record_blind_review(db, cycle="W1", fixture_id=1, choice="llm")
-    report = m3_protocol_report(db)
+    report = m3_protocol_report(db).model_dump()
     assert report["blind_review"]["total"] == 1
     assert report["blind_review"]["llm_share"] == 1.0

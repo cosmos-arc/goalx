@@ -630,8 +630,8 @@ def m3_evaluation() -> dict[str, object]:
         review = enqueue_post_settle(conn)
         record_control_events(conn, get_settings())
     return {
-        "tier_a": report["tier_a"]["verdict"],
-        "tier_b": report["tier_b"]["verdict"],
-        "paired": report["paired_fused_vs_ml"]["pairs"],
+        "tier_a": report.tier_a.verdict,
+        "tier_b": report.tier_b.verdict,
+        "paired": report.paired_fused_vs_ml.pairs,
         "post_settle_enqueued": review.enqueued,
     }
