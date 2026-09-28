@@ -31,7 +31,6 @@ import hashlib
 import json
 import random
 import re
-import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -52,6 +51,7 @@ from tenacity import (
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest.shell import DESKTOP_UA
 from goalx_backend.db import utc_now_iso
 from goalx_backend.rate_limit import default_limiter, throttle
 
@@ -104,28 +104,6 @@ CORPUS_SCOPE: tuple[str, ...] = (
     "欧冠杯",
     "欧罗巴杯",
 )
-
-DESKTOP_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
-
-# Chrome 风格密码套件（2026-09-27：源T vip/zq 边缘按 Python 默认 TLS 指纹断连,
-# 换套件改变 ClientHello 指纹后实测立通;对其它源无副作用——Chrome 套件兼容性最广）
-_CHROME_CIPHERS = (
-    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
-    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
-    "AES128-GCM-SHA256:AES256-GCM-SHA384"
-)
-
-
-def browser_ssl_context() -> ssl.SSLContext:
-    """采集客户端统一 TLS 画像:``httpx.Client(verify=browser_ssl_context())``。"""
-    ctx = ssl.create_default_context()
-    ctx.set_ciphers(_CHROME_CIPHERS)
-    return ctx
-
 
 # 防封参数（research/20 §九 定案 4）：请求间隔 3s±1s 均匀抖动（间距）+
 # 滑动窗口硬顶 20/分钟（jitter 均值 ≈20/min，窗口只加顶不改间距）

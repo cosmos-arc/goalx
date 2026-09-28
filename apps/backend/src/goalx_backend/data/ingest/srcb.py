@@ -30,6 +30,7 @@ from limits import RateLimitItemPerMinute
 from loguru import logger
 
 from goalx_backend.config import Settings
+from goalx_backend.data.ingest.shell import MOBILE_UA
 from goalx_backend.db import utc_now_iso
 from goalx_backend.rate_limit import default_limiter, throttle
 
@@ -53,10 +54,6 @@ CORE_PIDS: tuple[str, ...] = (
     "131",
     "84",  # ASIAN
     "24",  # AGGREGATE（全场共识对照，不进传导链）
-)
-MOBILE_UA = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-    + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 # 滑动窗口加顶（票 57）：0.5s 间距≈120/min 持续，200/min 纯加顶零行为变化
 _RATE_CEILING = RateLimitItemPerMinute(200)

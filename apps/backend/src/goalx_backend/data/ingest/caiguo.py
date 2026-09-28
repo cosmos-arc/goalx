@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from goalx_backend.config import Settings
+from goalx_backend.data.ingest.shell import MAC_CHROME_UA
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
@@ -122,10 +123,7 @@ _AUDIT_LOOKBACK_DAYS = 7
 def _browser_headers() -> dict[str, str]:
     """访问限制只认浏览器 UA（实证：curl 默认 UA → 567）。"""
     return {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
-        ),
+        "User-Agent": MAC_CHROME_UA,
         "Accept": "text/html,application/xhtml+xml",
     }
 

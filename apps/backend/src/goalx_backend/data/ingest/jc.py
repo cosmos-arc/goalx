@@ -38,6 +38,7 @@ import httpx
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest.shell import sporttery_json_headers
 
 JC_PROVIDER = "jc"  # 官方权威层身份（与 srct 书商层物理隔离）
 SP_DATASET = "sp_history"  # 一场一响应全玩法（getFixedBonusV1）
@@ -78,14 +79,7 @@ def fetch_fixed_bonus(client: httpx.Client, settings: Settings, match_id: str) -
     response = client.get(
         settings.jc_fixed_bonus_url or JC_FIXED_BONUS_URL,
         params={"clientCode": "3001", "matchId": match_id},
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
-            ),
-            "Referer": "https://www.sporttery.cn/",
-            "Accept": "application/json, text/plain, */*",
-        },
+        headers=sporttery_json_headers(),
         timeout=25.0,
     )
     response.raise_for_status()

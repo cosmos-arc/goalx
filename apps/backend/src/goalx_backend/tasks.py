@@ -43,7 +43,7 @@ from goalx_backend.data.ingest import (
     uniform,
     zucai_official,
 )
-from goalx_backend.data.ingest.oddsapi import polite_client
+from goalx_backend.data.ingest.shell import browser_ssl_context, polite_client
 from goalx_backend.db import connect, migrate, utc_now_iso
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
@@ -311,9 +311,7 @@ def srct_night_run(  # noqa: PLR0913 运行旋钮+测试注入口，cli/flow 共
             run_client = (
                 client
                 if client is not None
-                else stack.enter_context(
-                    httpx.Client(verify=srct.browser_ssl_context())
-                )
+                else stack.enter_context(httpx.Client(verify=browser_ssl_context()))
             )
             summary = srct_night.run_night(
                 store,
@@ -358,9 +356,7 @@ def srct_shift_run(
             run_client = (
                 client
                 if client is not None
-                else stack.enter_context(
-                    httpx.Client(verify=srct.browser_ssl_context())
-                )
+                else stack.enter_context(httpx.Client(verify=browser_ssl_context()))
             )
             stats = srct_shift.run_shift(
                 store,
@@ -408,7 +404,7 @@ def draw_results_sync() -> dict[str, object]:
     return {
         "links": links.as_dict() if links else None,
         "srct": srct_stats.as_dict(),
-        "uniform": uniform.stats_dict(stats),
+        "uniform": asdict(stats),
         "uniform_reconcile": reconcile.stats_dict(rec),
     }
 
@@ -524,7 +520,7 @@ def guardian_sync(*, request_cap: int | None = None) -> dict[str, object]:
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
     try:
-        with httpx.Client(verify=srct.browser_ssl_context()) as client:
+        with httpx.Client(verify=browser_ssl_context()) as client:
             stats = guardian.sync_guardian(
                 store, settings, client, request_cap=request_cap
             )
@@ -552,7 +548,7 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
 def pool_snapshot() -> dict[str, object]:
     """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果 → pool 域表。"""
     settings = get_settings()
-    with task_conn() as conn, httpx.Client(verify=srct.browser_ssl_context()) as client:
+    with task_conn() as conn, httpx.Client(verify=browser_ssl_context()) as client:
         stats = zucai_official.sync_current(conn, settings, client)
     return zucai_official.stats_dict(stats)
 
@@ -560,7 +556,7 @@ def pool_snapshot() -> dict[str, object]:
 def pool_backfill(periods: int = 20) -> dict[str, object]:
     """彩池历史彩果回填（票 68）：V2 逐期倒查官方注数/奖池/销量。"""
     settings = get_settings()
-    with task_conn() as conn, httpx.Client(verify=srct.browser_ssl_context()) as client:
+    with task_conn() as conn, httpx.Client(verify=browser_ssl_context()) as client:
         stats = zucai_official.backfill_draws(conn, settings, client, periods=periods)
     return zucai_official.stats_dict(stats)
 
@@ -577,7 +573,7 @@ def intel_collection() -> dict[str, object]:
     try:
         with (
             task_conn() as conn,
-            httpx.Client(verify=srct.browser_ssl_context()) as client,
+            httpx.Client(verify=browser_ssl_context()) as client,
         ):
             injury = injury_stats_dict(collect_injury_intel(conn, client))
     except httpx.HTTPError as exc:
@@ -587,7 +583,7 @@ def intel_collection() -> dict[str, object]:
     try:
         with (
             task_conn() as conn,
-            httpx.Client(verify=srct.browser_ssl_context()) as client,
+            httpx.Client(verify=browser_ssl_context()) as client,
         ):
             sina = sina_stats_dict(collect_sina_injury_intel(conn, client))
     except httpx.HTTPError as exc:

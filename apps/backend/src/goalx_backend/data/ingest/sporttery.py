@@ -43,6 +43,7 @@ import httpx
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import observations
+from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import GOALS_MARKETS
 from goalx_backend.models import (
@@ -205,10 +206,7 @@ def fetch_calculator(settings: Settings, client: httpx.Client) -> FetchedCalcula
         params={"poolCode": ",".join(POOL_CODES), "channel": "c"},
         headers={
             "Referer": settings.sporttery_referer,
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 Chrome/126.0"
-            ),
+            "User-Agent": SPORTTERY_CALC_UA,
             "Accept": "application/json",
         },
         timeout=25.0,
