@@ -45,6 +45,7 @@ from loguru import logger
 
 from goalx_backend.config import Settings
 from goalx_backend.data import pool as pool_store
+from goalx_backend.data.ingest.shell import sporttery_json_headers
 
 SOURCE = "sporttery-official"
 PARSE_VERSION = "zucai_official_v1"
@@ -66,14 +67,13 @@ BACKFILL_SLEEP_SECONDS = 3.2
 
 def _headers(referer: str) -> dict[str, str]:
     """同域同头直通（Origin=开奖族 CORS 闸，实测缺则空响应）。"""
+    # 键序按迁移前原文（UA/Referer/Origin/Accept）——出网头字节序属红线
+    base = sporttery_json_headers()
     return {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
-        ),
+        "User-Agent": base["User-Agent"],
         "Referer": referer,
         "Origin": "https://www.sporttery.cn",
-        "Accept": "application/json, text/plain, */*",
+        "Accept": base["Accept"],
     }
 
 

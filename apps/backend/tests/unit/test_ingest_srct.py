@@ -17,7 +17,7 @@ import pytest
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import srct
+from goalx_backend.data.ingest import shell, srct
 
 
 @pytest.fixture(autouse=True)
@@ -742,9 +742,9 @@ def test_collect_day_full_loop(tmp_path: Path) -> None:
     # 防封：固定 UA；odds/asian/overdown/analysis 带 odds Referer（vip/zq 域
     # 2026-09-26 起强制校验），day/detail 仍仅 UA
     day_req = seen[0]
-    assert day_req.headers["User-Agent"] == srct.DESKTOP_UA
+    assert day_req.headers["User-Agent"] == shell.DESKTOP_UA
     for req in seen[1:]:
-        assert req.headers["User-Agent"] == srct.DESKTOP_UA
+        assert req.headers["User-Agent"] == shell.DESKTOP_UA
         sid = _sid_of(req)
         if req.url.path.startswith(("/odds/", "/asian/", "/overdown/", "/analysis/")):
             assert req.headers["Referer"] == f"https://srct.test/oddslist/{sid}.htm"
@@ -914,7 +914,7 @@ def test_cli_srct_collect_seam(
     assert payload["parse_version"] == srct.PARSE_VERSION
     store = CorpusStore(_settings(tmp_path).corpus_root)
     assert store.verify_raw("srct", "day_page", DATE, ext=".htm")
-    assert seen[0].headers["User-Agent"] == srct.DESKTOP_UA  # 防封参数 CLI 路径同生效
+    assert seen[0].headers["User-Agent"] == shell.DESKTOP_UA  # 防封参数 CLI 路径同生效
 
 
 def test_bronze_repair_after_loss_zero_refetch(tmp_path: Path) -> None:

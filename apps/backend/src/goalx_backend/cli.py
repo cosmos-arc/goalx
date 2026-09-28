@@ -72,6 +72,7 @@ from goalx_backend.data.ingest import (
     srct_silver,
     uniform,
 )
+from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -310,7 +311,7 @@ def _cmd_srct_collect(
     store = CorpusStore(resolved.corpus_root)
     try:
         if client is None:
-            with httpx.Client(verify=srct.browser_ssl_context()) as owned:
+            with httpx.Client(verify=browser_ssl_context()) as owned:
                 stats = srct.collect_day(store, resolved, owned, date=args.date)
         else:
             stats = srct.collect_day(store, resolved, client, date=args.date)
@@ -481,7 +482,7 @@ def _cmd_jc_collect(
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
     try:
-        with httpx.Client(verify=srct.browser_ssl_context()) as client:
+        with httpx.Client(verify=browser_ssl_context()) as client:
             stats = jc.JcCollectStats()
             for match_id in args.match_id:
                 jc.collect_match(store, resolved, client, match_id, stats=stats)
@@ -504,7 +505,7 @@ def _cmd_jc_backfill(
     budget = srct.NightBudget(request_cap=args.request_cap)
     stats = jc_backfill.JcBackfillStats(date_from=args.date_from, date_to=args.date_to)
     try:
-        with httpx.Client(verify=srct.browser_ssl_context()) as client:
+        with httpx.Client(verify=browser_ssl_context()) as client:
             stats = jc_backfill.backfill_range(
                 store,
                 resolved,
@@ -539,10 +540,10 @@ def _cmd_jc_audit(
     }
     try:
         if args.probe_archive:
-            with httpx.Client(verify=srct.browser_ssl_context()) as client:
+            with httpx.Client(verify=browser_ssl_context()) as client:
                 earliest = jc_audit.earliest_archive_year(client, resolved)
         if args.date:
-            with httpx.Client(verify=srct.browser_ssl_context()) as client:
+            with httpx.Client(verify=browser_ssl_context()) as client:
                 recon = jc_audit.reconcile_cid1129(
                     store, resolved, client, dates=args.date
                 )
@@ -713,7 +714,7 @@ def _cmd_corpus_report(args: argparse.Namespace) -> None:
             )
         }
         if args.cross_check:
-            with httpx.Client(verify=srct.browser_ssl_context()) as client:
+            with httpx.Client(verify=browser_ssl_context()) as client:
                 report["cross_check"] = openfootball.cross_check_dict(
                     openfootball.cross_check_fdhist(
                         conn, get_settings(), client, seasons=seasons

@@ -41,6 +41,7 @@ import httpx
 from goalx_backend.config import Settings
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest.results import import_draw_results
+from goalx_backend.data.ingest.shell import sporttery_json_headers
 from goalx_backend.data.reconcile import (
     ReconcileStats,
     ReferenceResult,
@@ -215,15 +216,8 @@ def candidate_business_dates(
 
 
 def _headers() -> dict[str, str]:
-    """同域同头直通（票 44 实测）：浏览器 UA + 源A Referer。"""
-    return {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
-        ),
-        "Referer": "https://www.sporttery.cn/",
-        "Accept": "application/json, text/plain, */*",
-    }
+    """同域同头直通（票 44 实测）：官方 json 族共用壳。"""
+    return sporttery_json_headers()
 
 
 def fetch_uniform_results(
@@ -640,19 +634,3 @@ def pending_result_count(conn: sqlite3.Connection, now: datetime | None = None) 
         (current,),
     ).fetchone()
     return int(row["n"]) if row is not None else 0
-
-
-def stats_dict(stats: UniformSyncStats) -> dict[str, Any]:
-    """采集统计 → 可 JSON 化的 dict（flow 返回值用）。"""
-    return {
-        "source": stats.source,
-        "observed_at": stats.observed_at,
-        "business_dates": stats.business_dates,
-        "pages": stats.pages,
-        "fetched": stats.fetched,
-        "observed_rows": stats.observed_rows,
-        "imported": stats.imported,
-        "unchanged": stats.unchanged,
-        "unmatched": stats.unmatched,
-        "rejected": stats.rejected,
-    }

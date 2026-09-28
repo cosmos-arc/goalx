@@ -182,14 +182,6 @@ def record_credits(conn: sqlite3.Connection, credits_used: int, note: str) -> No
     )
 
 
-def polite_client() -> httpx.Client:
-    """带连接级重试与限速的采集客户端（票 19 重试+礼貌限速）。"""
-    return httpx.Client(
-        transport=httpx.HTTPTransport(retries=3),
-        limits=httpx.Limits(max_connections=2),
-    )
-
-
 def discover_sport_keys(settings: Settings, client: httpx.Client) -> list[str]:
     """冻结范围优先（票 37 协议）；未冻结时动态发现足球 sport key。"""
     if settings.odds_api_sport_scope:

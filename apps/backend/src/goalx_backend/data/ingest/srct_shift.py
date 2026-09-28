@@ -49,6 +49,7 @@ from loguru import logger
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct
+from goalx_backend.data.ingest.shell import DESKTOP_UA
 from goalx_backend.rate_limit import default_limiter, throttle
 
 if TYPE_CHECKING:
@@ -335,7 +336,7 @@ def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累�
             settings.srct_basid_url,
             params={"r": "007"},
             headers={
-                "User-Agent": srct.DESKTOP_UA,
+                "User-Agent": DESKTOP_UA,
                 **({"Referer": live_root.group(0) + "/"} if live_root else {}),
             },
             timeout=20.0,

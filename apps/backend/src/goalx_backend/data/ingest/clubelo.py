@@ -30,14 +30,10 @@ import httpx
 from loguru import logger
 
 from goalx_backend.config import Settings
+from goalx_backend.data.ingest.shell import CHROME_129_UA
 
 REQUEST_GAP_SECONDS = 0.3  # 回填逐队礼貌限速（~600 请求 ≈ 3 分钟）
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
-    )
-}
+_HEADERS = {"User-Agent": CHROME_129_UA}
 
 
 @dataclass
