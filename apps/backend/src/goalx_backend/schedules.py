@@ -41,6 +41,7 @@ ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议�
 from __future__ import annotations
 
 import argparse
+import os
 from typing import cast
 
 from loguru import logger
@@ -241,6 +242,12 @@ def main(only: str | None = None) -> None:
         "intel-collect": intel,
         "scout-line": scout,
     }
+    # 全程班模式闸门（2026-09-28）：手动连续窗期间摘除 srct-night 定拍触发，
+    # 防双进程叠加；恢复=不带此环境变量重启栈。须在 selected 固化前摘除
+    # （工作区原稿插在固化后属无效位，重建时修正）。
+    if os.environ.get("GOALX_SRCT_NIGHT_OFF"):
+        deployments.pop("srct-night", None)
+        logger.info("GOALX_SRCT_NIGHT_OFF 置位：摘除 srct-night（手动连续窗防叠加）")
     selected = tuple(deployments.values())
     if only:
         wanted = {name.strip() for name in only.split(",") if name.strip()}
