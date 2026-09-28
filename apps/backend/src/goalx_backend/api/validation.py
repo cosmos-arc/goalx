@@ -19,6 +19,7 @@ from goalx_backend.evaluation.validation import (
 )
 from goalx_backend.evaluation.validation import list_backtest_runs as list_runs
 from goalx_backend.llm import m3_report
+from goalx_backend.llm.review import verdict_counts as review_verdict_counts
 
 router = APIRouter(tags=["validation"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -64,11 +65,15 @@ async def get_validation_progress(
 
     - CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；
     - 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），
-      不读取任何历史回测 run；
-    - 复核：无记录 = 未评估（不做真空通过）；
+      不读取任何历史回测 run，只认部署版本（票 09 裁决）；
+    - 复核：误导率 ≤10% 且 ≥10 条（counts 在 api 层取——evaluation 不引 llm）；
     - 整赛季：独立显示，未验收前不通过。
     """
-    return validation_progress(db, yield_mode=yield_mode)
+    return validation_progress(
+        db,
+        yield_mode=yield_mode,
+        review_counts=review_verdict_counts(db),
+    )
 
 
 @router.get(

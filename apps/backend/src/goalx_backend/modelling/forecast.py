@@ -257,6 +257,14 @@ def insert_forecast(
     return None
 
 
+def latest_model_version(conn: sqlite3.Connection) -> str | None:
+    """最新发出的 Forecast 的 model_version（= 当前部署版本；票 09 裁决口径）。"""
+    row = conn.execute(
+        "SELECT model_version FROM forecasts ORDER BY issued_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+    return str(row["model_version"]) if row is not None else None
+
+
 def forecasts_for_track(conn: sqlite3.Connection, track: str) -> list[sqlite3.Row]:
     """
     某轨道全部 Forecast 行，按 (fixture, issued_at, id) 排序。

@@ -55,8 +55,8 @@
 ### 转真金三条件(验证页)
 
 1. clv_beat:纸面 ≥200 唯一注且 beat ≥60%;
-2. market_skill:前瞻 skill ≥0 且 ≥30 场(不读回测 run);
-3. review_errors:人工复核无系统性错误,**无复核记录恒不通过**;
+2. market_skill:前瞻 skill ≥0 且 ≥30 场(不读回测 run),只认当前部署 model_version(最新 issued_at 的版本;裁决 2026-09-28,周重训后样本窗口重置属诚实降级,历史好版本不作数);
+3. review_errors:复核误导率 ≤10%(verdict=misleading 占比)且 done ≥10 条;无记录/样本不足恒不通过(裁决 2026-09-28);
 4. full_season:整赛季覆盖,验收前恒 false。
 
 逻辑:CLV 证明"会找价"(先行指标),前瞻 skill 证明"模型确实准"(无泄漏),复核兜住系统性错。回测不作为门槛(可过拟合)。
