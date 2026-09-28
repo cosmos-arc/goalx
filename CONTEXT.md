@@ -151,6 +151,10 @@ _Avoid_: 联赛白名单、大流动性清单（口语可用，实体一律 Corp
 repo 外独立数据资产树（默认 ~/goalx-data/），承载 TrajectoryCorpus 的 raw 压缩件、bronze 解析层、silver canonical 层与研究查询库；与运行面仅经只读桥互通，采集故障与运行面互不波及。
 _Avoid_: 数据目录（泛指）、数据仓库（口语可用，实体一律 CorpusStore）
 
+**SilverKernel**:
+silver 层各 builder 的共同实现面（`data/silver.py`）：分区/整文件 parquet 原子写、幂等重建清理、事件流去重核 keep_value_changes（A→B→A 保留、同值心跳丢弃、不可解时间跳行——jc sp_change_event 与 srct odds_change_event 一份语义）、bronze 选取迭代与数值/赛季工具。磁盘布局唯一落点是 CorpusStore.silver_path()/raw_dir()。
+_Avoid_: silver 工具函数集（口语）、公共 helper（泛指）
+
 **本地报价研究候选**:
 相对于某项 Competition 具有本地投注市场关联、值得检验其报价相对跨市场共识是否含增量信息的 `(Competition, bookmaker_id)` 组合；候选身份不代表已证实领先、预测增益或数据覆盖达标。
 _Avoid_: 本地核心书商、领先书商

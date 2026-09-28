@@ -24,24 +24,21 @@ published_at 语义）。赛季按开球日 8 月界切（8/1-次年 7/31，与�
 
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct
 from goalx_backend.db import utc_now_iso
 
 SILVER_VERSION = "silver_fixture_v1"
 FIXTURE_DATASET = "fixture_universe"
-SEASON_START_MONTH = 8  # 赛季 8 月界切（与夜班季窗 8/1-7/31 同界）
 # 欧战正赛（联赛阶段）9 月开打，7/8 月同名行 = 资格赛（research/20 §九）
 EURO_COMPETITIONS = ("欧冠杯", "欧罗巴杯")
 EURO_QUALIFIER_MONTHS = (7, 8)
@@ -96,12 +93,6 @@ def resolve_kickoff(day: date, label: str) -> datetime | None:
     return datetime(anchor.year, anchor.month, anchor.day, hour, minute)
 
 
-def season_of(kickoff: datetime) -> str:
-    """开球 → 赛季键（8 月界切，目录名安全形 "2025-26"）。"""
-    year = kickoff.year if kickoff.month >= SEASON_START_MONTH else kickoff.year - 1
-    return f"{year}-{(year + 1) % 100:02d}"
-
-
 def _stage(league: str, kickoff: datetime) -> str:
     """联赛行 league；欧战按开球月窗口分资格赛/正赛。"""
     if league not in EURO_COMPETITIONS:
@@ -129,7 +120,12 @@ def fixture_rows(store: CorpusStore) -> tuple[list[dict[str, object]], int, int]
     重挂场次，防御性去重）。开球两形态/比分解析失败均跳行计数留痕。
     返回 (行集, 日页数, 异常跳行数)。
     """
-    latest_day = latest_bronze_rows(store, srct.DAY_DATASET)
+    latest_day = silver.latest_bronze_rows(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.DAY_DATASET,
+        srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+    )
     latest_match: dict[str, dict[str, object]] = {}
     fixtures: list[dict[str, object]] = []
     skipped = 0
@@ -176,18 +172,18 @@ def build_fixture_universe(store: CorpusStore) -> SilverFixtureReport:
     root = _fixture_root(store)
     grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
     for row in fixtures:
-        season = season_of(cast(datetime, row["kickoff"]))
+        season = silver.season_of(cast(datetime, row["kickoff"]))
         grouped.setdefault((season, str(row["league"])), []).append(row)
     target_dirs: set[Path] = set()
     for (season, league), rows in sorted(grouped.items()):
         part = root / f"season={season}" / f"competition={league}"
-        write_partition(part, rows, _FIXTURE_SCHEMA)
+        silver.write_partition(part, rows, _FIXTURE_SCHEMA)
         target_dirs.add(part)
         report.seasons[season] = report.seasons.get(season, 0) + len(rows)
     report.rows = len(fixtures)
     report.partitions = len(target_dirs)
-    report.stale_partitions_removed = remove_stale(root, target_dirs)
-    write_dataset_meta(
+    report.stale_partitions_removed = silver.remove_stale(root, target_dirs)
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": SILVER_VERSION,
@@ -204,97 +200,7 @@ def build_fixture_universe(store: CorpusStore) -> SilverFixtureReport:
 
 
 def _fixture_root(store: CorpusStore) -> Path:
-    return store.root / "silver" / srct.SRCT_PROVIDER / FIXTURE_DATASET
-
-
-def write_partition(
-    part: Path, rows: list[dict[str, object]], schema: pa.Schema
-) -> None:
-    """一分区一 parquet 文件（tmp 原子替换；排序已在上游统一完成）。"""
-    part.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pylist(rows, schema=schema)
-    tmp = part / "data.parquet.tmp"
-    pq.write_table(table, tmp, compression="zstd")
-    tmp.replace(part / "data.parquet")
-
-
-def remove_stale(root: Path, target: set[Path]) -> int:
-    """删除不在目标集里的旧分区（重建幂等的清理半边；silver 各数据集共用）。"""
-    removed = 0
-    if not root.exists():
-        return removed
-    for season_dir in sorted(root.iterdir()):
-        if not season_dir.is_dir():
-            continue  # _meta.json 等文件不动
-        for part in sorted(season_dir.iterdir()):
-            if part.is_dir() and part not in target:
-                for file in part.iterdir():
-                    file.unlink()
-                part.rmdir()
-                removed += 1
-        if season_dir.is_dir() and not any(season_dir.iterdir()):
-            season_dir.rmdir()
-    return removed
-
-
-def write_dataset_meta(root: Path, meta: dict[str, object]) -> None:
-    """数据集 _meta.json（空语料也要落——建库即审计；silver 各数据集共用）。"""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "_meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-
-
-def latest_bronze_rows(
-    store: CorpusStore, dataset: str
-) -> dict[str, dict[str, object]]:
-    """
-    当前解析器版本的 bronze 行，key→最新（append-only 后行胜出）。
-
-    silver 各 builder 共用的选取口径（切片 15 抽出）：重复抓取选一份
-    轨迹、旧 parser_version 行一律不可见。**全量物化**——仅限有界数据集
-    （day_page/match_stats，15.5K 行级）；odds/handicap 大数据集走
-    latest_bronze_ledger + 流式遍（票 19）。
-    """
-    latest: dict[str, dict[str, object]] = {}
-    for row in store.read_bronze(srct.SRCT_PROVIDER, dataset):
-        if row.get("parser_version") != srct.BRONZE_VERSIONS[dataset]:
-            continue
-        latest[str(row["sid"])] = row
-    return latest
-
-
-def latest_bronze_ledger(store: CorpusStore, dataset: str) -> dict[str, int]:
-    """
-    选轨信封账本：sid → 选中行号（票 19 选轨遍）。
-
-    选取口径与 latest_bronze_rows 全同（当前 parser_version、后行胜出）
-    但零物化——流式过 bronze 只留每 sid 一个行号，载荷逐行即弃；内存=
-    每 sid 一条 int，与语料总量无关。载荷遍按行号精确命中选中行。
-    """
-    version = srct.BRONZE_VERSIONS[dataset]
-    ledger: dict[str, int] = {}
-    for lineno, line in enumerate(store.iter_bronze_lines(srct.SRCT_PROVIDER, dataset)):
-        row = json.loads(line)
-        if row.get("parser_version") == version and row.get("sid") is not None:
-            ledger[str(row["sid"])] = lineno
-    return ledger
-
-
-def iter_selected_rows(
-    store: CorpusStore, dataset: str, ledger: dict[str, int]
-) -> Iterator[tuple[str, dict[str, object]]]:
-    """
-    信封账本的载荷遍：yield (sid, 选中 bronze 行)。
-
-    命中行号才 json.loads、单行即弃（内存=单行）。需原文透传的 spill 遍
-    不走这里（零解析写回保字节），见 srct_odds._spill_selected。
-    """
-    want = {lineno: sid for sid, lineno in ledger.items()}
-    for lineno, line in enumerate(store.iter_bronze_lines(srct.SRCT_PROVIDER, dataset)):
-        sid = want.get(lineno)
-        if sid is not None:
-            yield sid, json.loads(line)
+    return store.silver_path(srct.SRCT_PROVIDER, FIXTURE_DATASET)
 
 
 # ---- xg_observation（切片 16）：47 键统计按场 silver，源T 单源口径 ----
@@ -343,16 +249,6 @@ class SilverXgReport:
     built_at: str = ""
 
 
-def to_float(value: object) -> float | None:
-    """数值化容错（贴源串/数值均可；失败 None）。"""
-    if value is None:
-        return None
-    try:
-        return float(str(value))
-    except ValueError:
-        return None
-
-
 def _headline_xg(
     stats: list[dict[str, object]],
 ) -> tuple[float | None, float | None, bool]:
@@ -361,8 +257,8 @@ def _headline_xg(
     if headline is None:
         return None, None, False
     home, away = (
-        to_float(headline.get("home_value")),
-        to_float(headline.get("away_value")),
+        silver.to_float(headline.get("home_value")),
+        silver.to_float(headline.get("away_value")),
     )
     return home, away, home is None or away is None
 
@@ -396,7 +292,12 @@ def build_xg_observations(store: CorpusStore) -> SilverXgReport:
     bronze 行信封 fetched_at（列名同义）。
     """
     report = SilverXgReport(built_at=utc_now_iso())
-    latest = latest_bronze_rows(store, srct.STATS_DATASET)
+    latest = silver.latest_bronze_rows(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.STATS_DATASET,
+        srct.BRONZE_VERSIONS[srct.STATS_DATASET],
+    )
     meta = {str(r["sid"]): r for r in fixture_rows(store)[0]}
     rows: list[dict[str, object]] = []
     unknown: list[dict[str, object]] = []
@@ -427,25 +328,25 @@ def build_xg_observations(store: CorpusStore) -> SilverXgReport:
             unknown.append(row)
         else:
             rows.append(row)
-    root = store.root / "silver" / srct.SRCT_PROVIDER / XG_DATASET
+    root = store.silver_path(srct.SRCT_PROVIDER, XG_DATASET)
     target_dirs: set[Path] = set()
     grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
     for row in rows:
         fixture = meta[str(row["sid"])]
-        season = season_of(cast(datetime, fixture["kickoff"]))
+        season = silver.season_of(cast(datetime, fixture["kickoff"]))
         grouped.setdefault((season, str(fixture["league"])), []).append(row)
     if unknown:
         grouped.setdefault(("_unknown", "_unknown"), []).extend(unknown)
     for (season, league), part_rows in sorted(grouped.items()):
         part_rows.sort(key=lambda r: str(r["sid"]))
         part = root / f"season={season}" / f"competition={league}"
-        write_partition(part, part_rows, _XG_SCHEMA)
+        silver.write_partition(part, part_rows, _XG_SCHEMA)
         target_dirs.add(part)
         report.seasons[season] = report.seasons.get(season, 0) + len(part_rows)
     report.rows = len(rows) + len(unknown)
     report.partitions = len(target_dirs)
-    report.stale_partitions_removed = remove_stale(root, target_dirs)
-    write_dataset_meta(
+    report.stale_partitions_removed = silver.remove_stale(root, target_dirs)
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": XG_SILVER_VERSION,

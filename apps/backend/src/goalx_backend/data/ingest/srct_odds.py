@@ -55,6 +55,7 @@ from typing import Protocol, TextIO, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_silver
 from goalx_backend.db import utc_now_iso
@@ -75,7 +76,6 @@ STREAM_CHUNK_ROWS = 200_000
 # 语料峰值 ~2.5GB vs 不分块 ~4.5GB；测试经 chunk_sids=… 注入，分块对输出
 # 完全透明——Phase1 15.5K sid 重建峰值仍由本值决定）
 STREAM_CHUNK_SIDS = 500
-_UNSORTABLE_MS = 1 << 62  # 不可解时间的排序垫底值（随后按 bad_time 跳行）
 
 _BEIJING = timezone(timedelta(hours=8))  # 中国无夏令时，固定偏移归一
 _DETAIL_FIELDS = 8  # H|D|A|MM-DD HH:MM|凯利×3|YYYY（实测 516,027 行零异形）
@@ -304,12 +304,12 @@ def _parse_detail_row(raw: str, source_order: int) -> _DetailRec:
                 published = beijing_ms(datetime(int(year), month, day, hour, minute))
             except ValueError:
                 published = None
-    prices = [srct_silver.to_float(v) for v in fields[0:3]]
+    prices = [silver.to_float(v) for v in fields[0:3]]
     return _DetailRec(
         published_ms=published,
         source_order=source_order,
         prices=prices,
-        kellys=[srct_silver.to_float(v) for v in fields[4:7]],
+        kellys=[silver.to_float(v) for v in fields[4:7]],
         bad_price=any(p is None for p in prices),
     )
 
@@ -322,15 +322,6 @@ def _values_1x2(rec: _DetailRec) -> tuple[object, ...]:
 def _values_ah(rec: _AhRec) -> tuple[object, ...]:
     """亚盘值组：线原串+双水+状态（minute/score 为上下文列不进值组）。"""
     return (rec.line_raw, rec.home_water, rec.away_water, rec.status)
-
-
-def _row_sort_key(row: _TimedRow) -> tuple[int, int]:
-    """时间升序；不可解时间垫底（随后按 bad_time 跳行，序不影响结果）。"""
-    published = row.published_ms
-    return (
-        published if published is not None else _UNSORTABLE_MS,
-        row.source_order,
-    )
 
 
 def _same_minute_value_conflicts[R: _TimedRow](
@@ -351,42 +342,11 @@ def _same_minute_value_conflicts[R: _TimedRow](
     return sum(1 for ms, count in groups.items() if count > 1 and len(distinct[ms]) > 1)
 
 
-def _keep_value_changes[R: _TimedRow](
-    rows: list[R],
-    report: SilverOddsReport,
-    *,
-    value_of: Callable[[R], tuple[object, ...]],
-    account_row: Callable[[R], None],
-) -> list[R]:
-    """
-    去重核（两 market 共用）。
-
-    按 (published_at, source_order) 升序，值组与上一保留行全等的行丢弃——
-    A→B→A 保留、首条自然保留、末条同值心跳丢弃。不可解时间行不落事件
-    （bad_time 记账）；行级坏值口径由 account_row 注入。
-    """
-    rows.sort(key=_row_sort_key)
-    kept: list[R] = []
-    last_values: tuple[object, ...] | None = None
-    for rec in rows:
-        if rec.published_ms is None:
-            report.bad_time_rows += 1
-            continue
-        account_row(rec)
-        values = value_of(rec)
-        if values == last_values:
-            report.heartbeat_dropped += 1
-            continue
-        last_values = values
-        kept.append(rec)
-    return kept
-
-
 def _initial_triple(game_fields: list[str]) -> tuple[float, float, float] | None:
     """取 game 行初盘 HDA 三值（列位 3-5）；缺席/坏值 None。"""
     if len(game_fields) < _GAME_INITIAL_END:
         return None
-    values = [srct_silver.to_float(v) for v in game_fields[3:6]]
+    values = [silver.to_float(v) for v in game_fields[3:6]]
     if any(v is None for v in values):
         return None
     return cast("tuple[float, float, float]", tuple(values))
@@ -450,7 +410,7 @@ class StreamingPartitions:
         for part in self._writers:
             (part / "data.parquet.tmp").replace(part / "data.parquet")
         target = set(self._writers)
-        return len(target), srct_silver.remove_stale(self._root, target)
+        return len(target), silver.remove_stale(self._root, target)
 
 
 @dataclass
@@ -559,7 +519,9 @@ def _absorb_market_books(store: CorpusStore, entries: dict[str, _BookEntry]) -> 
         (SPACE_AH, srct.ASIANODDS_DATASET),
         ("ou", srct.OVERDOWN_DATASET),
     ):
-        for sid, bronze in srct_silver.latest_bronze_rows(store, dataset).items():
+        for sid, bronze in silver.latest_bronze_rows(
+            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
+        ).items():
             payload = bronze.get("payload")
             books = (
                 cast("list[dict[str, object]]", payload.get("books", []))
@@ -599,16 +561,28 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     """
     report = SilverBookmakerReport(built_at=utc_now_iso())
     entries: dict[str, _BookEntry] = {}
-    ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
-    for sid, bronze in srct_silver.iter_selected_rows(store, srct.ODDS_DATASET, ledger):
+    ledger = silver.latest_bronze_ledger(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+    )
+    for sid, bronze in silver.iter_selected_rows(
+        store, srct.SRCT_PROVIDER, srct.ODDS_DATASET, ledger
+    ):
         _absorb_games(bronze, entries, fetched_ms(bronze.get("fetched_at")) or 0, sid)
     _absorb_market_books(store, entries)
     ah_count = 0
     ah_first = 0
     ah_last = 0
-    hdp_ledger = srct_silver.latest_bronze_ledger(store, srct.HANDICAP_DATASET)
-    for _, bronze in srct_silver.iter_selected_rows(
-        store, srct.HANDICAP_DATASET, hdp_ledger
+    hdp_ledger = silver.latest_bronze_ledger(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.HANDICAP_DATASET,
+        srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+    )
+    for _, bronze in silver.iter_selected_rows(
+        store, srct.SRCT_PROVIDER, srct.HANDICAP_DATASET, hdp_ledger
     ):
         payload = bronze.get("payload")
         if isinstance(payload, dict) and payload.get("rows"):
@@ -641,16 +615,11 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
         }
         for bookmaker_id, entry in sorted(entries.items())
     ]
-    root = store.root / "silver" / srct.SRCT_PROVIDER / BOOKMAKER_DATASET
-    root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
-    pq.write_table(
-        pa.Table.from_pylist(rows, schema=_BOOKMAKER_SCHEMA), tmp, compression="zstd"
-    )
-    tmp.replace(root / "data.parquet")
+    root = store.silver_path(srct.SRCT_PROVIDER, BOOKMAKER_DATASET)
+    silver.write_dataset_file(root, rows, _BOOKMAKER_SCHEMA)
     report.rows = len(rows)
     report.matches = len(ledger)
-    srct_silver.write_dataset_meta(
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": BOOKMAKER_SILVER_VERSION,
@@ -746,8 +715,13 @@ def _emit_1x2_events(
             if rec.bad_price:
                 report.bad_prices += 1
 
-        kept = _keep_value_changes(
-            rows, report, value_of=_values_1x2, account_row=_account
+        kept = silver.keep_value_changes(
+            rows,
+            report,
+            time_of=lambda r: r.published_ms,
+            order_of=lambda r: r.source_order,
+            value_of=_values_1x2,
+            account_row=_account,
         )
         # §四口径：与 detail 首行（pre-dedup 最早可解时间行）比，非首个保留行
         earliest = next((r.prices for r in rows if r.published_ms is not None), [])
@@ -798,9 +772,9 @@ def _emit_ah_events(
             _AhRec(
                 published_ms=published,
                 source_order=idx,
-                home_water=srct_silver.to_float(row.get("home_water")),
+                home_water=silver.to_float(row.get("home_water")),
                 line_raw=(str(row["line"]) if row.get("line") is not None else None),
-                away_water=srct_silver.to_float(row.get("away_water")),
+                away_water=silver.to_float(row.get("away_water")),
                 minute=_to_int(row.get("minute")),
                 score=(str(row["score"]) if row.get("score") is not None else None),
                 status=(str(row["status"]) if row.get("status") is not None else None),
@@ -821,8 +795,13 @@ def _emit_ah_events(
         ):
             report.bad_prices += 1
 
-    kept = _keep_value_changes(
-        parsed, report, value_of=_values_ah, account_row=_account
+    kept = silver.keep_value_changes(
+        parsed,
+        report,
+        time_of=lambda r: r.published_ms,
+        order_of=lambda r: r.source_order,
+        value_of=_values_ah,
+        account_row=_account,
     )
     kept_meta: list[tuple[str, int]] = []
     for rec in kept:
@@ -874,7 +853,7 @@ def _emit_sid(
         kickoff_ms = None
     else:
         kickoff = cast("datetime", fixture["kickoff"])
-        partition = (srct_silver.season_of(kickoff), str(fixture["league"]))
+        partition = (silver.season_of(kickoff), str(fixture["league"]))
         kickoff_ms = beijing_ms(kickoff)
     if odds_bronze is not None:
         tracker.register(
@@ -956,9 +935,19 @@ def build_odds_change_events(
     """
     report = SilverOddsReport(built_at=utc_now_iso())
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
-    odds_ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
-    hdp_ledger = srct_silver.latest_bronze_ledger(store, srct.HANDICAP_DATASET)
-    root = store.root / "silver" / srct.SRCT_PROVIDER / ODDS_DATASET
+    odds_ledger = silver.latest_bronze_ledger(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+    )
+    hdp_ledger = silver.latest_bronze_ledger(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.HANDICAP_DATASET,
+        srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+    )
+    root = store.silver_path(srct.SRCT_PROVIDER, ODDS_DATASET)
     out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
 
@@ -1034,7 +1023,7 @@ def build_odds_change_events(
     )
     total = report.source_rows_1x2 + report.source_rows_ah
     report.unexplained_gap = total - accounted  # 负值=过记账，同样不许静默
-    srct_silver.write_dataset_meta(
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": ODDS_SILVER_VERSION,

@@ -39,48 +39,26 @@ CORPUS_DUCKDB_NAME = "corpus.duckdb"
 RUNNING_FACE_ALIAS = "goalx"
 # 银层视图清单（视图名, 语料树 silver 相对路径；随数据集逐张扩：
 # 538 静态表+odds/字典=切片 15/16，四件套齐）
-_SILVER_VIEWS: tuple[tuple[str, str], ...] = (
-    (
-        srct_silver.FIXTURE_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_silver.FIXTURE_DATASET}",
-    ),
-    (
-        srct_silver.XG_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_silver.XG_DATASET}",
-    ),
-    (
-        "archive_538",
-        f"{archive538.PROVIDER}/{archive538.DATASET}",
-    ),
-    (
-        srct_odds.ODDS_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_odds.ODDS_DATASET}",
-    ),
+_SILVER_VIEWS: tuple[tuple[str, str, str], ...] = (
+    (srct_silver.FIXTURE_DATASET, srct.SRCT_PROVIDER, srct_silver.FIXTURE_DATASET),
+    (srct_silver.XG_DATASET, srct.SRCT_PROVIDER, srct_silver.XG_DATASET),
+    ("archive_538", archive538.PROVIDER, archive538.DATASET),
+    (srct_odds.ODDS_DATASET, srct.SRCT_PROVIDER, srct_odds.ODDS_DATASET),
     (
         srct_odds.BOOKMAKER_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_odds.BOOKMAKER_DATASET}",
+        srct.SRCT_PROVIDER,
+        srct_odds.BOOKMAKER_DATASET,
     ),
-    (
-        srct_market.MARKET_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_market.MARKET_DATASET}",
-    ),
-    (
-        srct_market.DETAIL_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_market.DETAIL_DATASET}",
-    ),
+    (srct_market.MARKET_DATASET, srct.SRCT_PROVIDER, srct_market.MARKET_DATASET),
+    (srct_market.DETAIL_DATASET, srct.SRCT_PROVIDER, srct_market.DETAIL_DATASET),
     (
         srct_market.ANALYSIS_DATASET,
-        f"{srct.SRCT_PROVIDER}/{srct_market.ANALYSIS_DATASET}",
+        srct.SRCT_PROVIDER,
+        srct_market.ANALYSIS_DATASET,
     ),
-    (
-        jc_silver.SP_EVENT_DATASET,
-        f"{jc.JC_PROVIDER}/{jc_silver.SP_EVENT_DATASET}",
-    ),
+    (jc_silver.SP_EVENT_DATASET, jc.JC_PROVIDER, jc_silver.SP_EVENT_DATASET),
     # 票 78：自算 Elo 逐场赛前值（消费即 join fixture_universe，零跨源映射）
-    (
-        elo_silver.DATASET,
-        f"{elo_silver.PROVIDER}/{elo_silver.DATASET}",
-    ),
+    (elo_silver.DATASET, elo_silver.PROVIDER, elo_silver.DATASET),
 )
 
 
@@ -100,12 +78,12 @@ def build_corpus_duckdb(store: CorpusStore) -> Path:
     path = corpus_duckdb_path(store.root)
     con = duckdb.connect(str(path))
     try:
-        for view, rel in _SILVER_VIEWS:
-            silver = store.root / "silver" / rel
-            if not any(silver.glob("**/*.parquet")):
+        for view, provider, dataset in _SILVER_VIEWS:
+            dataset_dir = store.silver_path(provider, dataset)
+            if not any(dataset_dir.glob("**/*.parquet")):
                 logger.warning("corpus.duckdb：{} 无 parquet，跳过建视图", view)
                 continue
-            glob = silver.as_posix() + "/**/*.parquet"
+            glob = dataset_dir.as_posix() + "/**/*.parquet"
             con.execute(
                 # 视图名/路径来自模块常量与语料树根，非用户输入
                 f"""

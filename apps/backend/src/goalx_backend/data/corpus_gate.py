@@ -498,8 +498,8 @@ def _pearson(
 
 
 def _silver_root(store: CorpusStore, dataset: str) -> Path:
-    """语料 silver 数据集根（路径布局知识的唯一落点）。"""
-    return store.root / "silver" / srct.SRCT_PROVIDER / dataset
+    """语料 silver 数据集根（布局唯一落点在 CorpusStore.silver_path）。"""
+    return store.silver_path(srct.SRCT_PROVIDER, dataset)
 
 
 def _read_meta(store: CorpusStore, dataset: str) -> dict[str, Any]:
@@ -537,7 +537,7 @@ def _count_bronze_keys(store: CorpusStore, dataset: str) -> int:
 
 
 def _count_raw_files(store: CorpusStore, dataset: str) -> int:
-    root = store.root / "raw" / srct.SRCT_PROVIDER / dataset
+    root = store.raw_dir(srct.SRCT_PROVIDER, dataset)
     if not root.exists():
         return 0
     return sum(1 for p in root.iterdir() if p.is_file() and not p.name.endswith(".tmp"))

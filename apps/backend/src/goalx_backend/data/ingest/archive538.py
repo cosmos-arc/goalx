@@ -32,11 +32,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest.srct_silver import (
-    remove_stale,
-    season_of,
-    write_partition,
-)
+from goalx_backend.data.silver import remove_stale, season_of, write_partition
 from goalx_backend.db import utc_now_iso
 
 PROVIDER = "538"
@@ -114,7 +110,7 @@ class Archive538Report:
 
 
 def _silver_root(store: CorpusStore) -> Path:
-    return store.root / "silver" / PROVIDER / DATASET
+    return store.silver_path(PROVIDER, DATASET)
 
 
 def _num(value: str) -> float | None:
