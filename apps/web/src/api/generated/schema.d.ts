@@ -990,6 +990,46 @@ export interface components {
             events: components["schemas"]["BankrollEventView"][];
         };
         /**
+         * BaselinePeriod
+         * @description 分期一行：两源覆盖计数与质检均值（缺失/overround/两源差）。
+         */
+        BaselinePeriod: {
+            /** N */
+            n: number;
+            /** N Psc */
+            n_psc: number;
+            /** N Avgc */
+            n_avgc: number;
+            /** N Both */
+            n_both: number;
+            /** N Neither */
+            n_neither: number;
+            /** Psc Missing Rate */
+            psc_missing_rate: number | null;
+            /** Avgc Missing Rate */
+            avgc_missing_rate: number | null;
+            /** Mean Overround Psc */
+            mean_overround_psc: number | null;
+            /** Mean Overround Avgc */
+            mean_overround_avgc: number | null;
+            /** Mean Shin Prob Abs Diff Psc Vs Avgc */
+            mean_shin_prob_abs_diff_psc_vs_avgc: number | null;
+        };
+        /**
+         * BaselineQualityReport
+         * @description 基准分期质检报告（契约载荷，票 06 键集冻结）。
+         */
+        BaselineQualityReport: {
+            /** Review Date */
+            review_date: string;
+            /** Periods */
+            periods: {
+                [key: string]: components["schemas"]["BaselinePeriod"];
+            };
+            /** Limitations */
+            limitations: string;
+        };
+        /**
          * BetCreate
          * @description 建注(建议或直接回录)输入。
          */
@@ -1110,6 +1150,20 @@ export interface components {
             note?: string | null;
         };
         /**
+         * BlindReviewSummary
+         * @description 盲评参考列（统计力弱不作证明支柱）。
+         */
+        BlindReviewSummary: {
+            /** Total */
+            total: number;
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Llm Share */
+            llm_share: number | null;
+        };
+        /**
          * BookQuoteView
          * @description 研究页一行：某欧赔 book 的最新三向报价。
          *
@@ -1122,6 +1176,118 @@ export interface components {
             odds: components["schemas"]["SelectionTriple"];
             /** Captured At */
             captured_at?: string | null;
+        };
+        /**
+         * ClvBasisEntry
+         * @description by_close_basis 一级：腿数/唯一注数 + 同构分组（mixed 无分组仅注数）。
+         */
+        ClvBasisEntry: {
+            /**
+             * Legs
+             * @default 0
+             */
+            legs: number;
+            /** Bets */
+            bets: number;
+            /** Groups */
+            groups?: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["ClvGroupStats"];
+                };
+            };
+            /** Note */
+            note?: string | null;
+        };
+        /**
+         * ClvBucketStats
+         * @description 距开赛分桶（单关）的 beat 汇总。
+         */
+        ClvBucketStats: {
+            /** N */
+            n: number;
+            /** Beat Rate */
+            beat_rate: number;
+        };
+        /**
+         * ClvDenominator
+         * @description 报表分母：采集面四计 + 去重面五计（键集冻结，票 06）。
+         */
+        ClvDenominator: {
+            /** Settled Bets */
+            settled_bets: number;
+            /** Legs */
+            legs: number;
+            /** No Close Bets */
+            no_close_bets: number;
+            /** Unsupported Bets */
+            unsupported_bets: number;
+            /** Raw Bets */
+            raw_bets: number;
+            /** Reconciled Bets */
+            reconciled_bets: number;
+            /** Unique Bets */
+            unique_bets: number;
+            /** Deduped Duplicates */
+            deduped_duplicates: number;
+            /** Fixtures */
+            fixtures: number;
+        };
+        /**
+         * ClvGroupStats
+         * @description 一组（单关/2串1 × paper/live）的 beat/CLV 汇总（票级口径）。
+         */
+        ClvGroupStats: {
+            /**
+             * N Bets
+             * @default 0
+             */
+            n_bets: number;
+            /** Beat Rate */
+            beat_rate?: number | null;
+            /** Avg Clv */
+            avg_clv?: number | null;
+        };
+        /**
+         * ClvRegression
+         * @description 单关 CLV → 盈亏 OLS 回归。
+         */
+        ClvRegression: {
+            /** N */
+            n: number;
+            /** Slope */
+            slope: number | null;
+            /** R Squared */
+            r_squared: number | null;
+            /** Note */
+            note: string;
+        };
+        /**
+         * ClvReport
+         * @description 票级 CLV 报表（契约载荷，票 06 键集冻结）。
+         */
+        ClvReport: {
+            /** Singles */
+            singles: {
+                [key: string]: components["schemas"]["ClvGroupStats"];
+            };
+            /** Parlay2 */
+            parlay2: {
+                [key: string]: components["schemas"]["ClvGroupStats"];
+            };
+            /** Independence Assumed */
+            independence_assumed: boolean;
+            /** Close Basis Note */
+            close_basis_note: string;
+            /** By Close Basis */
+            by_close_basis: {
+                [key: string]: components["schemas"]["ClvBasisEntry"];
+            };
+            denominator: components["schemas"]["ClvDenominator"];
+            /** By Minutes Bucket Single */
+            by_minutes_bucket_single: {
+                [key: string]: components["schemas"]["ClvBucketStats"];
+            };
+            regression: components["schemas"]["ClvRegression"];
         };
         /**
          * ColdSwapView
@@ -1542,6 +1708,123 @@ export interface components {
             had_quote?: components["schemas"]["HadQuoteStatus"] | null;
         };
         /**
+         * ForwardCoverage
+         * @description 前瞻覆盖四态 + 计分（排除全计，不静默丢弃）。
+         */
+        ForwardCoverage: {
+            /** Settled Fixtures */
+            settled_fixtures: number;
+            /** No Forecast */
+            no_forecast: number;
+            /** Post Kickoff Only */
+            post_kickoff_only: number;
+            /** No Market Baseline */
+            no_market_baseline: number;
+            /** Scored */
+            scored: number;
+        };
+        /**
+         * ForwardGroupMetrics
+         * @description 一个 model_version 分组的前瞻指标（RPS/Brier/logloss 双侧 + skill + DM）。
+         */
+        ForwardGroupMetrics: {
+            /**
+             * N
+             * @default 0
+             */
+            n: number;
+            /**
+             * Rps Model
+             * @default 0
+             */
+            rps_model: number;
+            /**
+             * Rps Market
+             * @default 0
+             */
+            rps_market: number;
+            /**
+             * Skill Rps
+             * @default 0
+             */
+            skill_rps: number;
+            /**
+             * Dm Stat
+             * @default 0
+             */
+            dm_stat: number;
+            /**
+             * Dm P
+             * @default 1
+             */
+            dm_p: number;
+            /**
+             * Dm P Exploratory
+             * @default true
+             */
+            dm_p_exploratory: boolean;
+            /**
+             * Brier Model
+             * @default 0
+             */
+            brier_model: number;
+            /**
+             * Brier Market
+             * @default 0
+             */
+            brier_market: number;
+            /**
+             * Logloss Model
+             * @default 0
+             */
+            logloss_model: number;
+            /**
+             * Logloss Market
+             * @default 0
+             */
+            logloss_market: number;
+            /**
+             * Ece H
+             * @default 0
+             */
+            ece_h: number;
+            /**
+             * Ece D
+             * @default 0
+             */
+            ece_d: number;
+            /**
+             * Ece A
+             * @default 0
+             */
+            ece_a: number;
+            /**
+             * Insufficient Samples
+             * @default true
+             */
+            insufficient_samples: boolean;
+            /**
+             * N Fixtures
+             * @default 0
+             */
+            n_fixtures: number;
+        };
+        /**
+         * ForwardSkillReport
+         * @description 前瞻 skill 分组报告（契约载荷，票 06 键集冻结）。
+         */
+        ForwardSkillReport: {
+            /** Rule */
+            rule: string;
+            /** Track */
+            track: string;
+            coverage: components["schemas"]["ForwardCoverage"];
+            /** Groups */
+            groups: {
+                [key: string]: components["schemas"]["ForwardGroupMetrics"];
+            };
+        };
+        /**
          * GoalsFixtureView
          * @description 进球玩法页一行（票 wb-04）：场次信息 + ttg/crs 两块 + 模型出处。
          */
@@ -1699,6 +1982,20 @@ export interface components {
             collected_at: string;
         };
         /**
+         * IntelQuality
+         * @description 情报质量列（报告列不设门槛）。
+         */
+        IntelQuality: {
+            /** Covered */
+            covered: number;
+            /** Coverage */
+            coverage: number | null;
+            /** Median Hours To Kickoff */
+            median_hours_to_kickoff: number | null;
+            /** Avg Sources */
+            avg_sources: number | null;
+        };
+        /**
          * LegPayload
          * @description 一腿输入。
          */
@@ -1713,6 +2010,31 @@ export interface components {
             locked_odds: number;
             /** Goal Line */
             goal_line?: number | null;
+        };
+        /**
+         * M3ProtocolReport
+         * @description M3 评测协议总报告（契约载荷，票 06 键集冻结）。
+         */
+        M3ProtocolReport: {
+            /** Rule */
+            rule: string;
+            /** Tracks */
+            tracks: {
+                [key: string]: components["schemas"]["ForwardSkillReport"];
+            };
+            paired_fused_vs_ml: components["schemas"]["PairedFusedVsMl"];
+            tier_a: components["schemas"]["TierStatus"];
+            tier_b: components["schemas"]["TierStatus"];
+            /** Llm Ece Clean */
+            llm_ece_clean: boolean | null;
+            /** Review Clean */
+            review_clean: boolean | null;
+            intel_quality: components["schemas"]["IntelQuality"];
+            blind_review: components["schemas"]["BlindReviewSummary"];
+            /** Note */
+            note: string;
+            /** Generated At */
+            generated_at: string;
         };
         /**
          * ManualJoinPayload
@@ -1773,6 +2095,24 @@ export interface components {
             odds: number;
             /** Captured At */
             captured_at: string;
+        };
+        /**
+         * PairedFusedVsMl
+         * @description 同场双轨配对统计：fused vs ml 的 RPS 对照 + DM。
+         */
+        PairedFusedVsMl: {
+            /** Pairs */
+            pairs: number;
+            /** Fused Win Rate */
+            fused_win_rate: number | null;
+            /** Mean Rps Delta */
+            mean_rps_delta: number | null;
+            /** Dm Stat */
+            dm_stat: number;
+            /** Dm P */
+            dm_p: number;
+            /** Span Weeks */
+            span_weeks: number;
         };
         /**
          * PoolMatchView
@@ -1957,6 +2297,14 @@ export interface components {
             last_run?: components["schemas"]["PoolSyncRunView"] | null;
             /** Period Count */
             period_count: number;
+        };
+        /**
+         * RecordedView
+         * @description 落库结果（幂等语义化：recorded=false = 重复提交被吸收）。
+         */
+        RecordedView: {
+            /** Recorded */
+            recorded: boolean;
         };
         /**
          * ReviewItemView
@@ -2193,6 +2541,20 @@ export interface components {
             caliber: string;
         };
         /**
+         * TierStatus
+         * @description 一档达标状态行（阈值冻结，票 05）。
+         */
+        TierStatus: {
+            /** Checks */
+            checks: {
+                [key: string]: boolean;
+            };
+            /** Verdict */
+            verdict: string;
+            /** Dm P Reported */
+            dm_p_reported?: number | null;
+        };
+        /**
          * TodayFixtureView
          * @description 场次列表页一行：竞彩 vs 欧洲共识对照（票 22/36；票 wb-01 加业务日）。
          */
@@ -2285,14 +2647,8 @@ export interface components {
             yield_curve: components["schemas"]["YieldPoint"][];
             /** Yield Curve Mode */
             yield_curve_mode: string;
-            /** Clv */
-            clv: {
-                [key: string]: unknown;
-            };
-            /** Forward */
-            forward: {
-                [key: string]: unknown;
-            };
+            clv: components["schemas"]["ClvReport"];
+            forward: components["schemas"]["ForwardSkillReport"];
             latest_run?: components["schemas"]["BacktestRunView"] | null;
         };
         /**
@@ -3467,9 +3823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ForwardSkillReport"];
                 };
             };
         };
@@ -3489,9 +3843,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["M3ProtocolReport"];
                 };
             };
         };
@@ -3511,9 +3863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BaselineQualityReport"];
                 };
             };
         };
@@ -3637,9 +3987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
+                    "application/json": components["schemas"]["RecordedView"];
                 };
             };
             /** @description 复核项不存在或已裁决 */
@@ -3679,9 +4027,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
+                    "application/json": components["schemas"]["RecordedView"];
                 };
             };
             /** @description Validation Error */

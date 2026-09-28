@@ -12,6 +12,11 @@ from fastapi.testclient import TestClient
 
 from goalx_backend.config import Settings
 from goalx_backend.db import connect, migrate
+from goalx_backend.evaluation.forward_validation import (
+    ForwardCoverage,
+    ForwardGroupMetrics,
+    ForwardSkillReport,
+)
 from goalx_backend.main import create_app
 
 
@@ -282,13 +287,31 @@ def test_market_skill_deploys_latest_version(
         )
     conn.commit()
     conn.close()
-    groups = {
-        "dc-v1": {"n": 50, "skill_rps": 0.02},
-        "dc-v2": {"n": 50, "skill_rps": -0.01},
-    }
+
+    def _group(n: int, skill: float) -> ForwardGroupMetrics:
+        return ForwardGroupMetrics(
+            n=n,
+            skill_rps=skill,
+            dm_p=1.0,
+            dm_p_exploratory=True,
+            insufficient_samples=False,
+        )
+
+    groups = {"dc-v1": _group(50, 0.02), "dc-v2": _group(50, -0.01)}
     monkeypatch.setattr(
         "goalx_backend.evaluation.forward_validation.forward_skill_report",
-        lambda conn: {"groups": groups},
+        lambda conn: ForwardSkillReport(
+            rule="stub",
+            track="ml",
+            coverage=ForwardCoverage(
+                settled_fixtures=50,
+                no_forecast=0,
+                post_kickoff_only=0,
+                no_market_baseline=0,
+                scored=50,
+            ),
+            groups=groups,
+        ),
     )
     with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
         body = client.get("/api/v1/validation/progress").json()
@@ -298,7 +321,7 @@ def test_market_skill_deploys_latest_version(
     assert "dc-v2" in condition["current"]
     assert "部署" in condition["current"]
 
-    groups["dc-v2"]["skill_rps"] = 0.01
+    groups["dc-v2"].skill_rps = 0.01
     with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
         body = client.get("/api/v1/validation/progress").json()
     condition = {c["key"]: c for c in body["conditions"]}["market_skill"]

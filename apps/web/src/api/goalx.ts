@@ -28,6 +28,11 @@ export type StakeAdvice = Schemas["StakeSuggestion"];
 export type DrawResultImportInput = Schemas["DrawResultImport"];
 export type BacktestRun = Schemas["BacktestRunView"];
 export type ValidationProgress = Schemas["ValidationProgressView"];
+export type ClvReport = Schemas["ClvReport"];
+export type ClvGroupStats = Schemas["ClvGroupStats"];
+export type ClvBasisEntry = Schemas["ClvBasisEntry"];
+export type ForwardSkillReport = Schemas["ForwardSkillReport"];
+export type ForwardGroupMetrics = Schemas["ForwardGroupMetrics"];
 
 type FetchResult<T> = { data: T; error?: never } | { data?: never; error: unknown };
 
@@ -271,16 +276,16 @@ export function fetchReviewQueue(): Promise<Schemas["ReviewQueueView"]> {
 }
 
 /** 提交复核结论（三分类只进评测集；已裁决/不存在 404）。 */
-export function submitReviewVerdict(itemId: number, payload: VerdictInput): Promise<{ recorded: boolean }> {
+export function submitReviewVerdict(itemId: number, payload: VerdictInput): Promise<Schemas["RecordedView"]> {
 	return unwrap(
 		client.POST("/api/v1/review/items/{item_id}/verdict", {
 			params: { path: { item_id: itemId } },
 			body: payload,
 		}),
-	) as Promise<{ recorded: boolean }>;
+	);
 }
 
 /** 提交盲评（双周匿名二选一；同周期同场次幂等吸收）。 */
-export function submitBlindReview(payload: BlindReviewInput): Promise<{ recorded: boolean }> {
-	return unwrap(client.POST("/api/v1/blind-reviews", { body: payload })) as Promise<{ recorded: boolean }>;
+export function submitBlindReview(payload: BlindReviewInput): Promise<Schemas["RecordedView"]> {
+	return unwrap(client.POST("/api/v1/blind-reviews", { body: payload }));
 }

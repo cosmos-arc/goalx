@@ -22,6 +22,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, cast
 
+from pydantic import BaseModel
+
 from goalx_backend.data import quote_evidence
 from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation.metrics import evaluate_predictions
@@ -147,9 +149,49 @@ def _had_from_payload(payload: dict[str, Any]) -> dict[str, float] | None:
     return None
 
 
+class ForwardCoverage(BaseModel):
+    """前瞻覆盖四态 + 计分（排除全计，不静默丢弃）。"""
+
+    settled_fixtures: int
+    no_forecast: int
+    post_kickoff_only: int
+    no_market_baseline: int
+    scored: int
+
+
+class ForwardGroupMetrics(BaseModel):
+    """一个 model_version 分组的前瞻指标（RPS/Brier/logloss 双侧 + skill + DM）。"""
+
+    n: int = 0
+    rps_model: float = 0.0
+    rps_market: float = 0.0
+    skill_rps: float = 0.0
+    dm_stat: float = 0.0
+    dm_p: float = 1.0
+    dm_p_exploratory: bool = True  # 共享比赛相关性未处理，p 只作探索性参考
+    brier_model: float = 0.0
+    brier_market: float = 0.0
+    logloss_model: float = 0.0
+    logloss_market: float = 0.0
+    ece_h: float = 0.0
+    ece_d: float = 0.0
+    ece_a: float = 0.0
+    insufficient_samples: bool = True
+    n_fixtures: int = 0
+
+
+class ForwardSkillReport(BaseModel):
+    """前瞻 skill 分组报告（契约载荷，票 06 键集冻结）。"""
+
+    rule: str
+    track: str
+    coverage: ForwardCoverage
+    groups: dict[str, ForwardGroupMetrics]
+
+
 def forward_skill_report(
     conn: sqlite3.Connection, *, track: str = "ml"
-) -> dict[str, Any]:
+) -> ForwardSkillReport:
     """
     前瞻 skill 分组报告：每个 model_version 一组，含排除/覆盖分母。
 
@@ -160,12 +202,12 @@ def forward_skill_report(
     groups: dict[str, list[ForwardSample]] = {}
     for sample in samples:
         groups.setdefault(sample.model_version, []).append(sample)
-    report: dict[str, Any] = {
-        "rule": FROZEN_RULE,
-        "track": track,
-        "coverage": counts,
-        "groups": {},
-    }
+    report = ForwardSkillReport(
+        rule=FROZEN_RULE,
+        track=track,
+        coverage=ForwardCoverage(**counts),
+        groups={},
+    )
     for version, group in sorted(groups.items()):
         metrics = evaluate_predictions(
             [
@@ -179,7 +221,9 @@ def forward_skill_report(
                 for s in group
             ]
         )
-        metrics["insufficient_samples"] = len(group) < MIN_GROUP_SAMPLES
-        metrics["n_fixtures"] = len({s.fixture_id for s in group})
-        report["groups"][version] = metrics
+        report.groups[version] = ForwardGroupMetrics(
+            **metrics,
+            insufficient_samples=len(group) < MIN_GROUP_SAMPLES,
+            n_fixtures=len({s.fixture_id for s in group}),
+        )
     return report

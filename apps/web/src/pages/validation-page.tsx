@@ -1,6 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { type BacktestRun, fetchBacktestRuns, fetchValidationProgress, type ValidationProgress } from "../api/goalx";
+import {
+	type BacktestRun,
+	type ClvReport,
+	type ForwardSkillReport,
+	fetchBacktestRuns,
+	fetchValidationProgress,
+	type ValidationProgress,
+} from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import type { EChartsOption } from "../components/charts/echarts";
 import { useECharts } from "../components/charts/use-echarts";
@@ -25,49 +32,32 @@ import { cssVar, TABULAR_NUMS } from "../lib/ui";
  *   不在呈现层自创或弱化通过线。
  * - 成本摘要刻意不上本页（资金页的事，票 20）。
  *
- * 数据源 = 现有端点（票 10 定稿零 contract 变更）：`GET /validation/progress`
- * 已内嵌 clv/forward 两份弱类型字典，其中 forward 与 `GET /validation/forward-skill`
- * 是同一份报告（forward_skill_report），不再重复请求。
+ * 数据源（票 06 起）：clv/forward 为契约 typed models（后端改键 = CI 红灯，
+ * 不再页上静默消失）；回测 run 的 summary/overall_metrics 仍是自由字典
+ * （本票外），取值经 asNumber 容错。
  */
 
 type ConditionProgress = ValidationProgress["conditions"][number];
 type YieldPoint = ValidationProgress["yield_curve"][number];
 
-// ---- 弱类型字典取值工具（票 34：clv/forward 为 unknown 字典，缺失一律回退） ----
-
-function pick(source: unknown, ...keys: string[]): unknown {
-	let cursor: unknown = source;
-	for (const key of keys) {
-		if (typeof cursor !== "object" || cursor === null) return undefined;
-		cursor = (cursor as Record<string, unknown>)[key];
-	}
-	return cursor;
-}
+// ---- 数值容错（仅回测 run 自由字典用；clv/forward 已是契约类型） ----
 
 function asNumber(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function asString(value: unknown): string | null {
-	return typeof value === "string" && value !== "" ? value : null;
+function formatPct(value: number | null | undefined, digits = 1): string {
+	return value === null || value === undefined ? "—" : `${(value * 100).toFixed(digits)}%`;
 }
 
-function asBool(value: unknown): boolean | null {
-	return typeof value === "boolean" ? value : null;
-}
-
-function formatPct(value: number | null, digits = 1): string {
-	return value === null ? "—" : `${(value * 100).toFixed(digits)}%`;
-}
-
-function formatSigned(value: number | null, digits = 4): string {
-	if (value === null) return "—";
+function formatSigned(value: number | null | undefined, digits = 4): string {
+	if (value === null || value === undefined) return "—";
 	return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
 }
 
 /** 概率域 CLV 转百分比带符号（+0.01 → +1.00%），与词典"持续 +0.5%~3%"同读法。 */
-function formatSignedPct(value: number | null, digits = 2): string {
-	if (value === null) return "—";
+function formatSignedPct(value: number | null | undefined, digits = 2): string {
+	if (value === null || value === undefined) return "—";
 	return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;
 }
 
@@ -185,7 +175,7 @@ function YieldChart({ points }: { points: YieldPoint[] }) {
 	);
 }
 
-// ---- 弱类型指标映射（票 09 定稿：已知 key 映射为带标签指标行，未知 key 折叠） ----
+// ---- 契约类型指标映射（票 06：键集在 schema 冻结，改键 = CI 红） ----
 
 export type MetricRow = {
 	id: string;
@@ -194,52 +184,6 @@ export type MetricRow = {
 	hint?: string;
 	term?: GlossaryId;
 };
-
-export type MappedMetrics = {
-	rows: MetricRow[];
-	unknownEntries: Array<[string, unknown]>;
-};
-
-const CLV_KNOWN_KEYS = new Set([
-	"singles",
-	"parlay2",
-	"independence_assumed",
-	"close_basis_note",
-	"by_close_basis",
-	"denominator",
-	"by_minutes_bucket_single",
-	"regression",
-]);
-const FORWARD_KNOWN_KEYS = new Set(["rule", "track", "coverage", "groups"]);
-
-function splitUnknown(dict: Record<string, unknown>, known: Set<string>): Array<[string, unknown]> {
-	return Object.entries(dict).filter(([key]) => !known.has(key));
-}
-
-function groupRows(dict: Record<string, unknown>, key: "singles" | "parlay2", kind: string): MetricRow[] {
-	const rows: MetricRow[] = [];
-	const section = dict[key];
-	if (typeof section !== "object" || section === null) {
-		return rows;
-	}
-	for (const mode of ["paper", "live"] as const) {
-		const stats = pick(section, mode);
-		if (typeof stats !== "object" || stats === null) {
-			continue;
-		}
-		const n = asNumber(pick(stats, "n_bets"));
-		const beat = asNumber(pick(stats, "beat_rate"));
-		const avg = asNumber(pick(stats, "avg_clv"));
-		rows.push({
-			id: `${key}-${mode}`,
-			label: `${kind} · ${mode === "paper" ? "纸面" : "真金"} beat rate`,
-			term: "clv",
-			value: formatPct(beat),
-			hint: `n=${n ?? "—"} 注 · 平均 CLV ${formatSignedPct(avg)}（判读：≥60% 为门槛，正 = 买在好价）`,
-		});
-	}
-	return rows;
-}
 
 /** 基准来源分层的显示名（票 40：锚级顺序固定，未知级原样显示）。 */
 const CLOSE_BASIS_LABELS: Record<string, string> = {
@@ -250,88 +194,73 @@ const CLOSE_BASIS_LABELS: Record<string, string> = {
 	mixed: "串关跨基准(mixed)",
 };
 
-/** by_close_basis 字典 → 一行分层摘要（窗口期新旧口径并行判读，票 40）。 */
-function closeBasisRow(dict: Record<string, unknown>): MetricRow | null {
-	const basisDict = dict["by_close_basis"];
-	if (typeof basisDict !== "object" || basisDict === null) {
-		return null;
+/** clv 报表 → 指标行（契约类型直取；分桶/分层字典键为动态扩展位）。 */
+export function clvMetricRows(clv: ClvReport): MetricRow[] {
+	const rows: MetricRow[] = [];
+	for (const [key, kind] of [
+		["singles", "单关"],
+		["parlay2", "2串1"],
+	] as const) {
+		for (const mode of ["paper", "live"] as const) {
+			// 后端恒填 paper/live 两键；TS 索引签名层面表达不了"键恒在"，落零值兜底
+			const stats = clv[key][mode] ?? { n_bets: 0 };
+			rows.push({
+				id: `${key}-${mode}`,
+				label: `${kind} · ${mode === "paper" ? "纸面" : "真金"} beat rate`,
+				term: "clv",
+				value: formatPct(stats.beat_rate),
+				hint: `n=${stats.n_bets} 注 · 平均 CLV ${formatSignedPct(stats.avg_clv)}（判读：≥60% 为门槛，正 = 买在好价）`,
+			});
+		}
 	}
+
 	const parts: string[] = [];
-	for (const basis of ["pinnacle", "betfair_ex", "consensus", "legacy", "mixed"]) {
-		const entry = pick(basisDict, basis);
-		if (typeof entry !== "object" || entry === null) {
+	for (const basis of ["pinnacle", "betfair_ex", "consensus", "legacy", "mixed"] as const) {
+		const entry = clv.by_close_basis[basis];
+		if (entry === undefined) {
 			continue;
 		}
-		const bets = asNumber(pick(entry, "bets"));
-		const legs = asNumber(pick(entry, "legs"));
-		const beat = asNumber(pick(entry, "groups", "single", "paper", "beat_rate"));
-		const beatN = asNumber(pick(entry, "groups", "single", "paper", "n_bets"));
+		const paperSingle = entry.groups?.["single"]?.["paper"];
 		const pieces = [
-			bets !== null ? `${bets} 注` : null,
-			legs !== null ? `${legs} 腿` : null,
-			beat !== null && beatN ? `纸面单关 beat ${formatPct(beat)}(n=${beatN})` : null,
+			`${entry.bets} 注`,
+			entry.legs ? `${entry.legs} 腿` : null,
+			paperSingle && paperSingle.n_bets > 0 && paperSingle.beat_rate !== null && paperSingle.beat_rate !== undefined
+				? `纸面单关 beat ${formatPct(paperSingle.beat_rate)}(n=${paperSingle.n_bets})`
+				: null,
 		].filter((piece): piece is string => piece !== null);
 		if (pieces.length > 0) {
 			parts.push(`${CLOSE_BASIS_LABELS[basis] ?? basis} ${pieces.join(" · ")}`);
 		}
 	}
-	if (parts.length === 0) {
-		return null;
-	}
-	return {
-		id: "close-basis",
-		label: "基准来源分层",
-		term: "clv-basis",
-		value: parts.join(" · "),
-		hint: asString(dict["close_basis_note"]) ?? "pinnacle 主锚 → betfair_ex 辅 → consensus fallback",
-	};
-}
-
-/** clv 字典 → 指标行；未映射 key 原样进 unknownEntries（其他指标折叠区）。 */
-export function clvMetricRows(clv: unknown): MappedMetrics {
-	if (typeof clv !== "object" || clv === null) {
-		return { rows: [], unknownEntries: [] };
-	}
-	const dict = clv as Record<string, unknown>;
-	const rows: MetricRow[] = [...groupRows(dict, "singles", "单关"), ...groupRows(dict, "parlay2", "2串1")];
-
-	const basis = closeBasisRow(dict);
-	if (basis !== null) {
-		rows.push(basis);
-	}
-
-	const independence = asBool(dict["independence_assumed"]);
-	if (independence !== null) {
+	if (parts.length > 0) {
 		rows.push({
-			id: "independence",
-			label: "串关票级联合口径",
-			value: independence ? "两腿独立连乘（假设已声明）" : "未声明独立性假设",
-			hint: "beat 按票级联合概率判定；腿级 CLV 仅诊断。",
+			id: "close-basis",
+			label: "基准来源分层",
+			term: "clv-basis",
+			value: parts.join(" · "),
+			hint: clv.close_basis_note,
 		});
 	}
 
-	const uniqueBets = asNumber(pick(dict, "denominator", "unique_bets"));
-	if (uniqueBets !== null) {
-		rows.push({
-			id: "denominator",
-			label: "样本分母（唯一注）",
-			value: `${uniqueBets} 注`,
-			hint: [
-				`原始 ${asNumber(pick(dict, "denominator", "raw_bets")) ?? "—"}`,
-				`重复去重 ${asNumber(pick(dict, "denominator", "deduped_duplicates")) ?? "—"}`,
-				`缺收盘 ${asNumber(pick(dict, "denominator", "no_close_bets")) ?? "—"}`,
-				`覆盖场次 ${asNumber(pick(dict, "denominator", "fixtures")) ?? "—"}`,
-			].join(" · "),
-		});
-	}
+	rows.push({
+		id: "independence",
+		label: "串关票级联合口径",
+		value: clv.independence_assumed ? "两腿独立连乘（假设已声明）" : "未声明独立性假设",
+		hint: "beat 按票级联合概率判定；腿级 CLV 仅诊断。",
+	});
 
-	const buckets = dict["by_minutes_bucket_single"];
-	if (typeof buckets === "object" && buckets !== null && Object.keys(buckets).length > 0) {
-		const text = Object.entries(buckets as Record<string, unknown>)
-			.map(
-				([bucket, stats]) =>
-					`${bucket} ${formatPct(asNumber(pick(stats, "beat_rate")), 0)}（n=${asNumber(pick(stats, "n")) ?? "—"}）`,
-			)
+	const denom = clv.denominator;
+	rows.push({
+		id: "denominator",
+		label: "样本分母（唯一注）",
+		value: `${denom.unique_bets} 注`,
+		hint: `原始 ${denom.raw_bets} · 重复去重 ${denom.deduped_duplicates} · 缺收盘 ${denom.no_close_bets} · 覆盖场次 ${denom.fixtures}`,
+	});
+
+	const bucketEntries = Object.entries(clv.by_minutes_bucket_single);
+	if (bucketEntries.length > 0) {
+		const text = bucketEntries
+			.map(([bucket, stats]) => `${bucket} ${formatPct(stats.beat_rate, 0)}（n=${stats.n}）`)
 			.join(" · ");
 		rows.push({
 			id: "minutes-buckets",
@@ -341,96 +270,70 @@ export function clvMetricRows(clv: unknown): MappedMetrics {
 		});
 	}
 
-	const slope = asNumber(pick(dict, "regression", "slope"));
-	if (slope !== null) {
-		const rSquared = asNumber(pick(dict, "regression", "r_squared"));
+	// 渲染等价（迁移前口径）：slope 无值（样本 <3 的空/小数据形态）整行不出
+	if (clv.regression.slope !== null && clv.regression.slope !== undefined) {
 		rows.push({
 			id: "regression",
 			label: "单关 CLV → 盈亏回归",
-			value: `斜率 ${slope.toFixed(2)} · R²=${rSquared === null ? "—" : rSquared.toFixed(2)}`,
-			hint: `n=${asNumber(pick(dict, "regression", "n")) ?? "—"}（仅单关；串关不作独立样本）`,
+			value: `斜率 ${clv.regression.slope.toFixed(2)} · R²=${clv.regression.r_squared?.toFixed(2) ?? "—"}`,
+			hint: `n=${clv.regression.n}（仅单关；串关不作独立样本）`,
 		});
 	}
 
-	return { rows, unknownEntries: splitUnknown(dict, CLV_KNOWN_KEYS) };
+	return rows;
 }
 
-/** forward 字典 → 指标行（覆盖四态 + 分组 skill，排除全计不静默丢弃）。 */
-export function forwardMetricRows(forward: unknown): MappedMetrics {
-	if (typeof forward !== "object" || forward === null) {
-		return { rows: [], unknownEntries: [] };
-	}
-	const dict = forward as Record<string, unknown>;
-	const rows: MetricRow[] = [];
-
-	const rule = asString(dict["rule"]);
-	if (rule !== null) {
-		rows.push({
+/** forward 报表 → 指标行（覆盖四态 + 分组 skill）。 */
+export function forwardMetricRows(forward: ForwardSkillReport): MetricRow[] {
+	const rows: MetricRow[] = [
+		{
 			id: "rule",
 			label: "纳入规则（防时间泄漏）",
 			term: "forward-inclusion",
-			value: rule,
+			value: forward.rule,
 			hint: "只计开球前发出的最新 Forecast；开球后补发一律排除。",
-		});
-	}
-
-	const settled = asNumber(pick(dict, "coverage", "settled_fixtures"));
-	if (settled !== null) {
-		rows.push({
+		},
+		{
 			id: "coverage",
 			label: "前瞻覆盖（排除全计）",
 			value: [
-				`scored ${asNumber(pick(dict, "coverage", "scored")) ?? 0}`,
-				`无预测 ${asNumber(pick(dict, "coverage", "no_forecast")) ?? 0}`,
-				`仅赛后 ${asNumber(pick(dict, "coverage", "post_kickoff_only")) ?? 0}`,
-				`无基准 ${asNumber(pick(dict, "coverage", "no_market_baseline")) ?? 0}`,
+				`scored ${forward.coverage.scored}`,
+				`无预测 ${forward.coverage.no_forecast}`,
+				`仅赛后 ${forward.coverage.post_kickoff_only}`,
+				`无基准 ${forward.coverage.no_market_baseline}`,
 			].join(" · "),
-			hint: `已结算 ${settled} 场；scored = 纳入计分，其余为排除分母（不静默丢弃）。`,
+			hint: `已结算 ${forward.coverage.settled_fixtures} 场；scored = 纳入计分，其余为排除分母（不静默丢弃）。`,
+		},
+	];
+	for (const [version, metrics] of Object.entries(forward.groups)) {
+		rows.push({
+			id: `group-${version}`,
+			label: `前瞻分组 ${version}`,
+			term: "skill",
+			value: `skill ${formatSigned(metrics.skill_rps)} · n=${metrics.n}`,
+			hint: metrics.insufficient_samples
+				? `样本不足（<30 场），不作通过依据 · RPS 模型 ${formatSigned(metrics.rps_model, 3)} vs 市场 ${formatSigned(metrics.rps_market, 3)}`
+				: `RPS 模型 ${formatSigned(metrics.rps_model, 3)} vs 市场 ${formatSigned(metrics.rps_market, 3)}`,
 		});
 	}
-
-	const groups = dict["groups"];
-	if (typeof groups === "object" && groups !== null) {
-		for (const [version, metrics] of Object.entries(groups as Record<string, unknown>)) {
-			if (typeof metrics !== "object" || metrics === null) {
-				continue;
-			}
-			const insufficient = asBool(pick(metrics, "insufficient_samples")) === true;
-			rows.push({
-				id: `group-${version}`,
-				label: `前瞻分组 ${version}`,
-				term: "skill",
-				value: `skill ${formatSigned(asNumber(pick(metrics, "skill_rps")))} · n=${asNumber(pick(metrics, "n")) ?? "—"}`,
-				hint: insufficient
-					? `样本不足（<30 场），不作通过依据 · RPS 模型 ${formatSigned(asNumber(pick(metrics, "rps_model")), 3)} vs 市场 ${formatSigned(asNumber(pick(metrics, "rps_market")), 3)}`
-					: `RPS 模型 ${formatSigned(asNumber(pick(metrics, "rps_model")), 3)} vs 市场 ${formatSigned(asNumber(pick(metrics, "rps_market")), 3)}`,
-			});
-		}
-	}
-
-	return { rows, unknownEntries: splitUnknown(dict, FORWARD_KNOWN_KEYS) };
+	return rows;
 }
 
 /** 达标判定与服务器同构（validation.py）：样本足的分组里取最好 skill；全样本不足则只报不足。 */
-export function bestForwardSkill(forward: unknown): {
+export function bestForwardSkill(forward: ForwardSkillReport): {
 	skill: number | null;
 	version: string | null;
 	allInsufficient: boolean;
 } {
-	const groups = pick(forward, "groups");
-	if (typeof groups !== "object" || groups === null) {
-		return { skill: null, version: null, allInsufficient: false };
-	}
 	let best: { skill: number; version: string } | null = null;
 	let anyGroup = false;
-	for (const [version, metrics] of Object.entries(groups as Record<string, unknown>)) {
-		if (asBool(pick(metrics, "insufficient_samples")) === true) {
+	for (const [version, metrics] of Object.entries(forward.groups)) {
+		if (metrics.insufficient_samples) {
 			continue;
 		}
 		anyGroup = true;
-		const skill = asNumber(pick(metrics, "skill_rps"));
-		if (skill !== null && (best === null || skill > best.skill)) {
-			best = { skill, version };
+		if (best === null || metrics.skill_rps > best.skill) {
+			best = { skill: metrics.skill_rps, version };
 		}
 	}
 	return { skill: best?.skill ?? null, version: best?.version ?? null, allInsufficient: !anyGroup };
@@ -507,23 +410,6 @@ function MetricRowList({ rows, testid }: { rows: MetricRow[]; testid: string }) 
 	);
 }
 
-/** 未映射 key 的兜底（票 09：不裸字典直出——折叠呈现原始 JSON，不冒充已解读）。 */
-function UnknownMetrics({ entries, label }: { entries: Array<[string, unknown]>; label: string }) {
-	if (entries.length === 0) {
-		return null;
-	}
-	return (
-		<details data-testid="unknown-metrics" className="mt-3 rounded-md border border-dashed border-border px-3 py-2">
-			<summary className="cursor-pointer text-xs text-muted-foreground">
-				{label} · 其他指标（{entries.length} 项未映射字段）
-			</summary>
-			<pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
-				{JSON.stringify(Object.fromEntries(entries), null, 2)}
-			</pre>
-		</details>
-	);
-}
-
 function CompareCard({
 	label,
 	value,
@@ -547,8 +433,8 @@ function CompareCard({
 	);
 }
 
-function signedTone(value: number | null): "neutral" | "positive" | "negative" {
-	if (value === null || value === 0) return "neutral";
+function signedTone(value: number | null | undefined): "neutral" | "positive" | "negative" {
+	if (value === null || value === undefined || value === 0) return "neutral";
 	return value > 0 ? "positive" : "negative";
 }
 
@@ -596,8 +482,8 @@ export function ValidationPage() {
 	const latestRun = data?.latest_run ?? runs.data?.[0] ?? null;
 	const metrics = latestRun?.overall_metrics ?? null;
 	const backtestSkill = metrics ? asNumber(metrics["skill_rps"]) : null;
-	const clv = data ? clvMetricRows(data.clv) : null;
-	const forward = data ? forwardMetricRows(data.forward) : null;
+	const clvRows = data ? clvMetricRows(data.clv) : [];
+	const forwardRows = data ? forwardMetricRows(data.forward) : [];
 	const bestForward = data ? bestForwardSkill(data.forward) : null;
 	const backtestRuns = runs.data ?? [];
 
@@ -675,7 +561,9 @@ export function ValidationPage() {
 										</Badge>
 									</div>
 									<p className={`mt-2 text-xs ${TABULAR_NUMS}`}>当前 {verdict.fullSeason.current}</p>
-									<p className={`text-xs text-muted-foreground ${TABULAR_NUMS}`}>目标 {verdict.fullSeason.target}</p>
+									<p className={`mt-2 text-xs text-muted-foreground ${TABULAR_NUMS}`}>
+										目标 {verdict.fullSeason.target}
+									</p>
 									{CONDITION_HINTS["full_season"] ? (
 										<p className="mt-2 text-xs text-muted-foreground">{CONDITION_HINTS["full_season"]}</p>
 									) : null}
@@ -737,7 +625,7 @@ export function ValidationPage() {
 												? "样本不足"
 												: "无前瞻样本"
 									}
-									tone={signedTone(bestForward?.skill ?? null)}
+									tone={signedTone(bestForward?.skill)}
 									hint={
 										bestForward?.version
 											? `最好分组 ${bestForward.version} · skill ≥0 是唯一通过线（样本 ≥30 场才算数）`
@@ -758,8 +646,7 @@ export function ValidationPage() {
 										CLV 明细（单关 / 2串1 × 纸面 / 真金 分开报告）
 									</h3>
 									<div className="rounded-lg border border-border p-4">
-										<MetricRowList rows={clv?.rows ?? []} testid="clv-rows" />
-										<UnknownMetrics entries={clv?.unknownEntries ?? []} label="CLV" />
+										<MetricRowList rows={clvRows} testid="clv-rows" />
 									</div>
 								</section>
 
@@ -768,8 +655,7 @@ export function ValidationPage() {
 										前瞻评分明细（纳入规则 · 覆盖四态 · 分组 skill）
 									</h3>
 									<div className="rounded-lg border border-border p-4">
-										<MetricRowList rows={forward?.rows ?? []} testid="forward-rows" />
-										<UnknownMetrics entries={forward?.unknownEntries ?? []} label="前瞻" />
+										<MetricRowList rows={forwardRows} testid="forward-rows" />
 									</div>
 								</section>
 

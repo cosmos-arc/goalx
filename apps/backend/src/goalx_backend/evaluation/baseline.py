@@ -16,6 +16,8 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
+from pydantic import BaseModel
+
 from goalx_backend import odds_math as om
 from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation import backtest as bt
@@ -34,7 +36,30 @@ def _period(match_date: str) -> str:
     return f"before_{FD_PSC_REVIEW_DATE}"
 
 
-def baseline_quality_report(conn: sqlite3.Connection) -> dict[str, Any]:
+class BaselinePeriod(BaseModel):
+    """分期一行：两源覆盖计数与质检均值（缺失/overround/两源差）。"""
+
+    n: int
+    n_psc: int
+    n_avgc: int
+    n_both: int
+    n_neither: int
+    psc_missing_rate: float | None
+    avgc_missing_rate: float | None
+    mean_overround_psc: float | None
+    mean_overround_avgc: float | None
+    mean_shin_prob_abs_diff_psc_vs_avgc: float | None
+
+
+class BaselineQualityReport(BaseModel):
+    """基准分期质检报告（契约载荷，票 06 键集冻结）。"""
+
+    review_date: str
+    periods: dict[str, BaselinePeriod]
+    limitations: str
+
+
+def baseline_quality_report(conn: sqlite3.Connection) -> BaselineQualityReport:
     """分期 × 来源的基准数据质检（数量/缺失/overround/两源差异）。"""
     rows = rs_store.hist_close_odds_rows(conn)
     buckets: dict[str, dict[str, Any]] = {}
@@ -74,31 +99,32 @@ def baseline_quality_report(conn: sqlite3.Connection) -> dict[str, Any]:
             entry["n_diff"] += 1
         if not has_psc and not has_avgc:
             entry["n_neither"] += 1
-    report: dict[str, Any] = {"review_date": FD_PSC_REVIEW_DATE, "periods": {}}
+    buckets_out: dict[str, BaselinePeriod] = {}
     for period, entry in sorted(buckets.items()):
         n = entry["n"]
-        report["periods"][period] = {
-            "n": n,
-            "n_psc": entry["n_psc"],
-            "n_avgc": entry["n_avgc"],
-            "n_both": entry["n_both"],
-            "n_neither": entry["n_neither"],
-            "psc_missing_rate": 1 - entry["n_psc"] / n if n else None,
-            "avgc_missing_rate": 1 - entry["n_avgc"] / n if n else None,
-            "mean_overround_psc": (
+        buckets_out[period] = BaselinePeriod(
+            n=n,
+            n_psc=entry["n_psc"],
+            n_avgc=entry["n_avgc"],
+            n_both=entry["n_both"],
+            n_neither=entry["n_neither"],
+            psc_missing_rate=1 - entry["n_psc"] / n if n else None,
+            avgc_missing_rate=1 - entry["n_avgc"] / n if n else None,
+            mean_overround_psc=(
                 entry["overround_psc"] / entry["n_psc"] if entry["n_psc"] else None
             ),
-            "mean_overround_avgc": (
+            mean_overround_avgc=(
                 entry["overround_avgc"] / entry["n_avgc"] if entry["n_avgc"] else None
             ),
-            "mean_shin_prob_abs_diff_psc_vs_avgc": (
+            mean_shin_prob_abs_diff_psc_vs_avgc=(
                 entry["prob_diff"] / entry["n_diff"] if entry["n_diff"] else None
             ),
-        }
-    report["limitations"] = (
-        "描述统计,不判定真概率;两源差异含噪声;合成价实验非真实陈盘回放"
+        )
+    return BaselineQualityReport(
+        review_date=FD_PSC_REVIEW_DATE,
+        periods=buckets_out,
+        limitations="描述统计,不判定真概率;两源差异含噪声;合成价实验非真实陈盘回放",
     )
-    return report
 
 
 def run_baseline_comparison(

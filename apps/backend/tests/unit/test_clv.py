@@ -141,7 +141,7 @@ def test_reconcile_clv_and_report(db) -> None:
     # 幂等
     assert clv.reconcile_clv(db).recorded == 0
 
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["denominator"]["reconciled_bets"] == 1
     assert report["denominator"]["unique_bets"] == 1
     assert report["denominator"]["legs"] == 1  # 腿数不冒充分母（票 34）
@@ -228,7 +228,7 @@ def test_unpurchased_counterfactual_is_excluded_even_with_legacy_clv(db) -> None
     assert clv.reconcile_clv(db).recorded == 1
     db.execute("UPDATE bets SET purchased=0 WHERE id=?", (bet,))
     assert clv.reconcile_clv(db).recorded == 0
-    assert clv.clv_report(db)["denominator"]["unique_bets"] == 0
+    assert clv.clv_report(db).model_dump()["denominator"]["unique_bets"] == 0
 
 
 # --- 票 34：票级口径 / 分组分母 / 迟到 closing ---
@@ -281,7 +281,7 @@ def test_parlay_ticket_level_clv_with_independence_flag(db) -> None:
     )
     settle_bet(db, bet, status="won")
     assert clv.reconcile_clv(db).recorded == 2  # 逐腿记录
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["singles"]["paper"]["n_bets"] == 0
     group = report["parlay2"]["paper"]
     assert group["n_bets"] == 1  # 2 腿 → 1 票,不冒充 2 注
@@ -306,7 +306,7 @@ def test_parlay_missing_one_leg_close_excluded(db) -> None:
     )
     settle_bet(db, bet, status="lost")
     clv.reconcile_clv(db)
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["parlay2"]["paper"]["n_bets"] == 0
     assert report["denominator"]["no_close_bets"] == 1  # 缺一腿整票排除
 
@@ -338,7 +338,7 @@ def test_mixed_market_leg_bet_excluded(db) -> None:
     )
     settle_bet(db, bet, status="won")
     clv.reconcile_clv(db)
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["singles"]["paper"]["n_bets"] == 0  # 混合玩法腿不能当单关
     assert report["denominator"]["unsupported_bets"] == 1
 
@@ -371,7 +371,7 @@ def test_decision_identity_dedup_for_denominator(db) -> None:
         settle_bet(db, bet, status="won")
         ids.append(bet)
     clv.reconcile_clv(db)
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["denominator"]["reconciled_bets"] == 2  # 账务如实保留
     assert report["denominator"]["unique_bets"] == 1  # 验证分母去重
     assert report["denominator"]["deduped_duplicates"] == 1
@@ -427,7 +427,7 @@ def test_paper_live_reported_separately(db) -> None:
         )
         settle_bet(db, bet, status="won")
     clv.reconcile_clv(db)
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["singles"]["paper"]["n_bets"] == 1
     assert report["singles"]["live"]["n_bets"] == 1  # 分开报告,不混
 
@@ -589,7 +589,7 @@ def test_report_by_close_basis_parallel_presentation(db) -> None:
     )
     db.commit()
 
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["close_basis_note"].startswith("pinnacle 主锚")
     by_basis = report["by_close_basis"]
     assert set(by_basis) == {"pinnacle", "legacy"}
@@ -636,7 +636,7 @@ def test_report_mixed_basis_parlay(db) -> None:
     )
     settle_bet(db, bet, status="won")
     clv.reconcile_clv(db)
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     by_basis = report["by_close_basis"]
     assert by_basis["mixed"]["bets"] == 1
     # 腿数归各级：pinnacle 1 腿、consensus 1 腿，但单级注数不收 mixed 票
@@ -789,7 +789,7 @@ def test_reconcile_uses_srct_anchor_when_odds_api_dead(db) -> None:
     row = db.execute("SELECT * FROM clv_records").fetchone()
     assert row["close_basis"] == "srct_pinnacle"
     assert row["close_source"] == "srct_1x2_closing"
-    report = clv.clv_report(db)
+    report = clv.clv_report(db).model_dump()
     assert report["by_close_basis"]["srct_pinnacle"]["bets"] == 1
 
 

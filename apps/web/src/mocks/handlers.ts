@@ -784,7 +784,7 @@ export const validationProgressFixture = {
 					parlay2: { paper: { n_bets: 1, beat_rate: 0, avg_clv: -0.01 } },
 				},
 			},
-			mixed: { bets: 1, note: "串关两腿基准不同，腿级见 clv_records.close_basis" },
+			mixed: { legs: 0, bets: 1, note: "串关两腿基准不同，腿级见 clv_records.close_basis" },
 		},
 		denominator: {
 			settled_bets: 12,
@@ -802,8 +802,28 @@ export const validationProgressFixture = {
 	},
 	forward: {
 		rule: "latest_forecast_before_kickoff_v1",
+		track: "ml",
 		coverage: { settled_fixtures: 8, no_forecast: 2, post_kickoff_only: 0, no_market_baseline: 1, scored: 5 },
-		groups: { "dc-demo": { n: 5, skill_rps: 0.012, insufficient_samples: true } },
+		groups: {
+			"dc-demo": {
+				n: 5,
+				rps_model: 0.198,
+				rps_market: 0.201,
+				skill_rps: 0.012,
+				dm_stat: 0.4,
+				dm_p: 0.69,
+				dm_p_exploratory: true,
+				brier_model: 0.58,
+				brier_market: 0.581,
+				logloss_model: 1.02,
+				logloss_market: 1.03,
+				ece_h: 0.03,
+				ece_d: 0.02,
+				ece_a: 0.04,
+				insufficient_samples: true,
+				n_fixtures: 5,
+			},
+		},
 	},
 	latest_run: backtestRunsFixture[0],
 } as const satisfies DeepReadonly<ValidationProgress>;

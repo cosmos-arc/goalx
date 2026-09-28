@@ -1513,9 +1513,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Get Forward Skill Api V1 Validation Forward Skill Get"
+                  "$ref": "#/components/schemas/ForwardSkillReport"
                 }
               }
             }
@@ -1537,9 +1535,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Get M3 Protocol Api V1 Validation M3 Protocol Get"
+                  "$ref": "#/components/schemas/M3ProtocolReport"
                 }
               }
             }
@@ -1561,9 +1557,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Get Baseline Quality Api V1 Backtest Baseline Quality Get"
+                  "$ref": "#/components/schemas/BaselineQualityReport"
                 }
               }
             }
@@ -1730,11 +1724,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "title": "Response Submit Review Verdict Api V1 Review Items  Item Id  Verdict Post"
+                  "$ref": "#/components/schemas/RecordedView"
                 }
               }
             }
@@ -1779,11 +1769,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "type": "object",
-                  "title": "Response Submit Blind Review Api V1 Blind Reviews Post"
+                  "$ref": "#/components/schemas/RecordedView"
                 }
               }
             }
@@ -2176,6 +2162,127 @@
         "title": "BankrollResponse",
         "description": "资金页数据。"
       },
+      "BaselinePeriod": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "n_psc": {
+            "type": "integer",
+            "title": "N Psc"
+          },
+          "n_avgc": {
+            "type": "integer",
+            "title": "N Avgc"
+          },
+          "n_both": {
+            "type": "integer",
+            "title": "N Both"
+          },
+          "n_neither": {
+            "type": "integer",
+            "title": "N Neither"
+          },
+          "psc_missing_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Psc Missing Rate"
+          },
+          "avgc_missing_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avgc Missing Rate"
+          },
+          "mean_overround_psc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Overround Psc"
+          },
+          "mean_overround_avgc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Overround Avgc"
+          },
+          "mean_shin_prob_abs_diff_psc_vs_avgc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Shin Prob Abs Diff Psc Vs Avgc"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "n_psc",
+          "n_avgc",
+          "n_both",
+          "n_neither",
+          "psc_missing_rate",
+          "avgc_missing_rate",
+          "mean_overround_psc",
+          "mean_overround_avgc",
+          "mean_shin_prob_abs_diff_psc_vs_avgc"
+        ],
+        "title": "BaselinePeriod",
+        "description": "分期一行：两源覆盖计数与质检均值（缺失/overround/两源差）。"
+      },
+      "BaselineQualityReport": {
+        "properties": {
+          "review_date": {
+            "type": "string",
+            "title": "Review Date"
+          },
+          "periods": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BaselinePeriod"
+            },
+            "type": "object",
+            "title": "Periods"
+          },
+          "limitations": {
+            "type": "string",
+            "title": "Limitations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "review_date",
+          "periods",
+          "limitations"
+        ],
+        "title": "BaselineQualityReport",
+        "description": "基准分期质检报告（契约载荷，票 06 键集冻结）。"
+      },
       "BetCreate": {
         "properties": {
           "mode": {
@@ -2567,6 +2674,40 @@
         "title": "BlindReviewPayload",
         "description": "盲评提交（双周匿名二选一，参考列）。"
       },
+      "BlindReviewSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          },
+          "llm_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Share"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "counts",
+          "llm_share"
+        ],
+        "title": "BlindReviewSummary",
+        "description": "盲评参考列（统计力弱不作证明支柱）。"
+      },
       "BookQuoteView": {
         "properties": {
           "book": {
@@ -2595,6 +2736,255 @@
         ],
         "title": "BookQuoteView",
         "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
+      },
+      "ClvBasisEntry": {
+        "properties": {
+          "legs": {
+            "type": "integer",
+            "title": "Legs",
+            "default": 0
+          },
+          "bets": {
+            "type": "integer",
+            "title": "Bets"
+          },
+          "groups": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/ClvGroupStats"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Groups"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bets"
+        ],
+        "title": "ClvBasisEntry",
+        "description": "by_close_basis 一级：腿数/唯一注数 + 同构分组（mixed 无分组仅注数）。"
+      },
+      "ClvBucketStats": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "beat_rate": {
+            "type": "number",
+            "title": "Beat Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "beat_rate"
+        ],
+        "title": "ClvBucketStats",
+        "description": "距开赛分桶（单关）的 beat 汇总。"
+      },
+      "ClvDenominator": {
+        "properties": {
+          "settled_bets": {
+            "type": "integer",
+            "title": "Settled Bets"
+          },
+          "legs": {
+            "type": "integer",
+            "title": "Legs"
+          },
+          "no_close_bets": {
+            "type": "integer",
+            "title": "No Close Bets"
+          },
+          "unsupported_bets": {
+            "type": "integer",
+            "title": "Unsupported Bets"
+          },
+          "raw_bets": {
+            "type": "integer",
+            "title": "Raw Bets"
+          },
+          "reconciled_bets": {
+            "type": "integer",
+            "title": "Reconciled Bets"
+          },
+          "unique_bets": {
+            "type": "integer",
+            "title": "Unique Bets"
+          },
+          "deduped_duplicates": {
+            "type": "integer",
+            "title": "Deduped Duplicates"
+          },
+          "fixtures": {
+            "type": "integer",
+            "title": "Fixtures"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settled_bets",
+          "legs",
+          "no_close_bets",
+          "unsupported_bets",
+          "raw_bets",
+          "reconciled_bets",
+          "unique_bets",
+          "deduped_duplicates",
+          "fixtures"
+        ],
+        "title": "ClvDenominator",
+        "description": "报表分母：采集面四计 + 去重面五计（键集冻结，票 06）。"
+      },
+      "ClvGroupStats": {
+        "properties": {
+          "n_bets": {
+            "type": "integer",
+            "title": "N Bets",
+            "default": 0
+          },
+          "beat_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beat Rate"
+          },
+          "avg_clv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Clv"
+          }
+        },
+        "type": "object",
+        "title": "ClvGroupStats",
+        "description": "一组（单关/2串1 × paper/live）的 beat/CLV 汇总（票级口径）。"
+      },
+      "ClvRegression": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "slope": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slope"
+          },
+          "r_squared": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R Squared"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "slope",
+          "r_squared",
+          "note"
+        ],
+        "title": "ClvRegression",
+        "description": "单关 CLV → 盈亏 OLS 回归。"
+      },
+      "ClvReport": {
+        "properties": {
+          "singles": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ClvGroupStats"
+            },
+            "type": "object",
+            "title": "Singles"
+          },
+          "parlay2": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ClvGroupStats"
+            },
+            "type": "object",
+            "title": "Parlay2"
+          },
+          "independence_assumed": {
+            "type": "boolean",
+            "title": "Independence Assumed"
+          },
+          "close_basis_note": {
+            "type": "string",
+            "title": "Close Basis Note"
+          },
+          "by_close_basis": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ClvBasisEntry"
+            },
+            "type": "object",
+            "title": "By Close Basis"
+          },
+          "denominator": {
+            "$ref": "#/components/schemas/ClvDenominator"
+          },
+          "by_minutes_bucket_single": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ClvBucketStats"
+            },
+            "type": "object",
+            "title": "By Minutes Bucket Single"
+          },
+          "regression": {
+            "$ref": "#/components/schemas/ClvRegression"
+          }
+        },
+        "type": "object",
+        "required": [
+          "singles",
+          "parlay2",
+          "independence_assumed",
+          "close_basis_note",
+          "by_close_basis",
+          "denominator",
+          "by_minutes_bucket_single",
+          "regression"
+        ],
+        "title": "ClvReport",
+        "description": "票级 CLV 报表（契约载荷，票 06 键集冻结）。"
       },
       "ColdSwapView": {
         "properties": {
@@ -3616,6 +4006,158 @@
         "title": "FixtureResearchView",
         "description": "单场研究页读模型（票 wb-02）：逐书赔率 + 共识 + 模型 + 资格判定。"
       },
+      "ForwardCoverage": {
+        "properties": {
+          "settled_fixtures": {
+            "type": "integer",
+            "title": "Settled Fixtures"
+          },
+          "no_forecast": {
+            "type": "integer",
+            "title": "No Forecast"
+          },
+          "post_kickoff_only": {
+            "type": "integer",
+            "title": "Post Kickoff Only"
+          },
+          "no_market_baseline": {
+            "type": "integer",
+            "title": "No Market Baseline"
+          },
+          "scored": {
+            "type": "integer",
+            "title": "Scored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settled_fixtures",
+          "no_forecast",
+          "post_kickoff_only",
+          "no_market_baseline",
+          "scored"
+        ],
+        "title": "ForwardCoverage",
+        "description": "前瞻覆盖四态 + 计分（排除全计，不静默丢弃）。"
+      },
+      "ForwardGroupMetrics": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N",
+            "default": 0
+          },
+          "rps_model": {
+            "type": "number",
+            "title": "Rps Model",
+            "default": 0.0
+          },
+          "rps_market": {
+            "type": "number",
+            "title": "Rps Market",
+            "default": 0.0
+          },
+          "skill_rps": {
+            "type": "number",
+            "title": "Skill Rps",
+            "default": 0.0
+          },
+          "dm_stat": {
+            "type": "number",
+            "title": "Dm Stat",
+            "default": 0.0
+          },
+          "dm_p": {
+            "type": "number",
+            "title": "Dm P",
+            "default": 1.0
+          },
+          "dm_p_exploratory": {
+            "type": "boolean",
+            "title": "Dm P Exploratory",
+            "default": true
+          },
+          "brier_model": {
+            "type": "number",
+            "title": "Brier Model",
+            "default": 0.0
+          },
+          "brier_market": {
+            "type": "number",
+            "title": "Brier Market",
+            "default": 0.0
+          },
+          "logloss_model": {
+            "type": "number",
+            "title": "Logloss Model",
+            "default": 0.0
+          },
+          "logloss_market": {
+            "type": "number",
+            "title": "Logloss Market",
+            "default": 0.0
+          },
+          "ece_h": {
+            "type": "number",
+            "title": "Ece H",
+            "default": 0.0
+          },
+          "ece_d": {
+            "type": "number",
+            "title": "Ece D",
+            "default": 0.0
+          },
+          "ece_a": {
+            "type": "number",
+            "title": "Ece A",
+            "default": 0.0
+          },
+          "insufficient_samples": {
+            "type": "boolean",
+            "title": "Insufficient Samples",
+            "default": true
+          },
+          "n_fixtures": {
+            "type": "integer",
+            "title": "N Fixtures",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ForwardGroupMetrics",
+        "description": "一个 model_version 分组的前瞻指标（RPS/Brier/logloss 双侧 + skill + DM）。"
+      },
+      "ForwardSkillReport": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "track": {
+            "type": "string",
+            "title": "Track"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ForwardCoverage"
+          },
+          "groups": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ForwardGroupMetrics"
+            },
+            "type": "object",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "track",
+          "coverage",
+          "groups"
+        ],
+        "title": "ForwardSkillReport",
+        "description": "前瞻 skill 分组报告（契约载荷，票 06 键集冻结）。"
+      },
       "GoalsFixtureView": {
         "properties": {
           "fixture_id": {
@@ -4059,6 +4601,56 @@
         "title": "IntelItemView",
         "description": "一条已存证情报（来源/时点随条目——徽章展示口径）。"
       },
+      "IntelQuality": {
+        "properties": {
+          "covered": {
+            "type": "integer",
+            "title": "Covered"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "median_hours_to_kickoff": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Hours To Kickoff"
+          },
+          "avg_sources": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "covered",
+          "coverage",
+          "median_hours_to_kickoff",
+          "avg_sources"
+        ],
+        "title": "IntelQuality",
+        "description": "情报质量列（报告列不设门槛）。"
+      },
       "LegPayload": {
         "properties": {
           "fixture_id": {
@@ -4099,6 +4691,82 @@
         ],
         "title": "LegPayload",
         "description": "一腿输入。"
+      },
+      "M3ProtocolReport": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "tracks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ForwardSkillReport"
+            },
+            "type": "object",
+            "title": "Tracks"
+          },
+          "paired_fused_vs_ml": {
+            "$ref": "#/components/schemas/PairedFusedVsMl"
+          },
+          "tier_a": {
+            "$ref": "#/components/schemas/TierStatus"
+          },
+          "tier_b": {
+            "$ref": "#/components/schemas/TierStatus"
+          },
+          "llm_ece_clean": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Ece Clean"
+          },
+          "review_clean": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Clean"
+          },
+          "intel_quality": {
+            "$ref": "#/components/schemas/IntelQuality"
+          },
+          "blind_review": {
+            "$ref": "#/components/schemas/BlindReviewSummary"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "tracks",
+          "paired_fused_vs_ml",
+          "tier_a",
+          "tier_b",
+          "llm_ece_clean",
+          "review_clean",
+          "intel_quality",
+          "blind_review",
+          "note",
+          "generated_at"
+        ],
+        "title": "M3ProtocolReport",
+        "description": "M3 评测协议总报告（契约载荷，票 06 键集冻结）。"
       },
       "ManualJoinPayload": {
         "properties": {
@@ -4234,6 +4902,59 @@
         ],
         "title": "OddsSnapshotView",
         "description": "一条赔率快照。"
+      },
+      "PairedFusedVsMl": {
+        "properties": {
+          "pairs": {
+            "type": "integer",
+            "title": "Pairs"
+          },
+          "fused_win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fused Win Rate"
+          },
+          "mean_rps_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Rps Delta"
+          },
+          "dm_stat": {
+            "type": "number",
+            "title": "Dm Stat"
+          },
+          "dm_p": {
+            "type": "number",
+            "title": "Dm P"
+          },
+          "span_weeks": {
+            "type": "integer",
+            "title": "Span Weeks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pairs",
+          "fused_win_rate",
+          "mean_rps_delta",
+          "dm_stat",
+          "dm_p",
+          "span_weeks"
+        ],
+        "title": "PairedFusedVsMl",
+        "description": "同场双轨配对统计：fused vs ml 的 RPS 对照 + DM。"
       },
       "PoolMatchView": {
         "properties": {
@@ -4786,6 +5507,20 @@
         ],
         "title": "PoolSyncStatusView",
         "description": "彩池同步状态（触发后/查询）。"
+      },
+      "RecordedView": {
+        "properties": {
+          "recorded": {
+            "type": "boolean",
+            "title": "Recorded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recorded"
+        ],
+        "title": "RecordedView",
+        "description": "落库结果（幂等语义化：recorded=false = 重复提交被吸收）。"
       },
       "ReviewItemView": {
         "properties": {
@@ -5368,6 +6103,39 @@
         "title": "TargetPlanView",
         "description": "反推结果：推荐票面 + 建议注数 + 是否达到目标（不承诺达成）。"
       },
+      "TierStatus": {
+        "properties": {
+          "checks": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Checks"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "dm_p_reported": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dm P Reported"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checks",
+          "verdict"
+        ],
+        "title": "TierStatus",
+        "description": "一档达标状态行（阈值冻结，票 05）。"
+      },
       "TodayFixtureView": {
         "properties": {
           "fixture_id": {
@@ -5620,14 +6388,10 @@
             "title": "Yield Curve Mode"
           },
           "clv": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Clv"
+            "$ref": "#/components/schemas/ClvReport"
           },
           "forward": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Forward"
+            "$ref": "#/components/schemas/ForwardSkillReport"
           },
           "latest_run": {
             "anyOf": [

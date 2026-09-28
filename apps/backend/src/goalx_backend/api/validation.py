@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.evaluation import baseline
 from goalx_backend.evaluation import forward_validation as fwd
+from goalx_backend.evaluation.baseline import BaselineQualityReport
+from goalx_backend.evaluation.forward_validation import ForwardSkillReport
 from goalx_backend.evaluation.validation import (
     BacktestRunDetailView,
     BacktestRunView,
@@ -19,6 +21,7 @@ from goalx_backend.evaluation.validation import (
 )
 from goalx_backend.evaluation.validation import list_backtest_runs as list_runs
 from goalx_backend.llm import m3_report
+from goalx_backend.llm.m3_report import M3ProtocolReport
 from goalx_backend.llm.review import verdict_counts as review_verdict_counts
 
 router = APIRouter(tags=["validation"])
@@ -79,9 +82,9 @@ async def get_validation_progress(
 @router.get(
     "/api/v1/validation/forward-skill",
     summary="前瞻评分集合分组报告",
-    response_model=dict[str, Any],
+    response_model=ForwardSkillReport,
 )
-async def get_forward_skill(db: DbDep) -> dict[str, Any]:
+async def get_forward_skill(db: DbDep) -> ForwardSkillReport:
     """冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。"""
     return fwd.forward_skill_report(db)
 
@@ -89,9 +92,9 @@ async def get_forward_skill(db: DbDep) -> dict[str, Any]:
 @router.get(
     "/api/v1/validation/m3-protocol",
     summary="M3 评测协议报告(三轨参考列+两档冻结阈值)",
-    response_model=dict[str, Any],
+    response_model=M3ProtocolReport,
 )
-async def get_m3_protocol(db: DbDep) -> dict[str, Any]:
+async def get_m3_protocol(db: DbDep) -> M3ProtocolReport:
     """
     三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。
 
@@ -104,8 +107,8 @@ async def get_m3_protocol(db: DbDep) -> dict[str, Any]:
 @router.get(
     "/api/v1/backtest/baseline-quality",
     summary="历史基准分期/来源质检",
-    response_model=dict[str, Any],
+    response_model=BaselineQualityReport,
 )
-async def get_baseline_quality(db: DbDep) -> dict[str, Any]:
+async def get_baseline_quality(db: DbDep) -> BaselineQualityReport:
     """PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。"""
     return baseline.baseline_quality_report(db)

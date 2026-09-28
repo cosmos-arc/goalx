@@ -4,6 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
+import type { ClvReport, ForwardSkillReport } from "../api/goalx";
 import { validationProgressFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
@@ -35,6 +36,14 @@ const chartMock = {
 	dispose: vi.fn(),
 	resize: vi.fn(),
 };
+
+/** 构造完整 ForwardGroupMetrics（契约全字段；覆写测试关注键）。 */
+function groupMetrics(overrides: Partial<ForwardSkillReport["groups"][string]>): ForwardSkillReport["groups"][string] {
+	return {
+		...validationProgressFixture.forward.groups["dc-demo"],
+		...overrides,
+	};
+}
 
 async function renderAt(path: string) {
 	await router.navigate({ to: path });
@@ -88,10 +97,10 @@ test("validationVerdict：部分/全部达成与空条件的结论措辞", () =>
 	expect(verdictText(validationVerdict([]))).toBe("服务端暂未返回验证条件，无法下结论。");
 });
 
-// ---- 纯函数：弱类型指标映射 ----
+// ---- 纯函数：契约类型指标映射（票 06：键集在 schema 冻结） ----
 
-test("clvMetricRows：已知 key 映射为带标签行，未知 key 进折叠区", () => {
-	const { rows, unknownEntries } = clvMetricRows(validationProgressFixture.clv);
+test("clvMetricRows：契约字段映射为带标签行", () => {
+	const rows = clvMetricRows(validationProgressFixture.clv);
 	const byId = new Map(rows.map((row) => [row.id, row]));
 
 	const singlePaper = byId.get("singles-paper");
@@ -115,23 +124,13 @@ test("clvMetricRows：已知 key 映射为带标签行，未知 key 进折叠区
 	expect(basis?.value).toContain("串关跨基准(mixed) 1 注");
 	expect(basis?.hint).toContain("pinnacle 主锚");
 
-	// 分层字段缺失（旧后端/空报表）→ 不出行不进折叠区
-	const legacyOnly = clvMetricRows({
-		singles: {
-			paper: { n_bets: 0, beat_rate: null, avg_clv: null },
-			live: { n_bets: 0, beat_rate: null, avg_clv: null },
-		},
-	});
-	expect(legacyOnly.rows.map((row) => row.id)).not.toContain("close-basis");
-
-	// 默认 fixture 无未知 key；混入未知 key 后进 unknownEntries，已知 key 不进
-	const mixed = clvMetricRows({ ...validationProgressFixture.clv, mystery_field: { a: 1 } });
-	expect(mixed.unknownEntries).toEqual([["mystery_field", { a: 1 }]]);
-	expect(unknownEntries).toEqual([]);
+	// 空分层（旧后端/空报表形态）→ 不出 close-basis 行
+	const emptyBasis: ClvReport = { ...validationProgressFixture.clv, by_close_basis: {} };
+	expect(clvMetricRows(emptyBasis).map((row) => row.id)).not.toContain("close-basis");
 });
 
 test("forwardMetricRows：覆盖四态与分组 skill 成行，bestForwardSkill 与服务端同构跳过样本不足组", () => {
-	const { rows } = forwardMetricRows(validationProgressFixture.forward);
+	const rows = forwardMetricRows(validationProgressFixture.forward);
 	const byId = new Map(rows.map((row) => [row.id, row]));
 	expect(byId.get("rule")?.value).toBe("latest_forecast_before_kickoff_v1");
 	expect(byId.get("rule")?.term).toBe("forward-inclusion");
@@ -146,11 +145,12 @@ test("forwardMetricRows：覆盖四态与分组 skill 成行，bestForwardSkill 
 		version: null,
 		allInsufficient: true,
 	});
-	const report = {
+	const report: ForwardSkillReport = {
+		...validationProgressFixture.forward,
 		groups: {
-			weak: { n: 5, skill_rps: 0.5, insufficient_samples: true },
-			strong: { n: 40, skill_rps: 0.02, insufficient_samples: false },
-			negative: { n: 40, skill_rps: -0.01, insufficient_samples: false },
+			weak: groupMetrics({ n: 5, skill_rps: 0.5, insufficient_samples: true }),
+			strong: groupMetrics({ n: 40, skill_rps: 0.02, insufficient_samples: false }),
+			negative: groupMetrics({ n: 40, skill_rps: -0.01, insufficient_samples: false }),
 		},
 	};
 	expect(bestForwardSkill(report)).toEqual({ skill: 0.02, version: "strong", allInsufficient: false });
@@ -275,15 +275,7 @@ test("yield 主图：不足 2 点出空态，不挂图表容器", async () => {
 
 // ---- 渲染：弱类型映射与下钻层 ----
 
-test("下钻层：弱类型指标映射行带词典 tooltip，未知 key 折叠进其他指标", async () => {
-	server.use(
-		http.get("*/api/v1/validation/progress", () =>
-			HttpResponse.json({
-				...validationProgressFixture,
-				clv: { ...validationProgressFixture.clv, mystery_field: { a: 1 } },
-			}),
-		),
-	);
+test("下钻层：契约类型指标映射行带词典 tooltip", async () => {
 	await renderAt("/validation");
 
 	const drilldown = await screen.findByTestId("validation-drilldown");
@@ -295,11 +287,6 @@ test("下钻层：弱类型指标映射行带词典 tooltip，未知 key 折叠�
 	const forwardRows = within(drilldown).getByTestId("forward-rows");
 	expect(within(forwardRows).getAllByTestId("glossary-term-forward-inclusion").length).toBeGreaterThan(0);
 	expect(within(forwardRows).getAllByTestId("glossary-term-skill").length).toBeGreaterThan(0);
-
-	// 未知 key 折叠呈现原始 JSON；已知 key 不进折叠区
-	const unknowns = within(drilldown).getAllByTestId("unknown-metrics");
-	expect(unknowns.some((node) => node.textContent.includes("mystery_field"))).toBe(true);
-	expect(unknowns.every((node) => !node.textContent.includes("singles"))).toBe(true);
 
 	// 样本约束：唯一注分母 + 未购买在途
 	const constraints = within(drilldown).getByTestId("sample-constraints");
@@ -316,7 +303,7 @@ test("回测 vs 前瞻对比：回测 skill 标注不算通过线，前瞻口径
 				...validationProgressFixture,
 				forward: {
 					...validationProgressFixture.forward,
-					groups: { "dc-demo-v2": { n: 40, skill_rps: 0.02, insufficient_samples: false } },
+					groups: { "dc-demo-v2": groupMetrics({ n: 40, skill_rps: 0.02, insufficient_samples: false }) },
 				},
 			}),
 		),
@@ -386,7 +373,26 @@ test("空态：无回测、无曲线时诚实显示，结论与条件照常推�
 				unpurchased_open: 0,
 				yield_curve: [],
 				yield_curve_mode: "paper",
-				clv: { n_records: 2, beat_rate_overall: null },
+				clv: {
+					singles: {},
+					parlay2: {},
+					independence_assumed: true,
+					close_basis_note: "",
+					by_close_basis: {},
+					denominator: {
+						settled_bets: 0,
+						legs: 0,
+						no_close_bets: 2,
+						unsupported_bets: 0,
+						raw_bets: 0,
+						reconciled_bets: 0,
+						unique_bets: 0,
+						deduped_duplicates: 0,
+						fixtures: 0,
+					},
+					by_minutes_bucket_single: {},
+					regression: { n: 0, slope: null, r_squared: null, note: "singles only" },
+				},
 				forward: {
 					rule: "latest_forecast_before_kickoff_v1",
 					coverage: { settled_fixtures: 0, no_forecast: 2, post_kickoff_only: 0, no_market_baseline: 0, scored: 0 },
@@ -405,9 +411,6 @@ test("空态：无回测、无曲线时诚实显示，结论与条件照常推�
 		"进行中",
 		"进行中",
 	]);
-	// 遗留/未知 clv 字段折叠呈现，不裸字典直出
-	const unknowns = screen.getAllByTestId("unknown-metrics");
-	expect(unknowns.some((node) => node.textContent.includes("n_records"))).toBe(true);
 });
 
 test("后端不可用降级为空状态 + 重试恢复", async () => {

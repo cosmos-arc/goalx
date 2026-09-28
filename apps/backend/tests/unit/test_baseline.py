@@ -38,7 +38,7 @@ def test_baseline_quality_report_periods_and_diffs(db) -> None:
     seed_hist(db, "2025-06-01", n=3)  # 切期前,psc+avgc 齐
     seed_hist(db, "2025-08-01", psc=False, n=2)  # 切期后,只有 avgc(缺失 PSC)
     seed_hist(db, "2025-09-01", psc=False, avgc=False, n=1)  # 两无
-    report = baseline.baseline_quality_report(db)
+    report = baseline.baseline_quality_report(db).model_dump()
     assert report["review_date"] == "2025-07-23"
     before = report["periods"]["before_2025-07-23"]
     since = report["periods"]["since_2025-07-23"]

@@ -22,7 +22,11 @@ from goalx_backend.betting.store import (
 )
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import forward_validation as fwd
-from goalx_backend.evaluation.forward_validation import MIN_GROUP_SAMPLES
+from goalx_backend.evaluation.clv import ClvReport
+from goalx_backend.evaluation.forward_validation import (
+    MIN_GROUP_SAMPLES,
+    ForwardSkillReport,
+)
 from goalx_backend.modelling.forecast import latest_model_version
 
 CLV_MIN_BETS = 200  # 纸面三条件之一：≥200 唯一注才评估 beat rate（票 10/34）
@@ -91,8 +95,8 @@ class ValidationProgressView(BaseModel):
     unpurchased_open: int
     yield_curve: list[YieldPoint]
     yield_curve_mode: str
-    clv: dict[str, Any]
-    forward: dict[str, Any]
+    clv: ClvReport
+    forward: ForwardSkillReport
     latest_run: BacktestRunView | None = None
 
 
@@ -250,18 +254,15 @@ def validation_progress(
     - 复核：误导率 ≤10% 且 ≥10 条（review_counts 由 api 层注入）；
     - 整赛季：独立显示，未验收前不通过。
     """
-    clv_report = clv_mod.clv_report(conn)
+    clv_stats = clv_mod.clv_report(conn)
     paper_clv_bets = (
-        clv_report["singles"]["paper"]["n_bets"]
-        + clv_report["parlay2"]["paper"]["n_bets"]
+        clv_stats.singles["paper"].n_bets + clv_stats.parlay2["paper"].n_bets
     )
     paper_group = [
-        g
-        for g in (clv_report["singles"]["paper"], clv_report["parlay2"]["paper"])
-        if g["n_bets"]
+        g for g in (clv_stats.singles["paper"], clv_stats.parlay2["paper"]) if g.n_bets
     ]
     beats = sum(
-        round(g["beat_rate"] * g["n_bets"]) if g["beat_rate"] is not None else 0
+        round(g.beat_rate * g.n_bets) if g.beat_rate is not None else 0
         for g in paper_group
     )
     paper_beat = beats / paper_clv_bets if paper_clv_bets else None
@@ -286,20 +287,20 @@ def validation_progress(
 
     forward = fwd.forward_skill_report(conn)
     deployed = latest_model_version(conn)
-    dep_metrics = forward["groups"].get(deployed) if deployed is not None else None
-    if deployed is None or not forward["groups"]:
+    dep_metrics = forward.groups.get(deployed) if deployed is not None else None
+    if deployed is None or not forward.groups:
         skill_ok, skill_current = False, "无前瞻样本"
     elif dep_metrics is None:
         skill_ok = False
         skill_current = f"{deployed}: 无前瞻样本(部署版本)"
-    elif dep_metrics.get("insufficient_samples"):
+    elif dep_metrics.insufficient_samples:
         skill_ok = False
-        skill_current = f"{deployed}: n={dep_metrics['n']} 样本不足(部署版本)"
+        skill_current = f"{deployed}: n={dep_metrics.n} 样本不足(部署版本)"
     else:
-        skill_ok = dep_metrics["skill_rps"] >= 0.0
+        skill_ok = dep_metrics.skill_rps >= 0.0
         skill_current = (
-            f"{deployed}: n={dep_metrics['n']}"
-            f" skill={dep_metrics['skill_rps']:+.4f}(部署版本)"
+            f"{deployed}: n={dep_metrics.n}"
+            f" skill={dep_metrics.skill_rps:+.4f}(部署版本)"
         )
     conditions.append(
         ConditionProgress(
@@ -334,7 +335,7 @@ def validation_progress(
         unpurchased_open=count_unpurchased_open(conn),
         yield_curve=_yield_curve(paper_rows if yield_mode == "paper" else live_rows),
         yield_curve_mode=yield_mode,
-        clv=clv_report,
+        clv=clv_stats,
         forward=forward,
         latest_run=latest_view,
     )
