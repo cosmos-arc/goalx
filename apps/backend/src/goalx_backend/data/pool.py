@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
+from pydantic import BaseModel
+
 from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import utc_now_iso
@@ -485,3 +487,112 @@ def model_prob_for_fixture(
     matrix = forecast_matrix_from_payload(payload)
     had = matrix.had()
     return {s: had[s] for s in SELECTIONS}
+
+
+# ---- 期次读模型（票 08 自 api/pool.py 下沉）：概率源策略 + 三向视图 ----
+# 视图模型先前在 betting/pool_strategy 定义（review-20260928/02），随策略
+# 所需的读模型装配一起归 data 域正典（先例 data/today.py）；
+# betting/pool_strategy 保持纯函数决策层，反向引本模块。
+
+# 一场一选的三向顺序：官方池码 + 中文标签 + had 字母（视图装配用）
+_POOL_TRIPLE = (("3", "胜", "h"), ("1", "平", "d"), ("0", "负", "a"))
+
+
+class PoolSelectionView(BaseModel):
+    """一场一选的彩池口径三向数据。"""
+
+    code: str  # h/d/a
+    label: str
+    prob: float | None = None  # 概率（模型口径优先，退化为欧指去水）
+    prob_source: str  # model | euro_devig | none
+    share: float | None = None  # 公众份额（源B 人气，estimated）
+    implied_odds: float | None = None  # 估计派彩赔率 = 返奖率/share
+    ev: float | None = None  # p × 估计赔率 − 1（缺份额 None）
+
+
+class PoolMatchView(BaseModel):
+    """一期一场对阵。"""
+
+    match_seq: int
+    source_match_id: str | None = None
+    league: str
+    kickoff_utc: str
+    home_team: str
+    away_team: str
+    fixture_id: int | None = None  # 映射到的竞彩场次（无则 None）
+    selections: list[PoolSelectionView]
+
+
+def match_rows_with_fixture_ids(
+    conn: sqlite3.Connection, pool_period_id: int
+) -> list[tuple[sqlite3.Row, int | None]]:
+    """期次对阵行 + 逐行桥接 fixture_id（详情/搏冷/证据卡共用的逐行骨架）。"""
+    return [
+        (
+            row,
+            match_fixture_id(
+                conn,
+                str(row["kickoff_utc"]),
+                str(row["home_team"]),
+                str(row["away_team"]),
+            ),
+        )
+        for row in pool_matches_for_period(conn, pool_period_id)
+    ]
+
+
+def match_views(
+    conn: sqlite3.Connection, pool_period_id: int, now: str
+) -> list[PoolMatchView]:
+    """期次 → 三向视图列表（概率/份额/估计赔率/EV 装配；详情与生成器共用）。"""
+    shares = latest_shares_for_period(conn, pool_period_id)
+    views: list[PoolMatchView] = []
+    for row, fixture_id in match_rows_with_fixture_ids(conn, pool_period_id):
+        seq = int(row["match_seq"])
+        model_prob = (
+            model_prob_for_fixture(conn, fixture_id, now)
+            if fixture_id is not None
+            else None
+        )
+        devig = devig_euro_odds(
+            (row["euro_odds_h"], row["euro_odds_d"], row["euro_odds_a"])
+        )
+        selection_views: list[PoolSelectionView] = []
+        for position, (code, label, had) in enumerate(_POOL_TRIPLE):
+            if model_prob is not None:
+                prob, source = model_prob[had], "model"
+            elif devig is not None:
+                prob, source = devig[position], "euro_devig"
+            else:
+                prob, source = None, "none"
+            share = shares.get(seq, {}).get(code)
+            implied = parimutuel_odds(share) if share else None
+            ev = (
+                parimutuel_ev(prob, share)
+                if prob is not None and share is not None
+                else None
+            )
+            selection_views.append(
+                PoolSelectionView(
+                    code=had,
+                    label=label,
+                    prob=round(prob, 4) if prob is not None else None,
+                    prob_source=source,
+                    share=round(share, 4) if share is not None else None,
+                    implied_odds=round(implied, 2) if implied else None,
+                    ev=round(ev, 4) if ev is not None else None,
+                )
+            )
+        views.append(
+            PoolMatchView(
+                match_seq=seq,
+                source_match_id=row["source_match_id"],
+                league=str(row["league"] or ""),
+                kickoff_utc=str(row["kickoff_utc"]),
+                home_team=str(row["home_team"]),
+                away_team=str(row["away_team"]),
+                fixture_id=fixture_id,
+                selections=selection_views,
+            )
+        )
+    return views

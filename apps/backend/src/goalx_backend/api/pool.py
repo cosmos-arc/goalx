@@ -1,8 +1,9 @@
 """
 彩池 API（票 43）：期次/对阵/分布视图、同步触发、AI 代采入口。
 
-搏冷策略（生成器/目标反推）自票 review-20260928/02 起下沉 betting/pool_strategy，
-本模块只留路由、取数装配与视图组装。
+搏冷策略（生成器/目标反推）在 betting/pool_strategy；期次读模型装配
+（概率源策略：模型优先→欧赔去水兜底）在 data/pool.match_views（票 08
+下沉）；本模块只留路由与 HTTP 形状。
 """
 
 from __future__ import annotations
@@ -21,21 +22,17 @@ from goalx_backend.betting.pool_strategy import (
     COLD_CALIBER_TEXT,
     TARGET_CALIBER_TEXT,
     ColdTicketView,
-    PoolMatchView,
-    PoolSelectionView,
     cold_variants,
     default_base_picks,
     target_plan,
 )
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data.ingest import zucai
+from goalx_backend.data.pool import PoolMatchView
 from goalx_backend.db import utc_now_iso
 
 router = APIRouter(tags=["pool"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
-
-# 一场一选的三向顺序：官方池码 + 中文标签 + had 字母（前端展示用）
-_POOL_TRIPLE = (("3", "胜", "h"), ("1", "平", "d"), ("0", "负", "a"))
 
 
 class PoolStateView(BaseModel):
@@ -190,7 +187,7 @@ async def get_pool_period(
     if pool_period_id is None:
         raise HTTPException(status_code=404, detail=f"period {period_no} not found")
     now = utc_now_iso()
-    views = _match_views(db, pool_period_id, now)
+    views = pool_store.match_views(db, pool_period_id, now)
     return PoolPeriodDetailView(
         period_no=period_no,
         sales_deadline=pool_store.pool_period_deadline(db, pool_period_id),
@@ -199,67 +196,6 @@ async def get_pool_period(
         shares_captured_at=pool_store.shares_captured_at(db, pool_period_id),
         caliber=CALIBER_TEXT,
     )
-
-
-def _match_views(
-    db: sqlite3.Connection, pool_period_id: int, now: str
-) -> list[PoolMatchView]:
-    """期次 → 三向视图列表（概率/份额/估计赔率/EV 装配；详情与生成器共用）。"""
-    matches = pool_store.pool_matches_for_period(db, pool_period_id)
-    shares = pool_store.latest_shares_for_period(db, pool_period_id)
-    views: list[PoolMatchView] = []
-    for row in matches:
-        seq = int(row["match_seq"])
-        fixture_id = pool_store.match_fixture_id(
-            db, str(row["kickoff_utc"]), str(row["home_team"]), str(row["away_team"])
-        )
-        model_prob = (
-            pool_store.model_prob_for_fixture(db, fixture_id, now)
-            if fixture_id is not None
-            else None
-        )
-        devig = pool_store.devig_euro_odds(
-            (row["euro_odds_h"], row["euro_odds_d"], row["euro_odds_a"])
-        )
-        selection_views: list[PoolSelectionView] = []
-        for position, (code, label, had) in enumerate(_POOL_TRIPLE):
-            if model_prob is not None:
-                prob, source = model_prob[had], "model"
-            elif devig is not None:
-                prob, source = devig[position], "euro_devig"
-            else:
-                prob, source = None, "none"
-            share = shares.get(seq, {}).get(code)
-            implied = pool_store.parimutuel_odds(share) if share else None
-            ev = (
-                pool_store.parimutuel_ev(prob, share)
-                if prob is not None and share is not None
-                else None
-            )
-            selection_views.append(
-                PoolSelectionView(
-                    code=had,
-                    label=label,
-                    prob=round(prob, 4) if prob is not None else None,
-                    prob_source=source,
-                    share=round(share, 4) if share is not None else None,
-                    implied_odds=round(implied, 2) if implied else None,
-                    ev=round(ev, 4) if ev is not None else None,
-                )
-            )
-        views.append(
-            PoolMatchView(
-                match_seq=seq,
-                source_match_id=row["source_match_id"],
-                league=str(row["league"] or ""),
-                kickoff_utc=str(row["kickoff_utc"]),
-                home_team=str(row["home_team"]),
-                away_team=str(row["away_team"]),
-                fixture_id=fixture_id,
-                selections=selection_views,
-            )
-        )
-    return views
 
 
 # ---- 搏冷生成器（票 pool-v2/02）：策略在 betting/pool_strategy，此处只留端点 ----
@@ -303,7 +239,7 @@ async def generate_cold_variants(
         raise HTTPException(
             status_code=404, detail=f"period {payload.period_no} not found"
         )
-    views = _match_views(db, pool_period_id, utc_now_iso())
+    views = pool_store.match_views(db, pool_period_id, utc_now_iso())
     by_seq = {v.match_seq: v for v in views}
     if payload.base_picks is not None:
         for seq_str, code in payload.base_picks.items():
@@ -368,7 +304,7 @@ async def build_target_plan(payload: TargetPlanPayload, db: DbDep) -> TargetPlan
         raise HTTPException(
             status_code=404, detail=f"period {payload.period_no} not found"
         )
-    views = _match_views(db, pool_period_id, utc_now_iso())
+    views = pool_store.match_views(db, pool_period_id, utc_now_iso())
     try:
         ticket, per_unit, units, reached, note = target_plan(
             views, target_amount=payload.target_amount, risk=payload.risk

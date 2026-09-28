@@ -216,19 +216,9 @@ async def get_pool_evidence_summary(
     pool_period_id = pool_store.pool_period_id(db, market_code, period_no)
     if pool_period_id is None:
         raise HTTPException(status_code=404, detail=f"period {period_no} not found")
-    matches = [
-        _match_evidence_view(
-            db,
-            row,
-            pool_store.match_fixture_id(
-                db,
-                str(row["kickoff_utc"]),
-                str(row["home_team"]),
-                str(row["away_team"]),
-            ),
-        )
-        for row in pool_store.pool_matches_for_period(db, pool_period_id)
-    ]
+    # 逐行骨架（对阵行 + fixture_id 桥接）与期次详情/搏冷同一领域函数（票 08）
+    pairs = pool_store.match_rows_with_fixture_ids(db, pool_period_id)
+    matches = [_match_evidence_view(db, row, fixture_id) for row, fixture_id in pairs]
     return EvidenceSummaryView(
         period_no=period_no,
         market_code=market_code,
