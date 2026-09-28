@@ -27,6 +27,15 @@ import {
 } from "../components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import {
+	betsKey,
+	drawResultsKey,
+	drawSyncKey,
+	invalidateSettlementViews,
+	slipsKey,
+	TODAY_STALE_MS,
+	todayFixturesKey,
+} from "../lib/query-keys";
+import {
 	earliestKickoffMs,
 	errorText,
 	legText,
@@ -178,23 +187,22 @@ export function BetsPage() {
 	const [drawForm, setDrawForm] = useState<DrawForm>(EMPTY_DRAW_FORM);
 	const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewDrawResults>> | null>(null);
 
-	const bets = useQuery({ queryKey: ["bets"], queryFn: () => fetchBets() });
-	const drawResults = useQuery({ queryKey: ["draw-results"], queryFn: () => fetchDrawResults() });
-	const drawSync = useQuery({ queryKey: ["draw-sync"], queryFn: () => fetchDrawSyncStatus() });
-	const today = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
-	const slips = useQuery({ queryKey: ["slips"], queryFn: () => fetchSlips() });
+	const bets = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	const drawResults = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
+	const drawSync = useQuery({ queryKey: drawSyncKey, queryFn: () => fetchDrawSyncStatus() });
+	const today = useQuery({
+		queryKey: todayFixturesKey(1),
+		queryFn: () => fetchTodayFixtures(undefined, 1),
+		staleTime: TODAY_STALE_MS,
+	});
+	const slips = useQuery({ queryKey: slipsKey, queryFn: () => fetchSlips() });
 	const now = Date.now();
 
 	const allBets = bets.data ?? [];
 	const kickoffById = new Map((today.data ?? []).map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));
 
 	function refresh() {
-		void queryClient.invalidateQueries({ queryKey: ["bets"] });
-		void queryClient.invalidateQueries({ queryKey: ["draw-results"] });
-		void queryClient.invalidateQueries({ queryKey: ["draw-sync"] });
-		void queryClient.invalidateQueries({ queryKey: ["bankroll"] });
-		void queryClient.invalidateQueries({ queryKey: ["validation-progress"] });
-		void queryClient.invalidateQueries({ queryKey: ["slips"] });
+		invalidateSettlementViews(queryClient);
 	}
 
 	// ---- 生命周期三段（票 06 定稿：未锁定建议 / 已锁定 / 已结算），各段倒序 ----

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchStakeAdvice, type StakeAdviceInput } from "../api/goalx";
+import { stakeAdviceKey } from "../lib/query-keys";
 import { TABULAR_NUMS } from "../lib/ui";
 import { GlossaryTerm } from "./glossary-term";
 
@@ -57,7 +58,7 @@ export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, label, 
 			? { mode, bankroll, ev, odds, cap_fraction: cap }
 			: null;
 	const adviceQuery = useQuery({
-		queryKey: ["stake-advice", mode, bankroll, ev, odds, cap],
+		queryKey: stakeAdviceKey({ mode, bankroll, ev, odds, cap }),
 		queryFn: () => fetchStakeAdvice(body as StakeAdviceInput),
 		enabled,
 	});

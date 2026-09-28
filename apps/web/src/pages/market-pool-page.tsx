@@ -16,6 +16,14 @@ import { MarketTabs } from "../components/market-tabs";
 import { PoolGenerator, PoolTargetPlanner } from "../components/pool-generators";
 import { bestSelection, type PoolPickEntry, PoolSlotList, selectionOf } from "../components/pool-slots";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
+import {
+	bankrollKey,
+	invalidatePoolViews,
+	poolPeriodDetailKey,
+	poolPeriodsKey,
+	poolSyncStatusKey,
+	slipsKey,
+} from "../lib/query-keys";
 import { errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -56,9 +64,9 @@ export function combinations(n: number, k: number): number {
 }
 
 export function MarketPoolPage() {
-	const periodsQuery = useQuery({ queryKey: ["pool-periods"], queryFn: () => fetchPoolPeriods() });
-	const syncQuery = useQuery({ queryKey: ["pool-sync-status"], queryFn: fetchPoolSyncStatus });
-	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: fetchBankroll });
+	const periodsQuery = useQuery({ queryKey: poolPeriodsKey, queryFn: () => fetchPoolPeriods() });
+	const syncQuery = useQuery({ queryKey: poolSyncStatusKey, queryFn: fetchPoolSyncStatus });
+	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
 	const queryClient = useQueryClient();
 
 	const periods = periodsQuery.data ?? [];
@@ -67,7 +75,7 @@ export function MarketPoolPage() {
 	const activePeriod =
 		period !== null && periods.some((p) => p.period_no === period) ? period : defaultPeriod?.period_no;
 	const detailQuery = useQuery({
-		queryKey: ["pool-period-detail", activePeriod],
+		queryKey: poolPeriodDetailKey(activePeriod),
 		queryFn: () => fetchPoolPeriodDetail(activePeriod ?? ""),
 		enabled: activePeriod !== undefined,
 	});
@@ -75,9 +83,7 @@ export function MarketPoolPage() {
 	const syncMutation = useMutation({
 		mutationFn: runPoolSync,
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["pool-periods"] });
-			void queryClient.invalidateQueries({ queryKey: ["pool-period-detail"] });
-			void queryClient.invalidateQueries({ queryKey: ["pool-sync-status"] });
+			invalidatePoolViews(queryClient);
 		},
 	});
 
@@ -88,7 +94,7 @@ export function MarketPoolPage() {
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
 			setSubmitResult(`已建纸面池票 #${slip.id}`);
-			void queryClient.invalidateQueries({ queryKey: ["slips"] });
+			void queryClient.invalidateQueries({ queryKey: slipsKey });
 		},
 		onError: (error) => setSubmitResult(`提交失败：${errorText(error)}`),
 	});

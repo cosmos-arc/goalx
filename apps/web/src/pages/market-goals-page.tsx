@@ -22,6 +22,7 @@ import {
 	DrawerTitle,
 } from "../components/ui/drawer";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
+import { bankrollKey, goalsMarketKey, invalidateBets } from "../lib/query-keys";
 import { dayNoteOf, errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -42,10 +43,10 @@ const MAX_GOALS_LEGS = GOALS_COMBO_CONFIG.maxPicks;
 
 export function MarketGoalsPage() {
 	const goalsQuery = useQuery({
-		queryKey: ["goals-market", GOALS_WINDOW_DAYS],
+		queryKey: goalsMarketKey(GOALS_WINDOW_DAYS),
 		queryFn: () => fetchGoalsMarket(undefined, GOALS_WINDOW_DAYS),
 	});
-	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: fetchBankroll });
+	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
 	const queryClient = useQueryClient();
 	const [market, setMarket] = useState<GoalsMarket>("ttg");
 	const [legs, setLegs] = useState<GoalsLeg[]>([]);
@@ -167,7 +168,7 @@ export function MarketGoalsPage() {
 			setMessage(`已建 ${created.length} 条单关建议 — 去投注页锁定`);
 			setLegs([]);
 			setBasketOpen(false);
-			void queryClient.invalidateQueries({ queryKey: ["bets"] });
+			invalidateBets(queryClient);
 		},
 		onError: (error) => setMessage(`建注失败：${errorText(error)}`),
 	});
