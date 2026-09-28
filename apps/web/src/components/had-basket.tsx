@@ -16,16 +16,18 @@ import {
 } from "./ui/drawer";
 
 /**
- * had 选注篮共享件（lean-audit 票 04）：场次页与胜平负页的逐字节双副本抽取。
+ * had 选注篮共享件（lean-audit 票 04；review-20260928 票 06 收编研究页）：
+ * 场次页/胜平负页/单场研究页三页共用。
  * - useHadBasket：6 状态 + 规则前置（同场替换/MAX_LEGS/单固首腿）+ 建议仓位
- *   输入 + createBet mutation（invalidate ["bets"]）；
+ *   输入 + createBet mutation（invalidate ["bets"]）；建议仓位的 leg EV 经
+ *   第三参注入（缺省 = 列表页 fixture.ev 字段口径，研究页注入共识口径）；
  * - BasketBar：底部常驻条（已选摘要 + 组合赔率）；
  * - BasketDrawer：右侧抽屉（腿列表/建议仓位/模式/金额/策略版本/提交）。
  * 两页文本差异（空态提示）经 emptyHint prop 注入；进球玩法页是独立单关
  * 变体（同场多注/独立提交/goals-* testid），不进本共享件。
  */
 
-export function useHadBasket(now: number, fixtures: TodayFixture[]) {
+export function useHadBasket(now: number, fixtures: TodayFixture[] = [], legEvOverride?: (leg: Leg) => number | null) {
 	const [legs, setLegs] = useState<Leg[]>([]);
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [stake, setStake] = useState("100");
@@ -37,10 +39,12 @@ export function useHadBasket(now: number, fixtures: TodayFixture[]) {
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
 
 	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿=串关联合口径（整注一个 Kelly，不分腿）
-	const legEv = (leg: Leg): number | null => {
-		const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
-		return fixture?.ev?.[leg.selection] ?? null;
-	};
+	const legEv =
+		legEvOverride ??
+		((leg: Leg): number | null => {
+			const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
+			return fixture?.ev?.[leg.selection] ?? null;
+		});
 	const basketAdvice =
 		legs.length === 2
 			? {
