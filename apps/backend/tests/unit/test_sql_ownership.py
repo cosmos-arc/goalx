@@ -76,3 +76,19 @@ def test_table_sql_stays_in_owning_package() -> None:
             elif pkg != owner:
                 violations.append(f"{path}: 表 {table} 归 {owner} 包(ADR-0008)")
     assert not violations, "\n".join(violations)
+
+
+# 表名经 {} 插值（如 f"SELECT * FROM {table}"）对 sql_tables 的字面量提取
+# 天生不可见——票 review-20260928/01 的盲区形态，表名一律字面量或走归属包函数
+INTERPOLATED_TABLE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+\{", re.IGNORECASE)
+
+
+def test_table_names_stay_literal() -> None:
+    violations = [
+        f"{path}: 表名经 {{}} 插值，静态归属审不到(表名一律字面量/走归属包)"
+        for path in sorted(SRC.rglob("*.py"))
+        if "__pycache__" not in path.parts
+        and path.name not in INFRA
+        and INTERPOLATED_TABLE.search(path.read_text(encoding="utf-8"))
+    ]
+    assert not violations, "\n".join(violations)

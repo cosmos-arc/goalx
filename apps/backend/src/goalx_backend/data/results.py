@@ -77,6 +77,11 @@ def get_draw_result(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | 
     ).fetchone()
 
 
+def draw_result_revisions_history(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """全部开奖结果修正史（按 id；betting/ledger_audit 跨域读取入口）。"""
+    return conn.execute("SELECT * FROM draw_result_revisions ORDER BY id").fetchall()
+
+
 def list_draw_results(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """全部已导入的开奖结果（按场次稳定排序）。"""
     return conn.execute("SELECT * FROM draw_results ORDER BY fixture_id").fetchall()
