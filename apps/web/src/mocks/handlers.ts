@@ -1,12 +1,40 @@
 import { HttpResponse, http } from "msw";
+import type { components } from "../api/generated/schema";
 
+import type {
+	BacktestRun,
+	Bankroll,
+	Bet,
+	DrawResultView,
+	DrawSyncStatus,
+	EvidenceSummary,
+	FixtureEvidence,
+	FixtureResearch,
+	GoalsFixture,
+	PoolPeriod,
+	PoolPeriodDetail,
+	Slip,
+	TodayFixture,
+	ValidationProgress,
+} from "../api/goalx";
 import { beijingBusinessDate } from "../lib/ui";
+
+type StatusResponse = components["schemas"]["StatusResponse"];
+
+/** 深层只读视图（as const 字面量对 schema 可变数组字段的桥）；只用于 satisfies 锚点。 */
+type DeepReadonly<T> = {
+	readonly [K in keyof T]: T[K] extends (infer U)[]
+		? readonly DeepReadonly<U>[]
+		: T[K] extends object
+			? DeepReadonly<T[K]>
+			: T[K];
+};
 
 export const statusFixture = {
 	app_name: "goalx-backend",
 	app_version: "0.1.0",
 	environment: "testing",
-} as const;
+} as const satisfies DeepReadonly<StatusResponse>;
 
 function hoursFromNow(hours: number): string {
 	return new Date(Date.now() + hours * 3_600_000).toISOString();
@@ -144,7 +172,7 @@ export const todayFixture = [
 			eu_books: 5,
 		},
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<TodayFixture>[];
 
 /**
  * 票 38 poolList 口径样例：比赛级 bettingSingle=0（is_single=false）但
@@ -179,7 +207,7 @@ export const poolListTodayFixture = {
 		jc_source_updated_at: minutesAgoIso(12),
 		eu_books: 6,
 	},
-} as const;
+} as const satisfies DeepReadonly<TodayFixture>;
 
 export const betsFixture = [
 	{
@@ -267,7 +295,7 @@ export const betsFixture = [
 		],
 		review: { locked_pre_kickoff: true, closing_present: false, forward: "live_separate" },
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<Bet>[];
 
 /**
  * 票 20：事件时间相对 now 动态生成（今日页同思路）——余额迷你曲线的"近 30 天"
@@ -295,7 +323,7 @@ export const bankrollFixture = {
 			note: "初始资金",
 		},
 	],
-} as const;
+} as const satisfies DeepReadonly<Bankroll>;
 
 export const handlers = [
 	http.get("*/api/v1/status", () => HttpResponse.json(statusFixture)),
@@ -435,7 +463,7 @@ export const slipsFixture = [
 		stake_total: 100,
 		profit_total: 0,
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<Slip>[];
 
 export const drawResultsFixture = [
 	{
@@ -449,7 +477,7 @@ export const drawResultsFixture = [
 		source: "manual",
 		published_at: null,
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<DrawResultView>[];
 
 /** 票 42：赛果同步状态 mock——上次同步带待人工清单（not_finished/stored_differs）。 */
 export const drawSyncFixture = {
@@ -468,7 +496,7 @@ export const drawSyncFixture = {
 		],
 	},
 	pending_results: 2,
-} as const;
+} as const satisfies DeepReadonly<DrawSyncStatus>;
 
 /**
  * 票 wb-02 研究页 mock：fixture 1 的逐书赔率（两家全三向 + 一家缺一向）、
@@ -528,7 +556,7 @@ export const researchFixture = {
 		jc_source_updated_at: minutesAgoIso(8),
 		eu_books: 3,
 	},
-} as const;
+} as const satisfies DeepReadonly<FixtureResearch>;
 
 /**
  * 票 wb-05 进球玩法页 mock：与后端 demo 种子同思路——fixture 2 带模型
@@ -663,7 +691,7 @@ export const goalsMarketFixture = [
 		model_version: null,
 		issued_at: null,
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<GoalsFixture>[];
 
 export const backtestRunsFixture = [
 	{
@@ -683,7 +711,7 @@ export const backtestRunsFixture = [
 			brier_market: 0.578,
 		},
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<BacktestRun>[];
 
 export const validationProgressFixture = {
 	conditions: [
@@ -778,7 +806,7 @@ export const validationProgressFixture = {
 		groups: { "dc-demo": { n: 5, skill_rps: 0.012, insufficient_samples: true } },
 	},
 	latest_run: backtestRunsFixture[0],
-} as const;
+} as const satisfies DeepReadonly<ValidationProgress>;
 
 handlers.push(
 	// 票 wb-05：进球玩法读模型（与今日页同口径——单日默认、days>1 放行全窗）
@@ -934,7 +962,7 @@ export const poolPeriodsFixture = [
 		state: null,
 		status: "finished",
 	},
-] as const;
+] as const satisfies readonly DeepReadonly<PoolPeriod>[];
 
 export const poolPeriodDetailFixture = {
 	period_no: "26999",
@@ -944,7 +972,7 @@ export const poolPeriodDetailFixture = {
 	shares_captured_at: "2026-09-18T06:30:00Z",
 	caliber:
 		"概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；份额 = 第三方人气分布（公众分布代理，非官方池份额）；估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1，未建模 price impact 与分彩风险。",
-};
+} satisfies PoolPeriodDetail;
 
 const poolSyncStatusFixture = {
 	last_run: {
@@ -1219,7 +1247,7 @@ export const evidenceSummaryFixture = {
 			state: "no_intel",
 		},
 	],
-} as const;
+} as const satisfies DeepReadonly<EvidenceSummary>;
 
 export const fixtureEvidenceFixture = {
 	fixture_id: 1,
@@ -1269,7 +1297,7 @@ export const fixtureEvidenceFixture = {
 			decided_at: null,
 		},
 	],
-} as const;
+} as const satisfies DeepReadonly<FixtureEvidence>;
 
 export const reviewQueueFixture = {
 	items: [
@@ -1286,7 +1314,7 @@ export const reviewQueueFixture = {
 			created_at: minutesAgoIso(30),
 		},
 	],
-} as const;
+} as const satisfies DeepReadonly<components["schemas"]["ReviewQueueView"]>;
 
 handlers.push(
 	http.get("*/api/v1/pool/periods/:periodNo/evidence-summary", ({ params }) => {
