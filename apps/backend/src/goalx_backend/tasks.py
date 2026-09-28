@@ -96,17 +96,23 @@ def eu_odds_snapshot() -> oddsapi.OddsIngestStats:
         )
 
 
-def eu_odds_closing(window_minutes: int = 35) -> oddsapi.OddsIngestStats:
+def eu_odds_closing(window_minutes: int = 35) -> dict[str, object]:
     """收盘窗口尽力快照（票 32/35）：与常规采集共享月预算（同一记账路径）。"""
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
-        return oddsapi.fetch_closing_window(
+        stats = oddsapi.fetch_closing_window(
             conn,
             settings,
             client,
             window_minutes=window_minutes,
             raw_root=settings.observations_dir,
         )
+    # 三键口径 = 旧 flow 返回面（票 03 不变量：载荷形状不变）
+    return {
+        "events": stats.events,
+        "snapshots": stats.snapshots,
+        "credits_used": stats.credits_used,
+    }
 
 
 def fd_history_import() -> fdhist.HistImportStats:
@@ -331,17 +337,40 @@ def srct_night_run(  # noqa: PLR0913 运行旋钮+测试注入口，cli/flow 共
         store.close()
 
 
-def srct_shift_run() -> dict[str, object]:
+def srct_shift_run(
+    *,
+    request_cap: int | None = None,
+    no_window: bool = False,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
     """
     源T 当期班（票 65）：在售清单 → 四类拍决策 → raw+bronze append。
 
     夜窗让位/预算触顶都正常返回（拍键幂等，下轮自愈）；这里只回计数。
+    no_window=True 跳过夜窗让位（白天冒烟/手工回补）。settings/client
+    注入口只服务测试接缝（cli/flow 共用本函数，缺省真实装配）。
     """
-    settings = get_settings()
-    store = CorpusStore(settings.corpus_root)
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
     try:
-        with httpx.Client(verify=srct.browser_ssl_context()) as client:
-            stats = srct_shift.run_shift(store, settings, client)
+        with ExitStack() as stack:
+            run_client = (
+                client
+                if client is not None
+                else stack.enter_context(
+                    httpx.Client(verify=srct.browser_ssl_context())
+                )
+            )
+            stats = srct_shift.run_shift(
+                store,
+                resolved,
+                run_client,
+                request_cap=(
+                    srct_shift.SHIFT_REQUEST_CAP if request_cap is None else request_cap
+                ),
+                enforce_window=not no_window,
+            )
     finally:
         store.close()
     return srct_shift.stats_dict(stats)

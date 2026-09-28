@@ -37,7 +37,6 @@ import json
 import sqlite3
 import sys
 from collections.abc import Callable
-from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from functools import partial
@@ -70,7 +69,6 @@ from goalx_backend.data.ingest import (
     srct_market,
     srct_odds,
     srct_results,
-    srct_shift,
     srct_silver,
     uniform,
 )
@@ -275,17 +273,6 @@ def _cmd_calibrate_haircut() -> None:
             logger.info("{}", row)
 
 
-def _cmd_closing_snapshot() -> None:
-    """收盘窗口尽力快照（kickoff 前 35 分钟内的场次）。"""
-    stats = tasks.eu_odds_closing()
-    logger.info(
-        "closing: events={} snapshots={} credits={}",
-        stats.events,
-        stats.snapshots,
-        stats.credits_used,
-    )
-
-
 def _cmd_clv_reconcile() -> None:
     """已结算注单 CLV 对账 + 报表（票 75 起 srct 收盘锚接管）。"""
     with task_conn() as conn:
@@ -293,18 +280,6 @@ def _cmd_clv_reconcile() -> None:
             stats = clv_mod.reconcile_clv(conn, duck_con=anchor)
         logger.info("recorded={} skipped={}", stats.recorded, len(stats.skipped))
         logger.info("report: {}", clv_mod.clv_report(conn))
-
-
-def _cmd_understat_sync(args: argparse.Namespace) -> None:
-    """Understat xG 同步（票 45）：默认当前季；--seasons 2021 2022 … 回填历史。"""
-    seasons = tuple(args.seasons) if args.seasons else None
-    leagues = tuple(args.leagues) or None
-    logger.info("understat sync: {}", tasks.understat_sync(seasons, leagues=leagues))
-
-
-def _cmd_clubelo_sync(args: argparse.Namespace) -> None:
-    """Clubelo Elo 同步（票 74）：日拍快照；--backfill 逐队拉全历史区间。"""
-    logger.info("clubelo sync: {}", tasks.clubelo_sync(backfill=args.backfill))
 
 
 def _cmd_xg_compare(args: argparse.Namespace) -> None:
@@ -369,43 +344,6 @@ def _parse_success_rate(stats: srct.SrctCollectStats) -> float | None:
     """解析成功率（无解析样本返回 None——空日不折算成 1.0）。"""
     denom = stats.parsed_ok + len(stats.parse_failed)
     return round(stats.parsed_ok / denom, 4) if denom else None
-
-
-def _cmd_srct_shift(
-    args: argparse.Namespace,
-    *,
-    settings: Settings | None = None,
-    client: httpx.Client | None = None,
-) -> None:
-    """
-    源T当期班（票 65）：在售清单 → 四类拍决策 → raw+bronze append。
-
-    --no-window 跳过夜窗让位判断（白天冒烟/手工回补用）。settings/client
-    注入口只服务测试接缝。
-    """
-    resolved = settings if settings is not None else get_settings()
-    store = CorpusStore(resolved.corpus_root)
-    try:
-        with ExitStack() as stack:
-            run_client = (
-                client
-                if client is not None
-                else stack.enter_context(
-                    httpx.Client(verify=srct.browser_ssl_context())
-                )
-            )
-            stats = srct_shift.run_shift(
-                store,
-                resolved,
-                run_client,
-                request_cap=args.request_cap,
-                enforce_window=not args.no_window,
-            )
-    finally:
-        store.close()
-    sys.stdout.write(
-        json.dumps(srct_shift.stats_dict(stats), ensure_ascii=False, indent=2) + "\n"
-    )
 
 
 def _cmd_srct_silver(
@@ -921,28 +859,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
-    sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
-    understat = sub.add_parser(
-        "understat-sync", help="Understat xG 特征同步(票 45;默认当前季)"
-    )
-    understat.add_argument(
-        "--seasons", nargs="*", help="回填赛季起始年(如 2021 2022 …,默认当前季)"
-    )
-    understat.add_argument(
-        "--leagues",
-        nargs="*",
-        default=[],
-        help="understat slug(默认五大;俄超按需传 rfpl)",
-    )
-    clubelo = sub.add_parser(
-        "clubelo-sync", help="clubelo Elo 评级日拍(票 74;--backfill 全历史回填)"
-    )
-    clubelo.add_argument(
-        "--backfill",
-        action="store_true",
-        help="当日快照后逐队拉全历史区间(一次性,约 600 请求)",
-    )
     elo_query = sub.add_parser(
         "clubelo-elo",
         help="点时 Elo 按中文 canonical 队名查询(票 77 别名桥)",
@@ -1011,21 +928,6 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     sub.add_parser(
         "elo-build",
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
-    )
-    srct_shift_parser = sub.add_parser(
-        "srct-shift",
-        help="源T当期班四类拍(票65;在售清单发现+开售/每日/临场拍,拍键幂等)",
-    )
-    srct_shift_parser.add_argument(
-        "--request-cap",
-        type=int,
-        default=srct_shift.SHIFT_REQUEST_CAP,
-        help=f"当次运行请求预算上限(默认 {srct_shift.SHIFT_REQUEST_CAP})",
-    )
-    srct_shift_parser.add_argument(
-        "--no-window",
-        action="store_true",
-        help="跳过 01:00-08:00 夜窗让位判断(冒烟/手工回补用)",
     )
     sub.add_parser(
         "srct-silver",
@@ -1118,11 +1020,8 @@ def main(argv: list[str] | None = None) -> int:
         "backtest": lambda: _cmd_backtest(args),
         "baseline-compare": _cmd_baseline_compare,
         "calibrate-haircut": _cmd_calibrate_haircut,
-        "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
-        "understat-sync": lambda: _cmd_understat_sync(args),
-        "clubelo-sync": lambda: _cmd_clubelo_sync(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
@@ -1130,7 +1029,6 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-results": lambda: _cmd_srct_results(args),
         "elo-build": lambda: _cmd_elo_build(args),
-        "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),
@@ -1145,8 +1043,9 @@ def main(argv: list[str] | None = None) -> int:
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }
-    # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数
-    for spec in datasets.DATASETS:
+    # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
+    # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）
+    for spec in datasets.cli_specs():
         handlers[spec.command] = partial(datasets.run_cli, spec, args)
     handlers[args.command]()
     return 0

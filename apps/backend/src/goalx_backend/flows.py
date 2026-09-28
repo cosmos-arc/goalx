@@ -1,28 +1,16 @@
 """
-Prefect flows（ADR 0005）：定时采集、历史导入、训练与结算批跑。
+Prefect flows（ADR 0005）：组合面编排（票 03 后只剩非同构形状）。
 
 流程体是 goalx_backend.tasks 的薄 adapter——任务实现只有一份，cli 与
 flows 共用（票 35 证据契约因此不可能再漂移）；deployment 由本地
-Prefect server 调度（见 README「运行采集」）。同构「调 tasks 函数、记
-日志、回 stats」的 flow 自 deepen-20260928 票 02 起由数据集注册表
-（datasets.py）生成；本文件只剩编排型（多 flow 组合）与待搬迁（票 03）
-的手写壳。
+Prefect server 调度（见 README「运行采集」）。单 cron 同构壳（调 tasks
+函数、记日志、回 stats）自 deepen-20260928 票 02/03 起由数据集注册表
+（datasets.py）生成；本文件只剩：
 
-- jingcai_snapshot_flow：竞彩全玩法快照（销售期高频，如每 30 分钟）
-- odds_anchor_dense_flow：双锚临场定向采样（票 47 修正设计）——决策锚=
-  停售迁移检出后立即拉取（meta anchor=sale_stop）、评估锚=开球前 5 分钟
-  桶拉取（meta anchor=kickoff）；替代本文件早先"−30/−10/−1 加密"的愿望
-  描述（从未实现过，现已按竞彩停售墙钟实况落地）
-- eu_odds_closing_flow：收盘窗口快照（票 32/35）
-- fd_history_import_flow：历史底座一次性导入（幂等可重跑）
-- weekly_train_flow：DC 分池周训练（Tier1 五大，票 26）
-- forecast_daily_flow：每日在售场次 ML Forecast 生成（票 27）
-- settlement_flow：开奖后结算批跑（每日数次）
-- draw_results_sync_flow：赛果自动同步（票 42 源D 起；票 44 切 uniform；
-  票 76 起源T 物化落事实+uniform 兜底/审计）
-- official_reconcile_flow：赛果日终审计（票 76 收敛：openfootball 对账；
-  源D 退役、uniform 段随同步内联）
-- understat_sync_flow：Understat xG 特征同步（票 45：每日 6 请求 ≤10 上限）
+- 组合面（多 flow 编排）：daily-capture / weekly-refresh / daily-wrap
+- 双 cron 面：draw-results-sync（单 flow 双 deployment，schedules 手写）
+- 组合面子件：jingcai-snapshot / fd-history-import / weekly-train /
+  forecast-daily / settlement-sweep
 """
 
 from __future__ import annotations
@@ -50,23 +38,6 @@ def jingcai_snapshot_flow() -> dict[str, int]:
         stats.duplicate_snapshots,
     )
     return {"matches": stats.matches, "snapshots": stats.snapshots}
-
-
-@flow(name="eu-odds-closing", log_prints=True)
-def eu_odds_closing_flow(window_minutes: int = 35) -> dict[str, int]:
-    """收盘窗口快照（票 32/35）：与常规采集共享月预算（同一记账路径）。"""
-    stats = tasks.eu_odds_closing(window_minutes=window_minutes)
-    logger.info(
-        "eu closing: {} events, {} snapshots, credits={}",
-        stats.events,
-        stats.snapshots,
-        stats.credits_used,
-    )
-    return {
-        "events": stats.events,
-        "snapshots": stats.snapshots,
-        "credits_used": stats.credits_used,
-    }
 
 
 @flow(name="fd-history-import", log_prints=True)
@@ -122,58 +93,6 @@ def draw_results_sync_flow() -> dict[str, object]:
     return stats
 
 
-@flow(name="official-reconcile", log_prints=True)
-def official_reconcile_flow() -> dict[str, object]:
-    """赛果日终审计（票 44）：源D 页面 + openfootball 双参照源，不落事实。"""
-    stats = tasks.official_results_reconcile()
-    logger.info("official reconcile: {}", stats)
-    return stats
-
-
-@flow(name="odds-anchor-dense", log_prints=True)
-def odds_anchor_dense_flow() -> dict[str, object]:
-    """双锚临场采样（票 47）：*/5 拍，零候选零请求；30 分钟 closing 循环兜底。"""
-    stats = tasks.odds_anchor_dense()
-    logger.info("odds anchor dense: {}", stats)
-    return stats
-
-
-@flow(name="understat-sync", log_prints=True)
-def understat_sync_flow() -> dict[str, object]:
-    """Understat xG 特征同步（票 45）：五大当前季，幂等。"""
-    stats = tasks.understat_sync()
-    logger.info("understat sync: {}", stats)
-    return stats
-
-
-@flow(name="clubelo-sync", log_prints=True)
-def clubelo_sync_flow() -> dict[str, object]:
-    """Clubelo Elo 评级日拍（票 74）：当日全量快照单请求，幂等。"""
-    stats = tasks.clubelo_sync()
-    logger.info("clubelo sync: {}", stats)
-    return stats
-
-
-@flow(name="srcb-collect", log_prints=True)
-def srcb_collect_flow() -> dict[str, object]:
-    """源B变化时序采集（票 49 采集先行）：低频回溯式攒语料。"""
-    stats = tasks.srcb_collect()
-    logger.info("srcb collect: {}", stats)
-    return stats
-
-
-@flow(name="srct-shift", log_prints=True)
-def srct_shift_flow() -> dict[str, object]:
-    """
-    源T 当期班（票 65）：*/30 拍，竞彩在售场四类拍决策。
-
-    夜窗让位零成本；拍键幂等（漏拍重试自愈）。
-    """
-    stats = tasks.srct_shift_run()
-    logger.info("srct shift: {}", stats)
-    return stats
-
-
 @flow(name="daily-capture", log_prints=True)
 def daily_capture_flow() -> dict[str, object]:
     """
@@ -210,19 +129,3 @@ def daily_wrap_flow() -> dict[str, object]:
         m3,
     )
     return {"settlement": settlement, "clv": clv_stats, "audit_findings": findings}
-
-
-@flow(name="intel-collect", log_prints=True)
-def intel_collect_flow() -> dict[str, object]:
-    """情报采集（票 09）：当期彩池场次内部推导情报（幂等，零外部请求）。"""
-    stats = tasks.intel_collection()
-    logger.info("intel collect: {}", stats)
-    return stats
-
-
-@flow(name="scout-line", log_prints=True)
-def scout_line_flow() -> dict[str, object]:
-    """Scout 线（票 10）：读已存证情报出三项概率（跟 intel-collect 后）。"""
-    stats = tasks.scout_line()
-    logger.info("scout line: {}", stats)
-    return stats

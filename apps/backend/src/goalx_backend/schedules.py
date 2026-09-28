@@ -51,25 +51,16 @@ from prefect.schedules import Schedule
 
 from goalx_backend import datasets
 from goalx_backend.flows import (
-    clubelo_sync_flow,
     daily_capture_flow,
     daily_wrap_flow,
     draw_results_sync_flow,
-    eu_odds_closing_flow,
-    intel_collect_flow,
-    odds_anchor_dense_flow,
-    official_reconcile_flow,
-    scout_line_flow,
-    srcb_collect_flow,
-    srct_shift_flow,
-    understat_sync_flow,
     weekly_refresh_flow,
 )
 
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：手写编排面 + 注册表推导面（票 02 起首批三数据集）。
+    全量 deployment 装配：组合面手写（票 03 后仅 5 面）+ 注册表推导面（12 面）。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
@@ -81,16 +72,9 @@ def build_deployments() -> dict[str, RunnerDeployment]:
             schedule=Schedule(cron="0 10,19 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    closing = cast(
-        RunnerDeployment,
-        eu_odds_closing_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="*/30 * * * *", timezone="Asia/Shanghai"),
-        ),
-    )
     # 票 42：赛程集中在 18:00-次日 06:00，半小时一拍；08:00 补扫收尾晚场。
     # Prefect Schedule 单 deployment 只收一个 cron → 同 flow 双 deployment
-    # （建议频率写入票 Answer 待追认）
+    # （建议频率写入票 Answer 待追认）——双 cron 形状不进注册表，手写保留
     draw_sync = cast(
         RunnerDeployment,
         draw_results_sync_flow.to_deployment(
@@ -105,81 +89,11 @@ def build_deployments() -> dict[str, RunnerDeployment]:
             schedule=Schedule(cron="0 8 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # 赛果日终审计（票 44）：跟在 08:00 官方补扫之后半小时——事实先落、
-    # 参照源再比对；uniform 无待出赛果零请求，openfootball 对窗口内场次照跑
-    official_reconcile = cast(
-        RunnerDeployment,
-        official_reconcile_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="30 8 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # 双锚临场采样（票 47 修正设计）：*/5 拍，两锚零候选零请求；停售探测
-    # 候选 = 开球 ≤3h 或北京 ≥19 点的次日内场次（凌晨场前夜墙钟停售形态）
-    anchor_dense = cast(
-        RunnerDeployment,
-        odds_anchor_dense_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="*/5 * * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # 源B变化时序（票 49 采集先行）：每日两拍回溯式（赶在 daily-capture 后，
-    # 彩池期次已同步出新场次 mid）；36h 未开赛窗 × 17 pid，0.5s 限速
-    srcb_collect_deploy = cast(
-        RunnerDeployment,
-        srcb_collect_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # 当期班（票 65）：*/30 拍四类拍决策（开售/每日/临场；收口归夜班）；
-    # 08:00-00:59 与夜班窗口互斥（01:00-08:00 让位家宽低峰）；限流同 20/min
-    srct_shift_deploy = cast(
-        RunnerDeployment,
-        srct_shift_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="*/30 8-23,0 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # xG 特征（票 45）：每日一拍足够（赛中 5-10 分钟级更新，我们只吃赛后
-    # 累计）；09:20 赶在 daily-capture 10:00 前，当日预测决策时点最新鲜
-    understat = cast(
-        RunnerDeployment,
-        understat_sync_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="20 9 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # Elo 评级（票 74）：clubelo 日更一拍（单请求全量快照）；09:10 与
-    # understat 同窗逻辑，赶在 daily-capture 10:00 前
-    clubelo_deploy = cast(
-        RunnerDeployment,
-        clubelo_sync_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="10 9 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
     wrap = cast(
         RunnerDeployment,
         daily_wrap_flow.to_deployment(
             name="protocol-v1",
             schedule=Schedule(cron="30 23 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # 情报（票 09）：跟在 10:20/22:20 彩池同步与 10:00 采集之后（幂等增量）
-    intel = cast(
-        RunnerDeployment,
-        intel_collect_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="40 10,22 * * *", timezone="Asia/Shanghai"),
-        ),
-    )
-    # scout（票 10）：读已存证情报出三项概率，跟情报采集后 10 分钟
-    scout = cast(
-        RunnerDeployment,
-        scout_line_flow.to_deployment(
-            name="protocol-v1",
-            schedule=Schedule(cron="50 10,22 * * *", timezone="Asia/Shanghai"),
         ),
     )
     # 周刷新（票 54）：周一 06:10 fdhist 幂等重导（周末赛果）→ DC 周训练
@@ -194,21 +108,12 @@ def build_deployments() -> dict[str, RunnerDeployment]:
     )
     deployments: dict[str, RunnerDeployment] = {
         "daily-capture": daily,
-        "eu-odds-closing": closing,
         "draw-results-sync": draw_sync,
         "draw-results-sweep": draw_sync_sweep,
-        "official-reconcile": official_reconcile,
-        "understat-sync": understat,
-        "clubelo-sync": clubelo_deploy,
-        "odds-anchor-dense": anchor_dense,
-        "srcb-collect": srcb_collect_deploy,
-        "srct-shift": srct_shift_deploy,
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
-        "intel-collect": intel,
-        "scout-line": scout,
     }
-    # 注册表面（票 02 首批：guardian-sync / pool-snapshot / srct-night）
+    # 注册表面（票 03 全量 12 面：单 cron 定拍数据集，含两判死面）
     deployments.update(datasets.build_deployments())
     return deployments
 
@@ -244,24 +149,16 @@ def main(only: str | None = None) -> None:
 
 # 2026-09-25 恢复清单（用户裁决"相关采集任务一起调整"）：除两个判死面
 # （eu-odds-closing 欧赔聚合 / srcb-collect 源B，国际赔率全走源T）外全量。
-# 判死面例外表显式列出（票 03 注册表全量后并入 DatasetSpec.resume=False 形状）；
-# 注册数据集部分自注册表推导（票 02 起），手写余量随票 03 搬迁归零。
-DEAD_DEPLOYMENTS = ("eu-odds-closing", "srcb-collect")
+# 票 03 后全量推导：组合面手写 + 注册表 resume/dead 两推导，不再手抄行。
 RESUME_DEPLOYMENTS = (
     "daily-capture",
     "draw-results-sync",
     "draw-results-sweep",
-    "official-reconcile",
-    "srct-shift",
-    "understat-sync",
-    "clubelo-sync",
-    "odds-anchor-dense",
     "weekly-refresh",
     "daily-wrap",
-    "intel-collect",
-    "scout-line",
     *datasets.resume_names(),
 )
+DEAD_DEPLOYMENTS = datasets.dead_names()
 
 
 if __name__ == "__main__":
