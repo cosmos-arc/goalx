@@ -9,6 +9,7 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { StatusBadge } from "../components/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { betsKey, TODAY_STALE_MS, todayFixturesKey } from "../lib/query-keys";
 import { cssVar, legText, pnlClass, shortTime, signedCny, stakeText, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -158,8 +159,12 @@ function CumulativeChart({ points }: { points: Array<{ label: string; value: num
 }
 
 export function HistoryPage() {
-	const betsQuery = useQuery({ queryKey: ["bets"], queryFn: () => fetchBets() });
-	const todayQuery = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
+	const betsQuery = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	const todayQuery = useQuery({
+		queryKey: todayFixturesKey(1),
+		queryFn: () => fetchTodayFixtures(undefined, 1),
+		staleTime: TODAY_STALE_MS,
+	});
 	const [mode, setMode] = useState<Mode>("paper");
 	const [rangeKey, setRangeKey] = useState<RangeKey>("all");
 	const [competition, setCompetition] = useState("");

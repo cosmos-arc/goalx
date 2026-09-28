@@ -16,6 +16,7 @@ import { GlossaryTerm } from "../components/glossary-term";
 import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import type { GlossaryId } from "../lib/glossary";
+import { backtestRunsKey, validationProgressKey } from "../lib/query-keys";
 import { cssVar, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -473,8 +474,8 @@ function BacktestRunTable({ runs }: { runs: BacktestRun[] }) {
 // ---- 页面 ----
 
 export function ValidationPage() {
-	const progress = useQuery({ queryKey: ["validation-progress"], queryFn: () => fetchValidationProgress() });
-	const runs = useQuery({ queryKey: ["backtest-runs"], queryFn: () => fetchBacktestRuns() });
+	const progress = useQuery({ queryKey: validationProgressKey, queryFn: () => fetchValidationProgress() });
+	const runs = useQuery({ queryKey: backtestRunsKey, queryFn: () => fetchBacktestRuns() });
 
 	const data = progress.data ?? null;
 	const verdict = data ? validationVerdict(data.conditions) : null;

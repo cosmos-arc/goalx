@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { type EvidenceMatch, fetchPoolEvidenceSummary } from "../api/goalx";
+import { poolEvidenceSummaryKey } from "../lib/query-keys";
 import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { EmptyState } from "./empty-state";
 import { IntelLine } from "./intel-line";
@@ -100,7 +101,7 @@ function MatchEvidenceCard({ match }: { match: EvidenceMatch }) {
 /** 期次证据卡区块（activePeriod 变化随取；失败/无数据诚实降级）。 */
 export function EvidenceCardSection({ periodNo }: { periodNo: string }) {
 	const query = useQuery({
-		queryKey: ["pool-evidence-summary", periodNo],
+		queryKey: poolEvidenceSummaryKey(periodNo),
 		queryFn: () => fetchPoolEvidenceSummary(periodNo),
 		retry: false,
 		enabled: periodNo !== "",

@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { type FixtureEvidence, fetchFixtureEvidence, type TrackTriple } from "../api/goalx";
+import { fixtureEvidenceKey } from "../lib/query-keys";
 import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 import { AskAnalystPanel } from "./ask-analyst";
 import { EmptyState } from "./empty-state";
@@ -45,7 +46,7 @@ function TableCell({ children, className }: { children: ReactNode; className?: s
 
 export function EvidenceChainSection({ fixtureId }: { fixtureId: number }) {
 	const query = useQuery({
-		queryKey: ["fixture-evidence", fixtureId],
+		queryKey: fixtureEvidenceKey(fixtureId),
 		queryFn: () => fetchFixtureEvidence(fixtureId),
 		retry: false,
 	});

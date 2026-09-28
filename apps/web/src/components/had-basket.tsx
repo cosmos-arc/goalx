@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
+import { invalidateBets } from "../lib/query-keys";
 import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import { isPickable, type Leg, MAX_LEGS, makeLeg, type PickableFixture, type Selection } from "./had-quote-ui";
 import { parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
@@ -105,7 +106,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			setMessage(`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : "2串1"}）— 去投注页锁定`);
 			setLegs([]);
 			setBasketOpen(false);
-			void queryClient.invalidateQueries({ queryKey: ["bets"] });
+			invalidateBets(queryClient);
 		},
 		onError: (error) => setMessage(`建注失败：${errorText(error)}`),
 	});

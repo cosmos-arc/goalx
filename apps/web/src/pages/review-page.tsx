@@ -9,6 +9,7 @@ import {
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
+import { fixtureEvidenceKey, reviewQueueKey } from "../lib/query-keys";
 import { pct, shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -43,7 +44,7 @@ function QueueRow({ item }: { item: ReviewQueueItem }) {
 			}),
 		onSuccess: () => {
 			setMessage("已记录（只进评测集）");
-			void queryClient.invalidateQueries({ queryKey: ["review-queue"] });
+			void queryClient.invalidateQueries({ queryKey: reviewQueueKey });
 		},
 		onError: () => setMessage("提交失败，稍后重试"),
 	});
@@ -81,12 +82,12 @@ function QueueRow({ item }: { item: ReviewQueueItem }) {
 
 function BlindReviewPanel() {
 	const cycle = useMemo(() => biweekCycle(), []);
-	const queueQuery = useQuery({ queryKey: ["review-queue"], queryFn: fetchReviewQueue });
+	const queueQuery = useQuery({ queryKey: reviewQueueKey, queryFn: fetchReviewQueue });
 	const items = queueQuery.data?.items ?? [];
 	const [fixtureId, setFixtureId] = useState<number | null>(null);
 	const activeId = fixtureId ?? items[0]?.fixture_id ?? null;
 	const evidenceQuery = useQuery({
-		queryKey: ["fixture-evidence", activeId],
+		queryKey: fixtureEvidenceKey(activeId),
 		queryFn: () => fetchFixtureEvidence(activeId as number),
 		enabled: activeId !== null,
 	});
@@ -103,7 +104,7 @@ function BlindReviewPanel() {
 					? `已记录（${cycle} · 场次 ${activeId}）——两份研判的轨道已揭晓。`
 					: "本期该场次已有盲评记录（幂等吸收），轨道照常揭晓。",
 			);
-			void queryClient.invalidateQueries({ queryKey: ["fixture-evidence", activeId] });
+			void queryClient.invalidateQueries({ queryKey: fixtureEvidenceKey(activeId) });
 		},
 		onError: () => setResult("提交失败，稍后重试"),
 	});
@@ -239,7 +240,7 @@ function BlindPickCard({
 }
 
 export function ReviewPage() {
-	const queueQuery = useQuery({ queryKey: ["review-queue"], queryFn: fetchReviewQueue });
+	const queueQuery = useQuery({ queryKey: reviewQueueKey, queryFn: fetchReviewQueue });
 	const items = queueQuery.data?.items ?? [];
 	return (
 		<AppShell title="复核">

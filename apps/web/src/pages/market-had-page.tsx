@@ -9,6 +9,7 @@ import { MarketTabs } from "../components/market-tabs";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import { buildHadCombo, HAD_COMBO_CONFIG, rankFixturesForFeed } from "../lib/combo-engine";
+import { bankrollKey, TODAY_STALE_MS, todayFixturesKey } from "../lib/query-keys";
 import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -22,15 +23,16 @@ import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  *   （2%，区间 1–5%），仓位细化（¼Kelly 等）归票 06，本页不做。
  */
 
-/** 场次窗口与场次页同宽（同一 queryKey 共享缓存）。 */
+/** 场次窗口与场次页同宽（同一 queryKey 共享缓存——键登记在 lib/query-keys）。 */
 const MARKET_WINDOW_DAYS = 3;
 
 export function MarketHadPage() {
 	const fixturesQuery = useQuery({
-		queryKey: ["fixtures-window", MARKET_WINDOW_DAYS],
+		queryKey: todayFixturesKey(MARKET_WINDOW_DAYS),
+		staleTime: TODAY_STALE_MS,
 		queryFn: () => fetchTodayFixtures(undefined, MARKET_WINDOW_DAYS),
 	});
-	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: () => fetchBankroll() });
+	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
 	const now = Date.now();
 	const fixtures = fixturesQuery.data ?? [];
 	const basket = useHadBasket(now, fixtures);

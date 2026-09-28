@@ -14,6 +14,7 @@ import { useECharts } from "../components/charts/use-echarts";
 import { EmptyState } from "../components/empty-state";
 import { Button } from "../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { bankrollKey, costsKey } from "../lib/query-keys";
 import { cssVar, errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -144,7 +145,7 @@ function DepositForm({ onSuccess, onCancel }: DepositFormProps) {
 	const deposit = useMutation({
 		mutationFn: (input: DepositInput) => createDeposit(input),
 		onSuccess: (result) => {
-			void queryClient.invalidateQueries({ queryKey: ["bankroll"] });
+			void queryClient.invalidateQueries({ queryKey: bankrollKey });
 			onSuccess(result);
 		},
 		onError: (error) => setProblem(`入金失败：${errorText(error)}`),
@@ -239,8 +240,8 @@ function DepositForm({ onSuccess, onCancel }: DepositFormProps) {
 // ---- 页面 ----
 
 export function BankrollPage() {
-	const bankroll = useQuery({ queryKey: ["bankroll"], queryFn: () => fetchBankroll() });
-	const costs = useQuery({ queryKey: ["costs"], queryFn: () => fetchCostSummary() });
+	const bankroll = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
+	const costs = useQuery({ queryKey: costsKey, queryFn: () => fetchCostSummary() });
 	const [depositOpen, setDepositOpen] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 

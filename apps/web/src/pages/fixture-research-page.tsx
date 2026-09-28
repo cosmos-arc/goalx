@@ -20,6 +20,7 @@ import {
 } from "../components/had-quote-ui";
 import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { bankrollKey, fixtureResearchKey } from "../lib/query-keys";
 import { pct, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -48,12 +49,12 @@ export function FixtureResearchPage() {
 	const { id } = useParams({ from: "/fixtures/$id" });
 	const fixtureId = Number(id);
 	const research = useQuery({
-		queryKey: ["fixture-research", fixtureId],
+		queryKey: fixtureResearchKey(fixtureId),
 		queryFn: () => fetchFixtureResearch(fixtureId),
 		retry: false,
 	});
 	// 票 wb-06：选注篮建议仓位需要 bankroll（读取失败时建议块诚实降级）
-	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: fetchBankroll });
+	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
 	const now = Date.now();
 
 	const data = research.data;

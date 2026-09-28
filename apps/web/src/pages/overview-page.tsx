@@ -7,14 +7,22 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { isPickable } from "../components/had-quote-ui";
 import { Badge } from "../components/ui/badge";
+import {
+	bankrollKey,
+	betsKey,
+	drawResultsKey,
+	TODAY_STALE_MS,
+	todayFixturesKey,
+	validationProgressKey,
+} from "../lib/query-keys";
 import { earliestKickoffMs, openBetFixtureIds, pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 15：总览 Dashboard（票 05 定稿 = 唯一事实源）。总览 = 分诊（票 03）：
  * 待办清单卡（四规则）+ 首屏快照四卡（真金/纸面分区隔离）+ 页底验证进度细线。
  * 本页不做任何写操作；每张卡附判读方向，不裸放数字；红涨绿跌配正负号（票 02）。
- * 数据源 = 现有端点前端拼装（票 10 定稿，零 contract 变更），react-query 缓存键与
- * 今日/投注/资金/验证各页对齐，跨页返回不重拉。
+ * 数据源 = 现有端点前端拼装（票 10 定稿，零 contract 变更），react-query 缓存键
+ * 走 lib/query-keys 注册表与今日/投注/资金/验证各页同键，跨页返回不重拉（票 07 兑现）。
  *
  * 判定边界口径（与票 05 规则一一对应）：
  * - 规则①②的开赛时点只能对今日列表内的场次推导；历史挂注场次无 kickoff 数据，不下判不误报。
@@ -73,11 +81,15 @@ function TodoRow({ item }: { item: TodoItem }) {
 }
 
 export function OverviewPage() {
-	const todayQuery = useQuery({ queryKey: ["today"], queryFn: () => fetchTodayFixtures() });
-	const betsQuery = useQuery({ queryKey: ["bets"], queryFn: () => fetchBets() });
-	const bankrollQuery = useQuery({ queryKey: ["bankroll"], queryFn: () => fetchBankroll() });
-	const drawQuery = useQuery({ queryKey: ["draw-results"], queryFn: () => fetchDrawResults() });
-	const progressQuery = useQuery({ queryKey: ["validation-progress"], queryFn: () => fetchValidationProgress() });
+	const todayQuery = useQuery({
+		queryKey: todayFixturesKey(1),
+		queryFn: () => fetchTodayFixtures(undefined, 1),
+		staleTime: TODAY_STALE_MS,
+	});
+	const betsQuery = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
+	const drawQuery = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
+	const progressQuery = useQuery({ queryKey: validationProgressKey, queryFn: () => fetchValidationProgress() });
 	const now = Date.now();
 
 	const fixtures = todayQuery.data ?? [];
