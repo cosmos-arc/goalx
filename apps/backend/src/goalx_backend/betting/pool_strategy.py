@@ -2,7 +2,9 @@
 彩池搏冷策略（票 pool-v2/02、03；review-20260928 票 02 自 api/pool.py 下沉）。
 
 归属（ADR-0008）：选注决策逻辑归 betting 域；纯函数、无表、无 SQL——
-期次/份额取数在 data/pool.py，api/pool.py 只留路由与视图装配。
+期次/份额取数与读模型装配（概率源策略）在 data/pool.py（含视图模型
+PoolMatchView/PoolSelectionView，票 08 与装配同住所），api/pool.py 只留
+路由与 HTTP 形状；本模块消费视图做纯决策。
 
 口径（与期次详情页一致，单一正典在数据域）：
 - 冷门阈值 COLD_SHARE_MAX、返奖率 POOL_RETURN_RATE 均自 data.pool 直引；
@@ -17,10 +19,12 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from goalx_backend.data.pool import COLD_SHARE_MAX, POOL_RETURN_RATE
+from goalx_backend.data.pool import (
+    COLD_SHARE_MAX,
+    POOL_RETURN_RATE,
+    PoolMatchView,
+)
 
-# 搏冷生成器与目标反推共用的票面/视图模型（契约 schema 由本模块定义，
-# api 层组装期次详情时复用 PoolMatchView）
 STAKE_PER_UNIT = 2.0  # 任9/14场 每注 ¥2
 PICK9_COUNT = 9
 
@@ -37,31 +41,6 @@ TARGET_CALIBER_TEXT = (
     "估计派彩 = 返奖率 65% ÷ 份额连乘 × ¥2/注（单次抽水近似）——"
     '实际派彩随最终池变，输出是"若命中估计得 X"，不承诺目标达成。'
 )
-
-
-class PoolSelectionView(BaseModel):
-    """一场一选的彩池口径三向数据。"""
-
-    code: str  # h/d/a
-    label: str
-    prob: float | None = None  # 概率（模型口径优先，退化为欧指去水）
-    prob_source: str  # model | euro_devig | none
-    share: float | None = None  # 公众份额（源B 人气，estimated）
-    implied_odds: float | None = None  # 估计派彩赔率 = 返奖率/share
-    ev: float | None = None  # p × 估计赔率 − 1（缺份额 None）
-
-
-class PoolMatchView(BaseModel):
-    """一期一场对阵。"""
-
-    match_seq: int
-    source_match_id: str | None = None
-    league: str
-    kickoff_utc: str
-    home_team: str
-    away_team: str
-    fixture_id: int | None = None  # 映射到的竞彩场次（无则 None）
-    selections: list[PoolSelectionView]
 
 
 class ColdSwapView(BaseModel):
