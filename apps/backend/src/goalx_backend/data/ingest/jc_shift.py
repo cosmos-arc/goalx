@@ -17,7 +17,7 @@ fetch_calculator）——``value.matchInfoList[].subMatchList[]`` = 在售场次
 **幂等自愈**（story 6）：oddsHistory 全量返回——连续两拍间隔有 SP 变化
 时第二拍拉全量历史零丢失；漏拍/断拍重拉即补，拍天然无缺口语义。
 
-**护栏**：与源T 拍共用同一 NightBudget 与 20/min 滑窗（同一 run_shift
+**护栏**：与源T 拍共用同一 NightBudget 与 25/min 滑窗（同一 run_shift
 调用内顺序执行；源T 优先，JC 用剩余预算，断拍下轮自愈）。
 
 落库：jc provider（官方权威层，独立数据集）；bronze 行 sid=matchId
