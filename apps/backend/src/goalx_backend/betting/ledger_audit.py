@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from goalx_backend.betting.settle import evaluate_bet
+from goalx_backend.data.results import draw_result_revisions_history
 from goalx_backend.db import current_version
 
 REVISION_SCHEMA_VERSION = 4
@@ -81,11 +82,15 @@ def audit_ledger(conn: sqlite3.Connection) -> dict[str, Any]:
         )
     history: dict[str, object] = {}
     if current_version(conn) >= REVISION_SCHEMA_VERSION:
-        for table in ("draw_result_revisions", "settlement_revisions"):
-            history[table] = [
-                dict(row)
-                for row in conn.execute(f"SELECT * FROM {table} ORDER BY id")  # noqa: S608
-            ]
+        # draw_result_revisions 归 data（ADR-0008，读经归属包函数）；
+        # settlement_revisions 是 betting 自有表，包内字面量 SQL 合法
+        history["draw_result_revisions"] = [
+            dict(row) for row in draw_result_revisions_history(conn)
+        ]
+        history["settlement_revisions"] = [
+            dict(row)
+            for row in conn.execute("SELECT * FROM settlement_revisions ORDER BY id")
+        ]
     return {
         "schema_version": current_version(conn),
         "manual_review": findings,
