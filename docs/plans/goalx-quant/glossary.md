@@ -41,7 +41,7 @@
 - **roi(等权)** = 每注收益率平均;**roi_stake_weighted** = 总盈利/总投入。票 34 起两口径分列不混称。当前诚实结论:回测 skill≈−3.75%,不可作实盘依据。
 - **yield 曲线**:累计(黑)=累计 profit/staked;滚动(琥珀)=最近 100 注窗口。只算唯一纸面注。
 - **t_stat**:收益率 t 统计量,相关性未处理,弱证据。
-- **kelly/stake**:1/4 Kelly,单注上限 50(参考资金 5000 的 1%),仓位控制非收益指标。
+- **kelly/stake**:paper 一律 flat(bankroll×2% 截断 1–5%,红线);live ¼ fractional Kelly 截断单注 1%–5%(默认上限 5%,可经 cap_fraction 收紧;票 wb-06/07,staking-plans §5),仓位控制非收益指标。
 - **结算状态**:open 未结 / won / lost / void 退款 / partial 部分(串关无效腿按 1 继续)。
 
 ### 价格打得过市场吗(CLV/haircut)
