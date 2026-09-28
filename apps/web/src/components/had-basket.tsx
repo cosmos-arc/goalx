@@ -27,7 +27,7 @@ import {
  * 变体（同场多注/独立提交/goals-* testid），不进本共享件。
  */
 
-export function useHadBasket(now: number, fixtures: TodayFixture[] = [], legEvOverride?: (leg: Leg) => number | null) {
+export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverride?: (leg: Leg) => number | null) {
 	const [legs, setLegs] = useState<Leg[]>([]);
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [stake, setStake] = useState("100");
@@ -132,6 +132,61 @@ export function useHadBasket(now: number, fixtures: TodayFixture[] = [], legEvOv
 	};
 }
 
+/** 抽屉底部三输入（模式/金额/策略版本）：had 篮与进球单关篮共用（票 08 批二），
+ * testid 前缀与金额档（标签/最低注）经 prop 注入，e2e 锚不变。 */
+export function BasketFormFields({
+	testid,
+	state,
+	stakeLabel,
+	stakeMin,
+}: {
+	testid: string;
+	state: Pick<HadBasket, "mode" | "setMode" | "stake" | "setStake" | "strategyVersion" | "setStrategyVersion">;
+	stakeLabel: string;
+	stakeMin: number;
+}) {
+	const { mode, setMode, stake, setStake, strategyVersion, setStrategyVersion } = state;
+	return (
+		<div className="flex flex-wrap items-end gap-3">
+			<label className="flex flex-col gap-1 text-xs">
+				<span className="text-muted-foreground">模式</span>
+				<select
+					data-testid={`${testid}-mode`}
+					className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+					value={mode}
+					onChange={(event) => setMode(event.target.value === "live" ? "live" : "paper")}
+				>
+					<option value="paper">纸面</option>
+					<option value="live">真金</option>
+				</select>
+			</label>
+			<label className="flex flex-col gap-1 text-xs">
+				<span className="text-muted-foreground">{stakeLabel}</span>
+				<input
+					required
+					type="number"
+					min={stakeMin}
+					step="0.01"
+					data-testid={`${testid}-stake`}
+					className="w-24 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+					value={stake}
+					onChange={(event) => setStake(event.target.value)}
+				/>
+			</label>
+			<label className="flex flex-col gap-1 text-xs">
+				<span className="text-muted-foreground">策略版本(可选)</span>
+				<input
+					data-testid={`${testid}-strategy`}
+					placeholder="手动"
+					className="w-32 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+					value={strategyVersion}
+					onChange={(event) => setStrategyVersion(event.target.value)}
+				/>
+			</label>
+		</div>
+	);
+}
+
 export type HadBasket = ReturnType<typeof useHadBasket>;
 
 /** 底部常驻选注条：浏览全程可见已选腿摘要 + 组合赔率。 */
@@ -181,20 +236,7 @@ export function BasketDrawer({
 	bankroll: number | null;
 	emptyHint: string;
 }) {
-	const {
-		legs,
-		basketOpen,
-		setBasketOpen,
-		stake,
-		setStake,
-		strategyVersion,
-		setStrategyVersion,
-		mode,
-		setMode,
-		basketAdvice,
-		removeLeg,
-		createSuggestion,
-	} = basket;
+	const { legs, basketOpen, setBasketOpen, mode, basketAdvice, removeLeg, createSuggestion } = basket;
 	return (
 		<Drawer open={basketOpen} onOpenChange={setBasketOpen} swipeDirection="right">
 			<DrawerContent className="mx-0 w-full sm:max-w-md">
@@ -251,43 +293,7 @@ export function BasketDrawer({
 					) : null}
 				</div>
 				<DrawerFooter>
-					<div className="flex flex-wrap items-end gap-3">
-						<label className="flex flex-col gap-1 text-xs">
-							<span className="text-muted-foreground">模式</span>
-							<select
-								data-testid="basket-mode"
-								className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-								value={mode}
-								onChange={(event) => setMode(event.target.value === "live" ? "live" : "paper")}
-							>
-								<option value="paper">纸面</option>
-								<option value="live">真金</option>
-							</select>
-						</label>
-						<label className="flex flex-col gap-1 text-xs">
-							<span className="text-muted-foreground">金额(¥)</span>
-							<input
-								required
-								type="number"
-								min={1}
-								step="0.01"
-								data-testid="basket-stake"
-								className="w-24 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-								value={stake}
-								onChange={(event) => setStake(event.target.value)}
-							/>
-						</label>
-						<label className="flex flex-col gap-1 text-xs">
-							<span className="text-muted-foreground">策略版本(可选)</span>
-							<input
-								data-testid="basket-strategy"
-								placeholder="手动"
-								className="w-32 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-								value={strategyVersion}
-								onChange={(event) => setStrategyVersion(event.target.value)}
-							/>
-						</label>
-					</div>
+					<BasketFormFields testid="basket" state={basket} stakeLabel="金额(¥)" stakeMin={1} />
 					<button
 						type="button"
 						data-testid="basket-submit"

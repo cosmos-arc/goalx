@@ -15,7 +15,7 @@ import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
 import { PoolGenerator, PoolTargetPlanner } from "../components/pool-generators";
 import { bestSelection, type PoolPickEntry, PoolSlotList, selectionOf } from "../components/pool-slots";
-import { type AdviceLeg, StakeAdviceNote } from "../components/stake-advice";
+import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { errorText, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -101,26 +101,20 @@ export function MarketPoolPage() {
 		return code === undefined ? [] : [{ match: m, code }];
 	});
 	const comboCount = combinations(pickedEntries.length, PICK9);
-	/** 三档输入：所选组合联合口径（估计派彩赔率 Π × 联合 EV = Π(1+ev)−1）。 */
-	const adviceInput = useMemo(() => {
-		const legs: AdviceLeg[] = pickedEntries.map(({ match, code }) => {
-			const sel = selectionOf(match, code);
-			return {
-				ev: sel?.ev ?? null,
-				odds: sel?.implied_odds ?? Number.NaN, // 缺份额的向毒化联合赔率 → 下方整体降级
-			};
-		});
-		const odds = legs.reduce((acc, leg) => acc * leg.odds, 1);
-		let ev: number | null = 1;
-		for (const leg of legs) {
-			if (leg.ev === null || leg.ev === undefined) {
-				ev = null;
-				break;
-			}
-			ev *= 1 + leg.ev;
-		}
-		return { ev: ev === null ? null : ev - 1, odds };
-	}, [pickedEntries]);
+	/** 三档输入：所选组合联合口径（parlayAdviceInput 正典——估计派彩赔率 Π × 联合 EV = Π(1+ev)−1）。 */
+	const adviceInput = useMemo(
+		() =>
+			parlayAdviceInput(
+				pickedEntries.map(({ match, code }) => {
+					const sel = selectionOf(match, code);
+					return {
+						ev: sel?.ev ?? null,
+						odds: sel?.implied_odds ?? Number.NaN, // 缺份额的向毒化联合赔率 → 下方整体降级
+					};
+				}),
+			),
+		[pickedEntries],
+	);
 	const hasValidInput = pickedEntries.length > 0 && Number.isFinite(adviceInput.odds);
 	const bankroll = bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0);
 

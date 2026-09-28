@@ -7,6 +7,7 @@ import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-ui";
+import { BasketFormFields } from "../components/had-basket";
 import { evClass } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { StakeAdviceNote } from "../components/stake-advice";
@@ -501,43 +502,12 @@ export function MarketGoalsPage() {
 						) : null}
 					</div>
 					<DrawerFooter>
-						<div className="flex flex-wrap items-end gap-3">
-							<label className="flex flex-col gap-1 text-xs">
-								<span className="text-muted-foreground">模式</span>
-								<select
-									data-testid="goals-basket-mode"
-									className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-									value={mode}
-									onChange={(event) => setMode(event.target.value === "live" ? "live" : "paper")}
-								>
-									<option value="paper">纸面</option>
-									<option value="live">真金</option>
-								</select>
-							</label>
-							<label className="flex flex-col gap-1 text-xs">
-								<span className="text-muted-foreground">每注金额(¥)</span>
-								<input
-									required
-									type="number"
-									min={2}
-									step="0.01"
-									data-testid="goals-basket-stake"
-									className="w-24 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-									value={stake}
-									onChange={(event) => setStake(event.target.value)}
-								/>
-							</label>
-							<label className="flex flex-col gap-1 text-xs">
-								<span className="text-muted-foreground">策略版本(可选)</span>
-								<input
-									data-testid="goals-basket-strategy"
-									placeholder="手动"
-									className="w-32 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-									value={strategyVersion}
-									onChange={(event) => setStrategyVersion(event.target.value)}
-								/>
-							</label>
-						</div>
+						<BasketFormFields
+							testid="goals-basket"
+							state={{ mode, setMode, stake, setStake, strategyVersion, setStrategyVersion }}
+							stakeLabel="每注金额(¥)"
+							stakeMin={2}
+						/>
 						<button
 							type="button"
 							data-testid="goals-basket-submit"
