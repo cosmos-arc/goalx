@@ -11,10 +11,11 @@ import json
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from httpx import HTTPError
 from pydantic import BaseModel, Field
 
+from goalx_backend import tasks
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting.pool_strategy import (
     COLD_CALIBER_TEXT,
@@ -26,10 +27,8 @@ from goalx_backend.betting.pool_strategy import (
     default_base_picks,
     target_plan,
 )
-from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data.ingest import zucai
-from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.db import utc_now_iso
 
 router = APIRouter(tags=["pool"])
@@ -390,17 +389,16 @@ async def build_target_plan(payload: TargetPlanPayload, db: DbDep) -> TargetPlan
 
 @router.post(
     "/api/v1/pool-sync/run",
-    summary="触发一次彩池同步(源B 期次/对阵/人气)",
+    summary="触发一次彩池同步(体彩官方在售对阵+上期彩果)",
     response_model=PoolSyncStatusView,
     responses={502: {"description": "同步源不可达或返回异常"}},
 )
-async def run_pool_sync(request: Request, db: DbDep) -> PoolSyncStatusView:
-    """拉取最新期次页与人气分布（幂等）；期次/对阵刷新、份额追加。"""
-    settings: Settings = getattr(request.app.state, "settings", None) or get_settings()
+async def run_pool_sync(db: DbDep) -> PoolSyncStatusView:
+    """触发与定拍同款的彩池同步（票 68 官方源；幂等）。"""
     try:
-        with polite_client() as client:
-            zucai.sync_pool_data(db, settings, client)
-    except (HTTPError, ValueError) as exc:
+        tasks.pool_snapshot()
+    except (HTTPError, ValueError, RuntimeError) as exc:
+        # RuntimeError：官方页 success=false/无期次等源侧异常（zucai_official）
         raise HTTPException(
             status_code=502, detail=f"pool sync source error: {exc}"
         ) from exc

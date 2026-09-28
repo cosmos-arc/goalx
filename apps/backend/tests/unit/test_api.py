@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from goalx_backend import tasks
 from goalx_backend.config import Settings
 from goalx_backend.data.fixtures import CST, beijing_business_date
 from goalx_backend.db import connect, migrate
@@ -1140,12 +1141,10 @@ FIXTURE_PAGE_0916 = (
 ).read_text(encoding="utf-8")
 
 
-def _sync_transport(status: int = 200) -> httpx.MockTransport:
-    """官方 uniform 同步源传输层：200 给 2026-09-16 赛果页，其它状态码故障注入。"""
+def _sync_transport() -> httpx.MockTransport:
+    """官方 uniform 同步源传输层：200 给 2026-09-16 赛果页。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if status != 200:
-            return httpx.Response(status, text="boom")
         rows = [
             {
                 "matchId": 99001,
@@ -1218,40 +1217,48 @@ def test_draw_sync_status_never_run(api_client: TestClient) -> None:
     assert response.json() == {"last_run": None, "pending_results": 0}
 
 
-def test_draw_sync_run_imports_pending_and_reports_status(
+def test_draw_sync_run_delegates_to_tasks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    db_path = tmp_path / "sync-api.db"
+    """POST run 委派 tasks.draw_results_sync：触发即触发，router 不自带实现。"""
+    db_path = tmp_path / "draw-delegate.db"
     _seed_pending_result_fixture(db_path)
-    monkeypatch.setattr(
-        "goalx_backend.api.results.polite_client",
-        lambda: httpx.Client(transport=_sync_transport()),
-    )
+    calls: list[None] = []
+    monkeypatch.setattr(tasks, "draw_results_sync", lambda: calls.append(None) or {})
     with _make_client(db_path) as client:
-        before = client.get("/api/v1/draw-sync/status")
-        assert before.status_code == 200
-        assert before.json()["last_run"] is None
-        assert before.json()["pending_results"] == 1
-
         run = client.post("/api/v1/draw-sync/run")
         assert run.status_code == 200
-        body = run.json()
-        assert body["pending_results"] == 0
-        assert body["last_run"]["source"] == "sporttery.cn"
-        assert body["last_run"]["imported"] == 1
-        assert body["last_run"]["business_dates"] == ["2026-09-16"]
+        assert len(calls) == 1
+        # 假任务不落行 → 视图读库仍是空同步史；待出数仍由库面计算
+        assert run.json() == {"last_run": None, "pending_results": 1}
+
+
+def test_draw_results_sync_chain_uniform_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tasks.draw_results_sync 全链（语料桥缺席 → 映射/源T 段降级，uniform 独走）。"""
+    db_path = tmp_path / "draw-chain.db"
+    _seed_pending_result_fixture(db_path)
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    monkeypatch.setenv("GOALX_CORPUS_ROOT", str(tmp_path / "no-corpus"))
+    monkeypatch.setattr(
+        tasks, "polite_client", lambda: httpx.Client(transport=_sync_transport())
+    )
+    stats = tasks.draw_results_sync()
+    assert stats["links"] is None  # 语料桥缺席 → 映射段降级跳过
+    assert stats["srct"]["degraded"] == "duck_con unavailable"
+    assert stats["uniform"]["imported"] == 1
+    with _make_client(db_path) as client:
+        listing = client.get("/api/v1/draw-results").json()
+        assert listing[0]["source"] == "sporttery.cn"
+        assert (listing[0]["home_goals"], listing[0]["away_goals"]) == (2, 1)
+        status = client.get("/api/v1/draw-sync/status").json()
+        assert status["pending_results"] == 0
+        assert status["last_run"]["source"] == "sporttery.cn"
+        assert status["last_run"]["imported"] == 1
+        assert status["last_run"]["business_dates"] == ["2026-09-16"]
         # 未完场行由官方同步静默跳过（缺果待下次拍；拒因才进清单）
-        assert body["last_run"]["pending_manual"] == []
-
-        listing = client.get("/api/v1/draw-results")
-        assert listing.json()[0]["source"] == "sporttery.cn"
-        assert (listing.json()[0]["home_goals"], listing.json()[0]["away_goals"]) == (
-            2,
-            1,
-        )
-
-        after = client.get("/api/v1/draw-sync/status")
-        assert after.json()["last_run"] == body["last_run"]
+        assert status["last_run"]["pending_manual"] == []
 
 
 def test_draw_sync_run_maps_source_error_to_502(
@@ -1259,10 +1266,11 @@ def test_draw_sync_run_maps_source_error_to_502(
 ) -> None:
     db_path = tmp_path / "sync-api-502.db"
     _seed_pending_result_fixture(db_path)
-    monkeypatch.setattr(
-        "goalx_backend.api.results.polite_client",
-        lambda: httpx.Client(transport=_sync_transport(status=500)),
-    )
+
+    def boom() -> dict[str, object]:
+        raise httpx.ConnectError("source unreachable")
+
+    monkeypatch.setattr(tasks, "draw_results_sync", boom)
     with _make_client(db_path) as client:
         run = client.post("/api/v1/draw-sync/run")
         assert run.status_code == 502
@@ -1456,16 +1464,33 @@ def test_pool_paper_slip_with_real_period(demo_client: TestClient) -> None:
     assert any(row["id"] == slip["id"] for row in slips)
 
 
-def test_pool_sync_run_returns_502_when_source_unreachable(
+def test_pool_sync_run_delegates_to_tasks(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """同步源不可达 → 502（不落元信息行；调用方可重试）。"""
-    from httpx import ConnectError
+    """POST run 委派 tasks.pool_snapshot：触发即触发，router 不自带实现。"""
+    calls: list[None] = []
+    monkeypatch.setattr(tasks, "pool_snapshot", lambda: calls.append(None))
+    response = api_client.post("/api/v1/pool-sync/run")
+    assert response.status_code == 200
+    assert calls == [None]
+    # 假任务不落行 → 视图读库仍是空同步史
+    assert response.json() == {"last_run": None, "period_count": 0}
 
-    def boom(*args: object, **kwargs: object) -> None:
-        raise ConnectError("source unreachable")
 
-    monkeypatch.setattr("goalx_backend.api.pool.zucai.sync_pool_data", boom)
+@pytest.mark.parametrize(
+    "exc",
+    [httpx.ConnectError, RuntimeError],
+    ids=["unreachable", "page_anomaly"],
+)
+def test_pool_sync_run_maps_source_failures_to_502(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch, exc: type[Exception]
+) -> None:
+    """同步源不可达/官方页异常（success=false 等）→ 502（不落元信息行）。"""
+
+    def boom() -> None:
+        raise exc("source failed")
+
+    monkeypatch.setattr(tasks, "pool_snapshot", boom)
     response = api_client.post("/api/v1/pool-sync/run")
     assert response.status_code == 502
     assert "pool sync source error" in response.json()["detail"]

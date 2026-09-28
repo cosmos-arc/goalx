@@ -2,8 +2,8 @@
 共享任务体：cli 与 Prefect flows 调用同一实现（ADR-0005）。
 
 背景：cli ingest-jingcai 曾绕过 capture_jingcai 静默丢失证据存证——同一
-任务两份实现必然漂移（2026-09 架构评审候选 4）。Prefect flow 与 cli 命令
-是同一任务的两个 adapter；本模块是任务实现的唯一住所。
+任务两份实现必然漂移（2026-09 架构评审候选 4）。Prefect flow、cli 命令
+与 api 触发端点是同一任务的三个 adapter；本模块是任务实现的唯一住所。
 
 不含调度的运维命令（backtest/校准/报表等）只有 cli 一个 adapter，仍直接
 使用 task_conn 壳。

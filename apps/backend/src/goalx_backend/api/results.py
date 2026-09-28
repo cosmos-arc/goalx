@@ -4,21 +4,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 
+from goalx_backend import tasks
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.settle import preview_draw_result_change, run_settlement
-from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import uniform
-from goalx_backend.data.ingest.oddsapi import polite_client
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.models import DrawResultInput
 
@@ -343,22 +341,20 @@ async def list_draw_results(
 
 @router.post(
     "/api/v1/draw-sync/run",
-    summary="触发一次赛果自动同步(官方 sporttery uniform 源)",
+    summary="触发一次赛果自动同步(映射刷新+源T物化+官方兜底审计)",
     response_model=DrawSyncStatusView,
     responses={502: {"description": "同步源不可达或返回异常"}},
 )
-async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
+async def run_draw_sync(db: DbDep) -> DrawSyncStatusView:
     """
     同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。
 
-    官方终态(比分或无效判定)落库, 拒因行进待人工清单;
-    与库内不一致不自动冲正(人工兜底通道, ADR 0001)。
+    与定拍同链(票 76)：映射链刷新 → 源T 物化 → 官方 uniform 兜底+审计。
+    官方终态(比分或无效判定)落库, 拒因行进待人工清单; 与库内不一致
+    不自动冲正(人工兜底通道, ADR 0001)。
     """
-    settings: Settings = getattr(request.app.state, "settings", None) or get_settings()
-    now = datetime.now(UTC)
     try:
-        with polite_client() as client:
-            uniform.sync_uniform_results(db, settings, client, now=now)
+        tasks.draw_results_sync()
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
             status_code=502, detail=f"draw sync source error: {exc}"
@@ -366,7 +362,7 @@ async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
     row = uniform.latest_sync_run(db)
     return DrawSyncStatusView(
         last_run=_run_view(row) if row is not None else None,
-        pending_results=uniform.pending_result_count(db, now=now),
+        pending_results=uniform.pending_result_count(db),
     )
 
 
@@ -377,11 +373,10 @@ async def run_draw_sync(request: Request, db: DbDep) -> DrawSyncStatusView:
 )
 async def get_draw_sync_status(db: DbDep) -> DrawSyncStatusView:
     """上次同步元信息与当前待出赛果数; 从未同步时 last_run 为空。"""
-    now = datetime.now(UTC)
     row = uniform.latest_sync_run(db)
     return DrawSyncStatusView(
         last_run=_run_view(row) if row is not None else None,
-        pending_results=uniform.pending_result_count(db, now=now),
+        pending_results=uniform.pending_result_count(db),
     )
 
 
