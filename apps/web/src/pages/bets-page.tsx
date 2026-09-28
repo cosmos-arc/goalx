@@ -32,7 +32,6 @@ import {
 	drawSyncKey,
 	invalidateSettlementViews,
 	slipsKey,
-	TODAY_STALE_MS,
 	todayFixturesKey,
 } from "../lib/query-keys";
 import {
@@ -190,11 +189,7 @@ export function BetsPage() {
 	const bets = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
 	const drawResults = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
 	const drawSync = useQuery({ queryKey: drawSyncKey, queryFn: () => fetchDrawSyncStatus() });
-	const today = useQuery({
-		queryKey: todayFixturesKey(1),
-		queryFn: () => fetchTodayFixtures(undefined, 1),
-		staleTime: TODAY_STALE_MS,
-	});
+	const today = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
 	const slips = useQuery({ queryKey: slipsKey, queryFn: () => fetchSlips() });
 	const now = Date.now();
 

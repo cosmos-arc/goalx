@@ -20,7 +20,7 @@ import {
 } from "../components/had-quote-ui";
 import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { bankrollKey, TODAY_STALE_MS, todayFixturesKey } from "../lib/query-keys";
+import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
 import { addDays, beijingBusinessDate, dayLabel, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -66,7 +66,6 @@ export function FixturesPage() {
 	const fixturesQuery = useQuery({
 		queryKey: todayFixturesKey(FIXTURES_WINDOW_DAYS),
 		queryFn: () => fetchTodayFixtures(undefined, FIXTURES_WINDOW_DAYS),
-		staleTime: TODAY_STALE_MS,
 	});
 	// 票 wb-06：选注篮建议仓位需要 bankroll（读取失败时建议块诚实降级）
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
