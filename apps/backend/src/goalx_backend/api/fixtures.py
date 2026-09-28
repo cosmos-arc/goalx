@@ -319,18 +319,17 @@ async def get_fixture_research(
         for sel, (odds, _) in sels.items():
             if sel in by_selection:
                 by_selection[sel][book] = odds
-    if all(by_selection[s] for s in SELECTIONS):
-        consensus = om.consensus_odds([by_selection[s] for s in SELECTIONS])
-        if consensus is not None:
-            probs = om.shin_implied(consensus)
-            books = max(len(prices) for prices in by_selection.values())
-            view.consensus = ConsensusView(
-                books=books,
-                low_confidence=om.consensus_low_confidence(books),
-                probability=SelectionTriple(
-                    **{s: round(p, 4) for s, p in zip(SELECTIONS, probs, strict=True)}
-                ),
-            )
+    # 共识→Shin 装配单一正典在 odds_math.consensus_probs（与今日列表页同源）
+    assembled = om.consensus_probs(by_selection, SELECTIONS)
+    if assembled is not None:
+        books, probs = assembled
+        view.consensus = ConsensusView(
+            books=books,
+            low_confidence=om.consensus_low_confidence(books),
+            probability=SelectionTriple(
+                **{s: round(p, 4) for s, p in zip(SELECTIONS, probs, strict=True)}
+            ),
+        )
     forecast = latest_forecast(db, fixture_id)
     if forecast is not None:
         had = forecast_matrix_from_payload(json.loads(forecast["payload"])).had()

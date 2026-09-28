@@ -101,6 +101,26 @@ def consensus_low_confidence(
     return books < threshold
 
 
+def consensus_probs(
+    by_selection: dict[str, dict[str, float]],
+    selections: Iterable[str],
+) -> tuple[int, tuple[float, ...]] | None:
+    """
+    三向共识装配单一正典（今日列表页与场次详情页同源，review-20260928 票 05）。
+
+    ``by_selection``: selection → {book: price}（fx_store.eu_book_odds 形态）；
+    ``selections``：选定顺序（调用方传 markets.SELECTIONS——odds_math 不越层
+    引 markets，分层契约 lint-imports 强制）。任一向无价（对照不完整）返回
+    None；否则返回 (书数 = 最大向价数, Shin 去水概率按 selections 序)。
+    """
+    ordered = tuple(selections)
+    consensus = consensus_odds([by_selection.get(s) or {} for s in ordered])
+    if consensus is None:
+        return None
+    books = max(len(prices) for prices in by_selection.values())
+    return books, shin_implied(consensus)
+
+
 def expected_value(probability: float, odds: float) -> float:
     """EV of a unit stake: ``p * odds - 1``."""
     return probability * odds - 1.0

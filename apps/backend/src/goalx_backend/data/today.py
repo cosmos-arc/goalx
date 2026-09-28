@@ -136,13 +136,9 @@ def build_today_view(
             jc_source_updated_at=verdict.jc_source_updated_at,
             eu_books=verdict.eu_books,
         )
-        if all(s in books for s in SELECTIONS):
-            consensus = om.consensus_odds([books[s] for s in SELECTIONS])
-        else:
-            consensus = None
-        if consensus is not None:
-            probs = om.shin_implied(consensus)
-            view.books = max(len(prices) for prices in books.values())
+        assembled = om.consensus_probs(books, SELECTIONS)
+        if assembled is not None:
+            view.books, probs = assembled
             view.eu_prob = SelectionTriple(
                 **{s: round(p, 4) for s, p in zip(SELECTIONS, probs, strict=True)}
             )
