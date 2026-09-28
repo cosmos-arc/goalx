@@ -320,7 +320,7 @@ async def get_fixture_research(
             if sel in by_selection:
                 by_selection[sel][book] = odds
     # 共识→Shin 装配单一正典在 odds_math.consensus_probs（与今日列表页同源）
-    assembled = om.consensus_probs(by_selection)
+    assembled = om.consensus_probs(by_selection, SELECTIONS)
     if assembled is not None:
         books, probs = assembled
         view.consensus = ConsensusView(

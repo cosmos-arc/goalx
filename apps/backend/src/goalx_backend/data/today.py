@@ -136,7 +136,7 @@ def build_today_view(
             jc_source_updated_at=verdict.jc_source_updated_at,
             eu_books=verdict.eu_books,
         )
-        assembled = om.consensus_probs(books)
+        assembled = om.consensus_probs(books, SELECTIONS)
         if assembled is not None:
             view.books, probs = assembled
             view.eu_prob = SelectionTriple(
