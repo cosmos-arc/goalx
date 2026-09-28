@@ -34,6 +34,7 @@ from typing import Any
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import results as rs_store
+from goalx_backend.evaluation.odds_rows import odds_triple
 from goalx_backend.evaluation.pool_replay import percentiles
 
 _SELECTIONS: tuple[str, str, str] = ("h", "d", "a")
@@ -72,18 +73,6 @@ class _DriftRow:
         return self.p_close * self.odds_close - 1.0
 
 
-def _triple(row: sqlite3.Row, prefix: str) -> tuple[float, float, float] | None:
-    """行 → 三向赔率；任一缺/退化（≤1）整组不可用返回 None。"""
-    raw = (row[f"{prefix}_home"], row[f"{prefix}_draw"], row[f"{prefix}_away"])
-    odds: list[float] = []
-    for value in raw:
-        if value is None or float(value) <= 1.0:
-            return None
-        odds.append(float(value))
-    home, draw, away = odds
-    return home, draw, away
-
-
 def collect_drift_rows(
     conn: sqlite3.Connection,
     *,
@@ -105,8 +94,8 @@ def collect_drift_rows(
         if (str(row["competition"]), str(row["season"])) not in wanted:
             coverage["out_of_scope"] += 1
             continue
-        psc = _triple(row, "psc")
-        psh = _triple(row, "psh")
+        psc = odds_triple(row, "psc")
+        psh = odds_triple(row, "psh")
         if psc is None:
             coverage["no_psc"] += 1
             continue

@@ -31,6 +31,7 @@ from typing import Any
 from goalx_backend import odds_math as om
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data import results as rs_store
+from goalx_backend.evaluation.odds_rows import odds_triple
 
 # h/d/a 选向（与市场表 SELECTIONS 同序）；ftr 赛果字母对位
 _SELECTIONS: tuple[str, str, str] = ("h", "d", "a")
@@ -70,18 +71,6 @@ class _Candidate:
     early_pool_ev: float | None
 
 
-def _odds_triple(row: sqlite3.Row, prefix: str) -> tuple[float, float, float] | None:
-    """行 → (h, d, a) 三向赔率；任一缺/退化（≤1）整组不可用返回 None。"""
-    raw = (row[f"{prefix}_home"], row[f"{prefix}_draw"], row[f"{prefix}_away"])
-    odds: list[float] = []
-    for value in raw:
-        if value is None or float(value) <= 1.0:
-            return None
-        odds.append(float(value))
-    home, draw, away = odds
-    return home, draw, away
-
-
 def _shin_or_none(
     odds: tuple[float, float, float] | None,
 ) -> tuple[float, float, float] | None:
@@ -114,19 +103,19 @@ def collect_candidates(
         if (str(row["competition"]), str(row["season"])) not in wanted:
             coverage["out_of_scope"] += 1
             continue
-        avgc_odds = _odds_triple(row, "avgc")
+        avgc_odds = odds_triple(row, "avgc")
         share = _shin_or_none(avgc_odds)
         if share is None or avgc_odds is None:
             coverage["no_share_avgc"] += 1
             continue
-        psc = _shin_or_none(_odds_triple(row, "psc"))
+        psc = _shin_or_none(odds_triple(row, "psc"))
         if psc is not None:
             fair, stage = psc, "psc"
             coverage["stage_psc"] += 1
         else:
             fair, stage = share, "avgc"
             coverage["stage_avgc"] += 1
-        early = _shin_or_none(_odds_triple(row, "psh"))
+        early = _shin_or_none(odds_triple(row, "psh"))
         if early is not None:
             coverage["psh_present"] += 1
         ftr = str(row["ftr"])
