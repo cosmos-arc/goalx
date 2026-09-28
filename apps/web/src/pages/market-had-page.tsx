@@ -9,7 +9,7 @@ import { MarketTabs } from "../components/market-tabs";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import { buildHadCombo, HAD_COMBO_CONFIG, rankFixturesForFeed } from "../lib/combo-engine";
-import { bankrollKey, TODAY_STALE_MS, todayFixturesKey } from "../lib/query-keys";
+import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
 import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -29,7 +29,6 @@ const MARKET_WINDOW_DAYS = 3;
 export function MarketHadPage() {
 	const fixturesQuery = useQuery({
 		queryKey: todayFixturesKey(MARKET_WINDOW_DAYS),
-		staleTime: TODAY_STALE_MS,
 		queryFn: () => fetchTodayFixtures(undefined, MARKET_WINDOW_DAYS),
 	});
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });

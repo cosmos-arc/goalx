@@ -1,13 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 /**
- * server-state 缓存注册表（票 07）：全站 queryKey + 失效清单 + today 窗
- * staleTime 策略的唯一住所。
+ * server-state 缓存注册表（票 07）：全站 queryKey + 失效清单的唯一住所。
  *
  * 工厂 = 纯函数 + 常量（不建类不建 context，YAGNI）；失效辅助只包住既有
  * 清单，不发明新失效语义。新增查询必须先在此登记键再消费——散键会让跨页
  * 共享缓存与失效清单悄悄漂移（/fixtures/today 曾被 ["today"] 与
  * ["fixtures-window", 3] 两把键各缓存同一端点，就是这个漂移的实证）。
+ * staleTime 不在此设值：全站默认 0（每次挂载重拍）是用户 2026-09-28 裁定，
+ * 单用户工作台重拍代价可忽略、赔率新鲜优先。
  */
 
 // ---- 无参键（单例读模型）----
@@ -83,12 +84,3 @@ export function invalidatePoolViews(queryClient: QueryClient): void {
 	void queryClient.invalidateQueries({ queryKey: poolPeriodDetailKey() });
 	void queryClient.invalidateQueries({ queryKey: poolSyncStatusKey });
 }
-
-// ---- 人裁决记录 ----
-
-/**
- * 人裁决（票 07）：双键合一后跨页导航不重拍的 staleTime。30s = 赔率分钟级
- * 节奏下的保守值——只抑制 30s 内的重复挂载重拍；invalidate 语义不受影响
- * （active 观察者照刷、stale 标记照打，该刷新的页还刷新）。
- */
-export const TODAY_STALE_MS = 30_000;
