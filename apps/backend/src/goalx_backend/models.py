@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class Tier(StrEnum):
@@ -48,38 +48,6 @@ class SnapshotPurpose(StrEnum):
 # --- 赛程域 ---
 
 
-class Competition(BaseModel):
-    """一项赛事（联赛或杯赛），带投入分层标签。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    tier: Tier = Tier.TIER2
-    odds_api_sport_key: str | None = None
-    api_football_league_id: int | None = None
-
-
-class Team(BaseModel):
-    """一支球队；别名经 TeamAlias 映射到 canonical 实体。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    canonical_name: str
-
-
-class TeamAlias(BaseModel):
-    """外部源球队名 → canonical 球队的持久化映射。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    team_id: int
-    source: str
-    alias: str
-
-
 class Fixture(BaseModel):
     """一场已排期的比赛（UTC 记时）。"""
 
@@ -96,20 +64,6 @@ class Fixture(BaseModel):
     join_method: str | None = None
 
 
-class MatchCode(BaseModel):
-    """官方销售编号（竞彩“周二 301”），附属于 Fixture。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    fixture_id: int
-    kind: str
-    business_date: str
-    code: str
-    source_match_id: str | None = None
-    is_single: bool | None = None
-
-
 # --- 市场域 ---
 
 
@@ -117,49 +71,6 @@ class ObservationPurpose(StrEnum):
     """一次报价观测的获取模式（票 35：实时观测与历史查询分开）。"""
 
     LIVE = "live"
-
-
-class QuoteObservation(BaseModel):
-    """
-    一次 HTTP 观测的原始证据（append-only；票 35 时间/证据契约）。
-
-    - observed_at：本机收到响应的时间（UTC，必填、不伪造）。
-    - source_updated_at：源自报的更新时间（可空=源未提供）。
-    - snapshot_at：历史接口实际返回的快照时刻（仅 historical 有意义）。
-    - created_at：入库时间。
-    - raw_sha256/raw_ref：脱敏原始响应哈希与本地压缩文件引用。
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    source: str
-    purpose: ObservationPurpose = ObservationPurpose.LIVE
-    observed_at: str
-    source_updated_at: str | None = None
-    snapshot_at: str | None = None
-    endpoint: str | None = None
-    parse_version: str
-    raw_sha256: str
-    raw_ref: str | None = None
-    summary: str | None = None
-    created_at: str
-
-
-class SaleStatus(BaseModel):
-    """某时点国内销售状态与单固资格观测（append-only 时序）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    fixture_id: int
-    market_code: str | None = None
-    sale_state: str
-    single_eligible: bool | None = None
-    observed_at: str
-    source_updated_at: str | None = None
-    observation_id: int | None = None
-    created_at: str
 
 
 class OddsSnapshot(BaseModel):
@@ -185,32 +96,6 @@ class OddsSnapshot(BaseModel):
     source_updated_at: str | None = None
     observation_id: int | None = None
     meta: dict[str, str] | None = None
-
-
-# --- 奖池域 ---
-
-
-class PoolPeriod(BaseModel):
-    """一个奖池型玩法的销售期（如胜负彩第 26029 期）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    market_code: str
-    period_no: str
-    sales_deadline: str | None = None
-
-
-class PoolState(BaseModel):
-    """一个 PoolPeriod 的资金状态（销售额/滚存转入/奖级分配）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    pool_period_id: int
-    sales_amount: float | None = None
-    rollover_in: float | None = None
-    prize_tiers: dict[str, object] | None = None
-    published_at: str | None = None
 
 
 # --- 预测域 ---
@@ -329,60 +214,6 @@ class Settlement(BaseModel):
     profit: float
     detail: dict[str, object]
     computed_at: str
-
-
-class CostEntry(BaseModel):
-    """CostLedger 记账行（数据订阅/LLM 调用/API credit）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    occurred_at: str
-    category: str
-    units: float = 1.0
-    amount_cny: float = 0.0
-    note: str | None = None
-    meta: dict[str, object] | None = None
-
-
-class BankrollEvent(BaseModel):
-    """Bankroll 变动事件（仅 live 模式影响，ADR 0002）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    occurred_at: str
-    kind: str
-    amount_cny: float
-    balance_after: float
-    bet_id: int | None = Field(default=None)
-    slip_id: int | None = None
-    note: str | None = None
-
-
-# --- 历史回测底座（票 21）---
-
-
-class HistMatch(BaseModel):
-    """football-data.co.uk 历史行（ADR 0007 回测基准输入）。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    competition: str
-    season: str
-    match_date: str
-    home_team: str
-    away_team: str
-    fthg: int
-    ftag: int
-    ftr: str
-    psc_home: float | None = None
-    psc_draw: float | None = None
-    psc_away: float | None = None
-    avgc_home: float | None = None
-    avgc_draw: float | None = None
-    avgc_away: float | None = None
 
 
 # --- 仓储输入模型（聚合多参数，保持仓储函数签名精简） ---
