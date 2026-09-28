@@ -317,7 +317,7 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
     budget = srct.NightBudget(
         request_cap=request_cap, failure_streak_cap=failure_streak_cap
     )
-    limiter = default_limiter()  # 跨日期共享滑窗（20/min 硬顶连续生效）
+    limiter = default_limiter()  # 跨日期共享滑窗（25/min 硬顶连续生效）
     stopped = False
     for season, day in tasks:
         # 逐日复判窗口：长夜（退避封顶 60s ×N）越 08:00 当场收手

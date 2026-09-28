@@ -31,7 +31,7 @@ from goalx_backend.data.ingest import srct, srct_odds
 
 @pytest.fixture(autouse=True)
 def _wide_rate_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """放宽滑窗硬顶（noop sleeper 下 20/min 会忙转到真实时间翻窗）。"""
+    """放宽滑窗硬顶（noop sleeper 下 25/min 会忙转到真实时间翻窗）。"""
     from limits import RateLimitItemPerMinute
 
     monkeypatch.setattr(srct, "_REQUEST_WINDOW", RateLimitItemPerMinute(10**6))

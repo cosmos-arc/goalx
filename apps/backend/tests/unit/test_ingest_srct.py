@@ -853,7 +853,7 @@ def test_jitter_within_range(tmp_path: Path) -> None:
     assert stats.raw_new == 24
     assert len(sleeps) == 24  # 每次线上请求后一次礼貌间隔
     assert all(srct.JITTER_RANGE[0] <= s <= srct.JITTER_RANGE[1] for s in sleeps)
-    assert srct.JITTER_RANGE == (2.0, 4.0)  # 3s±1s 防封参数
+    assert srct.JITTER_RANGE == (1.6, 3.2)  # 2.4s±0.8s 防封参数（2026-09-28 提速令）
 
 
 def test_unconfigured_endpoints_raise(

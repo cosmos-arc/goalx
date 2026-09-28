@@ -17,7 +17,7 @@ NightBudget 语义，避免反向依赖）。
 实测样本裁剪单测（书商名一律打码，代称红线）。HTTP 访问套件（用户裁定
 2026-09-23）：httpx 客户端 + tenacity 重试 + limits 滑动窗口限流
 （MemoryStorage，不依赖外部存储）。防封基线（research/20 §九 定案 4）：
-3s±1s 抖动（间距）、20/分钟滑动窗口（硬顶）、传输失败指数退避重试、
+2.4s±0.8s 抖动（间距）、25/分钟滑动窗口（硬顶）、传输失败指数退避重试、
 单页失败不炸整跑。端点 URL 模板从 config 注入（代称红线：实名/路径不落
 码库，真值进本地 .env）。
 
@@ -105,10 +105,10 @@ CORPUS_SCOPE: tuple[str, ...] = (
     "欧罗巴杯",
 )
 
-# 防封参数（research/20 §九 定案 4）：请求间隔 3s±1s 均匀抖动（间距）+
-# 滑动窗口硬顶 20/分钟（jitter 均值 ≈20/min，窗口只加顶不改间距）
-JITTER_RANGE: tuple[float, float] = (2.0, 4.0)
-RATE_LIMIT_PER_MINUTE = 20
+# 防封参数（research/20 §九 定案 4）：请求间隔 2.4s±0.8s 均匀抖动（间距）+
+# 滑动窗口硬顶 25/分钟（jitter 均值 ≈25/min，窗口只加顶不改间距；2026-09-28 用户提速令）
+JITTER_RANGE: tuple[float, float] = (1.6, 3.2)
+RATE_LIMIT_PER_MINUTE = 25
 _REQUEST_WINDOW = RateLimitItemPerMinute(RATE_LIMIT_PER_MINUTE)
 # 公开别名（票 65 当期班同窗共用；测试经本属性放宽窗口）
 REQUEST_WINDOW = _REQUEST_WINDOW
