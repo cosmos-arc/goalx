@@ -6,8 +6,10 @@ pool_sync_runs 全部 SQL（ADR 0008：他包不走裸 SQL）。
 
 彩池口径（研究 03 §4 + staking-plans §2.3 三修正，票 43 只落第一修正）：
 - **抽水折算**：传统足彩返奖率 65%（64% 当期 + 1% 调节基金，规则口径）。
-  parimutuel 估计派彩赔率 = 返奖率 / 公众份额 share_i（share 来自源B 人气
-  分布，origin=estimated 的公众分布代理，非官方池份额）；
+  parimutuel 估计派彩赔率 = 返奖率 / 公众份额 share_i（origin=estimated 行
+  来自源B 人气投票**存量语料**——源B 2026-09-25 停采、采集器 ingest/zucai
+  已留档不调；自建份额投影器 P1 待建，research/28 裁决不补外部人气源；
+  公众分布代理，非官方池份额）；
   EV_i = p_i × (0.65 / share_i) − 1。
 - **price impact**（自己的注额推动赔率）：goalx 个人资金量级下可忽略
   （Isaacs 1953 / Kelly 1956 的竞速彩池结论），接口保留"按注额重算派彩"

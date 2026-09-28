@@ -1,5 +1,7 @@
 # Goalx 足彩量化投注与预测系统 — 设计 Spec v1.0
 
+> **已被取代（2026-09-19 起）**：当前有效 spec 为 [spec.md（Spec v1.1：可信纸面闭环）](spec.md)，实施地图见 [map.md](map.md)（其头部已声明原 M3/M4 顺序不再是当前实施承诺）。本文保留作历史设计参考；现行口径以 [CONTEXT.md](../../../CONTEXT.md) 与 [glossary.md](glossary.md) 为准。
+
 > 2026-09-13 由 wayfinder 地图（.scratch/goalx-quant/，18 张决策票闭环）汇编。术语以仓库根 [CONTEXT.md](../../../CONTEXT.md) 为准，架构决策见 [docs/adr/](../../../docs/adr/)（0001-0007）。
 
 ## 1. 目标与定位
