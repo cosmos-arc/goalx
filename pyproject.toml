@@ -266,13 +266,15 @@ addopts = [
 root_package = "goalx_backend"
 
 [[tool.importlinter.contracts]]
-name = "领域分层（ADR-0008）：shared < data < modelling < betting < evaluation < ingest < llm < tasks < api/server < main < cli/flows"
+name = "领域分层（ADR-0008）：shared < data < modelling < betting < evaluation < ingest < llm < tasks < datasets < api/server < main < cli/flows"
 type = "layers"
 layers = [
     "goalx_backend.cli | goalx_backend.flows | goalx_backend.export_openapi",
     "goalx_backend.main",
     "goalx_backend.api | goalx_backend.server",
-    # tasks 是任务实现唯一住所，api/cli/flows 是其 adapter（ADR-0008 2026-09-28 补）
+    # 定拍数据集注册表（票 02）：声明持 tasks 函数引用，cli/flows/schedules 消费
+    "goalx_backend.datasets",
+    # tasks 是任务实现唯一住所，api/cli/flows 都是它的 adapter（ADR-0008 2026-09-28 补）
     "goalx_backend.tasks",
     # ingest 是采集用例编排（可用 modelling/betting/data）；llm 情报域在其上
     "goalx_backend.llm",

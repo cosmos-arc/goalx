@@ -40,6 +40,7 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,7 @@ import duckdb
 import httpx
 from loguru import logger
 
-from goalx_backend import tasks
+from goalx_backend import datasets, tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import corpus_duckdb, corpus_gate, mapping, reconcile
@@ -67,13 +68,11 @@ from goalx_backend.data.ingest import (
     sporttery,
     srct,
     srct_market,
-    srct_night,
     srct_odds,
     srct_results,
     srct_shift,
     srct_silver,
     uniform,
-    zucai_official,
 )
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
@@ -89,7 +88,6 @@ from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.tasks import (
     clubelo_elo_for_team,
     corpus_anchor,
-    guardian_sync,
     mapping_audit,
     mapping_sync,
     task_conn,
@@ -371,55 +369,6 @@ def _parse_success_rate(stats: srct.SrctCollectStats) -> float | None:
     """解析成功率（无解析样本返回 None——空日不折算成 1.0）。"""
     denom = stats.parsed_ok + len(stats.parse_failed)
     return round(stats.parsed_ok / denom, 4) if denom else None
-
-
-def _cmd_srct_night(
-    args: argparse.Namespace,
-    *,
-    settings: Settings | None = None,
-    client: httpx.Client | None = None,
-    now_fn: Callable[[], datetime] | None = None,
-    sleeper: Callable[[float], None] | None = None,
-    seasons: tuple[srct_night.SeasonWindow, ...] | None = None,
-    jc_phase: bool = True,
-) -> None:
-    """
-    源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1；--list 只读查摘要。
-
-    settings/client/now_fn/sleeper/seasons 注入口只服务测试接缝；缺省走
-    真实配置、真实连接、本机墙钟、真实防封间隔与 Phase1 全表（窗口外
-    直接 window_closed，白天冒烟走 --no-window）。
-    """
-    resolved = settings if settings is not None else get_settings()
-    window = None if args.no_window else srct_night.NIGHT_WINDOW
-    store = CorpusStore(resolved.corpus_root)
-    try:
-        if args.list:
-            payload = {"nights": store.night_summaries(limit=args.limit)}
-        else:
-            with ExitStack() as stack:
-                run_client = (
-                    client
-                    if client is not None
-                    else stack.enter_context(
-                        httpx.Client(verify=srct.browser_ssl_context())
-                    )
-                )
-                summary = srct_night.run_night(
-                    store,
-                    resolved,
-                    run_client,
-                    now_fn=now_fn,
-                    window=window,
-                    request_cap=args.request_cap,
-                    sleeper=sleeper,
-                    seasons=seasons,
-                    jc_phase=jc_phase,
-                )
-            payload = asdict(summary)
-    finally:
-        store.close()
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _cmd_srct_shift(
@@ -738,12 +687,6 @@ def _cmd_elo_build(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
-def _cmd_guardian_sync(args: argparse.Namespace) -> None:
-    """卫报新闻语料同步（票 79）：回填翻页/日增量，断点续跑幂等。"""
-    report = guardian_sync(request_cap=args.request_cap)
-    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-
-
 def _cmd_mapping_sync(args: argparse.Namespace) -> None:
     """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
     report = mapping_sync()
@@ -859,15 +802,6 @@ def _cmd_drift_replay_report(args: argparse.Namespace) -> None:
             conn, competitions=fdhist.FD_COMPETITIONS, seasons=seasons
         )
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-
-
-def _cmd_pool_sync() -> None:
-    """彩池同步：体彩官方在售对阵+上期彩果（幂等，票 68 官方化）。"""
-    stats = tasks.pool_snapshot()
-    sys.stdout.write(
-        json.dumps(zucai_official.stats_dict(stats), ensure_ascii=False, indent=2)
-        + "\n"
-    )
 
 
 def _cmd_pool_backfill(args: argparse.Namespace) -> None:
@@ -989,7 +923,6 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("closing-snapshot", help="收盘窗口尽力快照(票 32)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
-    sub.add_parser("pool-sync", help="手动拉一次彩池期次/对阵/人气分布(票 43)")
     understat = sub.add_parser(
         "understat-sync", help="Understat xG 特征同步(票 45;默认当前季)"
     )
@@ -1075,40 +1008,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="只出竞彩待出×源T覆盖差集报告,不落事实",
     )
-    guardian_parser = sub.add_parser(
-        "guardian-sync",
-        help="卫报新闻语料同步(票79;回填~2日@500/日,断点续跑幂等)",
-    )
-    guardian_parser.add_argument(
-        "--request-cap",
-        type=int,
-        default=None,
-        help="单次请求上限(默认=当日剩余预算全部)",
-    )
     sub.add_parser(
         "elo-build",
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
-    )
-    srct_night_parser = sub.add_parser(
-        "srct-night",
-        help="源T夜班推进Phase1回填(票55切片13;预算/熔断/断点续传,摘要落库)",
-    )
-    srct_night_parser.add_argument(
-        "--request-cap",
-        type=int,
-        default=srct.NIGHT_REQUEST_CAP,
-        help=f"当夜请求预算上限(默认 {srct.NIGHT_REQUEST_CAP})",
-    )
-    srct_night_parser.add_argument(
-        "--no-window",
-        action="store_true",
-        help="跳过 01:00-08:00 窗口判断(白天冒烟/手工回补用)",
-    )
-    srct_night_parser.add_argument(
-        "--list", action="store_true", help="只读查最近夜班摘要(不发请求)"
-    )
-    srct_night_parser.add_argument(
-        "--limit", type=int, default=20, help="--list 行数(默认 20)"
     )
     srct_shift_parser = sub.add_parser(
         "srct-shift",
@@ -1191,6 +1093,8 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
+    # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
+    datasets.add_cli_subparsers(sub)
     return parser
 
 
@@ -1216,7 +1120,6 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate-haircut": _cmd_calibrate_haircut,
         "closing-snapshot": _cmd_closing_snapshot,
         "clv-reconcile": _cmd_clv_reconcile,
-        "pool-sync": _cmd_pool_sync,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
         "understat-sync": lambda: _cmd_understat_sync(args),
         "clubelo-sync": lambda: _cmd_clubelo_sync(args),
@@ -1227,8 +1130,6 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-results": lambda: _cmd_srct_results(args),
         "elo-build": lambda: _cmd_elo_build(args),
-        "guardian-sync": lambda: _cmd_guardian_sync(args),
-        "srct-night": lambda: _cmd_srct_night(args),
         "srct-shift": lambda: _cmd_srct_shift(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
@@ -1244,6 +1145,9 @@ def main(argv: list[str] | None = None) -> int:
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
     }
+    # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数
+    for spec in datasets.DATASETS:
+        handlers[spec.command] = partial(datasets.run_cli, spec, args)
     handlers[args.command]()
     return 0
 

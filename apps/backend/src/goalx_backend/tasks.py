@@ -12,8 +12,8 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 
@@ -273,25 +273,62 @@ def srcb_collect() -> dict[str, object]:
     }
 
 
-def srct_night_run() -> dict[str, object]:
+def srct_night_run(  # noqa: PLR0913 运行旋钮+测试注入口，cli/flow 共用
+    *,
+    request_cap: int | None = None,
+    no_window: bool = False,
+    list_mode: bool = False,
+    limit: int = 20,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+    now_fn: Callable[[], datetime] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+    seasons: tuple[srct_night.SeasonWindow, ...] | None = None,
+    jc_phase: bool = True,
+) -> dict[str, object]:
     """
     源T夜班（票 55 切片 13）：窗口内按预算推进 Phase1 回填批。
 
     窗口外零成本返回（deployment 01:00 触发总在窗内，此判保手工误触）；
     摘要已落 checkpoint 库，这里只回计数（failed 采样防 flow 日志爆量）。
+    list_mode=True 只读查最近摘要（不发请求）。settings/client/now_fn/
+    sleeper/seasons/jc_phase 注入口只服务测试接缝（cli/flow 共用本函数，
+    缺省走真实配置、真实连接、本机墙钟与 Phase1 全表）。
     """
-    settings = get_settings()
-    store = CorpusStore(settings.corpus_root)
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
     try:
-        with httpx.Client(verify=srct.browser_ssl_context()) as client:
-            summary = srct_night.run_night(store, settings, client)
+        if list_mode:
+            return {"nights": store.night_summaries(limit=limit)}
+        window = None if no_window else srct_night.NIGHT_WINDOW
+        with ExitStack() as stack:
+            run_client = (
+                client
+                if client is not None
+                else stack.enter_context(
+                    httpx.Client(verify=srct.browser_ssl_context())
+                )
+            )
+            summary = srct_night.run_night(
+                store,
+                resolved,
+                run_client,
+                now_fn=now_fn,
+                window=window,
+                request_cap=(
+                    srct.NIGHT_REQUEST_CAP if request_cap is None else request_cap
+                ),
+                sleeper=sleeper,
+                seasons=seasons,
+                jc_phase=jc_phase,
+            )
+        payload = asdict(summary)
+        payload["failed"] = dict(
+            list(summary.failed.items())[: srct_night.FAILED_SAMPLE_CAP]
+        )
+        return payload
     finally:
         store.close()
-    payload = asdict(summary)
-    payload["failed"] = dict(
-        list(summary.failed.items())[: srct_night.FAILED_SAMPLE_CAP]
-    )
-    return payload
 
 
 def srct_shift_run() -> dict[str, object]:
@@ -483,11 +520,12 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
     return clubelo.stats_dict(stats)
 
 
-def pool_snapshot() -> zucai_official.PoolSyncStats:
+def pool_snapshot() -> dict[str, object]:
     """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果 → pool 域表。"""
     settings = get_settings()
     with task_conn() as conn, httpx.Client(verify=srct.browser_ssl_context()) as client:
-        return zucai_official.sync_current(conn, settings, client)
+        stats = zucai_official.sync_current(conn, settings, client)
+    return zucai_official.stats_dict(stats)
 
 
 def pool_backfill(periods: int = 20) -> dict[str, object]:

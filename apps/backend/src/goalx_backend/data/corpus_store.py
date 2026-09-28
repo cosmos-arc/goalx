@@ -29,6 +29,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -161,6 +162,42 @@ CREATE TABLE IF NOT EXISTS guardian_request_days (
     requests INTEGER NOT NULL DEFAULT 0
 )
 """
+# checkpoint 建表单处登记（票 02 前 ensure_tree 与 _checkpoint 双抄两处；
+# 现两路共用本序列；新表 = 加一条 DDL 常量 + 入本元组）
+_CHECKPOINT_TABLE_SQL = (
+    _RAW_ARTIFACTS_SQL,
+    _SRCT_DAY_STATUS_SQL,
+    _SRCT_NIGHT_SUMMARIES_SQL,
+    _SRCT_SEASON_DEPTH_SQL,
+    _SRCT_SHIFT_MATCHES_SQL,
+    _JC_SHIFT_MATCHES_SQL,
+    _JC_BACKFILL_DAYS_SQL,
+    _GUARDIAN_SYNC_STATE_SQL,
+    _GUARDIAN_REQUEST_DAYS_SQL,
+)
+_TABLE_NAME_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)")
+
+
+def checkpoint_table_names() -> tuple[str, ...]:
+    """已登记 checkpoint 表名（数据集注册表规格核对面；顺序=建表顺序）。"""
+    names: list[str] = []
+    for ddl in _CHECKPOINT_TABLE_SQL:
+        match = _TABLE_NAME_RE.match(ddl.strip())
+        if match is None:  # 建表格式漂移会让核对面无声缩水——失败即炸
+            msg = f"checkpoint DDL 缺表名（格式漂移？）：{ddl.strip()[:60]}"
+            raise AssertionError(msg)
+        names.append(match.group(1))
+    return tuple(names)
+
+
+def _create_checkpoint_tables(conn: sqlite3.Connection) -> None:
+    """建全部 checkpoint 表 + 老库 boundary 补列（幂等）。"""
+    for ddl in _CHECKPOINT_TABLE_SQL:
+        conn.execute(ddl)
+    _ensure_boundary_column(conn)
+    conn.commit()
+
+
 _NIGHT_SUMMARY_COLUMNS = (
     "night_date",
     "started_at",
@@ -209,18 +246,7 @@ class CorpusStore:
         """建目录树与 checkpoint 表（幂等）。"""
         for sub in _TREE_SUBDIRS:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-        conn = self._checkpoint()
-        conn.execute(_RAW_ARTIFACTS_SQL)
-        conn.execute(_SRCT_DAY_STATUS_SQL)
-        conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
-        conn.execute(_SRCT_SEASON_DEPTH_SQL)
-        conn.execute(_SRCT_SHIFT_MATCHES_SQL)
-        conn.execute(_JC_SHIFT_MATCHES_SQL)
-        conn.execute(_JC_BACKFILL_DAYS_SQL)
-        conn.execute(_GUARDIAN_SYNC_STATE_SQL)
-        _ensure_boundary_column(conn)
-        conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
-        conn.commit()
+        _create_checkpoint_tables(self._checkpoint())
 
     def _checkpoint(self) -> sqlite3.Connection:
         # ponytail: 进程内单连接串行用；夜班单进程采集足够，多进程并发再上锁
@@ -228,17 +254,7 @@ class CorpusStore:
             self.root.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(self.checkpoint_path)
             self._conn.row_factory = sqlite3.Row
-            self._conn.execute(_RAW_ARTIFACTS_SQL)
-            self._conn.execute(_SRCT_DAY_STATUS_SQL)
-            self._conn.execute(_SRCT_NIGHT_SUMMARIES_SQL)
-            self._conn.execute(_SRCT_SEASON_DEPTH_SQL)
-            self._conn.execute(_SRCT_SHIFT_MATCHES_SQL)
-            self._conn.execute(_JC_SHIFT_MATCHES_SQL)
-            self._conn.execute(_JC_BACKFILL_DAYS_SQL)
-            self._conn.execute(_GUARDIAN_SYNC_STATE_SQL)
-            _ensure_boundary_column(self._conn)
-            self._conn.execute(_GUARDIAN_REQUEST_DAYS_SQL)
-            self._conn.commit()
+            _create_checkpoint_tables(self._conn)
         return self._conn
 
     def has(self, provider: str, dataset: str, key: str) -> bool:

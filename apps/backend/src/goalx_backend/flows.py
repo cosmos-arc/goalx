@@ -3,7 +3,10 @@ Prefect flows（ADR 0005）：定时采集、历史导入、训练与结算批�
 
 流程体是 goalx_backend.tasks 的薄 adapter——任务实现只有一份，cli 与
 flows 共用（票 35 证据契约因此不可能再漂移）；deployment 由本地
-Prefect server 调度（见 README「运行采集」）。
+Prefect server 调度（见 README「运行采集」）。同构「调 tasks 函数、记
+日志、回 stats」的 flow 自 deepen-20260928 票 02 起由数据集注册表
+（datasets.py）生成；本文件只剩编排型（多 flow 组合）与待搬迁（票 03）
+的手写壳。
 
 - jingcai_snapshot_flow：竞彩全玩法快照（销售期高频，如每 30 分钟）
 - odds_anchor_dense_flow：双锚临场定向采样（票 47 修正设计）——决策锚=
@@ -20,7 +23,6 @@ Prefect server 调度（见 README「运行采集」）。
 - official_reconcile_flow：赛果日终审计（票 76 收敛：openfootball 对账；
   源D 退役、uniform 段随同步内联）
 - understat_sync_flow：Understat xG 特征同步（票 45：每日 6 请求 ≤10 上限）
-- guardian_sync_flow：卫报新闻语料同步（票 79：回填 ~2 日@500/日，之后日增量 1-2 请求）
 """
 
 from __future__ import annotations
@@ -33,7 +35,6 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
-from goalx_backend.data.ingest.zucai_official import stats_dict
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
@@ -153,22 +154,6 @@ def clubelo_sync_flow() -> dict[str, object]:
     return stats
 
 
-@flow(name="guardian-sync", log_prints=True)
-def guardian_sync_flow() -> dict[str, object]:
-    """卫报新闻语料同步（票 79）：回填翻页/日增量，断点续跑幂等。"""
-    stats = tasks.guardian_sync()
-    logger.info("guardian sync: {}", stats)
-    return stats
-
-
-@flow(name="pool-snapshot", log_prints=True)
-def pool_snapshot_flow() -> dict[str, object]:
-    """彩池同步（票 68 官方化）：体彩官方在售对阵+上期彩果（幂等）。"""
-    stats = tasks.pool_snapshot()
-    logger.info("pool snapshot: {}", stats_dict(stats))
-    return stats_dict(stats)
-
-
 @flow(name="srcb-collect", log_prints=True)
 def srcb_collect_flow() -> dict[str, object]:
     """源B变化时序采集（票 49 采集先行）：低频回溯式攒语料。"""
@@ -186,19 +171,6 @@ def srct_shift_flow() -> dict[str, object]:
     """
     stats = tasks.srct_shift_run()
     logger.info("srct shift: {}", stats)
-    return stats
-
-
-@flow(name="srct-night", log_prints=True)
-def srct_night_flow() -> dict[str, object]:
-    """
-    源T夜班（票 55 切片 13）：Phase1 回填批自动推进。
-
-    01:00 deployment 触发；窗口/预算/熔断在任务体内裁（窗口外零成本）。
-    每夜摘要落语料树 checkpoint 库，`goalx srct-night --list` 晨检。
-    """
-    stats = tasks.srct_night_run()
-    logger.info("srct night: {}", stats)
     return stats
 
 

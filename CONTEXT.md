@@ -133,6 +133,10 @@ _Avoid_: 缺数据（口语）、缺口（单独使用）
 运行面 Fixture 与源侧场次（源T sid 等）的物化映射行：命中方法（两步确定性键的哪一步 / 人工覆写）、状态（linked / ambiguous）与候选档案。多候选不硬配，进人工队列；kickoff 以源T 为 canonical，已链场次自动对齐（超 12h 漂移只标记）。
 _Avoid_: 模糊匹配（指物化层）、join（口语）
 
+**ScheduledDataset**:
+一个定拍数据集的注册声明（`datasets.py` 的 DatasetSpec）：名字、cron、任务函数（实现住所仍是 tasks）、cli 参数、checkpoint 表清单；cli 子命令、Prefect flow、serve deployment 与恢复清单由它推导。任务实现只有一份，cli/flow/api 都是它的 adapter。
+_Avoid_: 任务注册（泛指）、定时任务（口语可用，实体一律 ScheduledDataset）
+
 ### 语料
 
 **TrajectoryCorpus**:
