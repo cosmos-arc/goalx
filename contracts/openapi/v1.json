@@ -1458,7 +1458,7 @@
           "validation"
         ],
         "summary": "纸面三条件进度、mode 隔离计数与前瞻评分",
-        "description": "验证页主数据（票 34 边界）：\n\n- CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；\n- 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），\n  不读取任何历史回测 run；\n- 复核：无记录 = 未评估（不做真空通过）；\n- 整赛季：独立显示，未验收前不通过。",
+        "description": "验证页主数据（票 34 边界）：\n\n- CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；\n- 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），\n  不读取任何历史回测 run，只认部署版本（票 09 裁决）；\n- 复核：误导率 ≤10% 且 ≥10 条（counts 在 api 层取——evaluation 不引 llm）；\n- 整赛季：独立显示，未验收前不通过。",
         "operationId": "get_validation_progress_api_v1_validation_progress_get",
         "parameters": [
           {

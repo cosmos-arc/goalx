@@ -23,11 +23,16 @@ from goalx_backend.betting.store import (
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import forward_validation as fwd
 from goalx_backend.evaluation.forward_validation import MIN_GROUP_SAMPLES
+from goalx_backend.modelling.forecast import latest_model_version
 
 CLV_MIN_BETS = 200  # 纸面三条件之一：≥200 唯一注才评估 beat rate（票 10/34）
 CLV_BEAT_TARGET = 0.60
 ROLLING_WINDOW = 100  # 滚动 yield 窗口（票 12）
 MIN_FORWARD_SAMPLES = MIN_GROUP_SAMPLES
+# 复核门槛（票 review-20260928/03 裁决 2026-09-28）：误导类占比 ≤10% 且
+# done ≥10 条才过；无记录/样本不足恒不通过（三分类见 llm.review._VERDICTS）
+REVIEW_MIN_SAMPLES = 10
+REVIEW_MISLEADING_MAX = 0.10
 
 
 class BacktestRunView(BaseModel):
@@ -200,16 +205,49 @@ def _season_condition(bets: list[Any]) -> ConditionProgress:
     )
 
 
+def _review_condition(review_counts: dict[str, int]) -> ConditionProgress:
+    """
+    复核门槛（票 review-20260928/03）：误导率 ≤10% 且 ≥10 条。
+
+    counts 由 api 层经 llm.review.verdict_counts 注入（层级契约：evaluation
+    不 import llm）。
+    """
+    done = sum(review_counts.values())
+    misleading = review_counts.get("misleading", 0)
+    if done == 0:
+        achieved, current = False, "无复核记录(未评估)"
+    elif done < REVIEW_MIN_SAMPLES:
+        achieved = False
+        current = (
+            f"复核样本不足({done}/{REVIEW_MIN_SAMPLES})：misleading {misleading}/{done}"
+        )
+    else:
+        ratio = misleading / done
+        achieved = ratio <= REVIEW_MISLEADING_MAX
+        current = f"misleading {misleading}/{done}({ratio:.0%})"
+    return ConditionProgress(
+        key="review_errors",
+        label=f"复核误导率 ≤{REVIEW_MISLEADING_MAX:.0%} (≥{REVIEW_MIN_SAMPLES} 条)",
+        achieved=achieved,
+        current=current,
+        target=f"misleading ≤{REVIEW_MISLEADING_MAX:.0%} @ ≥{REVIEW_MIN_SAMPLES} 条",
+    )
+
+
 def validation_progress(
-    conn: sqlite3.Connection, *, yield_mode: str = "paper"
+    conn: sqlite3.Connection,
+    *,
+    yield_mode: str = "paper",
+    review_counts: dict[str, int] | None = None,
 ) -> ValidationProgressView:
     """
     验证页主数据（票 34 边界）：
 
     - CLV beat：唯一纸面注（单关/2串1 分开报告）≥200 且 beat ≥60%；
     - 市场 skill：前瞻评分集合（冻结赛前 Forecast + 同期市场基准），
-      不读取任何历史回测 run；
-    - 复核：无记录 = 未评估（不做真空通过）；
+      不读取任何历史回测 run；只认当前部署 model_version（票 09 裁决
+      2026-09-28——周重训后样本窗口重置属诚实降级，历史好版本不作数）；
+    - 复核：误导率 ≤10% 且 ≥10 条（review_counts 由 api 层注入）；
     - 整赛季：独立显示，未验收前不通过。
     """
     clv_report = clv_mod.clv_report(conn)
@@ -247,39 +285,32 @@ def validation_progress(
     ]
 
     forward = fwd.forward_skill_report(conn)
-    eligible = [
-        (version, metrics)
-        for version, metrics in forward["groups"].items()
-        if not metrics.get("insufficient_samples")
-    ]
-    best = max((m["skill_rps"] for _, m in eligible), default=None)
-    skill_ok = best is not None and best >= 0.0
-    group_summary = (
-        "; ".join(
-            f"{v}: n={m['n']} skill={m['skill_rps']:+.4f}"
-            + ("(样本不足)" if m.get("insufficient_samples") else "")
-            for v, m in forward["groups"].items()
+    deployed = latest_model_version(conn)
+    dep_metrics = forward["groups"].get(deployed) if deployed is not None else None
+    if deployed is None or not forward["groups"]:
+        skill_ok, skill_current = False, "无前瞻样本"
+    elif dep_metrics is None:
+        skill_ok = False
+        skill_current = f"{deployed}: 无前瞻样本(部署版本)"
+    elif dep_metrics.get("insufficient_samples"):
+        skill_ok = False
+        skill_current = f"{deployed}: n={dep_metrics['n']} 样本不足(部署版本)"
+    else:
+        skill_ok = dep_metrics["skill_rps"] >= 0.0
+        skill_current = (
+            f"{deployed}: n={dep_metrics['n']}"
+            f" skill={dep_metrics['skill_rps']:+.4f}(部署版本)"
         )
-        or "无前瞻样本"
-    )
     conditions.append(
         ConditionProgress(
             key="market_skill",
-            label=f"前瞻对市场 skill ≥ 0 (RPS, ≥{MIN_FORWARD_SAMPLES} 场)",
+            label=f"前瞻对市场 skill ≥ 0 (RPS, ≥{MIN_FORWARD_SAMPLES} 场,部署版本)",
             achieved=skill_ok,
-            current=group_summary,
+            current=skill_current,
             target="≥ 0",
         )
     )
-    conditions.append(
-        ConditionProgress(
-            key="review_errors",
-            label="复核无系统性错误",
-            achieved=False,
-            current="无复核记录(未评估)",
-            target="无系统性错误",
-        )
-    )
+    conditions.append(_review_condition(review_counts or {}))
 
     paper_rows, paper_dups = _settled_bets(conn, "paper")
     live_rows, live_dups = _settled_bets(conn, "live")

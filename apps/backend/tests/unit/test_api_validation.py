@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -166,3 +167,140 @@ def test_backtest_runs_empty(tmp_path: Path) -> None:
     conn.close()
     with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
         assert client.get("/api/v1/backtest/runs").json() == []
+
+
+# ---- 票 review-20260928/03+09：三条件门两项裁决落地 ----
+
+
+def _seed_base(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    """一对队赛（competitions.name 唯一，只种一次），返回 (comp, home, away)。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO competitions (name, tier, created_at)"
+        " VALUES ('英超','tier1','x')"
+    )
+    comp = int(
+        conn.execute("SELECT id FROM competitions WHERE name = '英超'").fetchone()["id"]
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO teams (canonical_name, created_at) VALUES ('主','x')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO teams (canonical_name, created_at) VALUES ('客','x')"
+    )
+    home = int(
+        conn.execute("SELECT id FROM teams WHERE canonical_name = '主'").fetchone()[
+            "id"
+        ]
+    )
+    away = int(
+        conn.execute("SELECT id FROM teams WHERE canonical_name = '客'").fetchone()[
+            "id"
+        ]
+    )
+    return comp, home, away
+
+
+def _seed_fixture(
+    conn: sqlite3.Connection, base: tuple[int, int, int] | None = None, *, seq: int = 0
+) -> int:
+    comp, home, away = base or _seed_base(conn)
+    # 同对阵四列唯一：用分钟偏移区分（同日多场不真实但测试只求行存在）
+    kickoff = f"2026-09-13T02:{seq:02d}:00+00:00"
+    return int(
+        conn.execute(
+            "INSERT INTO fixtures (competition_id, kickoff_utc, home_team_id,"
+            " away_team_id) VALUES (?, ?, ?, ?)",
+            (comp, kickoff, home, away),
+        ).lastrowid
+    )
+
+
+def _review_client(tmp_path: Path, name: str, verdicts: list[str]) -> TestClient:
+    """带复核记录的客户端：每条 verdict 独立场次（review_items 每场每路由唯一）。"""
+    db_path = tmp_path / name
+    conn = connect(db_path)
+    migrate(conn)
+    base = _seed_base(conn)
+    for i, verdict in enumerate(verdicts):
+        fixture = _seed_fixture(conn, base, seq=i)
+        conn.execute(
+            "INSERT INTO review_items (fixture_id, route, status, verdict,"
+            " created_at, decided_at) VALUES (?, 'pre_match', 'done', ?,"
+            " '2026-09-28T00:00:00+00:00', '2026-09-28T01:00:00+00:00')",
+            (fixture, verdict),
+        )
+    conn.commit()
+    conn.close()
+    return TestClient(create_app(settings=Settings(db_path=db_path)))
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "achieved", "expect_text"),
+    [
+        # ≤10% 且 ≥10 条：1/12 = 8.3% → 过
+        (["misleading", *["key_contribution"] * 11], True, "misleading 1/12"),
+        # 样本不足（9 < 10）：恒不过
+        (["key_contribution"] * 9, False, "样本不足"),
+        # 超阈（2/12 = 16.7%）→ 不过
+        (
+            ["misleading", "misleading", *["key_contribution"] * 10],
+            False,
+            "misleading 2/12",
+        ),
+        # 无记录：未评估（glossary 原口径保留）
+        ([], False, "未评估"),
+    ],
+)
+def test_review_errors_gate(
+    tmp_path: Path, verdicts: list[str], achieved: bool, expect_text: str
+) -> None:
+    with _review_client(
+        tmp_path, f"review-{len(verdicts)}-{verdicts[:1]}.db", verdicts
+    ) as client:
+        body = client.get("/api/v1/validation/progress").json()
+    condition = {c["key"]: c for c in body["conditions"]}["review_errors"]
+    assert condition["achieved"] is achieved
+    assert expect_text in condition["current"]
+
+
+def test_market_skill_deploys_latest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 09 裁决：只认最新 issued_at 的部署版本——历史好版本救不了部署版负 skill。"""
+    db_path = tmp_path / "deployed.db"
+    conn = connect(db_path)
+    migrate(conn)
+    fixture = _seed_fixture(conn)
+    for version, issued in (
+        ("dc-v1", "2026-09-20T00:00:00+00:00"),
+        ("dc-v2", "2026-09-27T00:00:00+00:00"),
+    ):
+        conn.execute(
+            "INSERT INTO forecasts (fixture_id, track, model_version, issued_at,"
+            " content_hash, payload) VALUES (?, 'ml', ?, ?, ?, '{}')",
+            (fixture, version, issued, f"h-{version}"),
+        )
+    conn.commit()
+    conn.close()
+    groups = {
+        "dc-v1": {"n": 50, "skill_rps": 0.02},
+        "dc-v2": {"n": 50, "skill_rps": -0.01},
+    }
+    monkeypatch.setattr(
+        "goalx_backend.evaluation.forward_validation.forward_skill_report",
+        lambda conn: {"groups": groups},
+    )
+    with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
+        body = client.get("/api/v1/validation/progress").json()
+    condition = {c["key"]: c for c in body["conditions"]}["market_skill"]
+    # 部署版 dc-v2 为负 → 不过（旧 max 口径会拿 dc-v1 的 +0.02 通过）
+    assert condition["achieved"] is False
+    assert "dc-v2" in condition["current"]
+    assert "部署" in condition["current"]
+
+    groups["dc-v2"]["skill_rps"] = 0.01
+    with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
+        body = client.get("/api/v1/validation/progress").json()
+    condition = {c["key"]: c for c in body["conditions"]}["market_skill"]
+    assert condition["achieved"] is True
+    assert "dc-v2" in condition["current"]
