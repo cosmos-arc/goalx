@@ -26,8 +26,8 @@ from datetime import datetime
 from typing import cast
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 from goalx_backend.db import utc_now_iso
@@ -160,7 +160,7 @@ def _kickoff_ms(
     kickoff = cast("datetime", fixture["kickoff"])
     return (
         srct_odds.beijing_ms(kickoff),
-        srct_silver.season_of(kickoff),
+        silver.season_of(kickoff),
         str(fixture["league"]),
     )
 
@@ -170,7 +170,7 @@ def _ou_line(line_raw: str | None) -> float | None:
     if line_raw is None:
         return None
     parts = line_raw.split("/")
-    values = [srct_silver.to_float(p) for p in parts]
+    values = [silver.to_float(p) for p in parts]
     if not values or any(v is None for v in values):
         return None
     return sum(cast("list[float]", values)) / len(values)
@@ -199,8 +199,8 @@ def _quote_row(
         raw = str(line_raw) if line_raw is not None else None
         # ah=中文盘口词归一（主队视角受让为负）；ou=进球数线数值化（四分位中值）
         line = srct_odds.normalize_line(raw) if market == MARKET_AH else _ou_line(raw)
-        home = srct_silver.to_float(quote.get("home_water"))
-        away = srct_silver.to_float(quote.get("away_water"))
+        home = silver.to_float(quote.get("home_water"))
+        away = silver.to_float(quote.get("away_water"))
         if line_raw is not None and line is None:
             report.bad_line_values += 1
         if line_raw is not None and (home is None or away is None):
@@ -224,10 +224,12 @@ def build_market_quotes(
     """
     report = SilverMarketReport(built_at=utc_now_iso())
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
-    root = store.root / "silver" / srct.SRCT_PROVIDER / MARKET_DATASET
+    root = store.silver_path(srct.SRCT_PROVIDER, MARKET_DATASET)
     out = srct_odds.StreamingPartitions(root, _QUOTE_SCHEMA, chunk_rows)
     latest = {
-        dataset: srct_silver.latest_bronze_rows(store, dataset)
+        dataset: silver.latest_bronze_rows(
+            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
+        )
         for dataset in (srct.ASIANODDS_DATASET, srct.OVERDOWN_DATASET)
     }
     kickoff_of = {
@@ -275,7 +277,7 @@ def build_market_quotes(
     report.books_ah = sum(1 for m, _ in seen_books if m == MARKET_AH)
     report.books_ou = sum(1 for m, _ in seen_books if m == MARKET_OU)
     report.partitions, report.stale_partitions_removed = out.close()
-    srct_silver.write_dataset_meta(
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": MARKET_SILVER_VERSION,
@@ -301,8 +303,8 @@ def _xg_values(
         if "xg" in name.lower() or "预期进球" in name:
             return (
                 True,
-                srct_silver.to_float(row.get("home")),
-                srct_silver.to_float(row.get("away")),
+                silver.to_float(row.get("home")),
+                silver.to_float(row.get("away")),
             )
     return False, None, None
 
@@ -323,7 +325,12 @@ def build_detail_faces(store: CorpusStore) -> SilverFaceReport:
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
     rows: list[dict[str, object]] = []
     for sid, bronze in sorted(
-        srct_silver.latest_bronze_rows(store, srct.DETAIL_DATASET).items()
+        silver.latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct.DETAIL_DATASET,
+            srct.BRONZE_VERSIONS[srct.DETAIL_DATASET],
+        ).items()
     ):
         payload = bronze.get("payload")
         payload_dict = payload if isinstance(payload, dict) else {}
@@ -360,15 +367,10 @@ def build_detail_faces(store: CorpusStore) -> SilverFaceReport:
                 "away_bench": len(lineup.get("away_bench") or []),
             }
         )
-    root = store.root / "silver" / srct.SRCT_PROVIDER / DETAIL_DATASET
-    root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
-    pq.write_table(
-        pa.Table.from_pylist(rows, schema=_DETAIL_SCHEMA), tmp, compression="zstd"
-    )
-    tmp.replace(root / "data.parquet")
+    root = store.silver_path(srct.SRCT_PROVIDER, DETAIL_DATASET)
+    silver.write_dataset_file(root, rows, _DETAIL_SCHEMA)
     report.rows = len(rows)
-    srct_silver.write_dataset_meta(
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": DETAIL_SILVER_VERSION,
@@ -387,7 +389,12 @@ def build_analysis_faces(store: CorpusStore) -> SilverFaceReport:
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
     rows: list[dict[str, object]] = []
     for sid, bronze in sorted(
-        srct_silver.latest_bronze_rows(store, srct.ANALYSIS_DATASET).items()
+        silver.latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct.ANALYSIS_DATASET,
+            srct.BRONZE_VERSIONS[srct.ANALYSIS_DATASET],
+        ).items()
     ):
         payload = bronze.get("payload")
         payload_dict = payload if isinstance(payload, dict) else {}
@@ -418,15 +425,10 @@ def build_analysis_faces(store: CorpusStore) -> SilverFaceReport:
                 "next_away_gap_days": _next_gap_days(future.get("away") or []),
             }
         )
-    root = store.root / "silver" / srct.SRCT_PROVIDER / ANALYSIS_DATASET
-    root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
-    pq.write_table(
-        pa.Table.from_pylist(rows, schema=_ANALYSIS_SCHEMA), tmp, compression="zstd"
-    )
-    tmp.replace(root / "data.parquet")
+    root = store.silver_path(srct.SRCT_PROVIDER, ANALYSIS_DATASET)
+    silver.write_dataset_file(root, rows, _ANALYSIS_SCHEMA)
     report.rows = len(rows)
-    srct_silver.write_dataset_meta(
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": ANALYSIS_SILVER_VERSION,

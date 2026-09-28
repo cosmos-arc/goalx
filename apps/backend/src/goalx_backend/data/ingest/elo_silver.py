@@ -33,10 +33,7 @@ import pyarrow as pa
 from goalx_backend.data import mapping
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest.srct_silver import (
-    write_dataset_meta,
-    write_partition,
-)
+from goalx_backend.data.silver import write_dataset_meta, write_partition
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling import elo
 
@@ -219,7 +216,7 @@ def _season_rps_report(
 
 
 def _dataset_root(store: CorpusStore) -> Path:
-    return store.root / "silver" / PROVIDER / DATASET
+    return store.silver_path(PROVIDER, DATASET)
 
 
 def build_elo_self(

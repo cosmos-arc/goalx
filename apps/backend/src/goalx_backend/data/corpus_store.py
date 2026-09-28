@@ -269,9 +269,17 @@ class CorpusStore:
         )
         return row is not None
 
+    def raw_dir(self, provider: str, dataset: str) -> Path:
+        """Raw 数据集目录（布局唯一落点；raw_path 与计数走此）。"""
+        return self.root / "raw" / provider / dataset
+
     def raw_path(self, provider: str, dataset: str, key: str, *, ext: str = "") -> Path:
         """Raw 工件约定路径（不保证已存在）。"""
-        return self.root / "raw" / provider / dataset / f"{key}{ext}.gz"
+        return self.raw_dir(provider, dataset) / f"{key}{ext}.gz"
+
+    def silver_path(self, provider: str, dataset: str) -> Path:
+        """Silver 数据集根（布局唯一落点：{provider}/{dataset} 分区树）。"""
+        return self.root / "silver" / provider / dataset
 
     def ingest_raw(
         self, provider: str, dataset: str, key: str, body: bytes, *, ext: str = ""

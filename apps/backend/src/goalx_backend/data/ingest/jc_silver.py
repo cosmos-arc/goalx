@@ -32,17 +32,16 @@ from datetime import datetime, timedelta, timezone
 from typing import cast
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import jc, srct_silver
+from goalx_backend.data.ingest import jc
 from goalx_backend.db import utc_now_iso
 
 SP_EVENT_DATASET = "jc_sp_change_event"
 SILVER_VERSION = "silver_jc_sp_v1"
 _BEIJING = timezone(timedelta(hours=8))
 _TTG_OUTCOMES = tuple(f"s{i}" for i in range(8))
-_UNSORTABLE_MS = 1 << 62  # 不可解时间排序垫底（随后按 bad_time 跳行）
 
 _SCHEMA = pa.schema(
     [
@@ -114,38 +113,6 @@ def _to_float_any(value: object) -> float | None:
         return None
 
 
-def _keep_value_changes(
-    rows: list[dict[str, object]],
-    report: SilverJcSpReport,
-    value_of: Callable[[dict[str, object]], tuple[object, ...]],
-) -> list[dict[str, object]]:
-    """
-    去重核（与 odds_change_event 同构）：值组与上一保留行全等丢弃。
-
-    A→B→A 保留、首条自然保留、末条同值心跳丢弃；不可解时间行不落事件
-    （bad_time 记账）。
-    """
-    rows.sort(
-        key=lambda r: (
-            r["published_ms"] if r["published_ms"] is not None else _UNSORTABLE_MS,
-            r["source_order"],
-        )
-    )
-    kept: list[dict[str, object]] = []
-    last_values: tuple[object, ...] | None = None
-    for row in rows:
-        if row["published_ms"] is None:
-            report.bad_time_rows += 1
-            continue
-        values = value_of(row)
-        if values == last_values:
-            report.heartbeat_dropped += 1
-            continue
-        last_values = values
-        kept.append(row)
-    return kept
-
-
 def _note_same_minute(
     rows: list[dict[str, object]],
     value_of: Callable[[dict[str, object]], tuple[object, ...]],
@@ -174,7 +141,13 @@ def _emit_trajectory(
 ) -> list[dict[str, object]]:
     """一条轨迹 → 事件行（had/hhad 与 ttg 档位流共用形状）。"""
     _note_same_minute(trajectory, value_of, report)
-    kept = _keep_value_changes(trajectory, report, value_of)
+    kept = silver.keep_value_changes(
+        trajectory,
+        report,
+        time_of=lambda r: cast("int | None", r["published_ms"]),
+        order_of=lambda r: cast("int", r["source_order"]),
+        value_of=value_of,
+    )
     for _ in kept:
         if playtype == "hhad":
             report.events_hhad += 1
@@ -355,14 +328,9 @@ def build_sp_change_events(
         + report.bad_time_rows
     )
     report.unexplained_gap = report.source_rows - accounted
-    root = store.root / "silver" / jc.JC_PROVIDER / SP_EVENT_DATASET
-    root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
-    pq.write_table(
-        pa.Table.from_pylist(rows_out, schema=_SCHEMA), tmp, compression="zstd"
-    )
-    tmp.replace(root / "data.parquet")
-    srct_silver.write_dataset_meta(
+    root = store.silver_path(jc.JC_PROVIDER, SP_EVENT_DATASET)
+    silver.write_dataset_file(root, rows_out, _SCHEMA)
+    silver.write_dataset_meta(
         root,
         {
             "silver_version": SILVER_VERSION,

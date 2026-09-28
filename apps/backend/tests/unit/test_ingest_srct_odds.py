@@ -24,9 +24,9 @@ import pytest
 
 from goalx_backend.cli import _cmd_srct_odds
 from goalx_backend.config import Settings
-from goalx_backend.data import corpus_duckdb
+from goalx_backend.data import corpus_duckdb, silver
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest import srct, srct_odds, srct_silver
+from goalx_backend.data.ingest import srct, srct_odds
 
 
 @pytest.fixture(autouse=True)
@@ -699,7 +699,12 @@ def test_ledger_selects_latest_row_and_filters_old_version(tmp_path: Path) -> No
                 },
             ],
         )
-        ledger = srct_silver.latest_bronze_ledger(store, srct.ODDS_DATASET)
+        ledger = silver.latest_bronze_ledger(
+            store,
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        )
         report = srct_odds.build_odds_change_events(store)
     finally:
         store.close()

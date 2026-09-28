@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from goalx_backend.config import Settings
-from goalx_backend.data import corpus_duckdb
+from goalx_backend.data import corpus_duckdb, silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_silver
 
@@ -187,9 +187,9 @@ def test_resolve_kickoff_two_forms_and_anomaly() -> None:
 
 
 def test_season_of_august_boundary() -> None:
-    assert srct_silver.season_of(datetime(2025, 7, 31, 23, 59)) == "2024-25"
-    assert srct_silver.season_of(datetime(2025, 8, 1, 0, 0)) == "2025-26"
-    assert srct_silver.season_of(datetime(2026, 5, 20, 20, 0)) == "2025-26"
+    assert silver.season_of(datetime(2025, 7, 31, 23, 59)) == "2024-25"
+    assert silver.season_of(datetime(2025, 8, 1, 0, 0)) == "2025-26"
+    assert silver.season_of(datetime(2026, 5, 20, 20, 0)) == "2025-26"
 
 
 def test_stage_derivation() -> None:

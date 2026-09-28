@@ -255,7 +255,7 @@ def test_cli_archive_538_seam(
 
 def test_season_boundary_calendar(tmp_path: Path) -> None:
     """7/8 月界切：7 月行归上季（夏季历标签偏差见模块注记）。"""
-    from goalx_backend.data.ingest.srct_silver import season_of
+    from goalx_backend.data.silver import season_of
 
     assert season_of(datetime(2021, 7, 15)) == "2020-21"
     assert season_of(datetime(2021, 8, 1)) == "2021-22"
