@@ -957,8 +957,8 @@
         "tags": [
           "pool"
         ],
-        "summary": "触发一次彩池同步(源B 期次/对阵/人气)",
-        "description": "拉取最新期次页与人气分布（幂等）；期次/对阵刷新、份额追加。",
+        "summary": "触发一次彩池同步(体彩官方在售对阵+上期彩果)",
+        "description": "触发与定拍同款的彩池同步（票 68 官方源；幂等）。",
         "operationId": "run_pool_sync_api_v1_pool_sync_run_post",
         "responses": {
           "200": {
@@ -1194,8 +1194,8 @@
         "tags": [
           "results"
         ],
-        "summary": "触发一次赛果自动同步(官方 sporttery uniform 源)",
-        "description": "同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。\n\n官方终态(比分或无效判定)落库, 拒因行进待人工清单;\n与库内不一致不自动冲正(人工兜底通道, ADR 0001)。",
+        "summary": "触发一次赛果自动同步(映射刷新+源T物化+官方兜底审计)",
+        "description": "同步待出赛果(已开赛、无开奖的竞彩场次, 近 7 天窗口)。\n\n与定拍同链(票 76)：映射链刷新 → 源T 物化 → 官方 uniform 兜底+审计。\n官方终态(比分或无效判定)落库, 拒因行进待人工清单; 与库内不一致\n不自动冲正(人工兜底通道, ADR 0001)。",
         "operationId": "run_draw_sync_api_v1_draw_sync_run_post",
         "responses": {
           "200": {
