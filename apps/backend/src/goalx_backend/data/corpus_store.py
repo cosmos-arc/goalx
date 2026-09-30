@@ -319,7 +319,12 @@ class CorpusStore:
             gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
         ):
             fh.write(body)
-        tmp.replace(path)
+        try:
+            tmp.replace(path)
+        except FileNotFoundError:
+            # 双班竞态:对端先 replace 走了同名 .part——目标已达成,当成功
+            if not (path.exists() and not tmp.exists()):
+                raise
         conn = self._checkpoint()
         conn.execute(
             """
