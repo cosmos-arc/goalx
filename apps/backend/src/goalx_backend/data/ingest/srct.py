@@ -1051,11 +1051,7 @@ def day_page_sids(payload: dict[str, object]) -> list[str]:
 
 def _bronze_sids(store: CorpusStore, dataset: str) -> set[str]:
     """该数据集当前解析器版本已落 bronze 的 sid 集（防重/回补判断）。"""
-    return {
-        str(row["sid"])
-        for row in store.read_bronze(SRCT_PROVIDER, dataset)
-        if row.get("parser_version") == BRONZE_VERSIONS[dataset]
-    }
+    return store.bronze_sids(SRCT_PROVIDER, dataset, BRONZE_VERSIONS[dataset])
 
 
 def _page_sha(page: bytes) -> str:

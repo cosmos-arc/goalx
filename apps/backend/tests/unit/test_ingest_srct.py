@@ -991,3 +991,34 @@ def test_cli_three_endpoint_seam(
         "line": "2.5",
         "away_water": "1.00",
     }
+
+
+def test_bronze_sids_index_write_path_and_lazy_backfill(tmp_path) -> None:
+    """bronze sid 索引表：append 同步 upsert / 存量懒回填 / 版本过滤 / 缓存增量。"""
+    from goalx_backend.data.corpus_store import CorpusStore
+
+    store = CorpusStore(_settings(tmp_path).corpus_root)
+    store.ensure_tree()
+    v1, v2 = "stats_v1", "stats_v2"
+    # 存量形态：手工落 bronze 文件（不经 append，模拟旧数据）
+    import gzip as _gzip
+    import json as _json
+
+    legacy = [
+        {"sid": "1001", "parser_version": v1},
+        {"sid": "1002", "parser_version": v1},
+        {"sid": "1003", "parser_version": v2},
+    ]
+    path = store.bronze_path("srct", "match_stats")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _gzip.open(path, "wt", encoding="utf-8") as fh:
+        for row in legacy:
+            fh.write(_json.dumps(row) + "\n")
+    # 懒回填 + 版本过滤
+    assert store.bronze_sids("srct", "match_stats", v1) == {"1001", "1002"}
+    assert store.bronze_sids("srct", "match_stats", v2) == {"1003"}
+    # 写入路径：append 后缓存集合同步增长（跨日 collect_day 复用的核心保障）
+    store.append_bronze("srct", "match_stats", [{"sid": "1004", "parser_version": v1}])
+    assert store.bronze_sids("srct", "match_stats", v1) == {"1001", "1002", "1004"}
+    fresh = CorpusStore(_settings(tmp_path).corpus_root)  # 新实例=查表不复用缓存
+    assert fresh.bronze_sids("srct", "match_stats", v1) == {"1001", "1002", "1004"}
