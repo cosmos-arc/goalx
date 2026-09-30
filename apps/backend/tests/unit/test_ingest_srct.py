@@ -1022,3 +1022,27 @@ def test_bronze_sids_index_write_path_and_lazy_backfill(tmp_path) -> None:
     assert store.bronze_sids("srct", "match_stats", v1) == {"1001", "1002", "1004"}
     fresh = CorpusStore(_settings(tmp_path).corpus_root)  # 新实例=查表不复用缓存
     assert fresh.bronze_sids("srct", "match_stats", v1) == {"1001", "1002", "1004"}
+
+
+def test_ingest_raw_race_tolerant(tmp_path, monkeypatch) -> None:
+    """双班竞态:对端先 replace 同名 .part → 本端 FileNotFoundError 当成功。"""
+    from pathlib import Path
+
+    from goalx_backend.data.corpus_store import CorpusStore
+
+    store = CorpusStore(_settings(tmp_path).corpus_root)
+    ref = store.ingest_raw("srct", "match_stats", "1", b"first")
+    path = Path(ref.path)
+
+    real_replace = Path.replace
+
+    def racing_replace(self, target):
+        if str(self).endswith(".part"):
+            (path.parent / "1.gz.part").unlink(missing_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(path.read_bytes() if path.exists() else b"")
+            raise FileNotFoundError(str(self))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", racing_replace)
+    store.ingest_raw("srct", "match_stats", "1", b"again")  # 不炸=过
