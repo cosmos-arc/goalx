@@ -162,6 +162,28 @@ CREATE TABLE IF NOT EXISTS guardian_request_days (
     requests INTEGER NOT NULL DEFAULT 0
 )
 """
+# Bronze sid 索引：解析层防重（_bronze_sids 原全量解压 bronze GB 级 ~10 分钟/
+# 每日一次）的 O(1) 载体——append_bronze 同步 upsert；anchor=文件 size:mtime，
+# 外部改动（文件被删/旧代码进程直写）触发整体重扫，保住"文件即真相"自愈
+_BRONZE_SIDS_SQL = """
+CREATE TABLE IF NOT EXISTS bronze_sids (
+    provider TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    sid TEXT NOT NULL,
+    parser_version TEXT NOT NULL,
+    PRIMARY KEY (provider, dataset, sid)
+)
+"""
+_BRONZE_SID_BACKFILL_SQL = """
+CREATE TABLE IF NOT EXISTS bronze_sid_backfill (
+    provider TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    sids INTEGER NOT NULL,
+    anchor TEXT NOT NULL,
+    backfilled_at TEXT NOT NULL,
+    PRIMARY KEY (provider, dataset)
+)
+"""
 # checkpoint 建表单处登记（票 02 前 ensure_tree 与 _checkpoint 双抄两处；
 # 现两路共用本序列；新表 = 加一条 DDL 常量 + 入本元组）
 _CHECKPOINT_TABLE_SQL = (
@@ -174,6 +196,8 @@ _CHECKPOINT_TABLE_SQL = (
     _JC_BACKFILL_DAYS_SQL,
     _GUARDIAN_SYNC_STATE_SQL,
     _GUARDIAN_REQUEST_DAYS_SQL,
+    _BRONZE_SIDS_SQL,
+    _BRONZE_SID_BACKFILL_SQL,
 )
 _TABLE_NAME_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)")
 
@@ -236,6 +260,7 @@ class CorpusStore:
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self._conn: sqlite3.Connection | None = None
+        self._bronze_sid_cache: dict[tuple[str, str, str], set[str]] = {}
 
     @property
     def checkpoint_path(self) -> Path:
@@ -373,7 +398,103 @@ class CorpusStore:
         ):
             for row in rows:
                 fh.write((json.dumps(row, ensure_ascii=False) + "\n").encode())
+        index_rows = [
+            (provider, dataset, str(row["sid"]), str(row["parser_version"]))
+            for row in rows
+            if row.get("sid") is not None and row.get("parser_version") is not None
+        ]
+        if index_rows:
+            conn = self._checkpoint()
+            conn.executemany(
+                "INSERT OR REPLACE INTO bronze_sids VALUES (?, ?, ?, ?)",
+                index_rows,
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO bronze_sid_backfill
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    provider,
+                    dataset,
+                    -1,  # 行数由重扫维护；自写路径 anchor 同步防误扫
+                    self._bronze_anchor(provider, dataset),
+                    utc_now_iso(),
+                ),
+            )
+            conn.commit()
+            for _, _, sid, version in index_rows:
+                cached = self._bronze_sid_cache.get((provider, dataset, version))
+                if cached is not None:
+                    cached.add(sid)
         return len(rows)
+
+    def _bronze_anchor(self, provider: str, dataset: str) -> str:
+        """Bronze 文件身份锚（size:mtime；缺文件=空串）。"""
+        path = self.bronze_path(provider, dataset)
+        try:
+            stat = path.stat()
+        except OSError:
+            return ""
+        return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+    def bronze_sids(self, provider: str, dataset: str, parser_version: str) -> set[str]:
+        """
+        该数据集指定解析器版本已落 bronze 的 sid 集（防重/回补判断）。
+
+        载体=checkpoint 表（append_bronze 同步 upsert）；台账 anchor 与文件
+        stat 不符（首次访问/外部改动）→ 流式重扫重建，此后进程内缓存。
+        """
+        cache_key = (provider, dataset, parser_version)
+        cached = self._bronze_sid_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        conn = self._checkpoint()
+        anchor = self._bronze_anchor(provider, dataset)
+        row = conn.execute(
+            "SELECT anchor FROM bronze_sid_backfill WHERE provider=? AND dataset=?",
+            (provider, dataset),
+        ).fetchone()
+        if row is None or row["anchor"] != anchor:
+            self._backfill_bronze_sids(provider, dataset, anchor)
+        sids = {
+            str(r["sid"])
+            for r in conn.execute(
+                """
+                SELECT sid FROM bronze_sids
+                WHERE provider=? AND dataset=? AND parser_version=?
+                """,
+                (provider, dataset, parser_version),
+            )
+        }
+        self._bronze_sid_cache[cache_key] = sids
+        return sids
+
+    def _backfill_bronze_sids(self, provider: str, dataset: str, anchor: str) -> None:
+        """按当前文件全量重建索引（外部改动/首次访问；幂等）。"""
+        for key in [k for k in self._bronze_sid_cache if k[:2] == (provider, dataset)]:
+            del self._bronze_sid_cache[key]
+        index_rows: list[tuple[str, str, str, str]] = []
+        for line in self.iter_bronze_lines(provider, dataset):
+            envelope = json.loads(line)
+            sid = envelope.get("sid")
+            version = envelope.get("parser_version")
+            if sid is not None and version is not None:
+                index_rows.append((provider, dataset, str(sid), str(version)))
+        conn = self._checkpoint()
+        conn.execute(
+            "DELETE FROM bronze_sids WHERE provider=? AND dataset=?",
+            (provider, dataset),
+        )
+        conn.executemany(
+            "INSERT OR REPLACE INTO bronze_sids VALUES (?, ?, ?, ?)",
+            index_rows,
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO bronze_sid_backfill VALUES (?, ?, ?, ?, ?)",
+            (provider, dataset, len(index_rows), anchor, utc_now_iso()),
+        )
+        conn.commit()
 
     def read_bronze(self, provider: str, dataset: str) -> list[dict[str, object]]:
         """读回全部 bronze 行（测试/对账用；文件不存在返回空）。"""

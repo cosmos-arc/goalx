@@ -60,6 +60,9 @@ OWNERS: dict[str, set[str]] = {
         # 票 79：卫报语料游标状态机 + 500/日请求账本（checkpoint 库）
         "guardian_sync_state",
         "guardian_request_days",
+        # 2026-09-30：bronze sid 索引 + 文件锚台账（解析层防重 O(1) 载体）
+        "bronze_sids",
+        "bronze_sid_backfill",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {
