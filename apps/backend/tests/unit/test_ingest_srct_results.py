@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import duckdb
 
 from goalx_backend.data import fixtures as fx_store
@@ -114,7 +116,9 @@ def test_materialize_degraded_without_duck(db) -> None:
 def test_materialize_future_fixture_not_pending(db) -> None:
     """未开赛场不进待出窗口（防前视：无赛果可物化）。"""
     seed_pending_fixture(db, kickoff="2026-09-28T19:00:00+00:00", sid=None)
-    stats = srct_results.materialize_results(db, seed_universe([]))
+    stats = srct_results.materialize_results(
+        db, seed_universe([]), now=datetime(2026, 9, 27, 5, tzinfo=UTC)
+    )
     assert stats.pending == 0
 
 
