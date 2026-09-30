@@ -107,8 +107,8 @@ CORPUS_SCOPE: tuple[str, ...] = (
 
 # 防封参数（research/20 §九 定案 4）：请求间隔 2.4s±0.8s 均匀抖动（间距）+
 # 滑动窗口硬顶 25/分钟（jitter 均值 ≈25/min，窗口只加顶不改间距；2026-09-28 用户提速令）
-JITTER_RANGE: tuple[float, float] = (1.6, 3.2)
-RATE_LIMIT_PER_MINUTE = 25
+JITTER_RANGE: tuple[float, float] = (1.4, 2.6)
+RATE_LIMIT_PER_MINUTE = 30
 _REQUEST_WINDOW = RateLimitItemPerMinute(RATE_LIMIT_PER_MINUTE)
 # 公开别名（票 65 当期班同窗共用；测试经本属性放宽窗口）
 REQUEST_WINDOW = _REQUEST_WINDOW
