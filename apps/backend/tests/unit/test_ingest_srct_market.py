@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -53,7 +54,9 @@ STATS_HTML = (
 ASIANODDS_HTML = (
     "<html><head><title>甲VS乙-亚指指数-新球体育</title></head><body><table>"
     "<tr><td></td><td>书商8 封</td><td></td>"
-    "<td>0.90</td><td>受让半球</td><td>0.95</td>"
+    '<td title="2025-10-01 08:00">0.90</td>'
+    '<td title="2025-10-01 08:00">受让半球</td>'
+    '<td title="2025-10-01 08:00">0.95</td>'
     "<td>2.65</td><td>平手/半球</td><td>0.27</td>"
     "<td>0.80</td><td>受让平手/半球</td><td>1.05</td>"
     "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td>"
@@ -67,7 +70,9 @@ ASIANODDS_HTML = (
 OVERDOWN_HTML = (
     "<html><head><title>甲VS乙-大小指数-新球体育</title></head><body><table>"
     "<tr><td></td><td>书商1 封</td><td></td>"
-    "<td>0.93</td><td>2.5/3</td><td>0.87</td>"
+    '<td title="2025-10-01 09:30">0.93</td>'
+    '<td title="2025-10-01 09:30">2.5/3</td>'
+    '<td title="2025-10-01 09:30">0.87</td>'
     "<td>1.25</td><td>2.5</td><td>0.50</td>"
     "<td>0.80</td><td>2.5</td><td>1.00</td>"
     "<td><a href=/changeDetail/overunder.aspx?id=1&companyID=1>详</a></td>"
@@ -187,11 +192,26 @@ def test_market_quote_shape_and_semantics(tmp_path: Path) -> None:
     assert ah1["close_home_water"] == 0.80
     assert ah1["close_line_raw"] == "受让平手/半球"
     assert ah1["latest_home_water"] == 2.65  # 场内末价组
+    # v2：初盘时刻（页 title 北京钟面）+ latest 相位（抓取晚于开球=inplay）
+    assert int(ah1["open_at"].timestamp() * 1000) == srct_odds.beijing_ms(
+        datetime(2025, 10, 1, 8, 0)
+    )
+    assert ah1["latest_phase"] == "inplay"
+    ah2 = next(
+        r
+        for r in rows
+        if r["market"] == "ah" and r["sid"] == "91001" and r["multi"] == "盘2"
+    )
+    assert ah2["open_at"] is None  # 无 title 行贴源 None
     ou1 = next(r for r in rows if r["market"] == "ou" and r["sid"] == "91001")
     assert ou1["bookmaker_id"] == "srct:ou:1"
     assert ou1["open_line_raw"] == "2.5/3"  # 大小球线数值化（四分位中值）
     assert ou1["open_line"] == 2.75
     assert ou1["close_line"] == 2.5
+    assert int(ou1["open_at"].timestamp() * 1000) == srct_odds.beijing_ms(
+        datetime(2025, 10, 1, 9, 30)
+    )
+    assert report.initial_at_missing == 3  # 三场 ah 盘2 行有初值无时刻
     assert report.bad_line_values == 0  # ah 盘口词/ou 数值线全可归一
     assert ah1["kickoff"] is not None  # fixture 冗余列
     # 视图可查

@@ -118,7 +118,7 @@ _AH_ROW = (
     "<td><input type=checkbox></td>"
     "<td>{name}</td>"
     "<td>{multi}</td>"
-    "<td>{h1}</td><td>{l1}</td><td>{a1}</td>"
+    "<td{t1}>{h1}</td><td{t1}>{l1}</td><td{t1}>{a1}</td>"
     "<td>{h2}</td><td>{l2}</td><td>{a2}</td>"
     "<td>{h3}</td><td>{l3}</td><td>{a3}</td>"
     "<td><a href=/changeDetail/handicap.aspx?id=2789205&companyID={cid}>详</a></td>"
@@ -167,6 +167,130 @@ _AH_BOOKS = [
         ("1.20", "平手", "0.65"),
     ),
 ]
+# 变价矩阵实测裁剪（同页下方独立表；列=固定 11 家模板，见 srct._MATRIX_
+# TEMPLATE_CIDS）。三行新→旧：21:48 走地（col1→模板 cid3）、10:00 即时
+# （col0→cid1）、09:00 早餐盘同值（与 10:00 成心跳对，silver 侧丢）
+_MATRIX_COLS = (
+    "澳*",
+    "Crow*",
+    "36*",
+    "易胜*",
+    "伟*",
+    "明*",
+    "10*",
+    "12*",
+    "利*",
+    "盈*",
+    "18*",
+)
+
+# (cid, 名+状态, 盘序, 初盘 title 属性串——空=无时刻行, 初, 即时, 终)
+_AH_BOOK_ROWS = [
+    (
+        "1",
+        "书商1 封",
+        "",
+        ' title="2025-10-17 08:00"',
+        ("0.93", "受让半球", "0.93"),
+        ("0.80", "平手", "1.02"),
+        ("0.80", "受让平手/半球", "1.06"),
+    ),
+    (
+        "1",
+        "",
+        "盘2",
+        ' title="2025-10-17 20:30"',
+        ("1.23", "受让平手/半球", "0.63"),
+        ("1.18", "平手", "0.68"),
+        ("1.18", "平手", "0.68"),
+    ),
+    (
+        "3",
+        "书商3 封",
+        "",
+        ' title="2025-10-17 09:15"',
+        ("0.82", "受让半球", "1.06"),
+        ("7.14", "平手/半球", "0.03"),
+        ("0.81", "受让平手/半球", "1.07"),
+    ),
+    (
+        "8",
+        "书商8 封",
+        "",
+        ' title="2025-10-17 07:30"',
+        ("0.90", "受让半球", "0.95"),
+        ("2.65", "平手/半球", "0.27"),
+        ("0.80", "受让平手/半球", "1.05"),
+    ),
+    (
+        "8",
+        "",
+        "盘2",
+        "",
+        ("1.10", "受让平手/半球", "0.70"),
+        ("5.00", "平手/半球", "0.12"),
+        ("1.20", "平手", "0.65"),
+    ),
+]
+_OU_BOOK_ROWS = [
+    (
+        "1",
+        "书商1 封",
+        "",
+        ' title="2025-10-17 08:30"',
+        ("0.93", "2.5/3", "0.87"),
+        ("1.25", "2.5", "0.50"),
+        ("0.80", "2.5", "1.00"),
+    ),
+    (
+        "1",
+        "",
+        "盘2",
+        "",
+        ("1.13", "3", "0.67"),
+        ("1.00", "2.5/3", "0.80"),
+        ("1.00", "2.5/3", "0.80"),
+    ),
+    (
+        "3",
+        "书商3 封",
+        "",
+        ' title="2025-10-17 10:00"',
+        ("0.95", "2.5/3", "0.85"),
+        ("1.10", "2.5", "0.72"),
+        ("0.85", "2.5/3", "0.95"),
+    ),
+]
+
+
+def _matrix_row(filled: dict[int, str], score: str, time_raw: str) -> str:
+    body = "".join(
+        f"<td style='background: {filled[i]}'>"
+        + (
+            '平手/半球<br /><span class="blue b">0.82</span>&nbsp;'
+            '<span class="green">1.11</span>'
+            if i == 1
+            else '半球<br /><span class="blue b">0.95</span>&nbsp;'
+            '<span class="green">0.95</span>'
+        )
+        + "</td>"
+        if i in filled
+        else "<td></td>"
+        for i in range(11)
+    )
+    return f"<tr align=center>{body}<td >{score}</td><td>{time_raw}</td></tr>"
+
+
+_AH_MATRIX_HTML = (
+    '<table cellspacing=1 cellpadding=0 class="font13 company">'
+    "<tr align=center class=thead2>"
+    + "".join(f"<th width=80>{n}</th>" for n in _MATRIX_COLS)
+    + "<th width=40>比分</th><th width=80>变化时间</th></tr>"
+    + _matrix_row({1: "#eaeaff"}, "3-1", "10-18 21:48")
+    + _matrix_row({0: "#FFFFFF"}, "", "10-18 10:00")
+    + _matrix_row({0: "#dcfbff"}, "", "10-17 09:00")
+    + "</table>"
+)
 SAMPLE_ASIANODDS_HTML = (
     "<html><head><title>诺丁汉森林VS切尔西(2025-2026赛季英超)-亚指指数"
     "-新球体育-球探体育</title></head><body><table>"
@@ -175,6 +299,7 @@ SAMPLE_ASIANODDS_HTML = (
             cid=cid,
             name=name,
             multi=multi,
+            t1=t1,
             h1=g1[0],
             l1=g1[1],
             a1=g1[2],
@@ -185,9 +310,13 @@ SAMPLE_ASIANODDS_HTML = (
             l3=g3[1],
             a3=g3[2],
         )
-        for cid, name, multi, g1, g2, g3 in _AH_BOOKS
+        for cid, name, multi, t1, g1, g2, g3 in _AH_BOOK_ROWS
     )
-    + "</table></body></html>"
+    + "</table>"
+    # 页下方变价矩阵（2026-10-01 实测裁剪：固定 11 家模板列+比分+变化时间；
+    # 行序新→旧，空格=该书商此刻无变化；格底色=相位图例）
+    + _AH_MATRIX_HTML
+    + "</body></html>"
 )
 SAMPLE_ASIANODDS_BYTES = SAMPLE_ASIANODDS_HTML.encode("utf-8")
 # 空表（页题在、零书商行）：老场无报价=合法空（定则 4 空≠无）
@@ -198,32 +327,6 @@ SAMPLE_ASIANODDS_EMPTY_HTML = (
 
 # 大小球多庄页实测裁剪（2025-10-18 场 2789205；与亚盘多庄同构，线=进球数
 # 盘口线；书商名打码=代称红线）。2026-09-25 实测：16 家历史页取 2 家 3 行。
-_OVERDOWN_BOOKS = [
-    (
-        "1",
-        "书商1 封",
-        "",
-        ("0.93", "2.5/3", "0.87"),
-        ("1.25", "2.5", "0.50"),
-        ("0.80", "2.5", "1.00"),
-    ),
-    (
-        "1",
-        "",
-        "盘2",
-        ("1.13", "3", "0.67"),
-        ("1.00", "2.5/3", "0.80"),
-        ("1.00", "2.5/3", "0.80"),
-    ),
-    (
-        "3",
-        "书商3 封",
-        "",
-        ("0.95", "2.5/3", "0.85"),
-        ("1.10", "2.5", "0.72"),
-        ("0.85", "2.5/3", "0.95"),
-    ),
-]
 SAMPLE_OVERDOWN_HTML = (
     "<html><head><title>诺丁汉森林VS切尔西(2025-2026赛季英超)-大小指数"
     "-新球体育-球探体育</title></head><body><table>"
@@ -232,6 +335,7 @@ SAMPLE_OVERDOWN_HTML = (
             cid=cid,
             name=name,
             multi=multi,
+            t1=t1,
             h1=g1[0],
             l1=g1[1],
             a1=g1[2],
@@ -242,7 +346,7 @@ SAMPLE_OVERDOWN_HTML = (
             l3=g3[1],
             a3=g3[2],
         )
-        for cid, name, multi, g1, g2, g3 in _OVERDOWN_BOOKS
+        for cid, name, multi, t1, g1, g2, g3 in _OU_BOOK_ROWS
     )
     + "</table></body></html>"
 )
@@ -480,6 +584,8 @@ def test_parse_asianodds_page_groups_and_multi() -> None:
     assert sorted({b["cid"] for b in books}, key=int) == ["1", "3", "8"]
     first = books[0]
     assert (first["cid"], first["name_raw"], first["multi"]) == ("1", "书商1 封", "盘1")
+    assert first["initial_at"] == "2025-10-17 08:00"  # 初盘组 title 开盘时刻（v2）
+    assert books[4]["initial_at"] is None  # 无 title 行（空盘）贴源 None
     assert first["initial"] == {
         "home_water": "0.93",
         "line": "受让半球",
@@ -511,6 +617,47 @@ def test_parse_asianodds_page_groups_and_multi() -> None:
     multi = next(b for b in books if b["cid"] == "8" and b["multi"] == "盘2")
     assert multi["name_raw"] == ""  # 多盘行名格空（贴源）
     assert multi["initial"]["line"] == "受让平手/半球"
+
+
+def test_parse_asianodds_page_change_matrix() -> None:
+    """v2 变价矩阵：列=固定模板 cid（非当页汇总序）、相位底色、空=无变化。"""
+    payload = srct.parse_asianodds_page(SAMPLE_ASIANODDS_BYTES)
+    assert payload["columns"] == [
+        "澳*",
+        "Crow*",
+        "36*",
+        "易胜*",
+        "伟*",
+        "明*",
+        "10*",
+        "12*",
+        "利*",
+        "盈*",
+        "18*",
+    ]
+    changes = payload["changes"]
+    assert len(changes) == 3
+    # 行序贴源新→旧；col1=Crow* → 模板 cid3（与汇总表 cid 集无关）
+    assert changes[0] == {
+        "cid": "3",
+        "name_raw": "Crow*",
+        "time": "10-18 21:48",
+        "score": "3-1",
+        "line": "平手/半球",
+        "home_water": "0.82",
+        "away_water": "1.11",
+        "bg": "#eaeaff",  # 走地（场内）
+    }
+    # col0=澳* → 模板 cid1；比分空=盘前
+    assert changes[1]["cid"] == "1"
+    assert (changes[1]["score"], changes[1]["bg"]) == (None, "#FFFFFF")  # 即时盘
+    assert changes[2]["bg"] == "#dcfbff"  # 早餐盘（与上行同值 → silver 心跳丢）
+    # 大小球同构（无矩阵页 changes 空、初盘 title 照取）
+    ou = srct.parse_overdown_page(SAMPLE_OVERDOWN_BYTES)
+    assert ou["changes"] == []
+    assert ou["columns"] == []
+    assert ou["books"][0]["initial_at"] == "2025-10-17 08:30"
+    assert ou["books"][1]["initial_at"] is None
 
 
 def test_parse_asianodds_page_empty_table_valid() -> None:

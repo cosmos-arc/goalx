@@ -63,9 +63,16 @@ from goalx_backend.db import utc_now_iso
 BOOKMAKER_DATASET = "bookmaker"
 ODDS_DATASET = "odds_change_event"
 BOOKMAKER_SILVER_VERSION = "silver_bookmaker_v1"
-ODDS_SILVER_VERSION = "silver_odds_v1"
+ODDS_SILVER_VERSION = "silver_odds_v2"  # v2=+亚盘/大小球矩阵变价事件（多庄页 v2）
 SPACE_1X2 = "1x2"
 SPACE_AH = "ah"
+SPACE_OU = "ou"
+# 矩阵格底色 → 相位（页图例钉死 2026-10-01：早/即时=盘前两态、走地=场内）
+MATRIX_PHASE: dict[str, str] = {
+    "#dcfbff": "early",
+    "#FFFFFF": "pre",
+    "#eaeaff": "inplay",
+}
 # 亚盘 changeDetail 锚定书商（URL 模板 companyid 固定值；页面无名——身份
 # 按端点+cid 登记，人工核名挂账 design-15 §八）
 AH_ANCHOR_CID = "8"
@@ -235,9 +242,11 @@ class SilverOddsReport:
     silver_version: str = ODDS_SILVER_VERSION
     events_1x2: int = 0
     events_ah: int = 0
+    events_ou: int = 0  # 大小球矩阵变价事件（v2）
     heartbeat_dropped: int = 0  # 与上一保留行值组全等而丢弃的行
     source_rows_1x2: int = 0  # 所选轨迹的 1x2 源行总数（记账分母）
     source_rows_ah: int = 0
+    source_rows_ou: int = 0
     bad_time_rows: int = 0  # 时间不可解（无事件可落，跳行留痕）
     unmapped_gameid_rows: int = 0  # gameDetail 的 gameid 不在 game 数组（无法归书）
     unexplained_gap: int = 0  # 门④：必须为 0
@@ -836,16 +845,150 @@ def _emit_ah_events(
     return kept_meta
 
 
+def _matrix_records(
+    rows: list[dict[str, object]], anchor: datetime
+) -> dict[str, list[_AhRec]]:
+    """贴源矩阵行（文档新→旧）→ 逐 cid 时间记录（年按开球锚 ±1 推最近）。"""
+    by_cid: dict[str, list[_AhRec]] = {}
+    for doc_idx, row in enumerate(rows):
+        published: int | None = None
+        found = _TIME_RE.fullmatch(str(row.get("time") or "").strip())
+        if found is not None:
+            month, day, hour, minute = (int(g) for g in found.groups())
+            published = _nearest_year_ms(month, day, hour, minute, anchor)
+        by_cid.setdefault(str(row.get("cid") or ""), []).append(
+            _AhRec(
+                published_ms=published,
+                source_order=doc_idx,
+                home_water=silver.to_float(row.get("home_water")),
+                line_raw=(str(row["line"]) if row.get("line") is not None else None),
+                away_water=silver.to_float(row.get("away_water")),
+                minute=None,
+                score=(str(row["score"]) if row.get("score") is not None else None),
+                status=MATRIX_PHASE.get(str(row.get("bg") or "")),
+            )
+        )
+    return by_cid
+
+
+def _emit_matrix_events(
+    bronze: dict[str, object],
+    market: str,
+    partition: tuple[str, str],
+    kickoff_ms: int | None,
+    anchor: datetime | None,
+    report: SilverOddsReport,
+    out: StreamingPartitions,
+) -> list[tuple[str, int]]:
+    """
+    一场变价矩阵（多庄页 v2 changes）→ 变化事件（逐书商流）。
+
+    输入=贴源矩阵行（文档新→旧），keep_value_changes 按 (published,
+    source_order=文档序) 升序归位——同刻并列按文档序稳定。逐 cid 独立
+    去重（同刻值组/末条心跳语义同 1x2）。年份无源（"M-D HH:MM"）按
+    开球锚 ±1 推最近；无锚（孤儿场）整场记坏时间不落事件（同旧 ah 口
+    径，防未来时间戳）。status=格底色相位（early/pre/inplay=盘前两态+
+    场内，页图例钉死）；ou 线走四分位中值数值化（与 market_quote 同口径）。
+    """
+    payload = bronze.get("payload")
+    rows = [
+        r
+        for r in cast(
+            "list[object]",
+            payload.get("changes", []) if isinstance(payload, dict) else [],
+        )
+        if isinstance(r, dict)
+    ]
+    if market == SPACE_AH:
+        report.source_rows_ah += len(rows)
+    else:
+        report.source_rows_ou += len(rows)
+    if not rows or anchor is None:
+        report.bad_time_rows += len(rows)  # 无锚不推年（防未来时间戳）
+        return []
+    observed = fetched_ms(bronze.get("fetched_at"))
+
+    def _account(rec: _AhRec) -> None:
+        rec.line = (
+            normalize_line(rec.line_raw)
+            if market == SPACE_AH
+            else ou_line(rec.line_raw)
+        )
+        if rec.line_raw is not None and rec.line is None:
+            report.bad_line_values += 1
+        if rec.line_raw is not None and (
+            rec.home_water is None or rec.away_water is None
+        ):
+            report.bad_prices += 1
+
+    kept_meta: list[tuple[str, int]] = []
+    records = _matrix_records(rows, anchor)
+    for cid, recs in sorted(records.items()):  # cid 升序=文件序契约
+        report.same_minute_conflicts += _same_minute_value_conflicts(recs, _values_ah)
+        kept = silver.keep_value_changes(
+            recs,
+            report,
+            time_of=lambda r: r.published_ms,
+            order_of=lambda r: r.source_order,
+            value_of=_values_ah,
+            account_row=_account,
+        )
+        bookmaker_id = f"srct:{market}:{cid}"
+        for rec in kept:
+            out.append(
+                partition[0],
+                partition[1],
+                {
+                    "sid": bronze.get("sid"),
+                    "bookmaker_id": bookmaker_id,
+                    "market": market,
+                    "published_at": rec.published_ms,
+                    "observed_at": observed,
+                    "source_order": rec.source_order,
+                    "kickoff": kickoff_ms,
+                    "odds_home": None,
+                    "odds_draw": None,
+                    "odds_away": None,
+                    "kelly_home": None,
+                    "kelly_draw": None,
+                    "kelly_away": None,
+                    "line_raw": rec.line_raw,
+                    "line": rec.line,
+                    "home_water": rec.home_water,
+                    "away_water": rec.away_water,
+                    "minute": rec.minute,
+                    "score": rec.score,
+                    "status": rec.status,
+                },
+            )
+            kept_meta.append((bookmaker_id, rec.published_ms or 0))
+            if market == SPACE_AH:
+                report.events_ah += 1
+            else:
+                report.events_ou += 1
+    return kept_meta
+
+
+def ou_line(line_raw: str | None) -> float | None:
+    """大小球线数值化："3"→3.0，"2.5/3"→2.75（四分位中值）；非数 None。"""
+    if line_raw is None:
+        return None
+    parts = line_raw.split("/")
+    values = [silver.to_float(p) for p in parts]
+    if not values or any(v is None for v in values):
+        return None
+    return sum(cast("list[float]", values)) / len(values)
+
+
 def _emit_sid(
     sid: str,
     meta: dict[str, dict[str, object]],
-    odds_bronze: dict[str, object] | None,
-    hdp_bronze: dict[str, object] | None,
+    bronzes: dict[str, dict[str, object] | None],
     report: SilverOddsReport,
     out: StreamingPartitions,
     tracker: _EmitTracker,
 ) -> None:
-    """一场 → 两 market 事件（分区/年份锚/记账注册；1x2 先 ah 后=文件序）。"""
+    """一场 → 各 market 事件（分区/年份锚/记账注册；1x2→ah→ah 矩阵→ou 矩阵=文件序）。"""
     fixture = meta.get(sid)
     if fixture is None:
         report.orphan_sids += 1
@@ -855,23 +998,47 @@ def _emit_sid(
         kickoff = cast("datetime", fixture["kickoff"])
         partition = (silver.season_of(kickoff), str(fixture["league"]))
         kickoff_ms = beijing_ms(kickoff)
-    if odds_bronze is not None:
+    # 年份锚=fixture 开球（北京墙钟）——孤儿无锚不推年（design §四未授权
+    # 其他锚：抓取时刻锚会给回填场造出错误甚至未来的时间戳），整场记坏时间行
+    anchor = cast("datetime", fixture["kickoff"]) if fixture is not None else None
+    if bronzes.get(srct.ODDS_DATASET) is not None:
+        odds_bronze = cast("dict[str, object]", bronzes[srct.ODDS_DATASET])
         tracker.register(
             sid,
             _emit_1x2_events(odds_bronze, partition, kickoff_ms, report, out),
             kickoff_ms,
             partition[1],
         )
-    if hdp_bronze is not None:
-        # 年份锚=fixture 开球（北京墙钟）——孤儿无锚不推年（design §四未授权
-        # 其他锚：抓取时刻锚会给回填场造出错误甚至未来的时间戳），整场记坏时间行
-        anchor = cast("datetime", fixture["kickoff"]) if fixture is not None else None
+    if bronzes.get(srct.HANDICAP_DATASET) is not None:
+        hdp_bronze = cast("dict[str, object]", bronzes[srct.HANDICAP_DATASET])
         tracker.register(
             sid,
-            _emit_ah_events(hdp_bronze, partition, kickoff_ms, anchor, report, out),
+            _emit_ah_events(
+                hdp_bronze,
+                partition,
+                kickoff_ms,
+                anchor,
+                report,
+                out,
+            ),
             kickoff_ms,
             partition[1],
         )
+    # 多庄页 v2 变价矩阵：ah/ou 两市场逐书商主盘轨迹
+    for dataset, market in (
+        (srct.ASIANODDS_DATASET, SPACE_AH),
+        (srct.OVERDOWN_DATASET, SPACE_OU),
+    ):
+        bronze = bronzes.get(dataset)
+        if bronze is not None:
+            tracker.register(
+                sid,
+                _emit_matrix_events(
+                    bronze, market, partition, kickoff_ms, anchor, report, out
+                ),
+                kickoff_ms,
+                partition[1],
+            )
 
 
 def _spill_name(chunk_idx: int) -> str:
@@ -912,6 +1079,18 @@ def _spill_selected(
             fh.close()
 
 
+def _load_chunk_bronzes(
+    path: Path,
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Spill 块文件 → 数据集 → (sid → bronze 行) 两级映射。"""
+    maps: dict[str, dict[str, dict[str, object]]] = {}
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            row = json.loads(line)
+            maps.setdefault(str(row.get("dataset")), {})[str(row["sid"])] = row
+    return maps
+
+
 def build_odds_change_events(
     store: CorpusStore,
     *,
@@ -919,7 +1098,10 @@ def build_odds_change_events(
     chunk_sids: int = STREAM_CHUNK_SIDS,
 ) -> SilverOddsReport:
     """
-    重物化 silver odds_change_event（幂等；两数据集 bronze 当前版本）。
+    重物化 silver odds_change_event（幂等；四数据集 bronze 当前版本）。
+
+    数据面：odds_1x2d + 撤采留档 asian_handicap + 多庄页 asian_odds/
+    over_down v2 变价矩阵。
 
     输入路径内存有界（票 19 外排三步）：① 选轨遍只记信封行号；② sid 按
     (kickoff, sid) 全局排序后连续切块——块内连续块间有序，**块序即输出
@@ -930,7 +1112,8 @@ def build_odds_change_events(
     异常残留由下次重建先行清空（重跑幂等）。
 
     流出序=文件终序：sid 按 (kickoff, sid)（孤儿垫后），场内先 1x2（cid
-    升序）后 ah，书内 (published_at, source_order) 升序。分区取 fixture
+    升序）后 ah（撤采留档）再 ah 矩阵、ou 矩阵（各 cid 升序），书内
+    (published_at, source_order) 升序。分区取 fixture
     元数据（orphan → `_unknown`）。门④记账见 SilverOddsReport。
     """
     report = SilverOddsReport(built_at=utc_now_iso())
@@ -947,6 +1130,12 @@ def build_odds_change_events(
         srct.HANDICAP_DATASET,
         srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
     )
+    matrix_ledgers = {
+        dataset: silver.latest_bronze_ledger(
+            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
+        )
+        for dataset in (srct.ASIANODDS_DATASET, srct.OVERDOWN_DATASET)
+    }
     root = store.silver_path(srct.SRCT_PROVIDER, ODDS_DATASET)
     out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
@@ -956,7 +1145,14 @@ def build_odds_change_events(
         kickoff = cast("datetime", fixture["kickoff"]) if fixture else datetime.min
         return (fixture is None, kickoff, sid)
 
-    sids = sorted(set(odds_ledger) | set(hdp_ledger), key=_sid_sort_key)
+    all_ledgers = {
+        srct.ODDS_DATASET: odds_ledger,
+        srct.HANDICAP_DATASET: hdp_ledger,
+        **matrix_ledgers,
+    }
+    sids = sorted(
+        set().union(*(set(led) for led in all_ledgers.values())), key=_sid_sort_key
+    )
     size = max(1, chunk_sids)
     chunks = [list(part) for part in batched(sids, size, strict=False)]
     chunk_of = {sid: idx for idx, part in enumerate(chunks) for sid in part}
@@ -966,24 +1162,18 @@ def build_odds_change_events(
         shutil.rmtree(spill_root)
     spill_root.mkdir(parents=True)
     try:
-        for dataset, ledger in (
-            (srct.ODDS_DATASET, odds_ledger),
-            (srct.HANDICAP_DATASET, hdp_ledger),
-        ):
+        for dataset, ledger in all_ledgers.items():
             _spill_selected(store, dataset, ledger, chunk_of, spill_root)
         for idx, part in enumerate(chunks):
-            odds_map: dict[str, dict[str, object]] = {}
-            hdp_map: dict[str, dict[str, object]] = {}
-            with (spill_root / _spill_name(idx)).open(encoding="utf-8") as fh:
-                for line in fh:
-                    row = json.loads(line)
-                    if row.get("dataset") == srct.HANDICAP_DATASET:
-                        hdp_map[str(row["sid"])] = row
-                    else:
-                        odds_map[str(row["sid"])] = row
+            bronzes = _load_chunk_bronzes(spill_root / _spill_name(idx))
             for sid in part:  # 块内序=全局序切片：输出与不分块字节级一致
                 _emit_sid(
-                    sid, meta, odds_map.get(sid), hdp_map.get(sid), report, out, tracker
+                    sid,
+                    meta,
+                    {ds: rows_map.get(sid) for ds, rows_map in bronzes.items()},
+                    report,
+                    out,
+                    tracker,
                 )
     finally:
         shutil.rmtree(spill_root, ignore_errors=True)
@@ -1017,11 +1207,12 @@ def build_odds_change_events(
     accounted = (
         report.events_1x2
         + report.events_ah
+        + report.events_ou
         + report.heartbeat_dropped
         + report.bad_time_rows
         + report.unmapped_gameid_rows
     )
-    total = report.source_rows_1x2 + report.source_rows_ah
+    total = report.source_rows_1x2 + report.source_rows_ah + report.source_rows_ou
     report.unexplained_gap = total - accounted  # 负值=过记账，同样不许静默
     silver.write_dataset_meta(
         root,
@@ -1030,10 +1221,13 @@ def build_odds_change_events(
             "bronze_versions": {
                 "odds": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
                 "handicap": srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+                "asian_odds": srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET],
+                "over_down": srct.BRONZE_VERSIONS[srct.OVERDOWN_DATASET],
             },
             "built_at": report.built_at,
             "events_1x2": report.events_1x2,
             "events_ah": report.events_ah,
+            "events_ou": report.events_ou,
             "heartbeat_dropped": report.heartbeat_dropped,
             "source_rows": total,
             "unexplained_gap": report.unexplained_gap,

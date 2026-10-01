@@ -36,7 +36,7 @@ MARKET_DATASET = "market_quote"
 # silver 数据集名与 bronze 同名（分层路径不同；常量复用 srct 单一真相源）
 DETAIL_DATASET = srct.DETAIL_DATASET
 ANALYSIS_DATASET = srct.ANALYSIS_DATASET
-MARKET_SILVER_VERSION = "silver_market_v1"
+MARKET_SILVER_VERSION = "silver_market_v2"  # v2=+open_at/latest_phase（盘前盘中区分）
 DETAIL_SILVER_VERSION = "silver_detail_v1"
 ANALYSIS_SILVER_VERSION = "silver_analysis_v1"
 # 多庄页 market 标记与 bookmaker 空间（design-15 双空间防线沿用）
@@ -54,6 +54,9 @@ _QUOTE_SCHEMA = pa.schema(
         pa.field(
             "kickoff", pa.timestamp("ms", tz="UTC")
         ),  # fixture 冗余列（孤儿 None）
+        pa.field(
+            "open_at", pa.timestamp("ms", tz="UTC")
+        ),  # 初盘时刻（页 title，北京钟面归一；v2 起；空盘行 None）
         pa.field("open_line_raw", pa.string()),
         pa.field("open_line", pa.float64()),  # 主队视角归一（受让为负）
         pa.field("open_home_water", pa.float64()),
@@ -62,6 +65,10 @@ _QUOTE_SCHEMA = pa.schema(
         pa.field("latest_line", pa.float64()),
         pa.field("latest_home_water", pa.float64()),
         pa.field("latest_away_water", pa.float64()),
+        # latest 相位（v2）：observed_at≥kickoff=inplay（完场后抓取=场内末价），
+        # <kickoff=pre（开赛前抓取=即时盘前价）；open/close 定义即盘前（初盘/
+        # 盘前末价），不设相位列；孤儿场 None
+        pa.field("latest_phase", pa.string()),
         pa.field("close_line_raw", pa.string()),
         pa.field("close_line", pa.float64()),
         pa.field("close_home_water", pa.float64()),
@@ -129,6 +136,7 @@ class SilverMarketReport:
     books_ou: int = 0
     bad_line_values: int = 0  # 线串未识别（line=None，行保留）
     bad_waters: int = 0
+    initial_at_missing: int = 0  # 有初盘值而页面无开盘时刻（空≠无留痕）
     orphan_sids: int = 0
     partitions: int = 0
     stale_partitions_removed: int = 0
@@ -166,14 +174,39 @@ def _kickoff_ms(
 
 
 def _ou_line(line_raw: str | None) -> float | None:
-    """大小球线数值化："3"→3.0，"2.5/3"→2.75（四分位中值）；非数 None。"""
-    if line_raw is None:
+    """大小球线数值化（同 odds_change_event ou 面单一口径，见 srct_odds.ou_line）。"""
+    return srct_odds.ou_line(line_raw)
+
+
+# 初盘时刻年份护栏（站点空盘格占位 "0001-01-01 00:00"；语料窗 2016→）
+_OPEN_AT_YEAR_RANGE = range(2000, 2101)
+
+
+def _open_at(book: dict[str, object]) -> int | None:
+    """初盘时刻（贴源北京钟面）→ epoch 毫秒；缺/坏/站占位（0001）None。"""
+    raw = book.get("initial_at")
+    if not isinstance(raw, str):
         return None
-    parts = line_raw.split("/")
-    values = [silver.to_float(p) for p in parts]
-    if not values or any(v is None for v in values):
+    try:
+        naive = datetime.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
         return None
-    return sum(cast("list[float]", values)) / len(values)
+    if naive.year not in _OPEN_AT_YEAR_RANGE:
+        return None
+    return srct_odds.beijing_ms(naive)
+
+
+def _latest_phase(observed_at: int | None, kickoff_ms: int | None) -> str | None:
+    """
+    Latest 组相位判定。
+
+    observed_at≥kickoff=inplay（完场后抓取=场内末价），否则 pre（开赛前
+    抓取=即时盘前价）；孤儿场（无 kickoff）None。open/close 定义即盘前
+    （初盘/盘前末价），不设相位列。
+    """
+    if observed_at is None or kickoff_ms is None:
+        return None
+    return "inplay" if observed_at >= kickoff_ms else "pre"
 
 
 def _quote_row(
@@ -184,15 +217,21 @@ def _quote_row(
     report: SilverMarketReport,
 ) -> dict[str, object]:
     """一书一盘 bronze 行 → 报价行（三组线值按市场归一；坏值 None 计数留痕）。"""
+    observed = _fetched_ms(bronze)
     row: dict[str, object] = {
         "sid": bronze.get("sid"),
         "market": market,
         "cid": str(book.get("cid")),
         "bookmaker_id": f"srct:{market}:{book.get('cid')}",
         "multi": str(book.get("multi") or "盘1"),
-        "observed_at": _fetched_ms(bronze),
+        "observed_at": observed,
         "kickoff": kickoff_ms,
+        "open_at": _open_at(book),
+        "latest_phase": _latest_phase(observed, kickoff_ms),
     }
+    initial = cast("dict[str, object]", book.get("initial") or {})
+    if initial.get("line") is not None and row["open_at"] is None:
+        report.initial_at_missing += 1
     for prefix, key in (("open", "initial"), ("latest", "latest"), ("close", "close")):
         quote = cast("dict[str, object]", book.get(key) or {})
         line_raw = quote.get("line")
