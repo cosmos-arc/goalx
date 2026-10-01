@@ -75,8 +75,8 @@ HANDICAP_DATASET = "asian_handicap"
 BRONZE_VERSIONS: dict[str, str] = {
     DAY_DATASET: PARSE_VERSION,
     ODDS_DATASET: "srct_odds_v1",
-    ASIANODDS_DATASET: "srct_ah_multi_v1",
-    OVERDOWN_DATASET: "srct_ou_multi_v1",
+    ASIANODDS_DATASET: "srct_ah_multi_v2",  # v2=初盘组 title 开盘时刻入 bronze
+    OVERDOWN_DATASET: "srct_ou_multi_v2",  # 同构同升（v2=initial_at）
     DETAIL_DATASET: "srct_detail_v1",
     ANALYSIS_DATASET: "srct_analysis_v1",
     STATS_DATASET: "srct_stats_v1",
@@ -460,18 +460,135 @@ def _quote_triple(cells: list[str], start: int) -> dict[str, str | None]:
     return {keys[i]: cells[start + i].strip() or None for i in range(3)}
 
 
+# 初盘组 td 的 title=开盘时刻（"YYYY-MM-DD HH:MM" 北京钟面；三格共用同时刻，
+# 2026-10-01 实测历史页/当期 live 页同形态：仅初盘组带 title，即时/终组无时刻）
+_INITIAL_AT_RE = re.compile(r'title="(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"')
+
+
+def _initial_at(attrs: list[str]) -> str | None:
+    """初盘组（格 3-5）td 标签 → 开盘时刻；无 title 行（空盘/无报价）None。"""
+    for attr in attrs[3:6]:
+        found = _INITIAL_AT_RE.search(attr)
+        if found is not None:
+            return found.group(1)
+    return None
+
+
+def _top_tables(text: str) -> list[str]:
+    """顶层 table 内容列表（深度扫描；嵌套表归父表，防 sloppy HTML 误配对）。"""
+    out: list[str] = []
+    depth = 0
+    start = 0
+    for m in re.finditer(r"<table[^>]*>|</table>", text, re.I):
+        if m.group(0).startswith("<table"):
+            if depth == 0:
+                start = m.end()
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                out.append(text[start : m.start()])
+    return out
+
+
+# 矩阵数据行 td 的格底色（图例钉死 2026-10-01：早餐盘/即时盘=盘前两态、
+# 走地盘=场内；与"空比分=盘前"双信号互验 8 文件全吻合）
+_MATRIX_BG_RE = re.compile(r"background:\s*(#[0-9A-Fa-f]{6})")
+# 矩阵变化时间列（页尾右二/右一 = 比分|变化时间，时间 "M-D(D) H(H):MM" 无年份）
+_CHANGE_TIME_RE = re.compile(r"^\d{1,2}-\d{1,2} \d{1,2}:\d{2}$")
+# 矩阵列=站点固定 11 家书商模板（2026-10-01 实测 120 页 120 稳定：表头名
+# 序恒定、列绑书商身份非当页汇总顺序——cid22 缺席页其列恒空，汇总首现序
+# 会错位；遮罩名每场轮换不可名字 join，只能模板钉死）
+_MATRIX_TEMPLATE_CIDS: tuple[str, ...] = (
+    "1",
+    "3",
+    "8",
+    "12",
+    "14",
+    "17",
+    "22",
+    "24",
+    "31",
+    "35",
+    "42",
+)
+
+
+def _parse_change_matrix(text: str) -> tuple[list[str], list[dict[str, object]]]:
+    """
+    变价矩阵表（页下方大表）→ (列名, 变化行)。
+
+    表结构（2026-10-01 实测钉死）：表头 th=固定 11 家书商遮罩名+比分+变化
+    时间；数据行严格 13 格、恰一书商格有值（线+双水 span），格底色=报价
+    相位（#dcfbff 早餐盘/#FFFFFF 即时盘/#eaeaff 走地盘），比分空=盘前、
+    时间无年份（年归 silver 按开球锚推）。行序新→旧（贴源保留，source
+    order=文档序）。列 i ↔ _MATRIX_TEMPLATE_CIDS[i]。仅跟主盘（盘1）轨迹：
+    矩阵首条盘前盘口=盘1 终线吻合（85/87）。
+    """
+    names: list[str] = []
+    changes: list[dict[str, object]] = []
+    matrix = next((t for t in _top_tables(text) if "变化时间" in t), None)
+    if matrix is None:
+        return names, changes
+    for chunk in matrix.split("</tr>"):
+        if "<th" in chunk and not names:
+            names = [n.strip() for n in re.findall(r"<th[^>]*>([^<]*)</th>", chunk)]
+            continue
+        tds = re.findall(r"<td([^>]*)>(.*?)</td>", chunk, re.S | re.I)
+        if not names or len(tds) != len(names):
+            continue
+        cells = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", inner)).strip()
+            for _, inner in tds
+        ]
+        score = cells[-2]
+        time_raw = cells[-1]
+        for idx in range(len(names) - 2):
+            if not cells[idx]:
+                continue  # 该书商此刻无变化（空=无数据；模板书商缺席=整列空）
+            inner = tds[idx][1]
+            line_raw = re.split(r"<br", inner, maxsplit=1)[0]
+            line_raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", line_raw)).strip()
+            waters = [
+                w.strip() or None
+                for w in re.findall(r"<span[^>]*>([^<]*)</span>", inner)
+            ]
+            bg = _MATRIX_BG_RE.search(tds[idx][0])
+            changes.append(
+                {
+                    "cid": (
+                        _MATRIX_TEMPLATE_CIDS[idx]
+                        if idx < len(_MATRIX_TEMPLATE_CIDS)
+                        else ""
+                    ),
+                    "name_raw": names[idx],
+                    "time": time_raw if _CHANGE_TIME_RE.match(time_raw) else None,
+                    "score": score or None,
+                    "line": line_raw or None,
+                    "home_water": waters[0] if len(waters) > 0 else None,
+                    "away_water": waters[1] if len(waters) > 1 else None,
+                    "bg": bg.group(1) if bg else None,
+                }
+            )
+    return names[: max(len(names) - 2, 0)], changes
+
+
 def _parse_multi_book_page(
     body: bytes, title_marker: str, label: str
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
     """
     多庄对比页公共行解析（亚盘 AsianOdds_n / 大小球 OverDown_n 同构）。
 
-    行结构（2026-09-25 实测，两页同 13 格）：勾选|公司名+状态|盘序
+    汇总表行结构（2026-09-25 实测，两页同 13 格）：勾选|公司名+状态|盘序
     |初(水线水)|即时(水线水)|终(水线水)|详情，每行一 changeDetail 链接
-    =一书一盘。三组贴源存原文——
+    =一书一盘。多盘=同书商同时挂的相邻盘口档位（盘1=主盘，盘2/3/4=备选
+    档），各一组三报价。三组贴源存原文——
     - initial=初盘（页方口径，可能与 changeDetail 首行水位差一拍：后者有截断先例）；
     - latest=抓取时点最新价（完场后=场内末价，2026-09-25 实测与存档 92' 临场行一致）；
     - close=终盘（完场后=盘前末价，实测与 changeDetail 盘前末行逐值一致）。
+
+    initial_at=初盘组 title 开盘时刻（v2 起；贴源北京钟面字符串）。
+    changes=页下方变价矩阵（v2 起；主盘轨迹，见 _parse_change_matrix）。
 
     内容判别（定则 4 空≠无）：页题标记在而零书商行=合法空表（老场无报价，
     照常返回 []）；标记缺/伪 200 图=坏响应抛 SrctContentError。公司名原串
@@ -486,6 +603,7 @@ def _parse_multi_book_page(
         cid = _MULTI_BOOK_CID_RE.search(chunk)
         if cid is None:
             continue
+        cell_tags = re.findall(r"<t[dh][^>]*>", chunk, re.I)
         cells = [
             re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
             for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", chunk, re.S | re.I)
@@ -498,26 +616,28 @@ def _parse_multi_book_page(
                 "name_raw": cells[1],  # 公司名+封/即状态原串（silver 层代称化）
                 "multi": cells[2] or "盘1",  # 多盘标记（盘2/盘3/…；空=主盘）
                 "initial": _quote_triple(cells, 3),
+                "initial_at": _initial_at(cell_tags),
                 "latest": _quote_triple(cells, 6),
                 "close": _quote_triple(cells, 9),
             }
         )
-    return books
+    columns, changes = _parse_change_matrix(text)
+    return {"books": books, "columns": columns, "changes": changes}
 
 
 def parse_asianodds_page(body: bytes) -> dict[str, object]:
-    """亚盘多庄页（UTF-8）→ {"books": [...]}（行语义见 _parse_multi_book_page）。"""
-    return {"books": _parse_multi_book_page(body, _ASIANODDS_TITLE_MARKER, "asianodds")}
+    """亚盘多庄页 → {"books", "columns", "changes"}（见 _parse_multi_book_page）。"""
+    return _parse_multi_book_page(body, _ASIANODDS_TITLE_MARKER, "asianodds")
 
 
 def parse_overdown_page(body: bytes) -> dict[str, object]:
     """
-    大小球多庄页（UTF-8）→ {"books": [...]}。
+    大小球多庄页（UTF-8）→ {"books", "columns", "changes"}。
 
     与亚盘多庄同构（行语义见 _parse_multi_book_page），差异仅线值语义：
     line=进球数盘口线（"2.5/3" 等），水=大球/小球水位（票面口径：大球/进球数）。
     """
-    return {"books": _parse_multi_book_page(body, _OVERDOWN_TITLE_MARKER, "overdown")}
+    return _parse_multi_book_page(body, _OVERDOWN_TITLE_MARKER, "overdown")
 
 
 # detail 详情页（live 主机，UTF-8，规格 v2 端点 5）：页题标记=现场分析。

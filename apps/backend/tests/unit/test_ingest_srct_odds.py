@@ -379,6 +379,142 @@ def _minute_of(row: dict[str, Any]) -> str:
     return f"{beijing.hour:02d}:{beijing.minute:02d}"
 
 
+def _append_matrix_bronze(
+    store: CorpusStore,
+    dataset: str,
+    sid: str,
+    changes: list[dict[str, object]],
+) -> None:
+    """多庄页 v2 bronze 直写（changes=贴源矩阵行，形状=parse_*_page 产出）。"""
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        dataset,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": dataset,
+                "sid": sid,
+                "fetched_at": "2026-09-25T00:00:00+00:00",
+                "parser_version": srct.BRONZE_VERSIONS[dataset],
+                "raw_sha": "a" * 64,
+                "payload": {"books": [], "columns": [], "changes": changes},
+            }
+        ],
+    )
+
+
+# v2 变价矩阵行（文档新→旧；cid=模板列身份）：cid3 两保留一心跳一坏时间、
+# cid24 一行；时间无年份按开球（2025-10-01 20:00）锚推年。
+_MATRIX_AH_CHANGES = [
+    {
+        "cid": "3",
+        "name_raw": "Crow*",
+        "time": "10-01 21:48",
+        "score": "3-1",
+        "line": "平手",
+        "home_water": "0.82",
+        "away_water": "1.11",
+        "bg": "#eaeaff",
+    },
+    {
+        "cid": "3",
+        "name_raw": "Crow*",
+        "time": "10-01 19:30",
+        "score": None,
+        "line": "平手",
+        "home_water": "0.90",
+        "away_water": "1.00",
+        "bg": "#FFFFFF",
+    },
+    {
+        "cid": "3",
+        "name_raw": "Crow*",
+        "time": "10-01 12:00",
+        "score": None,
+        "line": "平手",
+        "home_water": "0.90",
+        "away_water": "1.00",
+        "bg": "#FFFFFF",
+    },
+    {
+        "cid": "3",
+        "name_raw": "Crow*",
+        "time": None,
+        "score": None,
+        "line": "平手",
+        "home_water": "0.88",
+        "away_water": "1.02",
+        "bg": "#FFFFFF",
+    },
+    {
+        "cid": "24",
+        "name_raw": "12*",
+        "time": "10-01 18:00",
+        "score": None,
+        "line": "受让平手/半球",
+        "home_water": "0.95",
+        "away_water": "0.95",
+        "bg": "#dcfbff",
+    },
+]
+_MATRIX_OU_CHANGES = [
+    {
+        "cid": "42",
+        "name_raw": "18*",
+        "time": "10-01 15:00",
+        "score": None,
+        "line": "2.5/3",
+        "home_water": "0.90",
+        "away_water": "0.92",
+        "bg": "#dcfbff",
+    },
+]
+
+
+def test_matrix_events_ah_ou_and_gate_accounting(tmp_path: Path) -> None:
+    """v2 矩阵 → ah/ou 变价事件：年份锚推、相位、心跳、逐书商流、门④恒等。"""
+    store, _ = _collect_bronze(tmp_path)
+    try:
+        _append_matrix_bronze(
+            store, srct.ASIANODDS_DATASET, "90001", _MATRIX_AH_CHANGES
+        )
+        _append_matrix_bronze(store, srct.OVERDOWN_DATASET, "90001", _MATRIX_OU_CHANGES)
+        report = srct_odds.build_odds_change_events(store, chunk_rows=2)
+    finally:
+        store.close()
+    assert report.unexplained_gap == 0
+    # 存量（两常规场同构+跨年场）+ 矩阵增量
+    assert report.events_ah == 2 * 7 + 1 + 3  # cid3 两保留 + cid24 一行
+    assert report.events_ou == 1
+    assert report.source_rows_ah == 2 * 8 + 1 + 5
+    assert report.source_rows_ou == 1
+    assert report.heartbeat_dropped == 4 + 1  # 存量 4 + 矩阵 12:00 同值
+    rows = [
+        r
+        for r in _odds_rows(store)
+        if r["sid"] == "90001"
+        and r["market"] in ("ah", "ou")
+        and r["bookmaker_id"].startswith(("srct:ah:3", "srct:ah:24", "srct:ou:42"))
+        and r["source_order"] >= 0  # 留档 ah:8 面行序独立，这里只看矩阵流
+    ]
+    matrix = [r for r in rows if r["bookmaker_id"] != "srct:ah:8"]
+    by_key = {(r["market"], r["bookmaker_id"]): r for r in matrix}
+    live = by_key[("ah", "srct:ah:3")]
+    # 21:48 行：盘前/盘中相位=页面底色、比分随行、年按锚推 2025
+    assert live["status"] == "inplay"
+    assert live["score"] == "3-1"
+    assert live["line"] == 0.0  # 平手 主队视角归一
+    assert _minute_of(live) == "21:48"
+    assert _shanghai(live["published_at"]).year == 2025
+    pre = by_key[("ah", "srct:ah:24")]
+    assert pre["status"] == "early"  # 早餐盘
+    assert pre["line"] == -0.25  # 受让平手/半球
+    ou = by_key[("ou", "srct:ou:42")]
+    assert ou["status"] == "early"
+    assert ou["line"] == 2.75  # "2.5/3" 四分位中值
+    assert ou["home_water"] == 0.9
+
+
 def test_ah_line_normalization_and_live_context(tmp_path: Path) -> None:
     store, _ = _collect_bronze(tmp_path)
     try:
