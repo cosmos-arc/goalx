@@ -271,9 +271,9 @@ def test_phase1_task_list_shape() -> None:
     assert labels[0] == "2026/27"
     assert labels[0] == labels[1] == labels[2]
     assert tasks[0][1] == "2026-09-22"  # TODAY-2：完场稳态上界
-    assert labels[-1] == "2023/24"
-    assert tasks[-1][1] == "2023-08-01"
-    assert set(labels) == {"2026/27", "2025/26", "2024/25", "2023/24"}
+    assert labels[-1] == "2017/18"  # Phase2 扩展批底（2016/17 走季深探针不入表）
+    assert tasks[-1][1] == "2017-08-01"
+    assert len(set(labels)) == 10  # 2017/18→2026/27 十季窗（含当季开区间）
     days = [d for _, d in tasks]
     assert days == sorted(days, reverse=True)  # 整表单调（全局倒序）
 
