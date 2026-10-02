@@ -222,3 +222,20 @@ def test_checkpoint_tables_registered() -> None:
     assert "guardian_request_days" in registered
     assert "srct_night_summaries" in registered
     assert "srct_shift_matches" in registered
+
+
+def test_deployment_entrypoints_importable() -> None:
+    """注册面 deployment 入口点必须可导入（Runner 起子进程按串 import）。
+
+    2026-10-01 实证事故：build_flow 闭包 qualname（build_flow.<locals>…）
+    不可导入 → 注册面 serve 后每拍必炸、数据零落地 ~24h。此断言红=再犯。
+    """
+    from prefect.utilities.importtools import import_object
+
+    for name, deployment in datasets.build_deployments().items():
+        entrypoint = deployment.entrypoint
+        assert entrypoint, name
+        try:
+            import_object(entrypoint)
+        except Exception as exc:
+            pytest.fail(f"{name} 入口点不可导入: {entrypoint} ({exc})")
