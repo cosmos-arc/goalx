@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -308,8 +309,19 @@ def dead_names() -> tuple[str, ...]:
     return tuple(spec.name for spec in DATASETS if not spec.resume)
 
 
+def _flow_attr(name: str) -> str:
+    """数据集名 → 模块级 flow 属性名（非法字符转下划线）。"""
+    return "_" + re.sub(r"[^0-9a-zA-Z_]", "_", name) + "_flow"
+
+
 def build_flow(spec: DatasetSpec) -> Flow[[], dict[str, object]]:
-    """同构 flow 壳工厂：调 tasks 函数、记日志、回 stats（非同构的留 flows.py）。"""
+    """
+    同构 flow 壳工厂：调 tasks 函数、记日志、回 stats（非同构的留 flows.py）。
+
+    __qualname__ 指向模块级物化属性（_REGISTRY_FLOWS）——Runner 按入口点
+    字符串起子进程 import，闭包 qualname 不可导入=必炸（2026-10-01 实证：
+    注册面 deployment 空转 ~24h，根因即此）。
+    """
 
     def _recorded_flow() -> dict[str, object]:
         stats = spec.task()
@@ -317,7 +329,16 @@ def build_flow(spec: DatasetSpec) -> Flow[[], dict[str, object]]:
         return stats
 
     _recorded_flow.__doc__ = spec.flow_help  # @flow 取 docstring 作 description
+    _recorded_flow.__qualname__ = _flow_attr(spec.name)
     return flow(name=spec.name, log_prints=True)(_recorded_flow)
+
+
+# 模块级物化：子进程入口点 import 的就是这些属性（单一物化点）
+_REGISTRY_FLOWS: dict[str, Flow[[], dict[str, object]]] = {
+    spec.name: build_flow(spec) for spec in DATASETS
+}
+for _name, _built in _REGISTRY_FLOWS.items():
+    globals()[_flow_attr(_name)] = _built
 
 
 def build_deployments() -> dict[str, RunnerDeployment]:
@@ -325,7 +346,7 @@ def build_deployments() -> dict[str, RunnerDeployment]:
     return {
         spec.name: cast(
             RunnerDeployment,
-            build_flow(spec).to_deployment(
+            _REGISTRY_FLOWS[spec.name].to_deployment(
                 name=_DEPLOYMENT_NAME,
                 schedule=Schedule(cron=spec.cron, timezone=_TIMEZONE),
             ),
