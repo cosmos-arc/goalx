@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS srct_season_depth (
     probed_at TEXT NOT NULL
 )
 """
+# 票 18 月度探针账（2026-10-02 用户裁决加密采样）：老季每月首个有场次日
+# 全深探一日；空场月不记账（零证据≠无数据）。判定=任一月有证据即 full，
+# 全部 12 月干净零证据才 shallow
+_SRCT_SEASON_PROBE_MONTHS_SQL = """
+CREATE TABLE IF NOT EXISTS srct_season_probe_months (
+    season TEXT NOT NULL,
+    month TEXT NOT NULL,
+    PRIMARY KEY (season, month)
+)
+"""
 # 票 71 JC 当期拍：matchId 建档（kickoff 取自 calculator 发现响应；收口
 # 判据=开球已过而裸键 raw 缺——fixedBonus 存档永在，赛后任意时点可收）
 _JC_SHIFT_MATCHES_SQL = """
@@ -191,6 +201,7 @@ _CHECKPOINT_TABLE_SQL = (
     _SRCT_DAY_STATUS_SQL,
     _SRCT_NIGHT_SUMMARIES_SQL,
     _SRCT_SEASON_DEPTH_SQL,
+    _SRCT_SEASON_PROBE_MONTHS_SQL,
     _SRCT_SHIFT_MATCHES_SQL,
     _JC_SHIFT_MATCHES_SQL,
     _JC_BACKFILL_DAYS_SQL,
@@ -555,6 +566,24 @@ class CorpusStore:
             VALUES (?, ?, ?)
             """,
             (season, depth, utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def season_probe_months(self, season: str) -> set[str]:
+        """该季已探月集（票 18 月度采样：有场次的探针日才记账）。"""
+        rows = self._checkpoint().execute(
+            "SELECT month FROM srct_season_probe_months WHERE season=?", (season,)
+        )
+        return {str(row["month"]) for row in rows}
+
+    def add_season_probe_month(self, season: str, month: str) -> None:
+        """记一探针月（幂等）。"""
+        self._checkpoint().execute(
+            """
+            INSERT OR IGNORE INTO srct_season_probe_months (season, month)
+            VALUES (?, ?)
+            """,
+            (season, month),
         )
         self._checkpoint().commit()
 
