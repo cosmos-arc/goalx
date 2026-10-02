@@ -779,3 +779,41 @@ def test_interrupted_probe_resume_keeps_evidence(tmp_path: Path) -> None:
     assert night.dates_done == 3
     assert night.requests == 14  # 续传探针日零线上 + 08-02/08-01 各 7
     assert len(seen) == 7 + 14
+
+
+def test_monthly_probe_cross_month_evidence_upgrades_full(tmp_path: Path) -> None:
+    """月度采样（2026-10-02 裁决）：九月首探零证据不断案，八月首探有证据即升全深。
+
+    两月窗（08-29→09-01，走序新→旧）：09-01 探针零证据→仅记月账；08-31
+    探针有统计证据→当季升 full；余日（08-30/08-29）随后全深。
+    """
+    seen, routes = _transport_spy()
+    two_month = (srct_night.SeasonWindow("2019/20", "2019-08-29", "2019-09-01"),)
+    days = ["2019-08-29", "2019-08-30", "2019-08-31", "2019-09-01"]
+    for i, day in enumerate(days):
+        sid = f"9100{i:02d}"
+        routes[f"day:{day.replace('-', '')}"] = httpx.Response(
+            200, content=_day_page(sid)
+        )
+        routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
+    # 全部场次深端点空；仅 08-31（sid 910002）统计页带 xG = 证据
+    for i in range(4):
+        sid = f"9100{i:02d}"
+        routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_EMPTY_BYTES)
+        routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_EMPTY_BYTES)
+        routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_EMPTY_BYTES)
+        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_EMPTY_BYTES)
+        routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_EMPTY_HTML)
+    routes["stats:910002"] = httpx.Response(200, content=STATS_HTML)
+
+    summary = _run(tmp_path, seen, routes, seasons=two_month)
+    assert summary.stop_reason == "completed"
+    # 九月零证据≠断案：若单日即降浅（旧行为），八月证据将被浅深漏采
+    assert _store(tmp_path).season_depths() == {"2019/20": srct.DEPTH_FULL}
+    store = _store(tmp_path)
+    assert store.season_probe_months("2019/20") == {"2019-08", "2019-09"}
+    store.close()
+    # 升全深后余日（08-30/08-29=91001/91000）全深：统计端点在 wire 上
+    paths = _deep_paths(seen)
+    assert "/shijian/910001.htm" in paths
+    assert "/shijian/910000.htm" in paths

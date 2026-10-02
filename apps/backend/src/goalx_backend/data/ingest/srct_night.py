@@ -59,6 +59,7 @@ FAILED_SAMPLE_CAP = 20
 # 票 18 老季分层：起始年 ≤2019 的季窗默认浅深（两请求/场），探针可升
 # 全深；Phase1 窗口（2023/24 起）不落此界，不受影响
 LAYERED_SEASON_MAX_START_YEAR = 2019
+_DECEMBER = 12  # 自然月推进的年进位点
 
 
 @dataclass(frozen=True)
@@ -128,9 +129,10 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
     """
     探针日判定（票 18）：full / shallow / None（不断案）。
 
-    宁可错升不错漏（漏=数据永久缺口，升=多花 1/3 请求）：正证据即升全深；
-    零证据须当日干净跑完且有场次才降浅深——中断/任一失败/解析失败/零场
-    都留待次夜下一 pending 日重探（不重探指已断案的季，见 srct_season_depth）。
+    宁可错升不错漏（漏=数据永久缺口，升=多花 1/3 请求）：正证据即升全深。
+    2026-10-02 用户裁决加密采样：单日样本会漏季内分段存档（如站点按月
+    回填），改月度采样——每月首个有场次日探一日，**任一月有证据即 full**，
+    全部 12 月干净零证据才 shallow；空场/中断/失败月不记账留待重探。
     """
     if (
         stats.stats_nonempty
@@ -147,19 +149,37 @@ def _probe_verdict(stats: srct.SrctCollectStats) -> str | None:
     return srct.DEPTH_SHALLOW
 
 
+def _season_months(season: SeasonWindow) -> set[str]:
+    """季窗覆盖的自然月集（判定 shallow 的采样完备判据）。"""
+    start = date.fromisoformat(season.start)
+    fallback_end = start.replace(year=start.year + 1).isoformat()
+    end = date.fromisoformat(season.end or fallback_end)
+    months: set[str] = set()
+    cursor = start
+    while cursor <= end:
+        months.add(f"{cursor.year:04d}-{cursor.month:02d}")
+        year_step = cursor.year + 1 if cursor.month == _DECEMBER else cursor.year
+        cursor = date(year_step, cursor.month % _DECEMBER + 1, 1)
+    return months
+
+
 def _resolve_depth(
     season: str,
+    day: str,
     windows: dict[str, SeasonWindow],
     depths: dict[str, str],
+    probe_months: set[str],
 ) -> tuple[str, bool]:
-    """该日采集深度：返回 (depth, 是否探针日)。老季无判定=全深探针。"""
+    """该日采集深度：返回 (depth, 是否探针日)。老季未判=每月首日全深探。"""
     window = windows.get(season)
     if window is None or not _is_layered(window):
-        return srct.DEPTH_FULL, False  # Phase1 季窗：不分层
+        return srct.DEPTH_FULL, False  # 非分层季窗：不分层
     known = depths.get(season)
-    if known is None:
-        return srct.DEPTH_FULL, True
-    return known, False
+    if known is not None:
+        return known, False
+    if day[:7] in probe_months:
+        return srct.DEPTH_SHALLOW, False  # 本月已采样：非探针日走浅深
+    return srct.DEPTH_FULL, True
 
 
 def _record_probe(
@@ -167,15 +187,33 @@ def _record_probe(
     depths: dict[str, str],
     season: str,
     day: str,
+    window: SeasonWindow,
+    probe_months: set[str],
     stats: srct.SrctCollectStats,
 ) -> None:
-    """探针日收尾断案并持久（None=不断案，次夜下一 pending 日重探）。"""
+    """
+    探针日收尾：记账采样月 + 断案持久。
+
+    失败/中断/零场=无效样本：月账不记、断案不落（次夜本月重探）；干净
+    零证据才记账。正证据即 full；shallow 须 12 月采样完备且全零证据。
+    """
     verdict = _probe_verdict(stats)
     if verdict is None:
         return
-    depths[season] = verdict
-    store.set_season_depth(season, verdict)
-    logger.info("srct night {}: 老季深度判定 {}（探针日 {}）", season, verdict, day)
+    month = day[:7]
+    store.add_season_probe_month(season, month)
+    probe_months.add(month)
+    if verdict == srct.DEPTH_FULL:
+        depths[season] = srct.DEPTH_FULL
+        store.set_season_depth(season, srct.DEPTH_FULL)
+        logger.info(
+            "srct night {}: 老季深度判定 full（探针日 {} 有深端点证据）", season, day
+        )
+        return
+    if probe_months >= _season_months(window):
+        depths[season] = srct.DEPTH_SHALLOW
+        store.set_season_depth(season, srct.DEPTH_SHALLOW)
+        logger.info("srct night {}: 老季深度判定 shallow（12 月采样全零证据）", season)
 
 
 def _depth_backfill_dates(
@@ -315,6 +353,10 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
     tasks = pending_dates(store, run_today, scoped_seasons)
     summary.pending_before = len(tasks)
     depths = store.season_depths()
+    probe_months = {
+        label: store.season_probe_months(label)
+        for label in (s.label for s in scoped_seasons if _is_layered(s))
+    }
     # 补抓（票 18 升深 + 票 63 规格扩展）：done 日缺当前深端点 raw 即重开
     # （缓存命中零重抓，只补缺端点）；浅深判定老季不重开。补欠在前、
     # pending 殿后（存量日深页老化风险 > 新日页下线风险）。
@@ -331,7 +373,9 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
             summary.stop_reason = "window_closed"
             stopped = True
             break
-        depth, probing = _resolve_depth(season, windows, depths)
+        depth, probing = _resolve_depth(
+            season, day, windows, depths, probe_months.get(season, set())
+        )
         summary.dates_attempted += 1
         try:
             stats = srct.collect_day(
@@ -368,7 +412,15 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
             continue
         _absorb(summary, stats)
         if probing:
-            _record_probe(store, depths, season, day, stats)
+            _record_probe(
+                store,
+                depths,
+                season,
+                day,
+                windows[season],
+                probe_months.setdefault(season, set()),
+                stats,
+            )
         if stats.stopped is not None:
             summary.stop_reason = stats.stopped
             stopped = True
