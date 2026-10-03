@@ -43,6 +43,8 @@ OWNERS: dict[str, set[str]] = {
         "srct_day_status",
         # 票 18：老季深度判定（同 checkpoint 库，跨夜不重探）
         "srct_season_depth",
+        # PR#125：月度探针账本（同 checkpoint 库，任一月正证据即升全深）
+        "srct_season_probe_months",
         # 票 65 当期班：sid 建档（联赛/开球/scope 资格）
         "srct_shift_matches",
         # 票 71 JC 当期拍：matchId 建档（kickoff/收口旗）
