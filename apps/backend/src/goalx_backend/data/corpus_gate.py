@@ -150,8 +150,10 @@ def match_fixtures(fixtures: list[FixtureRow], hists: list[HistRow]) -> MatchRes
     """
     联赛+比分+日期±1 匹配（三对账共用锚；确定性键·定则 1）。
 
-    同 (联赛, 比分, 日期窗) 多候选 → ambiguous 不硬配（宁缺毋错）；
-    配过的 fixture 不重复使用（比分重复场次各占一位）。
+    两步消歧（2026-10-03 门①收口）：步 1 精确日单候选直接配——同联赛
+    同比分的多场只在跨日窗内撞车，先配走无歧义的；步 2 剩余行退回
+    ±1 全窗（吸收 fdhist 当地日 × 语料北京墙钟日的基准差），多候选 →
+    ambiguous 不硬配（宁缺毋错）；配过的 fixture 不重复使用。
     """
     result = MatchResult()
     by_key: dict[tuple[str, int, int, str], list[FixtureRow]] = {}
@@ -164,23 +166,40 @@ def match_fixtures(fixtures: list[FixtureRow], hists: list[HistRow]) -> MatchRes
         )
         by_key.setdefault(key, []).append(fixture)
     used: set[str] = set()
-    for hist in hists:
-        league = FD_TO_LEAGUE.get(hist.league_key, hist.league_key)
+
+    def league_of_hist(hist: HistRow) -> str:
+        return FD_TO_LEAGUE.get(hist.league_key, hist.league_key)
+
+    pending: list[HistRow] = []
+    for hist in hists:  # 步 1：精确日唯一候选
+        exact_key = (
+            league_of_hist(hist),
+            hist.goals_home,
+            hist.goals_away,
+            hist.match_date,
+        )
+        free = [c for c in by_key.get(exact_key, []) if c.sid not in used]
+        if len(free) == 1:
+            used.add(free[0].sid)
+            result.pairs.append((free[0], hist))
+        else:
+            pending.append(hist)
+    for hist in pending:  # 步 2：±1 全窗兜底（含步 1 的同日撞车候选）
         candidates = [
             candidate
             for day in _nearby(hist.match_date)
             for candidate in by_key.get(
-                (league, hist.goals_home, hist.goals_away, day), []
+                (league_of_hist(hist), hist.goals_home, hist.goals_away, day), []
             )
+            if candidate.sid not in used
         ]
-        free = [c for c in candidates if c.sid not in used]
-        if not free:
+        if not candidates:
             result.gaps.append(hist)
-        elif len(free) > 1:
+        elif len(candidates) > 1:
             result.ambiguous.append(hist)
         else:
-            used.add(free[0].sid)
-            result.pairs.append((free[0], hist))
+            used.add(candidates[0].sid)
+            result.pairs.append((candidates[0], hist))
     result.extra_fixtures.extend(f for f in fixtures if f.sid not in used)
     return result
 
@@ -269,6 +288,14 @@ def gate1_fixture_reconciliation(
 
     def cause_of(hist: HistRow) -> str:
         # 差分归因：邻日有 done 页=夜班跑过而语料缺场；只有 not_found=源T 无日页
+        # split 期单列（2026-10-03 门①收口）：比甲 playoff/苏超 split 后轮次不在
+        # CorpusScope——2026-10-01 报告实测 gaps 303 中 ~287 落在此桶，属口径
+        # 差非采集失败；是否扩 CorpusScope 采 playoff 由用户裁决。
+        month = hist.match_date[5:7]
+        if league_of(hist) == "比甲" and month in {"04", "05", "06"}:
+            return "比甲 playoff 期（CorpusScope 口径外，非采集失败）"
+        if league_of(hist) == "苏超" and month == "05":
+            return "苏超 split 后轮次（CorpusScope 口径外，非采集失败）"
         if any(day in done_dates for day in _nearby(hist.match_date)):
             return "语料缺场（该日期夜班已完成）"
         return "源T 日页缺席（not_found——站点无该日 CorpusScope 页）"
