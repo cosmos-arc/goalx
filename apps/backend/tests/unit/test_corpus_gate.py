@@ -278,7 +278,7 @@ def _build_corpus(tmp_path: Path) -> tuple[CorpusStore, Settings]:
 
 
 def test_match_fixtures_ambiguity_and_nearby_window() -> None:
-    """±1 窗跨日同比分 → ambiguous 不硬配；窗外 → gap。"""
+    """两步匹配：精确日唯一先配；同日撞车→ambiguous；窗外→gap；邻日单候选→配。"""
     fixtures = [
         FixtureRow("sid1", "英超", "2025-10-02", 1, 1),
         FixtureRow("sid2", "英超", "2025-10-03", 1, 1),
@@ -288,17 +288,31 @@ def test_match_fixtures_ambiguity_and_nearby_window() -> None:
         HistRow("E0", "2025-10-05", "H", "B", 1, 1, None, None, None),
     ]
     matched = match_fixtures(fixtures, hists)
-    assert matched.pairs == []
-    assert len(matched.ambiguous) == 1  # 两候选不硬配
-    assert len(matched.gaps) == 1  # 10-05 窗外无候选
-    assert len(matched.extra_fixtures) == 2
+    # 步 1：10-02 精确日唯一候选直接配；步 2：10-05 窗外无候选
+    assert len(matched.pairs) == 1
+    assert matched.pairs[0][0].sid == "sid1"
+    assert len(matched.ambiguous) == 0
+    assert len(matched.gaps) == 1
+    assert len(matched.extra_fixtures) == 1
 
     single = match_fixtures(
         [FixtureRow("sid1", "英超", "2025-10-01", 2, 0)],
         [HistRow("E0", "2025-10-02", "H", "A", 2, 0, None, None, None)],
     )
-    assert len(single.pairs) == 1  # 邻日仍可配（日期基准差吸收）
+    assert len(single.pairs) == 1  # 精确日缺、邻日单候选仍可配（日期基准差吸收）
     assert single.rate == 1.0
+
+    # 同日同比分撞车：精确日多候选、邻日无新增 → ambiguous 不硬配
+    collide = match_fixtures(
+        [
+            FixtureRow("sid1", "英超", "2025-10-02", 1, 1),
+            FixtureRow("sid2", "英超", "2025-10-02", 1, 1),
+        ],
+        [HistRow("E0", "2025-10-02", "H", "A", 1, 1, None, None, None)],
+    )
+    assert collide.pairs == []
+    assert len(collide.ambiguous) == 1
+    assert len(collide.extra_fixtures) == 2
 
 
 def test_five_gates_report_on_synthetic_tree(tmp_path: Path) -> None:
