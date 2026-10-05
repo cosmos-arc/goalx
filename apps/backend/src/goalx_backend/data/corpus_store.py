@@ -26,6 +26,7 @@ srct_night_summaries（每夜请求/新增/吸收/失败摘要，晨检一眼健
 
 from __future__ import annotations
 
+import fcntl
 import gzip
 import hashlib
 import json
@@ -408,12 +409,18 @@ class CorpusStore:
             return 0
         path = self.bronze_path(provider, dataset)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with (
-            path.open("ab") as raw_fh,
-            gzip.GzipFile(fileobj=raw_fh, mode="ab", mtime=0) as fh,
-        ):
-            for row in rows:
-                fh.write((json.dumps(row, ensure_ascii=False) + "\n").encode())
+        # 跨进程互斥：day 班/夜班/马拉松多写者并发 append 同一 gzip 文件
+        # 会使 member 字节交错撕裂（2026-10-03 实测四数据集尾部 BAD）；
+        # flock 把"起 member→写行→close"整段串行化。checkpoint SQLite 自
+        # 带锁不在此护。
+        with path.open("ab") as raw_fh:
+            fcntl.flock(raw_fh, fcntl.LOCK_EX)
+            try:
+                with gzip.GzipFile(fileobj=raw_fh, mode="ab", mtime=0) as fh:
+                    for row in rows:
+                        fh.write((json.dumps(row, ensure_ascii=False) + "\n").encode())
+            finally:
+                fcntl.flock(raw_fh, fcntl.LOCK_UN)
         index_rows = [
             (provider, dataset, str(row["sid"]), str(row["parser_version"]))
             for row in rows
