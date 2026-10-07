@@ -807,6 +807,23 @@ _ANALYSIS_FUTURE_DATE_RE = re.compile(r"\d{2}-\d{2}")
 _ANALYSIS_FUTURE_HEADER = frozenset(("时间", "赛事", "对阵", "分析", "直播", "相隔"))
 _ANALYSIS_HOME_BLOCK = 1  # 单格行（队名块头）计数：1=主队块，>1=客队块
 
+# 端点页模板标记（公开面，2026-10-07 门⑤裁决）：数据集 → 解析守卫所依的
+# 页内标记。缺标记=旧模板/伪 200 页——解析器按设计跳过（不产 bronze 行），
+# 门⑤分母据此剔除此类页（键覆盖=可解析模板页口径），不视为管线损坏。
+# 站点约 2020 换模板：detail 缺席 2016-2019 全季+2020 尾、analysis 缺席
+# 2019-2020（实测），旧模板页是解析器 v3 候选内容而非采集失败。
+_STATS_JSON_MARKER = "var jsonData"
+TEMPLATE_MARKERS: dict[str, str] = {
+    ASIANODDS_DATASET: _ASIANODDS_TITLE_MARKER,
+    OVERDOWN_DATASET: _OVERDOWN_TITLE_MARKER,
+    DETAIL_DATASET: _DETAIL_TITLE_MARKER,
+    ANALYSIS_DATASET: _ANALYSIS_TITLE_MARKER,
+    STATS_DATASET: _STATS_JSON_MARKER,
+}
+# 伪 200 判别标记（公开面）：GBK/UTF-8 页内出现即 404 内容页（与
+# is_content_404 同源；门⑤单列 pseudo_200 用，勿在代码里复写字面量）
+CONTENT_404_MARKER = _CONTENT_404_MARKER
+
 
 def _analysis_array_rows(text: str, name: str) -> list[str]:
     """`var name=[[..],[..]];` → 顶层数组行原文串列表（贴源；缺 var 空）。"""
@@ -877,10 +894,15 @@ def parse_stats_page(body: bytes) -> dict[str, object]:
     47 键统计页（UTF-8）→ 键值数组 + xG coverage；缺键容忍（定则 4）。
 
     键集逐年演进（2018 页 24 键无 xG、2025 页 47 键含 xG），缺 xG 照常
-    返回（has_xg=False），缺 jsonData 块（伪 200/改版）抛 SrctContentError。
+    返回（has_xg=False），缺 jsonData 块或伪 200 图抛 SrctContentError
+    （404 图守卫 2026-10-07 补齐——与其余四端点同契，门⑤伪 200 分桶
+    同源）。
     """
     text = body.decode("utf-8-sig", errors="replace")
-    block = re.search(r"var jsonData\s*=\s*(\{.*)", text, re.S)
+    if is_content_404(text):
+        msg = "stats: 伪 200（404 内容）"
+        raise SrctContentError(msg)
+    block = re.search(rf"{_STATS_JSON_MARKER}\s*=\s*(\{{.*)", text, re.S)
     if block is None:
         msg = "stats: 缺 jsonData 块（伪 200 或坏响应）"
         raise SrctContentError(msg)

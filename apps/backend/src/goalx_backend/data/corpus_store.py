@@ -273,6 +273,9 @@ class CorpusStore:
         self.root = Path(root)
         self._conn: sqlite3.Connection | None = None
         self._bronze_sid_cache: dict[tuple[str, str, str], set[str]] = {}
+        # 缓存就位时的文件身份锚（size:mtime）——命中时复核，外部替换
+        # bronze 文件即弃缓存重扫（跨进程重建不再被本进程旧 sid 集掩盖）
+        self._bronze_sid_anchor_cache: dict[tuple[str, str], str] = {}
 
     @property
     def checkpoint_path(self) -> Path:
@@ -446,6 +449,9 @@ class CorpusStore:
                 ),
             )
             conn.commit()
+            self._bronze_sid_anchor_cache[(provider, dataset)] = self._bronze_anchor(
+                provider, dataset
+            )
             for _, _, sid, version in index_rows:
                 cached = self._bronze_sid_cache.get((provider, dataset, version))
                 if cached is not None:
@@ -467,11 +473,20 @@ class CorpusStore:
 
         载体=checkpoint 表（append_bronze 同步 upsert）；台账 anchor 与文件
         stat 不符（首次访问/外部改动）→ 流式重扫重建，此后进程内缓存。
+        缓存命中复核文件锚——外部替换 bronze 文件（重建脚本）即时弃缓存
+        重扫，不再被本进程旧 sid 集掩盖（correctness-review 2026-10-07）。
         """
         cache_key = (provider, dataset, parser_version)
         cached = self._bronze_sid_cache.get(cache_key)
         if cached is not None:
-            return cached
+            if self._bronze_anchor(
+                provider, dataset
+            ) == self._bronze_sid_anchor_cache.get((provider, dataset)):
+                return cached
+            for key in [
+                k for k in self._bronze_sid_cache if k[:2] == (provider, dataset)
+            ]:
+                del self._bronze_sid_cache[key]
         conn = self._checkpoint()
         anchor = self._bronze_anchor(provider, dataset)
         row = conn.execute(
@@ -491,12 +506,14 @@ class CorpusStore:
             )
         }
         self._bronze_sid_cache[cache_key] = sids
+        self._bronze_sid_anchor_cache[(provider, dataset)] = anchor
         return sids
 
     def _backfill_bronze_sids(self, provider: str, dataset: str, anchor: str) -> None:
         """按当前文件全量重建索引（外部改动/首次访问；幂等）。"""
         for key in [k for k in self._bronze_sid_cache if k[:2] == (provider, dataset)]:
             del self._bronze_sid_cache[key]
+        self._bronze_sid_anchor_cache[(provider, dataset)] = anchor
         index_rows: list[tuple[str, str, str, str]] = []
         for line in self.iter_bronze_lines(provider, dataset):
             envelope = json.loads(line)
@@ -516,6 +533,28 @@ class CorpusStore:
         conn.execute(
             "INSERT OR REPLACE INTO bronze_sid_backfill VALUES (?, ?, ?, ?, ?)",
             (provider, dataset, len(index_rows), anchor, utc_now_iso()),
+        )
+        conn.commit()
+
+    def reset_bronze_index(self, provider: str, dataset: str) -> None:
+        """
+        外部重建 bronze 文件后的索引强制失效（表+双缓存同清）。
+
+        缓存命中本就复核文件锚（外部替换自动弃缓存重扫），此方法供重建
+        脚本显式声明"文件已被外部换过"：清 checkpoint 索引表 + 进程内
+        两级缓存，下次访问按新文件全量重扫，不依赖调用方的缓存状态。
+        """
+        for key in [k for k in self._bronze_sid_cache if k[:2] == (provider, dataset)]:
+            del self._bronze_sid_cache[key]
+        self._bronze_sid_anchor_cache.pop((provider, dataset), None)
+        conn = self._checkpoint()
+        conn.execute(
+            "DELETE FROM bronze_sids WHERE provider=? AND dataset=?",
+            (provider, dataset),
+        )
+        conn.execute(
+            "DELETE FROM bronze_sid_backfill WHERE provider=? AND dataset=?",
+            (provider, dataset),
         )
         conn.commit()
 
