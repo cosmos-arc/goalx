@@ -1,0 +1,10 @@
+# OSV fail-closed 扫描（security.yml osv job）的显式豁免——续删从严：
+# 每条豁免须在注释里写明不可修的理由与复核触发器。
+[[PackageOverrides]]
+# braces 3.0.3 ReDoS（GHSA-vfj7-8cjw-p6xm）：上游停更无修复版可升；仅在
+# dev/构建链（fast-glob→micromatch→braces，shadcn CLI 等），不进运行时
+# bundle。复核触发器：braces 发修复版或链路可弃时删除本条。
+ecosystem = "npm"
+name = "braces"
+version = "3.0.3"
+ignore = true
