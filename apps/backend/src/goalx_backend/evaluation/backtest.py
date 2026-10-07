@@ -3,7 +3,8 @@
 
 - 按比赛周（ISO 年-周）重估：每联赛每周拟合一次时间衰减 DC，训练截止
   严格早于该周最早比赛日（``assert_no_lookahead`` 常开断言）；
-- 公允基准 fair = Pinnacle 收盘 Shin（PSC），缺失行用 AvgC 兜底；
+- 公允基准 fair = Pinnacle 收盘 Shin（PSC），缺失行用 AvgC 兜底；开球
+  不足 6 个月的行收盘列未收敛（A5 纪律），视为无基准不下注；
 - 模拟竞彩价 = fair 赔率 × (1 − haircut)（默认 −10%，票 30 可替换校准值）；
   hhad/ttg 的市场侧分布由 fair 1X2 经 penaltyblog goal_expectancy 反推
   (λ_home, λ_away) 构造市场隐含矩阵后推导；
@@ -34,6 +35,7 @@ from typing import Any
 from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import hygiene
 from goalx_backend.data import results as rs_store
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
@@ -128,9 +130,19 @@ def assert_no_lookahead(train_rows: list[TrainingRow], week_dates: list[str]) ->
 
 
 def fair_probs_from_close(
-    row: sqlite3.Row, *, fair_source: str = "auto"
+    row: sqlite3.Row,
+    *,
+    fair_source: str = "auto",
+    today: date | None = None,
 ) -> tuple[dict[str, float], str] | None:
-    """收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。"""
+    """
+    收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。
+
+    A5 成熟度硬规则：开球不足 6 个月的行 PSC/AvgC 视为暂定（未收敛），
+    一律视为无基准返回 None（today 缺省=当天；测试可注入固定日期）。
+    """
+    if not hygiene.psc_mature(str(row["match_date"]), today=today or date.today()):
+        return None
     psc = (row["psc_home"], row["psc_draw"], row["psc_away"])
     avgc = (row["avgc_home"], row["avgc_draw"], row["avgc_away"])
     if fair_source == "psc":

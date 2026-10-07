@@ -462,6 +462,13 @@ def _cmd_srct_gate(
     注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
+    # 门① 读运行面 admin_match_exclusions（A4 排除表）——先确保库已迁移到
+    # 建表版本，缺表即炸（fail-closed），不静默跳过排除纪律
+    face = connect(resolved.db_path)
+    try:
+        migrate(face)
+    finally:
+        face.close()
     store = CorpusStore(resolved.corpus_root)
     try:
         report = corpus_gate.build_phase1_gate_report(store, resolved)

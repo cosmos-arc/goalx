@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from goalx_backend import db
 from goalx_backend.cli import _cmd_srct_gate
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, corpus_gate
@@ -26,7 +26,9 @@ from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 
-GATE_TODAY = date(2025, 10, 4)  # 报告今天（Phase1 窗口内，进度远未完）
+# 报告今天：三赛日（2025-10-01..03）+6mo 已成熟（PSC 纪律全放行），
+# Phase1 窗口内进度远未完
+GATE_TODAY = date(2026, 4, 4)
 
 # 三日三场：联赛=英超、比分各异（避免 ±1 窗跨日同比分歧义）；锚书商
 # cid177 轨迹赛前末可见 1.40/5.00/8.00（13:00 变价，21:30 为赛中价）
@@ -147,27 +149,11 @@ def _client(routes: dict[str, httpx.Response]) -> httpx.Client:
 
 
 def _seed_running_face(db_path: Path) -> None:
-    """合成运行面：hist_matches（含一条缺口行）+ understat_matches（含异常 npxg）。"""
-    conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
-        CREATE TABLE hist_matches (
-            competition TEXT, season TEXT, match_date TEXT,
-            home_team TEXT, away_team TEXT,
-            fthg INTEGER, ftag INTEGER, ftr TEXT,
-            psc_home REAL, psc_draw REAL, psc_away REAL,
-            psh_home REAL, psh_draw REAL, psh_away REAL,
-            avgc_home REAL, avgc_draw REAL, avgc_away REAL
-        );
-        CREATE TABLE understat_matches (
-            match_id TEXT PRIMARY KEY, league TEXT, season INTEGER,
-            datetime_utc TEXT, home_team_id TEXT, away_team_id TEXT,
-            goals_home INTEGER, goals_away INTEGER,
-            npxg_home REAL, npxg_away REAL,
-            forecast_w REAL, forecast_d REAL, forecast_l REAL
-        );
-        """
-    )
+    """合成运行面：真实迁移 schema + hist_matches（含一条缺口行）与
+    understat_matches（含异常 npxg）种子行（v24 起 admin_match_exclusions
+    随迁移就位，种子三行=土超，不触合成 E0 面）。"""
+    conn = db.connect(db_path)
+    db.migrate(conn)
     psc_by_day = {
         "2025-10-01": (1.40, 5.00, 8.00),  # 与锚价全等（偏差 0）
         "2025-10-02": (1.42, 5.05, 8.08),  # ~1% 内
@@ -175,7 +161,6 @@ def _seed_running_face(db_path: Path) -> None:
     }
     hist_rows = [
         (
-            "E0",
             "2526",
             day,
             "HomeX",
@@ -184,39 +169,20 @@ def _seed_running_face(db_path: Path) -> None:
             int(score[2]),
             "H",
             *psc_by_day[day],
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
         )
         for (day, _sid, score) in DAYS
     ]
     # 缺口行：同日比分无语料对应（10-01 英超 3-3）
     hist_rows.append(
-        (
-            "E0",
-            "2526",
-            "2025-10-01",
-            "HomeGap",
-            "AwayGap",
-            3,
-            3,
-            "D",
-            3.0,
-            3.0,
-            2.0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        ("2526", "2025-10-01", "HomeGap", "AwayGap", 3, 3, "D", 3.0, 3.0, 2.0)
     )
     conn.executemany(
-        "INSERT INTO hist_matches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        """
+        INSERT INTO hist_matches
+            (competition, season, match_date, home_team, away_team, fthg, ftag,
+             ftr, psc_home, psc_draw, psc_away)
+        VALUES ('E0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         hist_rows,
     )
     npxg_by_day = {
@@ -227,22 +193,26 @@ def _seed_running_face(db_path: Path) -> None:
     under_rows = [
         (
             f"u{i}",
-            "epl",
-            2025,
+            "2025",
             f"{day}T12:00:00",
             "h1",
+            "H1",
             "a1",
+            "A1",
             int(score[0]),
             int(score[2]),
             *npxg_by_day[day],
-            None,
-            None,
-            None,
         )
         for i, (day, _sid, score) in enumerate(DAYS)
     ]
     conn.executemany(
-        "INSERT INTO understat_matches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        """
+        INSERT INTO understat_matches
+            (match_id, league, season, datetime_utc, home_team_id, home_team,
+             away_team_id, away_team, goals_home, goals_away,
+             npxg_home, npxg_away, first_seen_at, observed_at)
+        VALUES (?, 'epl', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2025-10-01', '2025-10-01')
+        """,
         under_rows,
     )
     conn.commit()
@@ -391,6 +361,7 @@ def _assert_gate1_v3(gate1: dict[str, Any]) -> None:
     assert gate1["matched"] == 3
     assert gate1["matched_via_name"] == 3  # 名字身份轮全量配走
     assert gate1["name_links_learned"] == 2  # HomeX→主队甲 / AwayX→客队乙
+    assert gate1["admin_excluded"] == 0  # 种子排除窗=土超，不触合成 E0 面
     assert gate1["gaps"] == 1  # 3-3 缺口行
     assert gate1["rate"] == 0.75  # 3/(3+1)
     assert gate1["verdict"] == "fail"  # 低于 99% 线——机制如实判
@@ -400,8 +371,9 @@ def _assert_gate1_v3(gate1: dict[str, Any]) -> None:
 
 
 def _assert_gate2_v2(gate2: dict[str, Any]) -> None:
-    """门② v2 断言（中位数裁决/赛季分层/异常清单）。"""
+    """门② v2 断言（中位数裁决/赛季分层/异常清单/成熟度放行）。"""
     assert gate2["usable"] == 3
+    assert gate2["immature_skipped"] == 0  # GATE_TODAY 下三赛日全成熟
     assert gate2["mean_relative_deviation"] is not None
     assert gate2["mean_relative_deviation"] < 0.01
     assert gate2["median_relative_deviation"] is not None
@@ -550,6 +522,48 @@ def test_five_gates_report_on_synthetic_tree(tmp_path: Path) -> None:
     markdown = md_path.read_text(encoding="utf-8")
     assert "门① 场次对账" in markdown
     assert "HomeGap vs AwayGap" in markdown  # 缺口归因可见
+
+
+def test_gate1_admin_exclusion_and_gate2_maturity(tmp_path: Path) -> None:
+    """A4/A5 卫生接线：行政判赛行出对账分母（缺口转排除单列）；PSC 未成熟
+    行门②跳过比较（usable 塌缩、verdict=insufficient 如实可见）。"""
+    store, settings = _build_corpus(tmp_path)
+    try:
+        # A4 正例：缺口行（HomeGap 2025-10-01）入排除表 → 出分母、缺口清零
+        conn = db.connect(settings.db_path)
+        conn.execute(
+            """
+            INSERT INTO admin_match_exclusions
+                (competition, team, date_start, date_end, reason, created_at)
+            VALUES ('E0', 'HomeGap', '2025-10-01', '2025-10-01',
+                    '测试行政判赛', datetime('now'))
+            """
+        )
+        conn.commit()
+        conn.close()
+        report = corpus_gate.build_phase1_gate_report(store, settings, today=GATE_TODAY)
+        gate1 = report["gates"]["1_fixture_reconciliation"]
+        assert gate1["admin_excluded"] == 1
+        assert gate1["gaps"] == 0  # 唯一缺口行已被排除吸收
+        assert gate1["matched"] == 3
+        assert gate1["rate"] == 1.0
+        assert gate1["verdict"] == "pass"
+        assert gate1["per_competition"]["英超"]["fdhist"] == 3  # 分母同步缩
+        # A5 正例：报告今天落在开球+6mo 内 → 三行全未成熟，门②跳过比较
+        fresh = corpus_gate.build_phase1_gate_report(
+            store, settings, today=date(2025, 10, 4)
+        )
+        gate2 = fresh["gates"]["2_psc_cid177"]
+        assert gate2["immature_skipped"] == 3
+        assert gate2["usable"] == 0
+        assert gate2["verdict"] == "insufficient"
+        markdown = (store.root / corpus_gate.REPORTS_DIR / "phase1-gate.md").read_text(
+            encoding="utf-8"
+        )
+        assert "行政判赛排除 1" in markdown
+        assert "PSC 未成熟跳过 3" in markdown
+    finally:
+        store.close()
 
 
 def test_cli_srct_gate_payload(

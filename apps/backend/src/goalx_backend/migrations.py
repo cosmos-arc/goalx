@@ -1301,6 +1301,63 @@ def _apply_v23(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v24(conn: sqlite3.Connection) -> None:
+    """
+    v24（backtest-decade A4）：行政判赛排除表 admin_match_exclusions。
+
+    一行 = 联赛×队×日期窗：窗内该队任一侧出场的 fdhist 场次"比分是真的、
+    比赛是假的"（行政判 3-0，从未真踢）。判门①对账集已剔除；gold 训练行/
+    引擎训练集（B 相/票 14）经 data/hygiene.py 单一取数口同规则。续添只
+    INSERT（append-only 触发器兜底，同 draw_sync_runs 惯例）；seed 行=
+    四刀盘点钉死的三处土超行政判赛（2023 地震两队赛季尾 + 2025 阿达纳
+    单场弃赛，队名与日期窗=真库 hist_matches 实测拼写）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_match_exclusions (
+            id INTEGER PRIMARY KEY,
+            competition TEXT NOT NULL,
+            team TEXT NOT NULL,
+            date_start TEXT NOT NULL,
+            date_end TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (competition, team, date_start, date_end)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO admin_match_exclusions
+            (competition, team, date_start, date_end, reason, created_at)
+        VALUES
+            ('T1', 'Hatayspor', '2023-02-06', '2023-06-30',
+             '2023 地震退赛——赛季余下场次行政判 3-0',
+             strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+            ('T1', 'Gaziantep', '2023-02-06', '2023-06-30',
+             '2023 地震退赛——赛季余下场次行政判 3-0',
+             strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+            ('T1', 'Ad. Demirspor', '2025-02-09', '2025-02-09',
+             '中途离场弃赛——单场判 3-0',
+             strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER admin_match_exclusions_no_update
+            BEFORE UPDATE ON admin_match_exclusions
+            BEGIN SELECT RAISE(ABORT, 'admin_match_exclusions is append-only'); END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER admin_match_exclusions_no_delete
+            BEFORE DELETE ON admin_match_exclusions
+            BEGIN SELECT RAISE(ABORT, 'admin_match_exclusions is append-only'); END
+        """
+    )
+
+
 # 票 73：hist_matches 扩列清单单一事实源（(列名, SQLite 类型)）——
 # data/results.upsert_hist_matches 同源消费（v20 DDL ↔ upsert 列防漂移）。
 HIST_EXTENDED_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -1357,4 +1414,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (21, _apply_v21),
     (22, _apply_v22),
     (23, _apply_v23),
+    (24, _apply_v24),
 )

@@ -10,7 +10,7 @@
 
 | 节 | 内容 |
 | --- | --- |
-| [1. 表速览](#t1) | 44 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
+| [1. 表速览](#t1) | 49 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
 | [2. 硬不变量](#t2) | append-only 触发器 / 防前视红线 / 事实源层级等全局铁律 |
 | [3. 表间关系（ER）](#t3) | 主键与外键边总览（Mermaid） |
 | [4. 全列明细](#t4) | 按域分组的生成块（44 表） |
@@ -43,7 +43,8 @@
 | `pool_periods` / `pool_matches` | 彩池期次与对阵 | euro_odds_*=期次页三向欧指兜底；source_match_id=澳客场次 id | append+幂等 |
 | `pool_states` / `public_shares` | 销量/滚存 + 公众份额 | 官方公布 upsert 最新；源B 人气 append（meta 带注数量级） | upsert / append |
 | `pool_sync_runs` | 彩池同步日志 | 期次/对阵/份额计数 | append |
-| `hist_matches` | fd.co.uk 历史底座 | 五大+N1+扩五联（票 46）含 PSC/AvgC 收盘价——DC 训练与回测分母 | append+幂等 |
+| `hist_matches` | fd.co.uk 历史底座 | 五大+N1+扩五联（票 46）含 PSC/AvgC 收盘价——DC 训练与回测分母；开球<6 个月收盘列视为暂定（A5 纪律，data/hygiene.psc_mature） | append+幂等 |
+| `admin_match_exclusions` | 行政判赛排除表（A4） | 联赛×队×日期窗——"比分真、比赛假"场次训练集与对账集统一剔除（data/hygiene 单一取数口）；种子=土超 2023 地震两队+2025 阿达纳弃赛 | append（续添只 INSERT） |
 | `cost_ledger` | 成本台账 | category+note 是口径维度（llm_call 的 note=model/surface/purpose） | append |
 
 ### modelling 域
@@ -111,6 +112,9 @@ as-of 纯函数重放即决策存证；EVAssessment 口径在视图与 betting �
 <!-- schema-doc:BEGIN:er -->
 ```mermaid
 erDiagram
+    admin_match_exclusions {
+        INTEGER id PK
+    }
     backtest_bets {
         INTEGER id PK
     }
@@ -815,6 +819,24 @@ append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 
 唯一键 `UNIQUE(`competition`, `season`, `match_date`, `home_team`, `away_team`)`
 <!-- schema-doc:END:table:hist_matches -->
+
+<!-- schema-doc:BEGIN:table:admin_match_exclusions -->
+#### `admin_match_exclusions`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `competition` | TEXT | NOT NULL |
+| `team` | TEXT | NOT NULL |
+| `date_start` | TEXT | NOT NULL |
+| `date_end` | TEXT | NOT NULL |
+| `reason` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`competition`, `team`, `date_start`, `date_end`)`
+
+append-only 触发器：`admin_match_exclusions_no_delete`、`admin_match_exclusions_no_update`
+<!-- schema-doc:END:table:admin_match_exclusions -->
 <!-- schema-doc:BEGIN:table:cost_ledger -->
 #### `cost_ledger`
 
