@@ -65,6 +65,8 @@ OWNERS: dict[str, set[str]] = {
         # 2026-09-30：bronze sid 索引 + 文件锚台账（解析层防重 O(1) 载体）
         "bronze_sids",
         "bronze_sid_backfill",
+        # backtest-decade A4：行政判赛排除表（data/hygiene.py 单一取数口）
+        "admin_match_exclusions",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {

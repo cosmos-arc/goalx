@@ -93,7 +93,9 @@ def test_fair_probs_psc_preferred_avgc_fallback() -> None:
     class Row(dict):
         pass
 
+    # match_date=成熟日（任何运行日都 >6mo 前），不触发 A5 纪律
     psc_row = Row(
+        match_date="2024-01-01",
         psc_home=2.2,
         psc_draw=3.4,
         psc_away=3.2,
@@ -105,6 +107,7 @@ def test_fair_probs_psc_preferred_avgc_fallback() -> None:
     assert source == "psc"
     assert sum(probs.values()) == pytest.approx(1.0)
     avgc_row = Row(
+        match_date="2024-01-01",
         psc_home=None,
         psc_draw=None,
         psc_away=None,
@@ -115,6 +118,7 @@ def test_fair_probs_psc_preferred_avgc_fallback() -> None:
     probs, source = bt.fair_probs_from_close(avgc_row)
     assert source == "avgc"
     empty = Row(
+        match_date="2024-01-01",
         psc_home=None,
         psc_draw=None,
         psc_away=None,
@@ -123,6 +127,27 @@ def test_fair_probs_psc_preferred_avgc_fallback() -> None:
         avgc_away=None,
     )
     assert bt.fair_probs_from_close(empty) is None
+
+
+def test_fair_probs_psc_immaturity_is_no_baseline() -> None:
+    """A5 硬规则：开球不足 6 个月 → PSC/AvgC 视为暂定，返回无基准。"""
+    from datetime import date
+
+    class Row(dict):
+        pass
+
+    row = Row(
+        match_date="2025-09-01",  # +6mo=2026-03-01
+        psc_home=2.2,
+        psc_draw=3.4,
+        psc_away=3.2,
+        avgc_home=2.1,
+        avgc_draw=3.3,
+        avgc_away=3.1,
+    )
+    assert bt.fair_probs_from_close(row, today=date(2026, 2, 28)) is None
+    # 边界含端点：开球+6mo 当天即可用
+    assert bt.fair_probs_from_close(row, today=date(2026, 3, 1)) is not None
 
 
 def test_simulated_jc_odds_haircut() -> None:
@@ -236,6 +261,26 @@ def test_run_backtest_run_isolation(db) -> None:
     assert by_run[first.run_id] == by_run.get(second.run_id, 0)
     statuses = db.execute("SELECT status FROM backtest_runs").fetchall()
     assert {str(r["status"]) for r in statuses} == {"done"}
+
+
+def test_run_backtest_pins_fair_maturity_today(db, monkeypatch) -> None:
+    """F2 回归（A5）：成熟度基准日 run 开头钉一次并入档 params——同 run
+    不混用两套口径，重放差异可由该字段解释。"""
+    from datetime import date as date_cls
+
+    class _FrozenDate(date_cls):
+        @classmethod
+        def today(cls) -> date_cls:
+            return date_cls(2026, 10, 8)
+
+    monkeypatch.setattr(bt, "date", _FrozenDate)
+    seed_synthetic_league(db)
+    params = bt.BacktestParams(competitions=("E0",), seasons=("2324",))
+    result = bt.run_backtest(db, params, label="pin-today")
+    row = db.execute(
+        "SELECT params FROM backtest_runs WHERE id = ?", (result.run_id,)
+    ).fetchone()
+    assert json.loads(row["params"])["fair_maturity_today"] == "2026-10-08"
 
 
 def test_run_backtest_marks_failed_run(db) -> None:

@@ -3,7 +3,8 @@
 
 - 按比赛周（ISO 年-周）重估：每联赛每周拟合一次时间衰减 DC，训练截止
   严格早于该周最早比赛日（``assert_no_lookahead`` 常开断言）；
-- 公允基准 fair = Pinnacle 收盘 Shin（PSC），缺失行用 AvgC 兜底；
+- 公允基准 fair = Pinnacle 收盘 Shin（PSC），缺失行用 AvgC 兜底；开球
+  不足 6 个月的行收盘列未收敛（A5 纪律），视为无基准不下注；
 - 模拟竞彩价 = fair 赔率 × (1 − haircut)（默认 −10%，票 30 可替换校准值）；
   hhad/ttg 的市场侧分布由 fair 1X2 经 penaltyblog goal_expectancy 反推
   (λ_home, λ_away) 构造市场隐含矩阵后推导；
@@ -34,6 +35,7 @@ from typing import Any
 from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
+from goalx_backend.data import hygiene
 from goalx_backend.data import results as rs_store
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
@@ -128,9 +130,19 @@ def assert_no_lookahead(train_rows: list[TrainingRow], week_dates: list[str]) ->
 
 
 def fair_probs_from_close(
-    row: sqlite3.Row, *, fair_source: str = "auto"
+    row: sqlite3.Row,
+    *,
+    fair_source: str = "auto",
+    today: date | None = None,
 ) -> tuple[dict[str, float], str] | None:
-    """收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。"""
+    """
+    收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。
+
+    A5 成熟度硬规则：开球不足 6 个月的行 PSC/AvgC 视为暂定（未收敛），
+    一律视为无基准返回 None（today 缺省=当天；测试可注入固定日期）。
+    """
+    if not hygiene.psc_mature(str(row["match_date"]), today=today or date.today()):
+        return None
     psc = (row["psc_home"], row["psc_draw"], row["psc_away"])
     avgc = (row["avgc_home"], row["avgc_draw"], row["avgc_away"])
     if fair_source == "psc":
@@ -344,8 +356,15 @@ def _record_week_predictions(
     artifact: DCArtifact,
     params: BacktestParams,
     result: BacktestResult,
+    *,
+    fair_today: date,
 ) -> dict[int, list[_Candidate]]:
-    """逐场落预测行并构造候选单关；返回 hist_match_id → candidates。"""
+    """
+    逐场落预测行并构造候选单关；返回 hist_match_id → candidates。
+
+    fair_today：本次 run 钉住的成熟度基准日（A5），由 run_backtest 统一
+    捕获传入——跨午夜/逐调用墙钟会让同一 run 混用两套成熟口径。
+    """
 
     def skip(key: str) -> None:
         result.skipped[key] = result.skipped.get(key, 0) + 1
@@ -357,7 +376,9 @@ def _record_week_predictions(
         if home not in artifact.teams or away not in artifact.teams:
             skip("untrained_teams")
             continue
-        fair = fair_probs_from_close(row, fair_source=params.fair_source)
+        fair = fair_probs_from_close(
+            row, fair_source=params.fair_source, today=fair_today
+        )
         if fair is None:
             skip("no_fair_baseline")
             continue
@@ -453,10 +474,15 @@ def run_backtest(
     结算实时完成（历史赛果已知）；逐注记录 EV/Kelly/盈亏，走与纸面/实盘
     相同的 ``settle_fixed_bet`` 代码路径。
     """
+    # A5：成熟度基准日钉住一次（跨午夜不换口径）并入档 params——重放可
+    # 解释：同输入不同日跑，近 6 个月尾窗行的 fair 判定可不同，差异由该
+    # 字段说明
+    fair_today = date.today()
     run_params = asdict(params) | {
         # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
         "price_model": "simulated_jc",
         "versions": implementation_versions(),
+        "fair_maturity_today": fair_today.isoformat(),
     }
     cur = conn.execute(
         """
@@ -497,7 +523,13 @@ def run_backtest(
                     for r in week_rows
                 }
                 candidates_by_match = _record_week_predictions(
-                    conn, run_id, week_rows, artifact, params, result
+                    conn,
+                    run_id,
+                    week_rows,
+                    artifact,
+                    params,
+                    result,
+                    fair_today=fair_today,
                 )
                 _place_week_bets(
                     conn,

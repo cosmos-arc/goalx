@@ -13,9 +13,11 @@ Phase 1 验证门报告（票 55/56 切片 17）：三对账 + 五条量化门�
   行退回比分+日期±1（北京墙钟 × 赛地本地日基准差）。比甲 playoff/苏超
   split 后轮次在 CorpusScope 口径外——单列 scope_excluded，不计分母。
   阈值：重叠匹配率 ≥99%，缺口逐场归因（分母只计夜班已完成日期 ±1 内
-  的 fdhist 场次——未回填日期不计入，不虚增缺口）。
+  的 fdhist 场次——未回填日期不计入，不虚增缺口）；行政判赛排除行
+  （A4 admin_match_exclusions）在对账集入口统一剔除，行数单列不藏。
 - **门② PSC×cid177**：fdhist PSC（收盘代理）×语料 cid177 赛前末可见价，
-  逐Outcome 相对偏差。裁决口径（2026-10-07 v2）=**中位数 <1%**（尾部
+  逐Outcome 相对偏差；开球不足 6 个月的行 PSC 未收敛（A5 成熟度纪律），
+  跳过比较单列。裁决口径（2026-10-07 v2）=**中位数 <1%**（尾部
   不敏感——晚场锚价/单场异常不再撬动裁决）；均值/p95/max 同报不藏尾，
   另按赛季分层（锚书 2023/24 起才报价，老季 usable 塌缩如实可见）+
   |偏差|>100% 异常清单供人工判读。
@@ -54,9 +56,11 @@ from typing import Any, cast
 
 import duckdb
 
+from goalx_backend import db
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded, psc_mature
 from goalx_backend.data.ingest import srct
 from goalx_backend.data.ingest.srct_night import phase1_dates
 from goalx_backend.data.results import UNDERSTAT_LEAGUES
@@ -482,8 +486,16 @@ def gate1_fixture_reconciliation(
     matched: MatchResult,
     hists: list[HistRow],
     done_dates: set[str],
+    *,
+    admin_excluded: int,
 ) -> dict[str, Any]:
-    """门①：场次对账（重叠匹配率≥99%、缺口逐场归因——JSON 全量）。"""
+    """
+    门①：场次对账（重叠匹配率≥99%、缺口逐场归因——JSON 全量）。
+
+    hists 应已剔除行政判赛排除行（A4，build 入口统一过滤后传入）；
+    admin_excluded=被剔行数（必传——0 须是调用方显式声明，不设默认），
+    报告单列不藏。
+    """
     scope_ids = {id(h) for h in matched.scope_excluded}
     active = [h for h in hists if id(h) not in scope_ids]
 
@@ -525,6 +537,7 @@ def gate1_fixture_reconciliation(
         "matched": len(matched.pairs),
         "matched_via_name": matched.matched_via_name,
         "name_links_learned": matched.name_links_learned,
+        "admin_excluded": admin_excluded,
         "gaps": len(matched.gaps),
         "ambiguous": len(matched.ambiguous),
         "scope_excluded": len(matched.scope_excluded),
@@ -618,20 +631,29 @@ def _dev_stats(devs: list[float]) -> dict[str, float | int | None]:
 
 
 def gate2_psc_anchor(
-    con: duckdb.DuckDBPyConnection, pairs: list[tuple[FixtureRow, HistRow]]
+    con: duckdb.DuckDBPyConnection,
+    pairs: list[tuple[FixtureRow, HistRow]],
+    *,
+    today: date,
 ) -> dict[str, Any]:
     """
     门②：PSC×cid177 赛前末可见价偏差（v2：裁决=中位数<1%）。
 
     锚书 cid177 2023/24 起才报价（十年窗老季 usable 塌缩在 per_season 如实
     可见）；均值/p95/max 同报，|偏差|>100% 进异常清单供人工判读（晚场锚价
-    陈旧/单场异常不再撬动裁决）。
+    陈旧/单场异常不再撬动裁决）。A5 成熟度纪律：开球不足 6 个月的行 PSC
+    视为暂定（未收敛），跳过比较单列 immature_skipped——2025/26 门②
+    median 1.3% 即 PSC 未成熟轨迹，纪律落地后自然消解。
     """
     anchors = _anchor_last_pre_kickoff(con, [f.sid for f, _ in pairs])
     usable = 0
+    immature_skipped = 0
     devs_by_season: dict[str, list[float]] = defaultdict(list)
     outliers: list[dict[str, Any]] = []
     for fixture, hist in pairs:
+        if not psc_mature(hist.match_date, today=today):
+            immature_skipped += 1
+            continue
         anchor = anchors.get(fixture.sid)
         raw_psc = (hist.psc_home, hist.psc_draw, hist.psc_away)
         if anchor is None or None in raw_psc:
@@ -677,6 +699,7 @@ def gate2_psc_anchor(
         "verdict_metric": "median",
         "pairs": len(pairs),
         "usable": usable,
+        "immature_skipped": immature_skipped,
         "outcome_comparisons": stats.get("comparisons", 0),
         "mean_relative_deviation": stats.get("mean"),
         "median_relative_deviation": dev_median,
@@ -1079,6 +1102,8 @@ def build_phase1_gate_report(
     跑五门+coverage，写 JSON/MD 两视图到语料树 reports/，返回报告 dict。
 
     Phase1 进度 <100% 时 overall=provisional（数据完整性先行，不放行）。
+    前置条件：运行面库已迁移（门①读 admin_match_exclusions，缺表即炸
+    fail-closed）；CLI 入口已前置 migrate，直接调用方自行确保。
     """
     resolved_today = today if today is not None else datetime.now().date()
     store.ensure_tree()
@@ -1090,10 +1115,29 @@ def build_phase1_gate_report(
     con = corpus_duckdb.connect(settings)
     try:
         fixtures = _fetch_fixtures(con)
-        hists = _fetch_hists(con, settled_dates)
+        all_hists = _fetch_hists(con, settled_dates)
+        # A4：行政判赛排除行在对账集入口统一剔除（比分真、比赛假——
+        # 训练集与对账集两侧同规则；行数单列进门①报告不藏）
+        face = db.connect(settings.db_path, readonly=True)
+        try:
+            exclusions = admin_exclusions(face)
+        finally:
+            face.close()
+        hists = [
+            h
+            for h in all_hists
+            if not is_admin_excluded(
+                h.league_key, h.home, h.away, h.match_date, exclusions
+            )
+        ]
         matched = match_fixtures(fixtures, hists)
-        gate1 = gate1_fixture_reconciliation(matched, hists, done_dates)
-        gate2 = gate2_psc_anchor(con, matched.pairs)
+        gate1 = gate1_fixture_reconciliation(
+            matched,
+            hists,
+            done_dates,
+            admin_excluded=len(all_hists) - len(hists),
+        )
+        gate2 = gate2_psc_anchor(con, matched.pairs, today=resolved_today)
         gate3 = gate3_xg_understat(con)
         coverage = coverage_matrix(con)
     finally:
@@ -1167,7 +1211,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
         + str(gate1["matched_via_name"])
         + "，队名映射 "
         + str(gate1["name_links_learned"])
-        + " 条）/ 缺口 "
+        + " 条）/ 行政判赛排除 "
+        + str(gate1["admin_excluded"])
+        + " / 缺口 "
         + str(gate1["gaps"])
         + " / 歧义 "
         + str(gate1["ambiguous"])
@@ -1180,6 +1226,14 @@ def _render_markdown(report: dict[str, Any]) -> str:
         + "** · verdict `"
         + str(gate1["verdict"])
         + "`",
+        *(
+            [
+                "  - 注：语料多出含行政判赛排除行的语料侧对应场次（fdhist 行"
+                + "已剔除、其 fixture 落此处）——非真冗余，勿当采集重复排查"
+            ]
+            if gate1["admin_excluded"] > 0
+            else []
+        ),
         "",
         "| 联赛 | fdhist | matched | gaps | ambiguous |",
         "|---|---|---|---|---|",
@@ -1204,7 +1258,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
         + str(gate2["pairs"])
         + "（可用 "
         + str(gate2["usable"])
-        + "，Outcome 比较 "
+        + "，PSC 未成熟跳过 "
+        + str(gate2["immature_skipped"])
+        + "（开球不足 6 个月，A5 纪律），Outcome 比较 "
         + str(gate2["outcome_comparisons"])
         + " 次）· 中位数偏差 **"
         + _fmt(gate2["median_relative_deviation"])
