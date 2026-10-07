@@ -263,6 +263,26 @@ def test_run_backtest_run_isolation(db) -> None:
     assert {str(r["status"]) for r in statuses} == {"done"}
 
 
+def test_run_backtest_pins_fair_maturity_today(db, monkeypatch) -> None:
+    """F2 回归（A5）：成熟度基准日 run 开头钉一次并入档 params——同 run
+    不混用两套口径，重放差异可由该字段解释。"""
+    from datetime import date as date_cls
+
+    class _FrozenDate(date_cls):
+        @classmethod
+        def today(cls) -> date_cls:
+            return date_cls(2026, 10, 8)
+
+    monkeypatch.setattr(bt, "date", _FrozenDate)
+    seed_synthetic_league(db)
+    params = bt.BacktestParams(competitions=("E0",), seasons=("2324",))
+    result = bt.run_backtest(db, params, label="pin-today")
+    row = db.execute(
+        "SELECT params FROM backtest_runs WHERE id = ?", (result.run_id,)
+    ).fetchone()
+    assert json.loads(row["params"])["fair_maturity_today"] == "2026-10-08"
+
+
 def test_run_backtest_marks_failed_run(db) -> None:
     seed_synthetic_league(db)
     params = bt.BacktestParams(competitions=("E0",), seasons=("2324",))

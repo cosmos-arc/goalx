@@ -463,7 +463,10 @@ def _cmd_srct_gate(
     """
     resolved = settings if settings is not None else get_settings()
     # 门① 读运行面 admin_match_exclusions（A4 排除表）——先确保库已迁移到
-    # 建表版本，缺表即炸（fail-closed），不静默跳过排除纪律
+    # 建表版本，缺表即炸（fail-closed），不静默跳过排除纪律。库文件缺失
+    # 同样 fail-loud：connect 会新建空库，空面会出"全 insufficient"假报告
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
     face = connect(resolved.db_path)
     try:
         migrate(face)

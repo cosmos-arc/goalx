@@ -82,3 +82,32 @@ def test_admin_exclusions_missing_table_fails_closed() -> None:
             hygiene.admin_exclusions(conn)
     finally:
         conn.close()
+
+
+def test_admin_exclusions_rejects_unpadded_window(db: sqlite3.Connection) -> None:
+    """F3 回归：缺零填充日期窗（如 2023-2-6）在取数口即抛——字典序区间
+    比较的前提，静默收下会让该窗永不命中（append-only 下纠错昂贵）。"""
+    db.execute(
+        """
+        INSERT INTO admin_match_exclusions
+            (competition, team, date_start, date_end, reason, created_at)
+        VALUES ('E0', 'BadTeam', '2023-2-6', '2023-06-30', '坏窗', 't')
+        """
+    )
+    db.commit()
+    with pytest.raises(ValueError, match="date_start"):
+        hygiene.admin_exclusions(db)
+
+
+def test_admin_exclusions_rejects_nonexistent_date(db: sqlite3.Connection) -> None:
+    """F3 回归：格式对但不存在的假日期（2023-02-30）同样拒收。"""
+    db.execute(
+        """
+        INSERT INTO admin_match_exclusions
+            (competition, team, date_start, date_end, reason, created_at)
+        VALUES ('E0', 'BadTeam', '2023-02-30', '2023-06-30', '假日期', 't')
+        """
+    )
+    db.commit()
+    with pytest.raises(ValueError, match="非法日期"):
+        hygiene.admin_exclusions(db)

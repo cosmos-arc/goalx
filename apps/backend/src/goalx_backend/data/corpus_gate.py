@@ -1226,6 +1226,14 @@ def _render_markdown(report: dict[str, Any]) -> str:
         + "** · verdict `"
         + str(gate1["verdict"])
         + "`",
+        *(
+            [
+                "  - 注：语料多出含行政判赛排除行的语料侧对应场次（fdhist 行"
+                + "已剔除、其 fixture 落此处）——非真冗余，勿当采集重复排查"
+            ]
+            if gate1["admin_excluded"] > 0
+            else []
+        ),
         "",
         "| 联赛 | fdhist | matched | gaps | ambiguous |",
         "|---|---|---|---|---|",

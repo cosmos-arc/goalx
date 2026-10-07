@@ -356,8 +356,15 @@ def _record_week_predictions(
     artifact: DCArtifact,
     params: BacktestParams,
     result: BacktestResult,
+    *,
+    fair_today: date,
 ) -> dict[int, list[_Candidate]]:
-    """逐场落预测行并构造候选单关；返回 hist_match_id → candidates。"""
+    """
+    逐场落预测行并构造候选单关；返回 hist_match_id → candidates。
+
+    fair_today：本次 run 钉住的成熟度基准日（A5），由 run_backtest 统一
+    捕获传入——跨午夜/逐调用墙钟会让同一 run 混用两套成熟口径。
+    """
 
     def skip(key: str) -> None:
         result.skipped[key] = result.skipped.get(key, 0) + 1
@@ -369,7 +376,9 @@ def _record_week_predictions(
         if home not in artifact.teams or away not in artifact.teams:
             skip("untrained_teams")
             continue
-        fair = fair_probs_from_close(row, fair_source=params.fair_source)
+        fair = fair_probs_from_close(
+            row, fair_source=params.fair_source, today=fair_today
+        )
         if fair is None:
             skip("no_fair_baseline")
             continue
@@ -465,10 +474,15 @@ def run_backtest(
     结算实时完成（历史赛果已知）；逐注记录 EV/Kelly/盈亏，走与纸面/实盘
     相同的 ``settle_fixed_bet`` 代码路径。
     """
+    # A5：成熟度基准日钉住一次（跨午夜不换口径）并入档 params——重放可
+    # 解释：同输入不同日跑，近 6 个月尾窗行的 fair 判定可不同，差异由该
+    # 字段说明
+    fair_today = date.today()
     run_params = asdict(params) | {
         # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
         "price_model": "simulated_jc",
         "versions": implementation_versions(),
+        "fair_maturity_today": fair_today.isoformat(),
     }
     cur = conn.execute(
         """
@@ -509,7 +523,13 @@ def run_backtest(
                     for r in week_rows
                 }
                 candidates_by_match = _record_week_predictions(
-                    conn, run_id, week_rows, artifact, params, result
+                    conn,
+                    run_id,
+                    week_rows,
+                    artifact,
+                    params,
+                    result,
+                    fair_today=fair_today,
                 )
                 _place_week_bets(
                     conn,

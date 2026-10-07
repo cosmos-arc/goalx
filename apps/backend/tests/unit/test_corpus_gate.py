@@ -562,8 +562,18 @@ def test_gate1_admin_exclusion_and_gate2_maturity(tmp_path: Path) -> None:
         )
         assert "行政判赛排除 1" in markdown
         assert "PSC 未成熟跳过 3" in markdown
+        assert "非真冗余" in markdown  # 被剔除配对的 fixture 落"语料多出"有注记
     finally:
         store.close()
+
+
+def test_cli_srct_gate_missing_db_fails_loud(tmp_path: Path) -> None:
+    """F1 回归：运行面库文件缺失 → fail-loud（connect 会新建空库，空面会
+    出"全 insufficient"假成功报告），且不得产生新库文件。"""
+    settings = _settings(tmp_path)  # db_path 未建
+    with pytest.raises(FileNotFoundError, match="运行面库不存在"):
+        _cmd_srct_gate(argparse.Namespace(), settings=settings)
+    assert not settings.db_path.exists()
 
 
 def test_cli_srct_gate_payload(

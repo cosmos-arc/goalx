@@ -13,11 +13,16 @@
 from __future__ import annotations
 
 import calendar
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
 PSC_MATURITY_MONTHS = 6
+# 排除窗日期=字典序区间比较的前提：严格零填充 YYYY-MM-DD（缺零填充如
+# '2023-2-6' 会让比较静默失效——append-only 触发器下纠错昂贵，取数口
+# fail-closed 拒收）
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass(frozen=True)
@@ -46,8 +51,29 @@ def psc_mature(match_date: str, *, today: date) -> bool:
     return _plus_months(date.fromisoformat(match_date), PSC_MATURITY_MONTHS) <= today
 
 
+def _checked_day(value: str, team: str, field: str) -> str:
+    """严格校验排除窗日期（零填充 YYYY-MM-DD 且真实存在），坏值即抛。"""
+    if not _ISO_DAY.match(value):
+        raise ValueError(
+            f"admin_match_exclusions.{field}={value!r}（{team}）非法："
+            + "须零填充 YYYY-MM-DD，否则字典序区间比较静默失效"
+        )
+    try:
+        date.fromisoformat(value)  # 拒 2023-02-30 类假日期
+    except ValueError as exc:
+        raise ValueError(
+            f"admin_match_exclusions.{field}={value!r}（{team}）非法日期"
+        ) from exc
+    return value
+
+
 def admin_exclusions(conn: sqlite3.Connection) -> list[AdminExclusion]:
-    """排除表全量行（运行面 sqlite；表缺席=未迁移，抛错优于静默跳过）。"""
+    """
+    排除表全量行（运行面 sqlite，fail-closed 单一取数口）。
+
+    表缺席=未迁移、窗口日期非法（非零填充 YYYY-MM-DD 或假日期）均抛错，
+    覆盖判门①与 gold/引擎两侧消费面，不静默跳过排除纪律。
+    """
     rows = conn.execute(
         """
         SELECT competition, team, date_start, date_end, reason
@@ -59,8 +85,8 @@ def admin_exclusions(conn: sqlite3.Connection) -> list[AdminExclusion]:
         AdminExclusion(
             competition=str(r["competition"]),
             team=str(r["team"]),
-            date_start=str(r["date_start"]),
-            date_end=str(r["date_end"]),
+            date_start=_checked_day(str(r["date_start"]), str(r["team"]), "date_start"),
+            date_end=_checked_day(str(r["date_end"]), str(r["team"]), "date_end"),
             reason=str(r["reason"]),
         )
         for r in rows
