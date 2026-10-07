@@ -866,23 +866,23 @@ def _count_raw_files(store: CorpusStore, dataset: str) -> int:
 
 
 def _scan_template_pages(
-    store: CorpusStore, dataset: str, marker: str
+    store: CorpusStore, dataset: str, markers: tuple[str, ...]
 ) -> tuple[set[str], int, int]:
     """
     Raw 页按解析守卫同源谓词分类 → (当前模板页 sid 集, 伪 200 页数, 不可读页数)。
 
     流式读页首 64KB 早退（标记实测全在 29KB 内）；UTF-8 页字节级搜索与
-    解码后搜索等价。sid 取自文件名（去 .gz 与端点扩展名）。三类互斥都出
-    分母：缺标记=旧模板/改版页（template_mismatch 桶，解析器 v3 候选
-    内容）；带伪 200 图=站点无此页（pseudo_200 桶，缺席内容非采集失败）；
-    解压失败=撕裂/截断 gzip（unreadable 桶，真树 2026-10-03 撕裂史）
-    ——单页坏不炸全报告。返回 sid 集供分子交集（bronze 残留行其 raw 非
-    模板页时剔出分子，防覆盖>1）。
+    解码后搜索等价。sid 取自文件名（去 .gz 与端点扩展名）。标记组任一
+    命中=可解析模板页（detail/analysis v3 起两代模板并存）。三类互斥都出
+    分母：缺全部标记=再改版页（template_mismatch 桶）；带伪 200 图=站点
+    无此页（pseudo_200 桶，缺席内容非采集失败）；解压失败=撕裂/截断 gzip
+    （unreadable 桶，真树 2026-10-03 撕裂史）——单页坏不炸全报告。返回
+    sid 集供分子交集（bronze 残留行其 raw 非模板页时剔出分子，防覆盖>1）。
     """
     root = store.raw_dir(srct.SRCT_PROVIDER, dataset)
     if not root.exists():
         return set(), 0, 0
-    marker_bytes = marker.encode()
+    marker_bodies = [m.encode() for m in markers]
     unavailable_bytes = srct.CONTENT_404_MARKER.encode()
     template_sids: set[str] = set()
     pseudo_200 = 0
@@ -899,7 +899,7 @@ def _scan_template_pages(
             continue
         if unavailable_bytes in head:
             pseudo_200 += 1
-        elif marker_bytes in head:
+        elif any(m in head for m in marker_bodies):
             template_sids.add(sid)
     return template_sids, pseudo_200, unreadable
 
@@ -933,11 +933,11 @@ def gate5_pipeline_health(
     """
     门⑤：管线健康（解析率代理/夜班台账/Phase1 进度/silver 版本面）。
 
-    键覆盖分母=含当前解析模板标记的页（2026-10-07 裁决）：站点约 2020
-    换模板，detail/analysis 旧模板页解析器按设计跳过——单列
-    template_mismatch（解析器 v3 候选内容）；伪 200 图页单列 pseudo_200
-    （站点无此页，缺席内容）——两者均非采集失败。无模板标记数据集
-    （day_page/odds_1x2d）分母维持 raw 全量。
+    键覆盖分母=含当前解析模板标记的页（2026-10-07 裁决）：标记组任一
+    命中即入分母——detail/analysis v3 分发后两代模板页（2020 换模板前后）
+    都可解析产 bronze；全组缺席=站点再改版，单列 template_mismatch；伪
+    200 图页单列 pseudo_200（站点无此页，缺席内容）——两者均非采集失败。
+    无模板标记数据集（day_page/odds_1x2d）分母维持 raw 全量。
 
     进度分母=phase1_dates 任务清单，分子=settled（done|not_found——夜班
     对两者的判定都算完成，与 pending_dates 口径一致）。数据集集从端点
@@ -955,10 +955,10 @@ def gate5_pipeline_health(
     for dataset in datasets:
         raw_count = _count_raw_files(store, dataset)
         bronze_sids = _count_bronze_sids(store, dataset)
-        marker = srct.TEMPLATE_MARKERS.get(dataset)
-        if marker:
+        markers = srct.TEMPLATE_MARKERS.get(dataset)
+        if markers:
             template_sids, pseudo_200, unreadable = _scan_template_pages(
-                store, dataset, marker
+                store, dataset, markers
             )
             template_count = len(template_sids)
             mismatch = raw_count - template_count - pseudo_200 - unreadable

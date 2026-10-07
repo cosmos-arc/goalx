@@ -77,8 +77,8 @@ BRONZE_VERSIONS: dict[str, str] = {
     ODDS_DATASET: "srct_odds_v1",
     ASIANODDS_DATASET: "srct_ah_multi_v2",  # v2=初盘组 title 开盘时刻入 bronze
     OVERDOWN_DATASET: "srct_ou_multi_v2",  # 同构同升（v2=initial_at）
-    DETAIL_DATASET: "srct_detail_v1",
-    ANALYSIS_DATASET: "srct_analysis_v1",
+    DETAIL_DATASET: "srct_detail_v3",  # v3=两代模板分发（旧模板 2016-2020 入列）
+    ANALYSIS_DATASET: "srct_analysis_v3",  # 同（旧模板 2019-2020 数组面同构）
     STATS_DATASET: "srct_stats_v1",
     HANDICAP_DATASET: "srct_hdp_v1",
 }
@@ -807,18 +807,350 @@ _ANALYSIS_FUTURE_DATE_RE = re.compile(r"\d{2}-\d{2}")
 _ANALYSIS_FUTURE_HEADER = frozenset(("时间", "赛事", "对阵", "分析", "直播", "相隔"))
 _ANALYSIS_HOME_BLOCK = 1  # 单格行（队名块头）计数：1=主队块，>1=客队块
 
-# 端点页模板标记（公开面，2026-10-07 门⑤裁决）：数据集 → 解析守卫所依的
-# 页内标记。缺标记=旧模板/伪 200 页——解析器按设计跳过（不产 bronze 行），
-# 门⑤分母据此剔除此类页（键覆盖=可解析模板页口径），不视为管线损坏。
-# 站点约 2020 换模板：detail 缺席 2016-2019 全季+2020 尾、analysis 缺席
-# 2019-2020（实测），旧模板页是解析器 v3 候选内容而非采集失败。
+# —— 解析器 v3（backtest-decade A组票 01/02）：站点 2020 换模板前的旧模板 ——
+# detail 旧模板 2016-01→2020 尾 19,878 张、analysis 旧模板 2019-2020 5,841
+# 张，v2 守卫按设计跳过（门⑤ template_mismatch 桶）。v3 与 v2 并存（版本
+# 函数隔离：v2 函数与既有行不动），分发入口按页内标记路由，重物化经既有
+# append_bronze 回补通道零网络重跑。payload 形状与 v2 同构——silver
+# match_detail/match_analysis 摘要面零改动即扩窗。
+#
+# 旧模板 detail（真树实测钉死）：页题/表头标记=「详细事件」（新模板页亦
+# 含此串——分发先查新标记）；技统 th 两代变体（2016「技术统计」/2017+
+# 「本场技术统计」），行=bar|主值|名|客值|bar 五格；事件表首行=半场比分
+# 行（colspan 3 格天然跳过），行=主侧|主图标|时刻|客图标|客侧，2016 图标
+# 无 title——事件语义取页内图例（bf_img/N.png→标签）；阵容=teamNames
+# （队名+阵型）+ plays 容器（class="home five"/"home"，号+名融合在锚文本，
+# pid 在 player URL，无队长标）+ backupPlay 替补块；无 xG/裁判/教练
+# （真无，空≠无，定则 4）。
+_DETAIL_V3_MARKER = "详细事件"
+# 技统/事件表数据行固定 5 格（bar|主|名|客|bar / 主|图标|时刻|图标|客）
+_DETAIL_V3_ROW_CELLS = 5
+# 头部清洗窗（场地/裁判行所在；v2 按锚文本定位，旧模板无稳定锚取定窗）
+_DETAIL_V3_HEAD_BYTES = 20000
+_DETAIL_V3_TECH_TH_RE = re.compile(r"<th[^>]*>(?:本场)?技术统计</th>")
+_DETAIL_V3_EVENT_TH_RE = re.compile(r"<th[^>]*>详细事件</th>")
+_V3_KICKOFF_RE = re.compile(  # 旧模板两页共用（v2 版要求等号两侧带空格）
+    r"var strTime\s*=\s*'([^']+)'"
+)
+_DETAIL_V3_NAME_SPAN_RE = re.compile(r'<span class="name">([^<]+)</span>')
+# 加时分钟可达 100'-120'+（欧冠杯等两回合赛制页实测 210 行）——三位数
+_DETAIL_V3_EVENT_TIME_RE = re.compile(r"\d{1,3}(?:\+\d{1,2})?'")
+_DETAIL_V3_ICON_RE = re.compile(r"/images/bf_img/(\d+)\.png")
+_ICON_LEGEND_RE = re.compile(
+    r'<div class="icon">\s*<img src="/images/bf_img/(\d+)\.png"\s*/>([^<]*)</div>'
+)
+# play 开标签（两种引号形态并存）；条目切片=到下一 play 开标签（部分页
+# play 块无 span 包裹，不能以 </span> 收口——真树 sid 1549846 实测）
+_DETAIL_V3_PLAY_OPEN_RE = re.compile(r"<div class=['\"]play['\"]")
+_DETAIL_V3_CONTAINER_RES = (
+    re.compile(r'class="home[^"]*"'),
+    re.compile(r'class="guest[^"]*"'),
+)
+# 头部三段独立提取（v2 三段同串在 2016 仅场地页连坐丢 venue——2,063 页
+# 实测；raw 文本惰性到下一标签/标签词，各段独立降级）
+_V3_VENUE_RE = re.compile(r"场地：\s*(.+?)(?:天气：|<)", re.S)
+_V3_WEATHER_RE = re.compile(r"天气：\s*(.+?)(?:温度：|<)", re.S)
+_V3_TEMPERATURE_RE = re.compile(r"温度：\s*([^\s<]+)")
+
+
+def _clean_source(fragment: str) -> str:
+    """去标签压空白并剥 &nbsp;（旧模板表格格清洗；v2 _clean_html 无 nbsp 面）。"""
+    return re.sub(
+        r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment.replace("&nbsp;", " "))
+    ).strip()
+
+
+def _seg_until(text: str, start: int, stops: tuple[str, ...]) -> str:
+    """从 start 起的段，截至首个命中的停界标（无命中=到文尾）。"""
+    end = len(text)
+    for stop in stops:
+        pos = text.find(stop, start)
+        if pos >= 0:
+            end = min(end, pos)
+    return text[start:end]
+
+
+def _detail_v3_team(text: str, team_id: str) -> str | None:
+    """头部 id="home"/"guest" 容器内首个 span.name（队名；真树全量在）。"""
+    start = text.find(f'id="{team_id}"')
+    if start < 0:
+        return None
+    found = _DETAIL_V3_NAME_SPAN_RE.search(text, start, start + 1500)
+    return found.group(1).strip() if found else None
+
+
+def _detail_v3_icon_legend(text: str) -> dict[str, str]:
+    """页内图例（icons 区 bf_img/N.png → 语义标签）：2016 事件图标无 title。"""
+    return {
+        m.group(1): m.group(2).strip()
+        for m in _ICON_LEGEND_RE.finditer(text)
+        if m.group(2).strip()
+    }
+
+
+def _detail_v3_tech(text: str) -> list[dict[str, str | None]]:
+    """
+    旧模板技统表（th 技术统计/本场技术统计）→ (主, 名, 客) 三元组行。
+
+    行=bar|主值|名|客值|bar 五格（两代同构，2016/2017 实测）；值空=源页
+    &nbsp;/空格 → None（空≠无）。
+    """
+    header = _DETAIL_V3_TECH_TH_RE.search(text)
+    if header is None:
+        return []
+    end = text.find("</table>", header.end())
+    rows: list[dict[str, str | None]] = []
+    for chunk in text[header.end() : end].split("</tr>"):
+        cells = [
+            _clean_source(inner)
+            for _, inner in re.findall(r"<td([^>]*)>(.*?)</td>", chunk, re.S | re.I)
+        ]
+        if len(cells) < _DETAIL_V3_ROW_CELLS or not cells[2]:
+            continue
+        rows.append(
+            {"home": cells[1] or None, "name": cells[2], "away": cells[3] or None}
+        )
+    return rows
+
+
+def _detail_v3_events(text: str, legend: dict[str, str]) -> list[str]:
+    """
+    旧模板事件表 → 事件串（"时刻 [图例标签] 侧文本"）。
+
+    行=主侧|主图标|时刻|客图标|客侧 五格；首行半场比分（3 格 colspan）与
+    表头天然跳过。图标语义取页内图例（侧图标列 title 2016 缺席）；侧文本
+    =有值一侧的贴源清洗串（换人行含出入两将，序贴源）。
+    """
+    header = _DETAIL_V3_EVENT_TH_RE.search(text)
+    if header is None:
+        return []
+    end = text.find("</table>", header.end())
+    events: list[str] = []
+    for chunk in text[header.end() : end].split("</tr>"):
+        tds = re.findall(r"<td([^>]*)>(.*?)</td>", chunk, re.S | re.I)
+        if len(tds) != _DETAIL_V3_ROW_CELLS:
+            continue
+        cells = [_clean_source(inner) for _, inner in tds]
+        time_cell = cells[2].strip('"')  # 个别页时刻带引号（"118'"）
+        if not _DETAIL_V3_EVENT_TIME_RE.fullmatch(time_cell):
+            continue
+        icons = _DETAIL_V3_ICON_RE.findall(
+            "".join((tds[1][0], tds[1][1], tds[3][0], tds[3][1]))
+        )
+        labels = " ".join(dict.fromkeys(legend[i] for i in icons if i in legend))
+        sides = " ".join(c for c in (cells[0], cells[4]) if c)
+        if not (sides or labels):
+            continue
+        events.append(" ".join(p for p in (time_cell, labels, sides) if p))
+    return events
+
+
+def _detail_v3_entries(seg: str) -> dict[str, list[dict[str, object]]]:
+    """plays/backupPlay 段 → 两侧条目（主客=最近 class="home|guest" 容器标记）。"""
+    markers = sorted(
+        (m.start(), cls)
+        for cls, pattern in zip(
+            ("home", "guest"), _DETAIL_V3_CONTAINER_RES, strict=True
+        )
+        for m in pattern.finditer(seg)
+    )
+    starts = [m.start() for m in _DETAIL_V3_PLAY_OPEN_RE.finditer(seg)]
+    sides: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    for i, start in enumerate(starts):
+        chunk = seg[start : starts[i + 1] if i + 1 < len(starts) else len(seg)]
+        anchor = re.search(r"<a[^>]*>([^<]+)</a>", chunk)
+        if anchor is None:
+            continue  # 无球员锚的 play 块（真无，跳过）
+        side = next((cls for pos, cls in reversed(markers) if pos <= start), "home")
+        pid = re.search(r"player/\d+/(\d+)\.html", chunk)
+        entry: dict[str, object] = {
+            "pid": pid.group(1) if pid else None,
+            "captain": False,  # 旧模板无队长标（真无）
+        }
+        num_name = re.fullmatch(r"\s*(\d+)\s+(.+)", anchor.group(1))
+        if num_name is not None:
+            entry.update(num=num_name.group(1), name=num_name.group(2).strip())
+        else:
+            entry.update(num=None, name=anchor.group(1).strip())
+        sides[side].append(entry)
+    return sides
+
+
+def _detail_v3_lineup(text: str) -> dict[str, object]:
+    """旧模板阵容：plays 容器（首发）+ backupPlay（替补），块缺=空。"""
+    starters: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    bench: dict[str, list[dict[str, object]]] = {"home": [], "guest": []}
+    plays_at = text.find('class="plays"')
+    if plays_at >= 0:
+        starters = _detail_v3_entries(
+            _seg_until(
+                text, plays_at, ('class="backupPlay"', 'class="hurtPlay"', 'id="icons"')
+            )
+        )
+    bench_at = text.find('class="backupPlay"')
+    if bench_at >= 0:
+        bench = _detail_v3_entries(
+            _seg_until(text, bench_at, ('class="hurtPlay"', 'id="icons"'))
+        )
+    return {
+        "home_starters": starters["home"],
+        "away_starters": starters["guest"],
+        "home_bench": bench["home"],
+        "away_bench": bench["guest"],
+    }
+
+
+def _detail_v3_formations(text: str) -> dict[str, str | None]:
+    """阵容头块（队名+阵型，2016/2017+ 两代在）→ 主/客阵型。"""
+    names_at = text.find('class="teamNames"')
+    seg = _seg_until(text, names_at, ('class="plays"',)) if names_at >= 0 else ""
+    formations: dict[str, str | None] = {}
+    for side, cls in (("home", "home"), ("away", "guest")):
+        block = re.search(rf'class="{cls}"[^>]*>(.*?)</div>', seg, re.S)
+        cleaned = _clean_source(block.group(1)) if block else ""
+        found = _DETAIL_FORMATION_RE.search(cleaned)
+        formations[side] = found.group(0) if found else None
+    return formations
+
+
+def parse_detail_page_v3(body: bytes) -> dict[str, object]:
+    """
+    旧模板 Detail 详情页（2016-01→2020 换模板前）→ 与 v2 同构 payload。
+
+    差异面（真树实测）：技统 th 两代变体、事件表 5 格行+图例图标、阵容
+    playBox/backupPlay（号+名融合锚文本）、无 xG/裁判/教练（真无，空≠无，
+    定则 4）。页题标记缺/伪 200 图=坏响应抛 SrctContentError。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _DETAIL_V3_MARKER not in text or is_content_404(text):
+        msg = "detail v3: 非旧模板详情页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    head_window = text[:_DETAIL_V3_HEAD_BYTES]
+    venue = _V3_VENUE_RE.search(head_window)
+    weather = _V3_WEATHER_RE.search(head_window)
+    temperature = _V3_TEMPERATURE_RE.search(head_window)
+    referee = _DETAIL_REFEREE_RE.search(_clean_source(head_window))
+    formations = _detail_v3_formations(text)
+    kickoff = _V3_KICKOFF_RE.search(text)
+    tech = _detail_v3_tech(text)
+    return {
+        "meta": {
+            "home": _detail_v3_team(text, "home"),
+            "away": _detail_v3_team(text, "guest"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+            "venue": venue.group(1).strip() if venue else None,
+            "weather": weather.group(1).strip() if weather else None,
+            "temperature": temperature.group(1) if temperature else None,
+            "referee": referee.group(1) if referee else None,
+            "home_formation": formations["home"],
+            "away_formation": formations["away"],
+            "home_coach": None,  # 旧模板无教练信息（真无）
+            "away_coach": None,
+        },
+        "tech": tech,
+        "has_xg": any(
+            "xg" in str(r["name"]).lower() or "预期进球" in str(r["name"]) for r in tech
+        ),
+        "events": _detail_v3_events(text, _detail_v3_icon_legend(text)),
+        "lineup": _detail_v3_lineup(text),
+    }
+
+
+# 旧模板 analysis（2019-2020，真树实测钉死 199/199）：数组面与新模板同构
+# ——七 var 全在（等号两侧带空格，_analysis_array_rows 已容忍）；两积分榜
+# var 缺席（积分榜=HTML 表，本代不解析，键留空=空≠无）；meta hometeam/
+# guestteam 在、strTime 缺（kickoff None，silver 经 fixture_universe join）；
+# 未来五场=外层表两 50% 半区（主左客右）各含内层 TABLE，v2 单格行切换法
+# 不适用。守卫标记=「var h_data」（两代页 64KB 头窗 100% 命中，门⑤共用）。
+_ANALYSIS_V3_MARKER = "var h_data"
+_ANALYSIS_V3_FUTURE_SPLIT_RE = re.compile(r"width=['\"]?50%['\"]?")
+_ANALYSIS_V3_BOTH_HALVES = 2  # 主左客右两半区都在才有客队块
+
+
+def _analysis_v3_future(text: str) -> dict[str, list[list[str]]]:
+    """旧模板未来五场：两 50% 半区（主左客右），行=首格日期形态（MM-DD）。"""
+    start = text.find("未来五场")
+    seg = text[start:] if start >= 0 else ""
+    halves = _ANALYSIS_V3_FUTURE_SPLIT_RE.split(seg)[1:]
+
+    def rows(half: str) -> list[list[str]]:
+        out: list[list[str]] = []
+        for row in re.findall(r"<tr[^>]*>(.*?)</tr>", half, re.S | re.I):
+            cells = [
+                _clean_source(c)
+                for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S | re.I)
+            ]
+            cells = [c for c in cells if c]
+            # 表头行缺 </tr> 时表头格与首条赛程并块——剥表头前缀（v2 同法）
+            while cells and cells[0] in _ANALYSIS_FUTURE_HEADER:
+                cells.pop(0)
+            if cells and _ANALYSIS_FUTURE_DATE_RE.fullmatch(cells[0]):
+                out.append(cells)
+        return out
+
+    return {
+        "home": rows(halves[0]) if halves else [],
+        "away": rows(halves[1]) if len(halves) >= _ANALYSIS_V3_BOTH_HALVES else [],
+    }
+
+
+def parse_analysis_page_v3(body: bytes) -> dict[str, object]:
+    """
+    旧模板分析页（2019-2020）→ 与 v2 同构 payload（票 02 bronze 贴源）。
+
+    数组面七 var 与新模板同构；homeScoreStr/guestScoreStr 缺=空；未来五场
+    两半区版式。守卫=「var h_data」；伪 200 同拒。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _ANALYSIS_V3_MARKER not in text or is_content_404(text):
+        msg = "analysis v3: 非旧模板分析页（伪 200 或改版）"
+        raise SrctContentError(msg)
+    kickoff = _V3_KICKOFF_RE.search(text)
+    return {
+        "meta": {
+            "home": _js_var(text, "hometeam"),
+            "away": _js_var(text, "guestteam"),
+            "kickoff": kickoff.group(1) if kickoff else None,
+        },
+        "arrays": {
+            key: _analysis_array_rows(text, var) for key, var in _ANALYSIS_ARRAY_VARS
+        },
+        "future_fixtures": _analysis_v3_future(text),
+    }
+
+
+def parse_detail_dispatch(body: bytes) -> dict[str, object]:
+    """
+    Detail 当前解析入口（srct_detail_v3）：新模板→v2，旧模板→v3 分发。
+
+    新模板页亦含「详细事件」串——先查新标记（现场分析）再落 v3。
+    """
+    text = body.decode("utf-8-sig", errors="replace")
+    if _DETAIL_TITLE_MARKER in text and not is_content_404(text):
+        return parse_detail_page(body)
+    return parse_detail_page_v3(body)
+
+
+def parse_analysis_dispatch(body: bytes) -> dict[str, object]:
+    """Analysis 当前解析入口（srct_analysis_v3）：新模板→v2，旧模板→v3。"""
+    text = body.decode("utf-8-sig", errors="replace")
+    if _ANALYSIS_TITLE_MARKER in text and not is_content_404(text):
+        return parse_analysis_page(body)
+    return parse_analysis_page_v3(body)
+
+
+# 端点页模板标记（公开面，2026-10-07 门⑤裁决；v3 起多标记）：数据集 →
+# 解析守卫所依的页内标记组（任一命中=可解析模板页）。detail/analysis v3
+# 分发后两代模板页都产 bronze 行，门⑤分母全量纳入；其余端点仍单标记。
+# 缺全部标记=再改版/伪 200 页——解析器按设计跳过，门⑤单列 template_
+# mismatch，不视为管线损坏。
 _STATS_JSON_MARKER = "var jsonData"
-TEMPLATE_MARKERS: dict[str, str] = {
-    ASIANODDS_DATASET: _ASIANODDS_TITLE_MARKER,
-    OVERDOWN_DATASET: _OVERDOWN_TITLE_MARKER,
-    DETAIL_DATASET: _DETAIL_TITLE_MARKER,
-    ANALYSIS_DATASET: _ANALYSIS_TITLE_MARKER,
-    STATS_DATASET: _STATS_JSON_MARKER,
+TEMPLATE_MARKERS: dict[str, tuple[str, ...]] = {
+    ASIANODDS_DATASET: (_ASIANODDS_TITLE_MARKER,),
+    OVERDOWN_DATASET: (_OVERDOWN_TITLE_MARKER,),
+    DETAIL_DATASET: (_DETAIL_TITLE_MARKER, _DETAIL_V3_MARKER),
+    ANALYSIS_DATASET: (_ANALYSIS_TITLE_MARKER, _ANALYSIS_V3_MARKER),
+    STATS_DATASET: (_STATS_JSON_MARKER,),
 }
 # 伪 200 判别标记（公开面）：GBK/UTF-8 页内出现即 404 内容页（与
 # is_content_404 同源；门⑤单列 pseudo_200 用，勿在代码里复写字面量）
@@ -996,8 +1328,8 @@ _ENDPOINT_WIRING: dict[str, tuple[_FetchFn, _ParseFn]] = {
     ODDS_DATASET: (fetch_odds_js, parse_odds_page),
     ASIANODDS_DATASET: (fetch_asianodds_page, parse_asianodds_page),
     OVERDOWN_DATASET: (fetch_overdown_page, parse_overdown_page),
-    DETAIL_DATASET: (fetch_detail_page, parse_detail_page),
-    ANALYSIS_DATASET: (fetch_analysis_page, parse_analysis_page),
+    DETAIL_DATASET: (fetch_detail_page, parse_detail_dispatch),
+    ANALYSIS_DATASET: (fetch_analysis_page, parse_analysis_dispatch),
     STATS_DATASET: (fetch_stats_page, parse_stats_page),
 }
 

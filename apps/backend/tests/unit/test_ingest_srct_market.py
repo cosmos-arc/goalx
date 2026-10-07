@@ -97,6 +97,51 @@ ANALYSIS_HTML = (
     "<td>3 天</td></tr>"
     "</table></body></html>"
 ).encode()
+# 旧模板两页（v3 分发面，裁剪版）：91003 场走 v3 路径进 bronze→silver 全链
+OLD_DETAIL_HTML = (
+    "<html><head><title>主队甲 VS 客队乙 详细事件-新球体育</title></head><body>"
+    "<script>var strTime='2018-11-10 23:00';</script>"
+    '<div id="home"><span class="name">主队甲</span></div>'
+    '<div id="guest"><span class="name">客队乙</span></div>'
+    "场地：测试球场 天气：小雨 温度：9℃～12℃<br />"
+    '<table><tr><th colspan="5">本场技术统计</th></tr>'
+    "<tr><td></td><td>6</td><td>角球</td><td>4</td><td></td></tr>"
+    "<tr><td></td><td>52%</td><td>控球率</td><td>48%</td><td></td></tr></table>"
+    '<div class="icon"><img src="/images/bf_img/3.png" />黄牌</div>'
+    "<table><tr><th>详细事件</th></tr>"
+    "<tr><td></td><td></td><td>20'</td>"
+    "<td><img src='/images/bf_img/3.png' title='黄牌' /></td><td>客将A</td></tr>"
+    "</table>"
+    '<div class="teamNames"><div class="home">主队甲 4-2-3-1</div>'
+    '<div class="guest">客队乙 4-2-3-1</div></div>'
+    '<div class="plays"><div class="home five">'
+    "<div class='play'><span><div></div><div class='name'>"
+    "<a href='//info.srct.test/cn/team/player/901/1001.html'>1 主首A</a>"
+    "</div></span></div></div>"
+    '<div class="guest five"></div></div>'
+    '<div class="backupPlay"><div class="home"></div>'
+    '<div class="guest"></div></div>'
+    "</body></html>"
+).encode()
+OLD_ANALYSIS_HTML = (
+    "<html><head><title>主队甲 VS 客队乙,分析,足球分析</title></head><body>"
+    '<script>var hometeam = "主队甲";var guestteam = "客队乙";'
+    "var h_data = [['20-12-13',34,'意甲',154,'他队甲',176,'主队甲']];"
+    "var v_data = [['20-07-02',34,'意甲',176,'主队甲',2960,'客队乙',1,3,'0-2']];"
+    "</script>"
+    '<div>未来五场</div><table cellspacing="0"><tbody><tr>'
+    '<td valign="top" width="50%"><TABLE>'
+    "<tr><td>主队甲</td></tr>"
+    "<tr><td>时间</td><td>赛事</td><td>对阵</td><td>分析</td><td>直播</td>"
+    "<td>相隔</td></tr>"
+    "<tr><td>12-19</td><td>意甲</td><td>主队甲 - 他队甲</td><td>分析</td>"
+    "<td></td><td>3 天</td></tr></TABLE></td>"
+    '<td valign="top" width="50%"><TABLE>'
+    "<tr><td>客队乙</td></tr>"
+    "<tr><td>12-23</td><td>意甲</td><td>他队乙 - 客队乙</td><td>分析</td>"
+    "<td></td><td>6 天</td></tr></TABLE></td>"
+    "</tr></tbody></table></body></html>"
+).encode()
 
 DATES = ["2025-10-01", "2025-10-02", "2025-10-03"]
 SIDS = ["91001", "91002", "91003"]
@@ -150,8 +195,15 @@ def _build_corpus(tmp_path: Path) -> CorpusStore:
         routes[f"odds:{sid}"] = httpx.Response(200, content=ODDS_JS)
         routes[f"ah:{sid}"] = httpx.Response(200, content=ASIANODDS_HTML)
         routes[f"ou:{sid}"] = httpx.Response(200, content=OVERDOWN_HTML)
-        routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_HTML)
-        routes[f"ay:{sid}"] = httpx.Response(200, content=ANALYSIS_HTML)
+        routes[f"dt:{sid}"] = httpx.Response(
+            200,
+            content=(
+                OLD_DETAIL_HTML if sid == SIDS[-1] else DETAIL_HTML
+            ),  # 末场走 v3 旧模板路径
+        )
+        routes[f"ay:{sid}"] = httpx.Response(
+            200, content=(OLD_ANALYSIS_HTML if sid == SIDS[-1] else ANALYSIS_HTML)
+        )
         routes[f"stats:{sid}"] = httpx.Response(200, content=STATS_HTML)
     settings = _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
@@ -249,6 +301,24 @@ def test_detail_analysis_face_shapes(tmp_path: Path) -> None:
     assert a1["future_home"] == 1
     assert a1["next_home_gap_days"] == 3  # 密度特征：相隔 3 天
     assert a1["next_away_gap_days"] is None  # 客队块缺=空≠无
+    # v3 旧模板场（91003 经分发入口进 bronze→silver，与 v2 行同表同构）
+    d3 = next(r for r in _read_table(store, "match_detail") if r["sid"] == "91003")
+    assert (d3["home"], d3["away"], d3["venue"], d3["weather"]) == (
+        "主队甲",
+        "客队乙",
+        "测试球场",
+        "小雨",
+    )
+    assert (d3["tech_rows"], d3["events"], d3["home_starters"]) == (2, 1, 1)
+    assert (d3["has_xg"], d3["xg_home"], d3["home_formation"]) == (
+        False,
+        None,
+        "4-2-3-1",
+    )
+    a3 = next(r for r in _read_table(store, "match_analysis") if r["sid"] == "91003")
+    assert (a3["recent_home"], a3["h2h"], a3["standings_home"]) == (1, 1, 0)
+    assert (a3["future_home"], a3["next_home_gap_days"]) == (1, 3)
+    assert a3["next_away_gap_days"] == 6
 
 
 def test_idempotent_rebuild_byte_identical(tmp_path: Path) -> None:
