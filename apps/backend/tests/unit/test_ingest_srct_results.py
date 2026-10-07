@@ -61,11 +61,14 @@ def seed_pending_fixture(
     return fixture_id
 
 
+_NOW = datetime.fromisoformat(NOW)  # 固定钟：窗口测试不随墙钟腐烂
+
+
 def test_materialize_imports_full_time_score(db) -> None:
     """已链+universe 有比分 → 落事实（source=srct，half 空、published 不伪造）。"""
     fixture_id = seed_pending_fixture(db)
     duck_con = seed_universe([("2790001", 2, 1)])
-    stats = srct_results.materialize_results(db, duck_con)
+    stats = srct_results.materialize_results(db, duck_con, now=_NOW)
     assert stats.pending == 1
     assert stats.unmapped == 0
     assert stats.imported == 1
@@ -87,7 +90,9 @@ def test_materialize_no_overwrite_of_stored_result(db) -> None:
         ),
     )
     # 已有结果 → 不再进待出窗口
-    stats = srct_results.materialize_results(db, seed_universe([("2790001", 2, 1)]))
+    stats = srct_results.materialize_results(
+        db, seed_universe([("2790001", 2, 1)]), now=_NOW
+    )
     assert stats.pending == 0
     stored = rs_store.get_draw_result(db, fixture_id)
     assert (stored["home_goals"], stored["away_goals"]) == (3, 3)
@@ -98,7 +103,7 @@ def test_materialize_buckets_diffset_and_awaiting(db) -> None:
     seed_pending_fixture(db, home="差集队", sid=None)
     seed_pending_fixture(db, home="滞后队", away="客队二", sid="2790099")
     duck_con = seed_universe([("2790001", 1, 0), ("2790001", 1, 0)])
-    stats = srct_results.materialize_results(db, duck_con)
+    stats = srct_results.materialize_results(db, duck_con, now=_NOW)
     assert stats.pending == 2
     assert stats.unmapped == 1  # 差集队：uniform 兜底口径
     assert stats.awaiting_universe == 1  # 滞后队：universe 无行
@@ -108,7 +113,7 @@ def test_materialize_buckets_diffset_and_awaiting(db) -> None:
 def test_materialize_degraded_without_duck(db) -> None:
     """语料桥缺席 → 降级零动作（uniform 独走，票 44 行为不变）。"""
     seed_pending_fixture(db)
-    stats = srct_results.materialize_results(db, None)
+    stats = srct_results.materialize_results(db, None, now=_NOW)
     assert stats.degraded is not None
     assert stats.imported == 0
 
@@ -128,7 +133,7 @@ def test_coverage_diff_report_buckets(db) -> None:
     seed_pending_fixture(db, home="滞后队", away="客队二", sid="2790099")
     seed_pending_fixture(db, home="差集队", away="客队三", sid=None, league="日职")
     duck_con = seed_universe([("2790001", 2, 0)])
-    report = srct_results.coverage_diff_report(db, duck_con)
+    report = srct_results.coverage_diff_report(db, duck_con, now=_NOW)
     assert report["pending"] == 3
     assert report["srct_covered"] == 1
     assert report["diffset_unmapped"] == 1
@@ -140,7 +145,7 @@ def test_coverage_diff_report_buckets(db) -> None:
 def test_coverage_report_degraded_honest(db) -> None:
     """语料桥缺席 → linked 维度诚实降 awaiting（不伪装已覆盖）。"""
     seed_pending_fixture(db)
-    report = srct_results.coverage_diff_report(db, None)
+    report = srct_results.coverage_diff_report(db, None, now=_NOW)
     assert report["universe_degraded"] is True
     assert report["per_competition"]["英超"]["awaiting"] == 1
 

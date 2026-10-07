@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -81,9 +82,12 @@ def _permission_error() -> PermissionDeniedError:
 
 
 def _seed_spend(
-    db: sqlite3.Connection, amount: float, *, month: str = "2026-09-01T00:00:00+00:00"
+    db: sqlite3.Connection, amount: float, *, month: str | None = None
 ) -> None:
-    record_cost(db, COST_CATEGORY, units=1.0, amount_cny=amount, occurred_at=month)
+    # 默认种在当前月（glm_chat 路径按自然月对账取墙钟）——固定旧月会随
+    # 日历腐烂成零支出；显式 month 留给跨月口径用例
+    occurred = month or datetime.now(UTC).isoformat(timespec="seconds")
+    record_cost(db, COST_CATEGORY, units=1.0, amount_cny=amount, occurred_at=occurred)
 
 
 # --- 熔断档位 ---

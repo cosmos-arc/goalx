@@ -814,6 +814,13 @@ def test_parse_stats_page_missing_block_raises() -> None:
         srct.parse_stats_page(b"<html>no data</html>")
 
 
+def test_parse_stats_page_pseudo_200_raises() -> None:
+    """404 图守卫（2026-10-07 补齐，与其余四端点同契；门⑤伪 200 分桶同源）。"""
+    dual = b"<html><img src='error_404.gif'><script>var jsonData = {};</script></html>"
+    with pytest.raises(srct.SrctContentError, match="404"):
+        srct.parse_stats_page(dual)
+
+
 def test_content_404_discrimination() -> None:
     assert srct.is_content_404(srct.decode_day_page(SAMPLE_404_BYTES))
     assert not srct.is_content_404(srct.decode_day_page(SAMPLE_OVER_BYTES))

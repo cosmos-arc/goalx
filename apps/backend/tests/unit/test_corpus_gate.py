@@ -14,6 +14,7 @@ import json
 import sqlite3
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -314,27 +315,171 @@ def test_match_fixtures_ambiguity_and_nearby_window() -> None:
     assert len(collide.ambiguous) == 1
     assert len(collide.extra_fixtures) == 2
 
+    # 交错语义既知权衡（correctness-review 2026-10-07 钉死）：乱序输入下
+    # 漂移行（04-10 先处理）±1 窗见两候选 → 歧义，且已遮蔽 04-09 的精确
+    # 日配对。真树输入按日期定序（SQL ORDER BY）无此忧，且十年实测交错
+    # 比两遍结构净多 528 对——语义终裁见 _score_date_round docstring。
+    interleaved = match_fixtures(
+        [
+            FixtureRow("f1", "英超", "2025-04-09", 1, 0),
+            FixtureRow("f2", "英超", "2025-04-11", 1, 0),
+        ],
+        [
+            HistRow("E0", "2025-04-10", "H", "A", 1, 0, None, None, None),
+            HistRow("E0", "2025-04-09", "H", "B", 1, 0, None, None, None),
+        ],
+    )
+    assert len(interleaved.pairs) == 1  # 04-09 精确配 f1；04-10 漂移行歧义
+    assert len(interleaved.ambiguous) == 1
+    # 同输入按日期定序（真树口径）：漂移行后判，两行全配
+    ordered = match_fixtures(
+        [
+            FixtureRow("f1", "英超", "2025-04-09", 1, 0),
+            FixtureRow("f2", "英超", "2025-04-11", 1, 0),
+        ],
+        [
+            HistRow("E0", "2025-04-09", "H", "B", 1, 0, None, None, None),
+            HistRow("E0", "2025-04-10", "H", "A", 1, 0, None, None, None),
+        ],
+    )
+    assert len(ordered.pairs) == 2
+    assert ordered.ambiguous == []
 
-def test_five_gates_report_on_synthetic_tree(tmp_path: Path) -> None:
-    store, settings = _build_corpus(tmp_path)
-    try:
-        report = corpus_gate.build_phase1_gate_report(store, settings, today=GATE_TODAY)
-    finally:
-        store.close()
-    gates = report["gates"]
-    gate1 = gates["1_fixture_reconciliation"]
+
+def test_match_fixtures_name_round_and_scope() -> None:
+    """v3 名字身份轮：学映射解同比分撞车、±3 吸收改期漂移；口径外单列。"""
+    fixtures = [
+        FixtureRow("f1", "德甲", "2025-04-02", 2, 1, home="甲", away="乙"),
+        FixtureRow("f2", "德甲", "2025-04-09", 1, 0, home="甲", away="乙"),
+        FixtureRow("f3", "德甲", "2025-04-16", 3, 2, home="丙", away="丁"),
+        FixtureRow("f4", "德甲", "2025-04-23", 0, 0, home="丙", away="丁"),
+        FixtureRow("f5", "德甲", "2025-04-16", 3, 2, home="戊", away="己"),
+        FixtureRow("f6", "德甲", "2025-04-30", 1, 1, home="己", away="戊"),
+        FixtureRow("f7", "德甲", "2025-04-08", 4, 4, home="甲", away="乙"),
+        FixtureRow("f8", "德甲", "2025-05-07", 2, 2, home="丙", away="丁"),
+    ]
+    hists = [
+        # 甲/乙 两票学映射（不同日不同比分，各精确日唯一）
+        HistRow("D1", "2025-04-02", "TeamA", "TeamB", 2, 1, None, None, None),
+        HistRow("D1", "2025-04-09", "TeamA", "TeamB", 1, 0, None, None, None),
+        # 丙/丁：04-16 与戊/己同比分撞车（学习轮不投票），04-23/05-07 补票
+        HistRow("D1", "2025-04-16", "TeamC", "TeamD", 3, 2, None, None, None),
+        HistRow("D1", "2025-04-23", "TeamC", "TeamD", 0, 0, None, None, None),
+        HistRow("D1", "2025-05-07", "TeamC", "TeamD", 2, 2, None, None, None),
+        # 戊/己：一票撞车一票反向 → 无映射，走比分+日期兜底
+        HistRow("D1", "2025-04-16", "TeamE", "TeamF", 3, 2, None, None, None),
+        HistRow("D1", "2025-04-30", "TeamF", "TeamE", 1, 1, None, None, None),
+        # 改期漂移 3 天（±1 窗外）——名字轮吸收
+        HistRow("D1", "2025-04-05", "TeamA", "TeamB", 4, 4, None, None, None),
+        # 比甲 playoff 期：CorpusScope 口径外单列
+        HistRow("B1", "2025-05-10", "TeamS", "TeamT", 1, 1, None, None, None),
+    ]
+    matched = match_fixtures(fixtures, hists)
+    assert len(matched.pairs) == 8  # 全配齐（含撞车与漂移）
+    assert matched.matched_via_name == 6  # 甲乙×3 + 丙丁×3；戊己走兜底轮
+    assert matched.name_links_learned == 4  # A→甲 B→乙 C→丙 D→丁
+    assert matched.ambiguous == []
+    assert matched.gaps == []
+    assert len(matched.scope_excluded) == 1
+    assert matched.scope_excluded[0].home == "TeamS"
+    assert matched.rate == 1.0
+    assert matched.extra_fixtures == []
+
+
+def _assert_gate1_v3(gate1: dict[str, Any]) -> None:
+    """门① v3 断言（名字轮/映射/口径外/缺口归因）。"""
     assert gate1["matched"] == 3
+    assert gate1["matched_via_name"] == 3  # 名字身份轮全量配走
+    assert gate1["name_links_learned"] == 2  # HomeX→主队甲 / AwayX→客队乙
     assert gate1["gaps"] == 1  # 3-3 缺口行
     assert gate1["rate"] == 0.75  # 3/(3+1)
     assert gate1["verdict"] == "fail"  # 低于 99% 线——机制如实判
     assert gate1["gap_attribution"][0]["match"] == "HomeGap vs AwayGap"
     assert gate1["per_competition"]["英超"]["fdhist"] == 4
+    assert gate1["scope_excluded"] == 0
 
-    gate2 = gates["2_psc_cid177"]
+
+def _assert_gate2_v2(gate2: dict[str, Any]) -> None:
+    """门② v2 断言（中位数裁决/赛季分层/异常清单）。"""
     assert gate2["usable"] == 3
     assert gate2["mean_relative_deviation"] is not None
     assert gate2["mean_relative_deviation"] < 0.01
+    assert gate2["median_relative_deviation"] is not None
+    assert gate2["median_relative_deviation"] < 0.01
+    assert gate2["verdict_metric"] == "median"
+    assert len(gate2["per_season"]) == 1  # 单赛季分层可见
+    assert gate2["outliers"] == []
     assert gate2["verdict"] == "pass"
+
+
+def test_gate5_all_template_miss_is_red_not_empty(tmp_path: Path) -> None:
+    """全量模板外=站点再改版红灯（空≠无）：verdict fail 而非 insufficient 跳过。"""
+    store = CorpusStore(tmp_path)
+    try:
+        store.ensure_tree()
+        store.ingest_raw(
+            srct.SRCT_PROVIDER, srct.ASIANODDS_DATASET, "a", b"<html>redesign</html>"
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER, srct.ASIANODDS_DATASET, "b", b"<html>redesign</html>"
+        )
+        gate5 = corpus_gate.gate5_pipeline_health(
+            store, GATE_TODAY, settled={"2025-10-03"}
+        )
+        asian = gate5["per_dataset_key_coverage"][srct.ASIANODDS_DATASET]
+        assert asian["raw_files"] == 2
+        assert asian["parser_template_files"] == 0
+        assert asian["key_coverage"] == 0.0  # 红不是 None
+        assert gate5["worst_key_coverage"] == 0.0
+        assert gate5["verdict"] == "fail"
+    finally:
+        store.close()
+
+
+def _assert_gate5_template(gate5: dict[str, Any]) -> None:
+    """门⑤断言（模板分母修正/单列/韧性/进度面）。"""
+    assert gate5["worst_key_coverage"] == 1.0
+    assert gate5["verdict"] == "pass"
+    assert gate5["template_mismatch_total"] == 1  # 手植旧模板页单列
+    assert gate5["pseudo_200_total"] == 1  # 手植伪 200 页单列
+    assert gate5["unreadable_total"] == 1  # 手植撕裂 gzip 单列（.part 不计）
+    asian = gate5["per_dataset_key_coverage"][srct.ASIANODDS_DATASET]
+    assert asian["raw_files"] == 6  # 3 有效 + 旧模板 + 伪 200 + 撕裂（.part 跳过）
+    assert asian["parser_template_files"] == 3
+    assert asian["template_mismatch"] == 1
+    assert asian["pseudo_200"] == 1
+    assert asian["unreadable"] == 1
+    assert asian["key_coverage"] == 1.0  # 分母剔除后覆盖满格
+    assert gate5["phase1_progress"]["done_dates"] == 3
+    assert gate5["phase1_progress"]["progress"] < 1.0
+
+
+def test_five_gates_report_on_synthetic_tree(tmp_path: Path) -> None:
+    store, settings = _build_corpus(tmp_path)
+    try:
+        # 模板外 raw 页 ×3：旧模板（无标记）、伪 200（404 图）、撕裂 gzip
+        # ——都出分母单列，单页坏不炸报告（correctness-review 回归）
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ASIANODDS_DATASET,
+            "99000",
+            "<html><body>旧模板无标记页</body></html>".encode(),
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ASIANODDS_DATASET,
+            "99001",
+            b"<html><body><img src='error_404.gif'></body></html>",
+        )
+        raw_dir = store.raw_dir(srct.SRCT_PROVIDER, srct.ASIANODDS_DATASET)
+        (raw_dir / "99002.html.gz").write_bytes(b"\x1f\x8b truncated garbage")
+        (raw_dir / "99003.html.gz.part").write_bytes(b"\x1f\x8b leftover temp")
+        report = corpus_gate.build_phase1_gate_report(store, settings, today=GATE_TODAY)
+    finally:
+        store.close()
+    gates = report["gates"]
+    _assert_gate1_v3(gates["1_fixture_reconciliation"])
+    _assert_gate2_v2(gates["2_psc_cid177"])
 
     gate3 = gates["3_xg_understat"]
     assert gate3["pairs"] == 3
@@ -349,10 +494,7 @@ def test_five_gates_report_on_synthetic_tree(tmp_path: Path) -> None:
     assert gate4["verdict"] == "pass"
 
     gate5 = gates["5_pipeline_health"]
-    assert gate5["worst_key_coverage"] == 1.0
-    assert gate5["verdict"] == "pass"
-    assert gate5["phase1_progress"]["done_dates"] == 3
-    assert gate5["phase1_progress"]["progress"] < 1.0
+    _assert_gate5_template(gate5)
 
     assert report["overall"] == "provisional"  # 进度未完不放行
     assert report["coverage"]["matrix"]["英超"]
