@@ -446,6 +446,156 @@ ANALYSIS_HTML = (
 )
 SAMPLE_ANALYSIS_BYTES = ANALYSIS_HTML.encode("utf-8")
 
+# —— 旧模板两页实测裁剪（解析器 v3，backtest-decade A组票 01/02）——
+# 结构对齐真树（2017-11 场 1418016 / 2016-04 场 1131142 / 2020-12 场
+# 1915380），队名/球员打码，数量裁剪。2017 版：引号属性+title 图标；
+# 2016 版：th「技术统计」变体+无 title 图标+未引用属性+无教练/场地。
+OLD_DETAIL_HTML = (
+    "<html><head><title>主队甲 VS 客队乙 详细事件-新球体育</title></head><body>"
+    "<script>var scheduleID=99001;var state=-1;"
+    "var strTime='2018-11-10 23:00';</script>"
+    '<div id="home"><a href="//info.srct.test/cn/team/Summary/901.html"'
+    ' target="_blank"><span class="name">主队甲</span></a></div>'
+    '<span class="b">开赛时间：2018-11-10 23:00</span><br />'
+    "场地：测试球场 天气：小雨 温度：9℃～12℃<br />"
+    '<div id="guest"><a href="//info.srct.test/cn/team/Summary/902.html"'
+    ' target="_blank"><span class="name">客队乙</span></a></div>'
+    '<table><tr><th colspan="5">本场技术统计</th></tr>'
+    "<tr><td><div class='barBg2'><div class='info' style='width:60%;'></td>"
+    "<td>6</td><td>角球</td><td>4</td><td><div class='barBg'></div></td></tr>"
+    "<tr><td class='bg1'></td><td class='bg1'>52%</td><td class='bg3'>控球率</td>"
+    "<td class='bg1'>48%</td><td class='bg1'></td></tr></table>"
+    '<div class="icons">'
+    '<div class="icon"><img src="/images/bf_img/1.png" />入球</div>'
+    '<div class="icon"><img src="/images/bf_img/3.png" />黄牌</div>'
+    '<div class="icon"><img src="/images/bf_img/11.png" />换人</div>'
+    '<div class="icon"><img src="/images/bf_img/4.png" />换入</div>'
+    '<div class="icon"><img src="/images/bf_img/5.png" />换出</div></div>'
+    '<table><tr><th colspan="5" class="bg1">详细事件</th></tr>'
+    '<tr bgcolor="#FCEAAB"><td colspan="2"><span class="b t15">0</span></td>'
+    '<td align="center">时间</td><td colspan="2">'
+    '<span class="b t15">2</span></td></tr>'
+    "<tr align=\"center\"><td class='bg2'></td><td class='bg2'></td>"
+    "<td class='bg4'>20'</td>"
+    "<td class='bg2'><img src='/images/bf_img/3.png' title='黄牌' /></td>"
+    "<td class='bg2'><a href='//info.srct.test/cn/team/player/902/7001.html' "
+    "title='客将A'>客将A</a></td></tr>"
+    '<tr align="center">'
+    "<td class='bg1'><img src='/images/bf_img/4.png' align='absmiddle'/>"
+    "<a href='//info.srct.test/cn/team/player/901/7002.html' "
+    "title='主将C'>主将C</a>"
+    "<img src='/images/bf_img/5.png' align='absmiddle'/>"
+    "<a href='//info.srct.test/cn/team/player/901/7003.html' "
+    "title='主将D'>主将D</a></td>"
+    "<td class='bg1'><img src='/images/bf_img/11.png' title='换人' /></td>"
+    "<td class='bg3'>44'</td><td class='bg1'>&nbsp;</td><td class='bg1'>&nbsp;</td>"
+    "</tr></table>"
+    '<div id="matchBox2"><div class="teamNames">'
+    '<div class="home"><a href="//info.srct.test/cn/team/Summary/901.html">'
+    "主队甲</a> 4-2-3-1</div>"
+    '<div class="guest"><a href="//info.srct.test/cn/team/Summary/902.html">'
+    "客队乙</a> 4-2-3-1</div>"
+    "首发阵容</div>"
+    '<div class="plays">'
+    '<div class="home five">'
+    "<div class=\"playBox\"><div class='play'><span><div></div>"
+    "<div class='name'><a href='//info.srct.test/cn/team/player/901/1001.html' "
+    "title='主首A'>1 主首A</a></div></span></div></div>"
+    "<div class=\"playBox\"><div class='play'><span><div></div>"
+    "<div class='name'><a href='//info.srct.test/cn/team/player/901/1002.html' "
+    "title='主首B'>4 主首B</a></div></span></div></div></div>"
+    '<div class="guest five">'
+    "<div class=\"playBox\"><div class='play'><span><div></div>"
+    "<div class='name'><a href='//info.srct.test/cn/team/player/902/2001.html' "
+    "title='客首A'>7 客首A</a></div></span></div></div></div>"
+    "</div>"
+    '<div class="backupPlay">'
+    "<div class=\"home\"><div class='play'><span><div></div>"
+    "<div class='name'><a href='//info.srct.test/cn/team/player/901/1004.html' "
+    "title='主替A'>12 主替A</a></div></span></div></div>"
+    '<div class="bu_txt">替<br />补</div>'
+    "<div class=\"guest\"><div class='play'><span><div></div>"
+    "<div class='name'><a href='//info.srct.test/cn/team/player/902/2004.html' "
+    "title='客替A'>13 客替A</a></div></span></div></div>"
+    "</div>"
+    '<div class="hurtPlay" style=\'display:none;\'><div class="home">'
+    '</div><div class="guest"></div></div>'
+    "</div></body></html>"
+)
+OLD_DETAIL_BYTES = OLD_DETAIL_HTML.encode("utf-8")
+
+# 2016 变体：th「技术统计」（无本场）、图标无 title、未引用属性、
+# 无场地/教练/首发言、play 双引号形态、替补空块
+OLD_DETAIL_2016_BYTES = (
+    "<html><head><title>主队丙 VS 客队丁 详细事件-新球体育</title></head><body>"
+    "<script>var strTime='2016-04-06 02:45';</script>"
+    '<div id="home"><span class="name">主队丙</span></div>'
+    '<div id="guest"><span class="name">客队丁</span></div>'
+    "<table><tr><th>技术统计</th></tr>"
+    "<tr><td><div class='barBg2'></div></td><td>0</td><td>角球</td>"
+    "<td>3</td><td></td></tr>"
+    "<tr><td></td><td>&nbsp;</td><td>黄牌</td><td>1</td><td></td></tr></table>"
+    '<div class="icon"><img src="/images/bf_img/3.png" />黄牌</div>'
+    '<div class="icon"><img src="/images/bf_img/11.png" />换人</div>'
+    "<table><tr><th>详细事件</th></tr>"
+    "<tr align=center><td width=320 class='bg2'>丁将A</td>"
+    "<td width=30 class='bg2'><img src=/images/bf_img/3.png align=absmiddle>"
+    "</td><td width=100 class='bg4'>81'</td><td width=30 class='bg2'>&nbsp;"
+    "</td><td width=320 class='bg2'>&nbsp;</td></tr></table>"
+    '<div id="matchBox"><div class="teamNames">'
+    '<div class="home">主队丙 4-2-3-1</div>'
+    '<div class="guest">客队丁 4-3-3</div></div>'
+    '<div class="plays"><div class="home five">'
+    '<div class="playBox"><div class="play"><span><div></div>'
+    '<div class="name"><a href="//info.srct.test/cn/team/player/903/3001.html"'
+    " title='丙首A' target=_blank>5 丙首A</a></div></span></div></div></div>"
+    '<div class="guest five"></div></div>'
+    '<div class="backupPlay"><div class="home"></div>'
+    '<div class="guest"></div></div>'
+    "</div></body></html>"
+).encode()
+
+# 旧模板分析页：七 var 数组面（等号带空格）+ 无 homeScoreStr/guestScoreStr
+# /strTime + 未来五场两 50% 半区（主左客右各含内层 TABLE）
+OLD_ANALYSIS_HTML = (
+    "<html><head><title>主队甲 VS 客队乙,分析,篮球分析,足球分析，赛前分析"
+    "</title></head><body><script>"
+    'var hometeam = "主队甲";\r\nvar guestteam = "客队乙";\r\n'
+    "var h_data = [['20-12-13',34,'意甲','#0088FF',154,"
+    "'<span title=\"他队甲  排名:9\">他队甲</span>',176,"
+    "'<span title=\"主队甲  排名:17\">主队甲</span>',3,0,'1-0','0.75',-1,-1,1,"
+    "99001,'11','2','//zq.srct.test/cn/league.aspx?sclassid=34',-1]];\r\n"
+    "var a_data = [['20-12-08',34,'意甲','#0088FF',176,"
+    "'<span title=\"主队甲  排名:17\">主队甲</span>',552,"
+    "'<span title=\"他队乙  排名:19\">他队乙</span>',1,1,'0-0','0.75',0,-1,-1,"
+    "99002,'5','1','//zq.srct.test/cn/league.aspx?sclassid=34',0]];\r\n"
+    "var v_data = [['20-07-02',34,'意甲','#0088FF',176,"
+    "'<span title=\"主队甲  排名:13\">主队甲</span>',2960,"
+    "'<span title=\"客队乙  排名:12\">客队乙</span>',1,3,'0-2']];\r\n"
+    "var Vs_hOdds = [[99001,8,'0.80','平手/半球','1.06']];\r\n"
+    "var Vs_eOdds = [[99001,18,'1.48','4.50','5.81','1.83','3.61','4.41',7]];\r\n"
+    "</script>"
+    '<div class="porletP"><h2 class="fx_title2">未来五场</h2>'
+    '<table cellspacing="0"><tbody><tr>'
+    '<td valign="top" width="50%"><TABLE width=\'100%\'>'
+    "<tr><td>主队甲</td></tr>"
+    "<tr align=center class=red_t1><td>时间</td><td>赛事</td><td>对阵</td>"
+    "<td>分析</td><td>直播</td><td>相隔</td></tr>"
+    "<tr><td>12-19</td><td>意甲</td><td>主队甲 - 他队甲</td><td>分析</td>"
+    "<td></td><td>3 天</td></tr>"
+    "</TABLE></td>"
+    '<td valign="top" width="50%"><TABLE width=\'100%\'>'
+    "<tr><td>客队乙</td></tr>"
+    "<tr align=center class=red_t1><td>时间</td><td>赛事</td><td>对阵</td>"
+    "<td>分析</td><td>直播</td><td>相隔</td></tr>"
+    "<tr><td>12-23</td><td>意甲</td><td>他队乙 - 客队乙</td><td>分析</td>"
+    "<td></td><td>6 天</td></tr>"
+    "</TABLE></td>"
+    "</tr></tbody></table></div>"
+    "</body></html>"
+)
+OLD_ANALYSIS_BYTES = OLD_ANALYSIS_HTML.encode()
+
 DATE = "2025-10-18"
 SCOPE_SIDS = ["2789205", "2711573", "2861202", "2862060"]
 # 统计页 xG 分布：挪超 2711573 用无 xG 样本（老键集），其余三家有 xG
@@ -784,6 +934,204 @@ def test_parse_analysis_page_not_analysis_raises() -> None:
     payload = srct.parse_analysis_page(minimal)
     assert payload["arrays"]["h_data"] == []
     assert payload["future_fixtures"] == {"home": [], "away": []}
+
+
+# —— 解析器 v3（旧模板两页，backtest-decade A组票 01/02）——
+
+
+def test_parse_detail_page_v3_sections() -> None:
+    """旧模板 detail（2017 版）：meta/技统/图例事件/阵容与 v2 payload 同构。"""
+    payload = srct.parse_detail_page_v3(OLD_DETAIL_BYTES)
+    meta = payload["meta"]
+    assert (meta["home"], meta["away"], meta["kickoff"]) == (
+        "主队甲",
+        "客队乙",
+        "2018-11-10 23:00",
+    )
+    assert (meta["venue"], meta["weather"], meta["temperature"]) == (
+        "测试球场",
+        "小雨",
+        "9℃～12℃",
+    )
+    assert meta["home_formation"] == "4-2-3-1"
+    assert meta["referee"] is None  # 旧模板真无（空≠无，定则 4）
+    assert (meta["home_coach"], meta["away_coach"]) == (None, None)
+    assert payload["tech"] == [
+        {"home": "6", "name": "角球", "away": "4"},
+        {"home": "52%", "name": "控球率", "away": "48%"},
+    ]
+    assert payload["has_xg"] is False
+    # 半场比分行（colspan）跳过；事件串=时刻+图例标签+侧文本
+    assert payload["events"] == ["20' 黄牌 客将A", "44' 换人 主将C 主将D"]
+    lineup = payload["lineup"]
+    assert [p["name"] for p in lineup["home_starters"]] == ["主首A", "主首B"]
+    assert lineup["home_starters"][0] == {
+        "pid": "1001",
+        "captain": False,  # 旧模板无队长标
+        "num": "1",
+        "name": "主首A",
+    }
+    assert [p["name"] for p in lineup["away_starters"]] == ["客首A"]
+    assert [p["num"] for p in lineup["home_bench"]] == ["12"]
+    assert [p["pid"] for p in lineup["away_bench"]] == ["2004"]
+
+
+def test_parse_detail_page_v3_2016_flavor() -> None:
+    """2016 变体：th「技术统计」头、无 title 图标（语义在图例）、未引用属性。"""
+    payload = srct.parse_detail_page_v3(OLD_DETAIL_2016_BYTES)
+    meta = payload["meta"]
+    assert (meta["home"], meta["away"], meta["kickoff"]) == (
+        "主队丙",
+        "客队丁",
+        "2016-04-06 02:45",
+    )
+    assert meta["venue"] is None  # 2016 页真无场地行
+    assert (meta["home_formation"], meta["away_formation"]) == ("4-2-3-1", "4-3-3")
+    assert payload["tech"][1] == {"home": None, "name": "黄牌", "away": "1"}  # &nbsp;
+    assert payload["events"] == ["81' 黄牌 丁将A"]  # 图例给 2016 无 title 图标
+    starter = payload["lineup"]["home_starters"][0]
+    assert (starter["pid"], starter["num"], starter["name"]) == (
+        "3001",
+        "5",
+        "丙首A",
+    )
+
+
+def test_parse_detail_dispatch_routes_both_templates() -> None:
+    """分发：新模板→v2，旧模板→v3，两者 payload 同构、乱页抛内容错误。"""
+    new_via_dispatch = srct.parse_detail_dispatch(SAMPLE_DETAIL_BYTES)
+    assert new_via_dispatch == srct.parse_detail_page(SAMPLE_DETAIL_BYTES)
+    old_via_dispatch = srct.parse_detail_dispatch(OLD_DETAIL_BYTES)
+    assert old_via_dispatch == srct.parse_detail_page_v3(OLD_DETAIL_BYTES)
+    # 新模板页亦含「详细事件」串——分发先查新标记，不受串复用干扰
+    assert new_via_dispatch["meta"]["home"] == "主队甲"
+    with pytest.raises(srct.SrctContentError, match="detail v3"):
+        srct.parse_detail_dispatch("<html><body>乱码</body></html>".encode())
+    with pytest.raises(srct.SrctContentError, match="detail v3"):
+        srct.parse_detail_dispatch(b"<html><img src='error_404.gif'></html>")
+
+
+def test_parse_detail_page_v3_correctness_regressions() -> None:
+    """correctness-review 四反例回归：加时分钟/无 span 首发块/仅场地行。"""
+    extra_time = (
+        "<html><head><title>甲 VS 乙 详细事件</title></head><body>"
+        '<div class="icon"><img src="/images/bf_img/1.png" />入球</div>'
+        "<table><tr><th>详细事件</th></tr>"
+        "<tr><td>主将E</td><td><img src='/images/bf_img/1.png' /></td>"
+        "<td>118'</td><td></td><td></td></tr>"
+        '<tr><td></td><td></td><td>"121\'"</td>'
+        "<td><img src='/images/bf_img/1.png' /></td><td>客将E</td></tr>"
+        "</table></body></html>"
+    ).encode()
+    events = srct.parse_detail_page_v3(extra_time)["events"]
+    assert events == ["118' 入球 主将E", "121' 入球 客将E"]  # 三位分钟+引号剥除
+    # 无 span 包裹的 play 块（真树 sid 1549846 形态）：切片到下一 play 开标签
+    no_span = (
+        "<html><head><title>甲 VS 乙 详细事件</title></head><body>"
+        '<div class="teamNames"><div class="home">甲 4-4-2</div>'
+        '<div class="guest">乙 4-4-2</div></div>'
+        '<div class="plays"><div class="home">'
+        "<div class='play'><div class='name'>"
+        "<a href='//info.srct.test/cn/team/player/1/11.html'>1 主首A</a>"
+        "</div><div class='img'></div></div>"
+        "<div class='play'><div class='name'>"
+        "<a href='//info.srct.test/cn/team/player/1/12.html'>4 主首B</a>"
+        "</div><div class='img'></div></div>"
+        '</div><div class="guest"></div></div></body></html>'
+    ).encode()
+    lineup = srct.parse_detail_page_v3(no_span)["lineup"]
+    assert [p["num"] for p in lineup["home_starters"]] == ["1", "4"]
+    assert [p["name"] for p in lineup["home_starters"]] == ["主首A", "主首B"]
+    # 2016 仅场地行（无天气/温度）：各段独立降级，venue 不连坐
+    venue_only = (
+        "<html><head><title>甲 VS 乙 详细事件</title></head><body>"
+        '<span class="b">开赛时间：2016-01-25 01:00</span><br />'
+        '场地：测试球场甲  \n<div class="leng"><img /></div>'
+        "</body></html>"
+    ).encode()
+    meta = srct.parse_detail_page_v3(venue_only)["meta"]
+    assert (meta["venue"], meta["weather"], meta["temperature"]) == (
+        "测试球场甲",
+        None,
+        None,
+    )
+
+
+def test_parse_analysis_page_v3_correctness_regressions() -> None:
+    """correctness-review 反例回归：表头行缺 </tr> 并块时首条赛程不丢。"""
+    merged_header = (
+        "<html><head><title>甲 VS 乙,分析</title></head><body><script>"
+        "var h_data = [[]];</script>"
+        '<div>未来五场</div><table cellspacing="0"><tbody><tr>'
+        '<td valign="top" width="50%"><TABLE>'
+        "<tr><td>主队甲</td></tr>"
+        "<tr><td>时间</td><td>赛事</td><td>对阵</td><td>分析</td><td>直播</td>"
+        "<td>相隔</td><td>12-19</td><td>意甲</td><td>主队甲 - 他队甲</td>"
+        "<td>分析</td><td>3 天</td></tr>"
+        "</TABLE></td>"
+        '<td valign="top" width="50%"><TABLE>'
+        "<tr><td>客队乙</td></tr>"
+        "<tr><td>12-23</td><td>意甲</td><td>他队乙 - 客队乙</td><td>分析</td>"
+        "<td>6 天</td></tr>"
+        "</TABLE></td>"
+        "</tr></tbody></table></body></html>"
+    ).encode()
+    payload = srct.parse_analysis_page_v3(merged_header)
+    assert payload["future_fixtures"]["home"] == [
+        ["12-19", "意甲", "主队甲 - 他队甲", "分析", "3 天"]
+    ]
+    assert payload["future_fixtures"]["away"] == [
+        ["12-23", "意甲", "他队乙 - 客队乙", "分析", "6 天"]
+    ]
+
+
+def test_parse_analysis_page_v3_arrays_isomorphic() -> None:
+    """旧模板 analysis：七 var 数组面同构、积分榜 var 缺=空、strTime 缺。"""
+    payload = srct.parse_analysis_page_v3(OLD_ANALYSIS_BYTES)
+    assert payload["meta"] == {
+        "home": "主队甲",
+        "away": "客队乙",
+        "kickoff": None,  # 旧模板无 strTime（silver 经 fixture join 补）
+    }
+    arrays = payload["arrays"]
+    assert arrays["h_data"][0].startswith("['20-12-13',34,'意甲'")
+    assert "<span title=" in arrays["h_data"][0]  # 行内 HTML 贴源保留
+    assert len(arrays["a_data"]) == 1
+    assert len(arrays["v_data"]) == 1
+    assert arrays["Vs_hOdds"][0].startswith("[99001,8,")
+    assert arrays["homeScoreStr"] == []  # 两积分榜 var 缺=空≠无
+    assert arrays["guestScoreStr"] == []
+    assert arrays["h2_data"] == []
+    # 未来五场：两 50% 半区（主左客右），队名/表头行不入
+    assert payload["future_fixtures"] == {
+        "home": [["12-19", "意甲", "主队甲 - 他队甲", "分析", "3 天"]],
+        "away": [["12-23", "意甲", "他队乙 - 客队乙", "分析", "6 天"]],
+    }
+
+
+def test_parse_analysis_dispatch_routes_both_templates() -> None:
+    new_via_dispatch = srct.parse_analysis_dispatch(SAMPLE_ANALYSIS_BYTES)
+    assert new_via_dispatch == srct.parse_analysis_page(SAMPLE_ANALYSIS_BYTES)
+    old_via_dispatch = srct.parse_analysis_dispatch(OLD_ANALYSIS_BYTES)
+    assert old_via_dispatch == srct.parse_analysis_page_v3(OLD_ANALYSIS_BYTES)
+    with pytest.raises(srct.SrctContentError, match="analysis v3"):
+        srct.parse_analysis_dispatch("<html><body>乱码</body></html>".encode())
+
+
+def test_bronze_versions_v3_and_marker_registry() -> None:
+    """版本隔离与门⑤标记组钉死：detail/analysis=v3 双标记，v2 函数未动。"""
+    assert srct.BRONZE_VERSIONS[srct.DETAIL_DATASET] == "srct_detail_v3"
+    assert srct.BRONZE_VERSIONS[srct.ANALYSIS_DATASET] == "srct_analysis_v3"
+    assert srct.TEMPLATE_MARKERS[srct.DETAIL_DATASET] == ("现场分析", "详细事件")
+    assert srct.TEMPLATE_MARKERS[srct.ANALYSIS_DATASET] == (
+        "数据分析",
+        "var h_data",
+    )
+    # v2 函数仍只认新模板（版本函数隔离）
+    with pytest.raises(srct.SrctContentError):
+        srct.parse_detail_page(OLD_DETAIL_BYTES)
+    with pytest.raises(srct.SrctContentError):
+        srct.parse_analysis_page(OLD_ANALYSIS_BYTES)
 
 
 def test_parse_stats_page_xg_and_legacy_keysets() -> None:

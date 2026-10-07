@@ -436,6 +436,50 @@ def test_gate5_all_template_miss_is_red_not_empty(tmp_path: Path) -> None:
         store.close()
 
 
+def test_gate5_v3_multi_marker_old_template_pages(tmp_path: Path) -> None:
+    """门⑤ 多标记（v3 分发起）：两代模板页都入解析分母，仅再改版页单列。"""
+    store = CorpusStore(tmp_path)
+    try:
+        store.ensure_tree()
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.DETAIL_DATASET,
+            "91001",
+            "<html><body>新模板页 现场分析</body></html>".encode(),
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.DETAIL_DATASET,
+            "91002",
+            "<html><head><title>甲VS乙 详细事件</title></head><body></body>"
+            "</html>".encode(),
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ANALYSIS_DATASET,
+            "91003",
+            b"<html><body><script>var h_data = [[]];</script></body></html>",
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.DETAIL_DATASET,
+            "91004",
+            "<html><body>再改版页</body></html>".encode(),
+        )
+        gate5 = corpus_gate.gate5_pipeline_health(
+            store, GATE_TODAY, settled={"2025-10-03"}
+        )
+        detail = gate5["per_dataset_key_coverage"][srct.DETAIL_DATASET]
+        assert detail["raw_files"] == 3
+        assert detail["parser_template_files"] == 2  # 新+旧模板页同入分母
+        assert detail["template_mismatch"] == 1  # 仅再改版页单列
+        analysis = gate5["per_dataset_key_coverage"][srct.ANALYSIS_DATASET]
+        assert analysis["parser_template_files"] == 1  # 旧模板 var h_data 命中
+        assert analysis["template_mismatch"] == 0
+    finally:
+        store.close()
+
+
 def _assert_gate5_template(gate5: dict[str, Any]) -> None:
     """门⑤断言（模板分母修正/单列/韧性/进度面）。"""
     assert gate5["worst_key_coverage"] == 1.0
