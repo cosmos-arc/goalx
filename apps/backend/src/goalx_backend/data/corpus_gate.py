@@ -43,7 +43,6 @@ Phase 1 验证门报告（票 55/56 切片 17）：三对账 + 五条量化门�
 from __future__ import annotations
 
 import gzip
-import hashlib
 import json
 import math
 from collections import Counter, defaultdict
@@ -58,7 +57,7 @@ import duckdb
 
 from goalx_backend import db
 from goalx_backend.config import Settings
-from goalx_backend.data import corpus_duckdb
+from goalx_backend.data import corpus_duckdb, silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded, psc_mature
 from goalx_backend.data.ingest import srct
@@ -82,8 +81,9 @@ LEAGUE_TO_FD: dict[str, str] = {
     "苏超": "SC0",
 }
 FD_TO_LEAGUE = {code: name for name, code in LEAGUE_TO_FD.items()}
-# 门②比较锚：SHARP 尖货 cid177（跨源数据质量检查，不决定模型选书）
-_ANCHOR_BOOK = "srct:1x2:177"
+# 门②比较锚：SHARP 尖货 cid177（跨源数据质量检查，不决定模型选书）。
+# gold 特征面轨迹锚同此一份（B 相单一真相源）
+ANCHOR_BOOK = "srct:1x2:177"
 
 
 def _sql_in(values: Iterable[str]) -> str:
@@ -587,7 +587,7 @@ def _anchor_last_pre_kickoff(
     if not sids:
         return {}
     quoted = _sql_in(sids)
-    anchor = _ANCHOR_BOOK
+    anchor = ANCHOR_BOOK
     rows = con.execute(
         f"""
         SELECT sid,
@@ -941,13 +941,8 @@ def _count_bronze_sids(store: CorpusStore, dataset: str) -> set[str]:
 
 
 def _silver_digest(store: CorpusStore, dataset: str) -> str:
-    """数据集 parquet 摘要（跨次报告比对 = 重建幂等佐证）。"""
-    sha = hashlib.sha256()
-    root = _silver_root(store, dataset)
-    for part in sorted(root.glob("**/data.parquet")) if root.exists() else []:
-        sha.update(part.relative_to(root).as_posix().encode())
-        sha.update(part.read_bytes())
-    return sha.hexdigest()[:16]
+    """数据集 parquet 摘要（跨次报告比对 = 重建幂等佐证；silver 内核同款）。"""
+    return silver.dataset_digest(_silver_root(store, dataset))
 
 
 def gate5_pipeline_health(

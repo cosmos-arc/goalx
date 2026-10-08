@@ -43,6 +43,8 @@ ERA1_DAY, ERA1_SID, ERA1_SCORE = "2021-10-02", "80001", "2-1"
 ERA1X_DAY, ERA1X_SID, ERA1X_SCORE = "2021-10-02", "80003", "0-3"
 ERA2_DAY, ERA2_SID, ERA2_SCORE = "2024-10-01", "80002", "1-2"
 ERA2_KICKOFF = datetime(2024, 10, 1, 20, 0)  # 北京墙钟（开球标签 1日20:00）
+# era2b：同季次日、无 fdhist/understat 行——验 srct xG 补位与零配对留空
+ERA2B_DAY, ERA2B_SID, ERA2B_SCORE = "2024-10-02", "80004", "3-0"
 
 # 1x2 轨迹（era2）：锚 cid177 双书。24h 前切片价/盘中价/收盘价逐档不同；
 # 20:00 恰开球行与 21:30 场内行必须被严格 < 开球滤掉。
@@ -259,6 +261,7 @@ FIXTURES: list[tuple[str, str, str]] = [
     (ERA1_DAY, ERA1_SID, ERA1_SCORE),
     (ERA2_DAY, ERA2_SID, ERA2_SCORE),
     (ERA1X_DAY, ERA1X_SID, ERA1X_SCORE),
+    (ERA2B_DAY, ERA2B_SID, ERA2B_SCORE),
 ]
 
 
@@ -310,13 +313,13 @@ _HIST_INSERT = """
          avgc_home, avgc_draw, avgc_away,
          avg_ou_over, avg_ou_under, avgc_ou_over, avgc_ou_under,
          ah_line, avg_ah_home, avg_ah_away, ahc_line, avgc_ah_home, avgc_ah_away,
-         hthg, htag, shots_home, shots_away, shots_on_target_home,
+         hthg, htag, htr, referee, shots_home, shots_away, shots_on_target_home,
          shots_on_target_away, corners_home, corners_away, fouls_home, fouls_away,
          yellow_home, yellow_away, red_home, red_away)
     VALUES ('E0', '2122', ?, ?, ?, ?, ?, ?, ?, ?, ?,
             2.05, 3.30, 3.10, 1.95, 3.55, 3.95,
             1.95, 1.85, 1.90, 1.80, -0.5, 1.95, 1.95, -0.25, 1.90, 1.92,
-            1, 0, 12, 8, 5, 3, 6, 4, 11, 9, 2, 2, 0, 0)
+            1, 0, 'H', 'RefX', 12, 8, 5, 3, 6, 4, 11, 9, 2, 2, 0, 0)
 """
 _HIST_SEED: list[tuple[str, str, str, int, int, str, float, float, float]] = [
     (ERA1_DAY, "HomeA", "AwayA", 2, 1, "H", 2.10, 3.40, 3.20),
@@ -447,22 +450,27 @@ def test_era_layering_and_report(built: Built) -> None:
     """era 字段=正典声明；报告 era 计数与覆盖面计数如实。"""
     _store, settings, report = built
     rows = _gold_rows(settings)
-    assert set(rows) == {ERA1_SID, ERA2_SID, ERA1X_SID}
+    assert set(rows) == {ERA1_SID, ERA2_SID, ERA1X_SID, ERA2B_SID}
     assert rows[ERA1_SID]["era"] == gold.ERA_PSC_PROXY
     assert rows[ERA1X_SID]["era"] == gold.ERA_PSC_PROXY
     assert rows[ERA2_SID]["era"] == gold.ERA_TRAJECTORY
     assert report.era_psc_proxy_rows == 2
-    assert report.era_trajectory_rows == 1
-    assert report.rows == 3
-    assert report.fd_paired == 2  # era1 + era2（era1b 排除不配特征）
+    assert report.era_trajectory_rows == 2
+    assert report.rows == 4
+    assert report.fd_paired == 2  # era1 + era2（era1b 排除、era2b 无 hist 行）
     assert report.admin_flagged == 1
     assert report.xg_understat == 1
-    assert report.xg_srct == 2  # era1 两场走 srct 补位（无 understat 行）
+    assert report.xg_srct == 1  # era2b 走 srct 补位；era1 两场季门内留空
     assert report.elo_rows == 1
-    assert report.close1x2_rows == 1
-    assert report.market_ah_rows == 3
-    assert report.market_ou_rows == 3
-    assert report.pit_rows == 1
+    assert report.close1x2_rows == 2
+    assert report.market_ah_rows == 4
+    assert report.market_ou_rows == 4
+    assert report.pit_rows == 4  # 双锚切片全时代（AH 锚轨迹 2016 起在档）
+    assert report.face_inputs == {
+        "hist_matches_rows": 3,
+        "understat_rows": 1,
+        "admin_exclusions": 4,
+    }
 
 
 def test_fdhist_pairing_maturity_and_admin(built: Built) -> None:
@@ -475,6 +483,11 @@ def test_fdhist_pairing_maturity_and_admin(built: Built) -> None:
     assert era1["fd_avg_ou_over"] == pytest.approx(1.95)
     assert era1["fd_ah_line"] == pytest.approx(-0.5)
     assert era1["fd_shots_home"] == 12  # 标签侧技统不过成熟度门
+    assert era1["fd_htr"] == "H"
+    assert era1["fd_referee"] == "RefX"
+    # era2b 无 hist 行：fd 族全空（空≠无，行仍在）
+    assert rows[ERA2B_SID]["psc_home"] is None
+    assert rows[ERA2B_SID]["fd_shots_home"] is None
     # era2 也配到 fdhist（并存；era 字段声明轨迹族为正典）
     assert rows[ERA2_SID]["psc_home"] == pytest.approx(1.90)
     # 行政判赛：标记 + 整族不消费（odds 族与技统都不取）
@@ -503,8 +516,12 @@ def test_xg_source_discipline(built: Built) -> None:
     assert rows[ERA2_SID]["xg_source"] == "understat"
     assert rows[ERA2_SID]["xg_home"] == pytest.approx(0.75)
     assert rows[ERA2_SID]["xg_away"] == pytest.approx(1.60)
-    assert rows[ERA1_SID]["xg_source"] == "srct"
-    assert rows[ERA1_SID]["xg_home"] == pytest.approx(0.71)
+    # era1（2021）在源T stats 季门（2024/25+）外：诚实留空不补
+    assert rows[ERA1_SID]["xg_source"] is None
+    assert rows[ERA1_SID]["xg_home"] is None
+    # era2b 无 understat 行 → srct 补位（一行一源）
+    assert rows[ERA2B_SID]["xg_source"] == "srct"
+    assert rows[ERA2B_SID]["xg_home"] == pytest.approx(0.71)
     assert rows[ERA1_SID]["elo_home_pre"] is None  # elo 只种了 era2 行
     assert rows[ERA2_SID]["elo_home_pre"] == pytest.approx(1500.0)
 
@@ -535,6 +552,17 @@ def test_trajectory_close_and_slices(built: Built) -> None:
     assert row["q24hah_home_water"] == pytest.approx(0.95)
     # PIT：所用最大 published_at = 收盘 19:30（北京）< 开球 20:00
     assert row["pit_max_ms"] == srct_odds.beijing_ms(datetime(2024, 10, 1, 19, 30))
+    # era1（2021）：1x2 轨迹不存在（切片为空），AH 锚切片全时代在档。
+    # 开球 10-02 20:00 → 1h 界=10-02 19:00/24h 界=10-01 20:00——切片纪律
+    # 纯时间 PIT（页内 status 不参与）：矩阵四行时间全在 1h 窗内，末价=
+    # 10-01 21:48 行（受让半球 -0.5）；24h 末价=19:00 行（半球）
+    era1 = _gold_rows(settings)[ERA1_SID]
+    assert era1["q1h1x2_h"] is None
+    assert era1["q1hah_line"] == pytest.approx(-0.5)
+    assert era1["q1hah_home_water"] == pytest.approx(0.70)
+    assert era1["q24hah_line"] == pytest.approx(0.5)
+    assert era1["q24hah_home_water"] == pytest.approx(0.85)
+    assert era1["pit_max_ms"] == srct_odds.beijing_ms(datetime(2021, 10, 1, 21, 48))
 
 
 def test_market_family_and_phases(built: Built) -> None:
@@ -573,8 +601,13 @@ def test_version_stamp_idempotent_and_digest(built: Built) -> None:
     root = store.gold_path(gold.GOLD_PROVIDER, gold.GOLD_DATASET)
     meta = json.loads((root / "_meta.json").read_text())
     assert meta["gold_version"] == gold.GOLD_VERSION
-    assert meta["rows"] == 3
+    assert meta["rows"] == 4
     assert meta["maturity_today"] == TODAY.isoformat()
+    assert meta["face_inputs"] == {
+        "hist_matches_rows": 3,
+        "understat_rows": 1,
+        "admin_exclusions": 4,
+    }
     assert set(meta["input_digests"]) == {
         "srct/fixture_universe",
         "srct/market_quote",
@@ -644,11 +677,11 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     _cmd_gold_build(argparse.Namespace(), settings=settings)
     payload = json.loads(capsys.readouterr().out)
     assert payload["gold_version"] == gold.GOLD_VERSION
-    assert payload["rows"] == 3
+    assert payload["rows"] == 4
     assert payload["degraded"] is None
     con = corpus_duckdb.connect(settings)
     try:
         (n,) = con.execute("SELECT count(*) FROM match_features").fetchone()
     finally:
         con.close()
-    assert n == 3
+    assert n == 4

@@ -38,7 +38,6 @@ pyarrow 无官方 stub（同 silver 先例）。
 # pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
@@ -48,6 +47,7 @@ import duckdb
 import pyarrow as pa
 
 from goalx_backend.data.corpus_gate import (
+    ANCHOR_BOOK,
     FD_TO_LEAGUE,
     LEAGUE_TO_FD,
     FixtureRow,
@@ -61,9 +61,13 @@ from goalx_backend.data.corpus_store import (
 )
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded, psc_mature
 from goalx_backend.data.ingest.srct_market import MARKET_AH
-from goalx_backend.data.ingest.srct_odds import AH_ANCHOR_CID, beijing_ms
+from goalx_backend.data.ingest.srct_odds import AH_ANCHOR_CID, AH_ANCHOR_ID, beijing_ms
 from goalx_backend.data.results import UNDERSTAT_LEAGUES
-from goalx_backend.data.silver import write_dataset_meta, write_partition
+from goalx_backend.data.silver import (
+    dataset_digest,
+    write_dataset_meta,
+    write_partition,
+)
 from goalx_backend.db import utc_now_iso
 
 # 数据集身份 GOLD_PROVIDER/GOLD_DATASET 唯一落点=corpus_store（防环，见其注释）
@@ -77,11 +81,15 @@ ERA_TRAJECTORY = "trajectory"
 # 轨迹切片窗（开球前）：1h / 24h
 SLICE_1H_MS = 3_600_000
 SLICE_24H_MS = 86_400_000
-# 欧赔 1x2 轨迹锚（票 75 收盘接管同锚）与亚盘锚（design-15 双空间）
-E1X2_ANCHOR = "srct:1x2:177"
-AH_ANCHOR = f"srct:ah:{AH_ANCHOR_CID}"
-# understat 主源赛季下界（2014+ 语料窗内全量取）
+# 轨迹锚：1x2 = 门②同锚（corpus_gate.ANCHOR_BOOK 单一真相源）；AH = 亚盘锚
+# 书商（srct_odds.AH_ANCHOR_ID，design-15 双空间）。AH 锚轨迹自 2016 全程
+# 在档，切片不限时代；1x2 锚轨迹 2023/24 起，早时代自然为空
+E1X2_ANCHOR = ANCHOR_BOOK
+AH_ANCHOR = AH_ANCHOR_ID
+# understat 主源赛季下界（2014+ 语料窗内全量取）；源T stats xG 近代源
+# 稳定季下界（story 10：2024/25+，早季缺口诚实留空不补）
 UNDERSTAT_SEASON_MIN = 2014
+SRCT_XG_SEASON_MIN = "2024-25"
 
 DuckCon = duckdb.DuckDBPyConnection
 
@@ -139,6 +147,8 @@ _SCHEMA = pa.schema(
         _f64("fd_avgc_ah_away"),
         pa.field("fd_hthg", pa.int16()),
         pa.field("fd_htag", pa.int16()),
+        pa.field("fd_htr", pa.string()),
+        pa.field("fd_referee", pa.string()),
         pa.field("fd_shots_home", pa.int16()),
         pa.field("fd_shots_away", pa.int16()),
         pa.field("fd_sot_home", pa.int16()),
@@ -225,6 +235,7 @@ class GoldBuildReport:
     pit_rows: int = 0  # pit_max_ms 非空行（断言覆盖面）
     maturity_today: str = ""
     input_digests: dict[str, str] = field(default_factory=dict)
+    face_inputs: dict[str, int] = field(default_factory=dict)
     degraded: str | None = None
 
 
@@ -328,51 +339,66 @@ def _trajectory_close(con: DuckCon) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _kickoffs_cte() -> str:
+    """全量场次 kickoff CTE（切片不限时代——AH 锚轨迹 2016 起全程在档）。"""
+    return """
+        kickoffs AS (
+            SELECT sid, epoch_ms(kickoff AT TIME ZONE 'Asia/Shanghai') AS kickoff_ms
+            FROM fixture_universe
+            WHERE kickoff IS NOT NULL
+        )
+    """
+
+
 def _anchor_slices(con: DuckCon) -> dict[str, dict[str, Any]]:
     """
-    锚轨迹临场切片（era2）。
+    锚轨迹临场切片（全时代；1x2 锚轨迹 2023/24 起、早时代自然为空）。
 
     1x2 cid177 与 AH cid8 双锚，开球前 1h/24h 时点的末价（arg_max ≤ 界点
-    ——时点报价语义，含等于）。条目携带 _pit（该侧所用最大 published_at），
-    装配侧并入 pit_max_ms。
+    ——时点报价语义，含等于；同刻并列按 source_order 决胜，与 silver 层
+    语义一致）。条目 = {"features": 特征列, "pit": 该行所用最大 published_at}。
     """
     rows = con.execute(
         f"""
-        WITH {_era2_cte()}
+        WITH {_kickoffs_cte()}
         SELECT e.sid, e.market,
                arg_max(struct_pack(v1 := e.odds_home, v2 := e.odds_draw,
                                    v3 := e.odds_away, t := epoch_ms(e.published_at)),
                        struct_pack(t := epoch_ms(e.published_at), o := e.source_order))
                    FILTER (WHERE epoch_ms(e.published_at)
-                               <= era2.kickoff_ms - {SLICE_1H_MS}) AS q1h,
+                               <= kickoffs.kickoff_ms - {SLICE_1H_MS}) AS q1h,
                arg_max(struct_pack(v1 := e.odds_home, v2 := e.odds_draw,
                                    v3 := e.odds_away, t := epoch_ms(e.published_at)),
                        struct_pack(t := epoch_ms(e.published_at), o := e.source_order))
                    FILTER (WHERE epoch_ms(e.published_at)
-                               <= era2.kickoff_ms - {SLICE_24H_MS}) AS q24h,
+                               <= kickoffs.kickoff_ms - {SLICE_24H_MS}) AS q24h,
                arg_max(struct_pack(v1 := e.line, v2 := e.home_water,
                                    v3 := e.away_water, t := epoch_ms(e.published_at)),
                        struct_pack(t := epoch_ms(e.published_at), o := e.source_order))
                    FILTER (WHERE epoch_ms(e.published_at)
-                               <= era2.kickoff_ms - {SLICE_1H_MS}) AS q1h_ah,
+                               <= kickoffs.kickoff_ms - {SLICE_1H_MS}) AS q1h_ah,
                arg_max(struct_pack(v1 := e.line, v2 := e.home_water,
                                    v3 := e.away_water, t := epoch_ms(e.published_at)),
                        struct_pack(t := epoch_ms(e.published_at), o := e.source_order))
                    FILTER (WHERE epoch_ms(e.published_at)
-                               <= era2.kickoff_ms - {SLICE_24H_MS}) AS q24h_ah
+                               <= kickoffs.kickoff_ms - {SLICE_24H_MS}) AS q24h_ah
         FROM odds_change_event e
-        JOIN era2 ON era2.sid = e.sid
+        JOIN kickoffs ON kickoffs.sid = e.sid
         WHERE (e.market = '1x2' AND e.bookmaker_id = '{E1X2_ANCHOR}')
            OR (e.market = 'ah' AND e.bookmaker_id = '{AH_ANCHOR}')
         GROUP BY e.sid, e.market
-        """  # noqa: S608 锚 id/era 界/窗常量=模块常量
+        """  # noqa: S608 锚 id/窗常量=模块常量
     ).fetchall()
     out: dict[str, dict[str, Any]] = {}
     for sid, market, q1h, q24h, q1h_ah, q24h_ah in rows:
-        entry = out.setdefault(str(sid), {})
-        pits = [q["t"] for q in (q1h, q24h, q1h_ah, q24h_ah) if q is not None]
+        entry = out.setdefault(str(sid), {"features": {}, "pit": None})
+        pits = [
+            int(q["t"])
+            for q in (q1h, q24h, q1h_ah, q24h_ah)
+            if q is not None and q["t"] is not None
+        ]
         if pits:
-            entry["_pit"] = max(int(p) for p in pits if p is not None)
+            entry["pit"] = max(entry["pit"] or 0, *pits)
         if market == "1x2":
             pairs = (("q1h1x2", q1h), ("q24h1x2", q24h))
         else:
@@ -381,13 +407,13 @@ def _anchor_slices(con: DuckCon) -> dict[str, dict[str, Any]]:
             if q is None:
                 continue
             if market == "1x2":
-                entry[f"{prefix}_h"] = q["v1"]
-                entry[f"{prefix}_d"] = q["v2"]
-                entry[f"{prefix}_a"] = q["v3"]
+                entry["features"][f"{prefix}_h"] = q["v1"]
+                entry["features"][f"{prefix}_d"] = q["v2"]
+                entry["features"][f"{prefix}_a"] = q["v3"]
             else:
-                entry[f"{prefix}_line"] = q["v1"]
-                entry[f"{prefix}_home_water"] = q["v2"]
-                entry[f"{prefix}_away_water"] = q["v3"]
+                entry["features"][f"{prefix}_line"] = q["v1"]
+                entry["features"][f"{prefix}_home_water"] = q["v2"]
+                entry["features"][f"{prefix}_away_water"] = q["v3"]
     return out
 
 
@@ -493,18 +519,26 @@ def _elo_rows(con: DuckCon) -> dict[str, tuple[float, float]]:
 
 
 def _srct_xg_rows(con: DuckCon) -> dict[str, tuple[float, float]]:
-    """源T stats xG（近代源；sid 直连零映射风险）。"""
+    """
+    源T stats xG（近代源；sid 直连零映射风险）。
+
+    季下界 2024/25（story 10 源纪律：源T stats xG 此季起稳定；早季缺口
+    诚实留空，understat 主源覆盖）。
+    """
     rows = con.execute(
-        """
+        f"""
         SELECT sid, xg_home, xg_away FROM xg_observation
-        WHERE has_xg AND xg_home IS NOT NULL AND xg_away IS NOT NULL
-        """
+        WHERE season >= '{SRCT_XG_SEASON_MIN}'
+          AND has_xg AND xg_home IS NOT NULL AND xg_away IS NOT NULL
+        """  # noqa: S608 季下界=模块常量
     ).fetchall()
     return {str(r[0]): (float(r[1]), float(r[2])) for r in rows}
 
 
-# fdhist 配对取回列（odds 族 19 列 + 标签侧技统；配对经 match_fixtures v3）
-_HIST_COLUMNS = (
+# fdhist 配对取回列（odds 两族 + 标签侧面；配对经 match_fixtures v3）。
+# 三个命名组即三段处置：欧赔三族（schema 同名、成熟度门）、fd odds 族
+# （fd_ 前缀、成熟度门）、标签侧（fd_ 前缀、明示改名映射、不过门）
+_HIST_EURO = (
     "psc_home",
     "psc_draw",
     "psc_away",
@@ -514,6 +548,8 @@ _HIST_COLUMNS = (
     "avgc_home",
     "avgc_draw",
     "avgc_away",
+)
+_HIST_FD_ODDS = (
     "avg_ou_over",
     "avg_ou_under",
     "avgc_ou_over",
@@ -524,23 +560,26 @@ _HIST_COLUMNS = (
     "ahc_line",
     "avgc_ah_home",
     "avgc_ah_away",
-    "hthg",
-    "htag",
-    "shots_home",
-    "shots_away",
-    "shots_on_target_home",
-    "shots_on_target_away",
-    "corners_home",
-    "corners_away",
-    "fouls_home",
-    "fouls_away",
-    "yellow_home",
-    "yellow_away",
-    "red_home",
-    "red_away",
 )
-_HIST_EURO_N = 9  # psc/psh/avgc 欧赔三族（era1 正典；schema 同名）
-_HIST_ODDS_N = 19  # 至 ou/ah 均值族末——成熟度门内整族
+_HIST_STATS: tuple[tuple[str, str], ...] = (  # (源列, gold 列)——显式映射
+    ("hthg", "fd_hthg"),
+    ("htag", "fd_htag"),
+    ("htr", "fd_htr"),
+    ("referee", "fd_referee"),
+    ("shots_home", "fd_shots_home"),
+    ("shots_away", "fd_shots_away"),
+    ("shots_on_target_home", "fd_sot_home"),
+    ("shots_on_target_away", "fd_sot_away"),
+    ("corners_home", "fd_corners_home"),
+    ("corners_away", "fd_corners_away"),
+    ("fouls_home", "fd_fouls_home"),
+    ("fouls_away", "fd_fouls_away"),
+    ("yellow_home", "fd_yellow_home"),
+    ("yellow_away", "fd_yellow_away"),
+    ("red_home", "fd_red_home"),
+    ("red_away", "fd_red_away"),
+)
+_HIST_COLUMNS = _HIST_EURO + _HIST_FD_ODDS + tuple(src for src, _ in _HIST_STATS)
 
 
 def _fetch_fdhists(con: DuckCon) -> list[tuple[HistRow, dict[str, Any]]]:
@@ -627,18 +666,16 @@ def _fd_feature_row(ext: dict[str, Any], *, mature: bool) -> dict[str, Any]:
     """
     配对 hist 扩展列 → gold 特征列。
 
-    未成熟 = odds 族（psc/psh/avgc + ou/ah 均值族）整族置空；半场/技统=
-    标签侧，不过成熟度门。列名：欧赔三族与 schema 同名，其余加 fd_ 前缀
-    （与盘口市场族列名隔离）。
+    未成熟 = odds 族（欧赔三族 + fd odds 族）整族置空；标签侧面（半场/
+    技统/裁判）不过成熟度门。列名：欧赔三族与 schema 同名，其余 fd_ 前缀。
     """
     row: dict[str, Any] = {}
-    for i, key in enumerate(_HIST_COLUMNS):
-        if i < _HIST_EURO_N:  # psc/psh/avgc：era1 正典欧赔三族
-            row[key] = ext[key] if mature else None
-        elif i < _HIST_ODDS_N:  # ou/ah 均值族：fd_ 前缀 + 成熟度门
-            row[f"fd_{key}"] = ext[key] if mature else None
-        else:  # 半场/技统=标签侧，不过成熟度门
-            row[f"fd_{key.replace('shots_on_target', 'sot')}"] = ext[key]
+    for key in _HIST_EURO:
+        row[key] = ext[key] if mature else None
+    for key in _HIST_FD_ODDS:
+        row[f"fd_{key}"] = ext[key] if mature else None
+    for src_col, gold_col in _HIST_STATS:
+        row[gold_col] = ext[src_col]
     return row
 
 
@@ -657,13 +694,8 @@ def _assert_no_lookahead(rows: list[tuple[int, dict[str, Any]]]) -> None:
 
 
 def _input_digest(store: CorpusStore, provider: str, dataset: str) -> str:
-    """数据集 parquet 摘要（同 gate⑤ 口径；_meta 钉输入用）。"""
-    sha = hashlib.sha256()
-    root = store.silver_path(provider, dataset)
-    for part in sorted(root.glob("**/data.parquet")) if root.exists() else []:
-        sha.update(part.relative_to(root).as_posix().encode())
-        sha.update(part.read_bytes())
-    return sha.hexdigest()[:16]
+    """数据集 parquet 摘要（silver 内核同款；_meta 钉输入用）。"""
+    return dataset_digest(store.silver_path(provider, dataset))
 
 
 _INPUT_DATASETS: tuple[tuple[str, str], ...] = (
@@ -733,30 +765,30 @@ class _Sources:
     phases: dict[str, dict[str, int]]
 
 
-def _attach_trajectory(row: dict[str, Any], src: _Sources) -> int | None:
+def _attach_trajectory(row: dict[str, Any], src: _Sources, era: str) -> int | None:
     """
-    era2 轨迹族装载：收盘 + 1h/24h 切片。
+    轨迹族装载：era2 收盘 + 双锚 1h/24h 切片。
 
-    返回该行 PIT 类输入最大时间戳（无则 None）。slices 条目的 _pit 在此
-    弹出（不落盘）。
+    收盘（1x2 轨迹起点季起）era2 装载；切片全时代（AH 锚轨迹 2016 起
+    在档，早时代 1x2 侧自然为空）。返回该行 PIT 类输入最大时间戳。
     """
     sid = row["sid"]
     pit: int | None = None
-    if sid in src.close1x2:
+    if era == ERA_TRAJECTORY and sid in src.close1x2:
         entry = src.close1x2[sid]
         row.update({k: v for k, v in entry.items() if k != "pit_ms"})
         pit = entry.get("pit_ms")
     slice_entry = src.slices.get(sid)
     if slice_entry is not None:
-        slice_pit = slice_entry.pop("_pit", None)
-        row.update(slice_entry)
+        row.update(slice_entry["features"])
+        slice_pit = slice_entry["pit"]
         if slice_pit is not None:
             pit = slice_pit if pit is None else max(pit, slice_pit)
     return pit
 
 
 def _assemble_row(f: dict[str, Any], src: _Sources) -> dict[str, Any]:
-    """一场 → gold 特征行（各族平铺合并；era 决定轨迹族是否装载）。"""
+    """一场 → gold 特征行（各族平铺合并；era 决定收盘族，切片全时代）。"""
     sid = f["sid"]
     era = ERA_TRAJECTORY if f["season"] >= ERA_TRAJECTORY_SEASON else ERA_PSC_PROXY
     row: dict[str, Any] = {
@@ -782,7 +814,7 @@ def _assemble_row(f: dict[str, Any], src: _Sources) -> dict[str, Any]:
         row["xg_home"], row["xg_away"] = src.srct_xg[sid]
         row["xg_source"] = "srct"
     row.update(src.fd_by_sid.get(sid, {}))
-    row["pit_max_ms"] = _attach_trajectory(row, src) if era == ERA_TRAJECTORY else None
+    row["pit_max_ms"] = _attach_trajectory(row, src, era)
     if sid in src.ah_family:
         row.update({f"ah_{k}": v for k, v in src.ah_family[sid].items()})
     if sid in src.ou_family:
@@ -849,18 +881,17 @@ def build_match_features(
         )
         for f in fixtures
     ]
+    fdhists = _fetch_fdhists(duck_con)
+    under_rows = _fetch_understat(duck_con)
     fd_by_sid, admin_sids, paired, immature = _fd_pairing(
-        fixture_rows,
-        _fetch_fdhists(duck_con),
-        exclusions,
-        maturity,
+        fixture_rows, fdhists, exclusions, maturity
     )
     ah_family, ou_family = _market_family(duck_con)
     sources = _Sources(
         fd_by_sid=fd_by_sid,
         admin_sids=admin_sids,
         elo=_elo_rows(duck_con),
-        understat_by_sid=_understat_pairing(fixture_rows, _fetch_understat(duck_con)),
+        understat_by_sid=_understat_pairing(fixture_rows, under_rows),
         srct_xg=_srct_xg_rows(duck_con),
         close1x2=_trajectory_close(duck_con),
         slices=_anchor_slices(duck_con),
@@ -872,6 +903,13 @@ def build_match_features(
     report.fd_paired = paired
     report.fd_immature = immature
     report.admin_flagged = len(admin_sids)
+    # 运行面输入无 digest 可钉（sqlite 表），行数入档审计——面变更致 gold
+    # 漂移时可由本字段暴露（spec S6 可追溯）
+    report.face_inputs = {
+        "hist_matches_rows": len(fdhists),
+        "understat_rows": len(under_rows),
+        "admin_exclusions": len(exclusions),
+    }
     _tally(rows, report)
     _assert_no_lookahead([(beijing_ms(r["kickoff"]), r) for r in rows])
 
@@ -893,6 +931,7 @@ def build_match_features(
             },
             "maturity_today": report.maturity_today,
             "input_digests": report.input_digests,
+            "face_inputs": report.face_inputs,
             "partitioning": "single",
         },
     )

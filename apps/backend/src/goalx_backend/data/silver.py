@@ -16,6 +16,7 @@ pyarrow 无官方 stub（srct_silver/jc_silver/elo_silver 同先例）。
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -147,6 +148,20 @@ def write_dataset_meta(root: Path, meta: dict[str, object]) -> None:
     (root / "_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def dataset_digest(root: Path) -> str:
+    """
+    数据集 parquet 摘要。
+
+    排序遍 ``**/data.parquet`` 相对路径+字节入 sha256（16 hex）；gate⑤
+    报告与 gold _meta 钉输入共用一份（跨次比对 = 重建幂等佐证）。
+    """
+    sha = hashlib.sha256()
+    for part in sorted(root.glob("**/data.parquet")) if root.exists() else []:
+        sha.update(part.relative_to(root).as_posix().encode())
+        sha.update(part.read_bytes())
+    return sha.hexdigest()[:16]
 
 
 def latest_bronze_rows(

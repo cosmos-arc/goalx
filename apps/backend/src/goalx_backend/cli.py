@@ -658,24 +658,20 @@ def _cmd_gold_build(
         face = connect(resolved.db_path)
         try:
             migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
-        finally:
-            face.close()
-        try:
-            duck_con = corpus_duckdb.connect(resolved)
-        except (duckdb.Error, OSError) as exc:
-            message = (
-                "corpus.duckdb unavailable（先跑 srct-silver/srct-odds/srct-market）: "
-            )
-            sys.stderr.write(message + str(exc) + "\n")
-            raise SystemExit(2) from exc
-        try:
-            face = connect(resolved.db_path)
+            try:
+                duck_con = corpus_duckdb.connect(resolved)
+            except (duckdb.Error, OSError) as exc:
+                message = "corpus.duckdb unavailable（先跑 srct-silver/"
+                sys.stderr.write(
+                    message + "srct-odds/srct-market）: " + str(exc) + "\n"
+                )
+                raise SystemExit(2) from exc
             try:
                 report = gold.build_match_features(store, face, duck_con)
             finally:
-                face.close()
+                duck_con.close()
         finally:
-            duck_con.close()
+            face.close()
         duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     finally:
         store.close()
