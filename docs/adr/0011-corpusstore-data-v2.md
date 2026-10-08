@@ -52,6 +52,13 @@ wayfinder 地图十票终审，多项难以逆转且未来读者会问"为什么
 逐赛事×书商报价覆盖、首/赛前末可见率及时距只作报告。`cid177` 的价格对账仍是
 跨源数据质量检查，不决定模型选书。
 
+2026-10-08 修订决策 1：`gold/` 首个数据集 `match_features`（backtest-decade
+B 相）落地时裁定 schema 与构建器归 `data/gold.py`（OWNERS 登记 data；era
+断点/PIT 断言/源纪律常量唯一落点）——层序 data < modelling 使构建器无法上引
+模型图，且其输入（corpus_gate 配对、hygiene 谓词、silver 视图）全在 data 域。
+"schema 归模型图"的占位裁决自此作废；模型侧消费经 duckdb 只读视图
+（`match_features`），如需契约面另议。
+
 ## 后果
 
 - 随文修订 ADR-0010 背景行回填窗口；research/20 §九定案 5 量级同步标注修订。
