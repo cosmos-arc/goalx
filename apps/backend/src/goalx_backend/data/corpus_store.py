@@ -254,6 +254,12 @@ _NIGHT_SUMMARY_COLUMNS = (
     "failed_json",
     "budget_cap",
 )
+# Gold 特征面数据集身份（backtest-decade B 相）：落本模块供 corpus_duckdb
+# 视图注册与 data/gold.py 构建器共用——gold.py 引 corpus_gate（配对器），
+# corpus_gate 引 corpus_duckdb，常量放 gold.py 会成环（2026-10-08）
+GOLD_PROVIDER = "goalx"
+GOLD_DATASET = "match_features"
+
 _TREE_SUBDIRS = ("raw", "bronze", "silver", "gold", "duckdb")
 
 
@@ -320,6 +326,10 @@ class CorpusStore:
     def silver_path(self, provider: str, dataset: str) -> Path:
         """Silver 数据集根（布局唯一落点：{provider}/{dataset} 分区树）。"""
         return self.root / "silver" / provider / dataset
+
+    def gold_path(self, provider: str, dataset: str) -> Path:
+        """Gold 数据集根（布局唯一落点；B 相特征面，schema 归 data/gold.py）。"""
+        return self.root / "gold" / provider / dataset
 
     def ingest_raw(
         self, provider: str, dataset: str, key: str, body: bytes, *, ext: str = ""

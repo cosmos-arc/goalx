@@ -21,7 +21,7 @@ import duckdb
 from loguru import logger
 
 from goalx_backend.config import Settings
-from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.corpus_store import GOLD_DATASET, GOLD_PROVIDER, CorpusStore
 from goalx_backend.data.ingest import (
     archive538,
     elo_silver,
@@ -60,6 +60,11 @@ _SILVER_VIEWS: tuple[tuple[str, str, str], ...] = (
     # 票 78：自算 Elo 逐场赛前值（消费即 join fixture_universe，零跨源映射）
     (elo_silver.DATASET, elo_silver.PROVIDER, elo_silver.DATASET),
 )
+# gold 层视图清单（B 相特征面；路径经 gold_path，视图随首建落地）
+_GOLD_VIEWS: tuple[tuple[str, str, str], ...] = (
+    ("match_features", GOLD_PROVIDER, GOLD_DATASET),
+)
+_ALL_VIEWS = _SILVER_VIEWS + _GOLD_VIEWS
 
 
 def corpus_duckdb_path(root: Path) -> Path:
@@ -78,8 +83,12 @@ def build_corpus_duckdb(store: CorpusStore) -> Path:
     path = corpus_duckdb_path(store.root)
     con = duckdb.connect(str(path))
     try:
-        for view, provider, dataset in _SILVER_VIEWS:
-            dataset_dir = store.silver_path(provider, dataset)
+        for view, provider, dataset in _ALL_VIEWS:
+            dataset_dir = (
+                store.gold_path(provider, dataset)
+                if provider == GOLD_PROVIDER
+                else store.silver_path(provider, dataset)
+            )
             if not any(dataset_dir.glob("**/*.parquet")):
                 logger.warning("corpus.duckdb：{} 无 parquet，跳过建视图", view)
                 continue
