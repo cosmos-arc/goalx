@@ -28,6 +28,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-odds
     uv run python -m goalx_backend.cli srct-gate
     uv run python -m goalx_backend.cli archive-538
+    uv run python -m goalx_backend.cli gold-build
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from loguru import logger
 from goalx_backend import datasets, tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, corpus_gate, mapping, reconcile
+from goalx_backend.data import corpus_duckdb, corpus_gate, gold, mapping, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
@@ -638,6 +639,46 @@ def _cmd_elo_build(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_gold_build(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    Gold 特征面全量重算（backtest-decade B 相，幂等零请求）。
+
+    输入=silver 视图（先跑 srct-silver/srct-odds/srct-market/elo-build）+
+    运行面只读（hist/understat/admin 排除表）；产出语料树
+    gold/goalx/match_features（era 分层/PIT 断言/卫生接线），并刷新
+    corpus.duckdb（含 gold 视图）。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        face = connect(resolved.db_path)
+        try:
+            migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
+            try:
+                duck_con = corpus_duckdb.connect(resolved)
+            except (duckdb.Error, OSError) as exc:
+                message = "corpus.duckdb unavailable（先跑 srct-silver/"
+                sys.stderr.write(
+                    message + "srct-odds/srct-market）: " + str(exc) + "\n"
+                )
+                raise SystemExit(2) from exc
+            try:
+                report = gold.build_match_features(store, face, duck_con)
+            finally:
+                duck_con.close()
+        finally:
+            face.close()
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_mapping_sync(args: argparse.Namespace) -> None:
     """跨源映射同步（票 77）：物化链 + kickoff 校准 + 别名补源。"""
     report = mapping_sync()
@@ -943,6 +984,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
     )
     sub.add_parser(
+        "gold-build",
+        help="gold特征面全量重算(B相;era分层+PIT断言+卫生接线,幂等,先备齐silver)",
+    )
+    sub.add_parser(
         "srct-silver",
         help="源T silver 重物化+DuckDB 只读桥(票56切片14/16;fixture+xg 幂等重建)",
     )
@@ -1042,6 +1087,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-collect": lambda: _cmd_srct_collect(args),
         "srct-results": lambda: _cmd_srct_results(args),
         "elo-build": lambda: _cmd_elo_build(args),
+        "gold-build": lambda: _cmd_gold_build(args),
         "srct-silver": lambda: _cmd_srct_silver(args),
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),

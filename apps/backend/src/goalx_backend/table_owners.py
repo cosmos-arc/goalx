@@ -67,6 +67,8 @@ OWNERS: dict[str, set[str]] = {
         "bronze_sid_backfill",
         # backtest-decade A4：行政判赛排除表（data/hygiene.py 单一取数口）
         "admin_match_exclusions",
+        # backtest-decade B：gold 特征面（data/gold.py 物化，语料树 parquet）
+        "match_features",
     },
     "modelling": {"forecasts", "team_aliases"},
     "evaluation": {
