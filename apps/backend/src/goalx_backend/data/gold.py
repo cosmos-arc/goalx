@@ -523,14 +523,16 @@ def _srct_xg_rows(con: DuckCon) -> dict[str, tuple[float, float]]:
     源T stats xG（近代源；sid 直连零映射风险）。
 
     季下界 2024/25（story 10 源纪律：源T stats xG 此季起稳定；早季缺口
-    诚实留空，understat 主源覆盖）。
+    诚实留空，understat 主源覆盖）。`_unknown` 孤儿分区显式排除——hive
+    分区串字典序 '_unknown' ≥ '2024-25'，不排则季门对孤儿 fail-open
+    （correctness-review 2026-10-08 F1）。
     """
     rows = con.execute(
         f"""
         SELECT sid, xg_home, xg_away FROM xg_observation
-        WHERE season >= '{SRCT_XG_SEASON_MIN}'
+        WHERE season >= '{SRCT_XG_SEASON_MIN}' AND season <> '_unknown'
           AND has_xg AND xg_home IS NOT NULL AND xg_away IS NOT NULL
-        """  # noqa: S608 季下界=模块常量
+        """  # noqa: S608 季下界/孤儿分区=模块常量
     ).fetchall()
     return {str(r[0]): (float(r[1]), float(r[2])) for r in rows}
 
@@ -858,13 +860,17 @@ def build_match_features(
     exclusions = admin_exclusions(face)
     try:
         fixtures = _fetch_fixtures(duck_con)
-    except duckdb.CatalogException as exc:
-        # 空语料（srct-silver 零 parquet → duckdb 桥不建视图）= 合法初生态，
-        # 降级报告；其余输入视图缺席不降级——fail-loud（先跑齐 silver 命令）
-        report.degraded = f"fixture_universe view missing: {exc}"
+    except (duckdb.CatalogException, duckdb.IOException) as exc:
+        # 空语料（视图缺席或残留视图指向已清空的 silver）= 合法初生态，
+        # 降级报告；其余输入视图缺席不降级——fail-loud（先跑齐 silver 命令）。
+        # 降级同时清掉上一成功构建的 parquet：否则 CLI 随后重建 duckdb 桥
+        # 会把陈旧快照挂回 match_features 视图，静默服务旧数据
+        # （correctness-review 2026-10-08 F2/F3）
+        report.degraded = f"fixture_universe view unusable: {exc}"
+        root = store.gold_path(GOLD_PROVIDER, GOLD_DATASET)
+        (root / "all" / "data.parquet").unlink(missing_ok=True)
         write_dataset_meta(
-            store.gold_path(GOLD_PROVIDER, GOLD_DATASET),
-            {"gold_version": GOLD_VERSION, "degraded": report.degraded},
+            root, {"gold_version": GOLD_VERSION, "degraded": report.degraded}
         )
         return report
 

@@ -685,3 +685,52 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     finally:
         con.close()
     assert n == 4
+
+
+def test_srct_xg_unknown_partition_excluded(built: Built) -> None:
+    """F1 回归：xg 孤儿行落 _unknown 分区不得过季门（'_' 字典序 > '2024-25'）。"""
+    import pyarrow.compute as pc
+
+    store, settings, _report = built
+    root = store.silver_path("srct", "xg_observation")
+    for part in list(root.glob("season=*/competition=*/data.parquet")):
+        table = pq.read_table(part)
+        if ERA1_SID not in table.column("sid").to_pylist():
+            continue
+        orphan = table.filter(pc.field("sid") == ERA1_SID)
+        pq.write_table(
+            table.filter(pc.field("sid") != ERA1_SID), part, compression="zstd"
+        )
+        unknown = root / "season=_unknown" / "competition=_unknown"
+        unknown.mkdir(parents=True, exist_ok=True)
+        pq.write_table(orphan, unknown / "data.parquet", compression="zstd")
+    corpus_duckdb.build_corpus_duckdb(store)
+    report = _build_gold(store, settings, today=TODAY)
+    rows = _gold_rows(settings)
+    assert rows[ERA1_SID]["xg_source"] is None  # _unknown 不进近代源
+    assert rows[ERA2B_SID]["xg_source"] == "srct"  # 正常 2024/25 行不受影响
+    assert report.xg_srct == 1
+
+
+def test_degraded_rebuild_cleans_stale_snapshot(built: Built) -> None:
+    """F2/F3 回归：silver 清空后降级不炸（残留视图 IOException），且清掉
+    上一成功构建的 parquet——重建桥后 match_features 不再服务陈旧快照。"""
+    import shutil
+
+    store, settings, _report = built
+    shutil.rmtree(store.silver_path("srct", "fixture_universe"))
+    corpus_duckdb.build_corpus_duckdb(store)  # 残留视图指向空 glob
+    report = _build_gold(store, settings, today=TODAY)
+    assert report.degraded is not None
+    assert "fixture_universe" in report.degraded
+    gold_root = store.gold_path(gold.GOLD_PROVIDER, gold.GOLD_DATASET)
+    assert not (gold_root / "all" / "data.parquet").exists()
+    corpus_duckdb.build_corpus_duckdb(store)
+    con = corpus_duckdb.connect(settings)
+    try:
+        stale = con.execute(
+            "SELECT count(*) FROM duckdb_views() WHERE view_name = 'match_features'"
+        ).fetchone()[0]
+    finally:
+        con.close()
+    assert stale == 0  # 无 parquet 即无视图——不服务旧数据

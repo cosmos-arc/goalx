@@ -90,7 +90,11 @@ def build_corpus_duckdb(store: CorpusStore) -> Path:
                 else store.silver_path(provider, dataset)
             )
             if not any(dataset_dir.glob("**/*.parquet")):
+                # 无 parquet：跳建并弃残视图——残留 CREATE OR REPLACE 的旧
+                # 视图指向空 glob，查询即 IOException（correctness-review
+                # 2026-10-08 F2/F3 根因）
                 logger.warning("corpus.duckdb：{} 无 parquet，跳过建视图", view)
+                con.execute(f"DROP VIEW IF EXISTS {view}")  # 视图名=模块常量
                 continue
             glob = dataset_dir.as_posix() + "/**/*.parquet"
             con.execute(
