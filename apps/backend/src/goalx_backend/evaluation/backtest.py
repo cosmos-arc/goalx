@@ -224,33 +224,42 @@ def _valid_probs(
     return vals[0], vals[1], vals[2]
 
 
-def fair_probs_from_gold(
-    match: GoldMatch, *, fair_source: str = "auto"
+Odds3 = tuple[float | None, float | None, float | None]
+
+
+def era_fair_probs(
+    era: str,
+    psc_odds: Odds3,
+    avgc_odds: Odds3,
+    anchor_odds: Odds3,
+    cons_probs: Odds3,
+    *,
+    fair_source: str = "auto",
 ) -> tuple[dict[str, float], str] | None:
     """
     收盘公允概率（时代分层正典链 / 源选择器；ADR-0007 修订）。
+
+    纯数据入参版，票 15 解锁报告等消费面复用（语义单一落点，不散写
+    第二份链）。
 
     - auto：era1 = PSC→AvgC（Shin 去水）；era2 = cid177 锚收盘（Shin）→
       多书中位数共识归一（traj_cons，构建侧已归一的概率直用）；
     - psc/avgc：只用该源（票 34 对照 run；跨 era 作用于配对行）。
 
     缺列/无效价 = 无基准返回 None。PSC 成熟度由 gold 快照承载：未成熟行
-    odds 列整族置空（门=gold 构建一处，票 06），本引擎不二次判。
+    odds 列整族置空（门=gold 构建一处，票 06），消费侧不二次判。
     """
     if fair_source not in ("auto", "psc", "avgc"):
         raise ValueError(f"未知 fair_source {fair_source!r}（合法: auto/psc/avgc）")
-    candidates: tuple[tuple[tuple[float | None, float | None, float | None], str], ...]
+    candidates: tuple[tuple[Odds3, str], ...]
     if fair_source == "psc":
-        candidates = ((match.psc_odds, "psc"),)
+        candidates = ((psc_odds, "psc"),)
     elif fair_source == "avgc":
-        candidates = ((match.avgc_odds, "avgc"),)
-    elif match.era == ERA_TRAJECTORY:
-        candidates = (
-            (match.anchor_odds, "traj_anchor"),
-            (match.cons_probs, "traj_cons"),
-        )
+        candidates = ((avgc_odds, "avgc"),)
+    elif era == ERA_TRAJECTORY:
+        candidates = ((anchor_odds, "traj_anchor"), (cons_probs, "traj_cons"))
     else:
-        candidates = ((match.psc_odds, "psc"), (match.avgc_odds, "avgc"))
+        candidates = ((psc_odds, "psc"), (avgc_odds, "avgc"))
     for quote, source in candidates:
         if source == "traj_cons":
             probs3 = _valid_probs(quote)
@@ -262,6 +271,20 @@ def fair_probs_from_gold(
                 probs = om.shin_implied(odds3)
                 return dict(zip(SELECTIONS, probs, strict=True)), source
     return None
+
+
+def fair_probs_from_gold(
+    match: GoldMatch, *, fair_source: str = "auto"
+) -> tuple[dict[str, float], str] | None:
+    """单场 gold 行的收盘公允概率（era 正典链委托 ``era_fair_probs``）。"""
+    return era_fair_probs(
+        match.era,
+        match.psc_odds,
+        match.avgc_odds,
+        match.anchor_odds,
+        match.cons_probs,
+        fair_source=fair_source,
+    )
 
 
 def simulated_jc_odds(fair_probs: dict[str, float], haircut: float) -> dict[str, float]:

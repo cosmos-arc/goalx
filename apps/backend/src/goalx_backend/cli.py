@@ -77,7 +77,7 @@ from goalx_backend.data.ingest import (
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
-from goalx_backend.evaluation import baseline
+from goalx_backend.evaluation import baseline, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
@@ -295,6 +295,20 @@ def _cmd_baseline_compare() -> None:
         for source, summary in results.items():
             ev.compute_run_metrics(conn, int(summary["run_id"]))
             logger.info("baseline {} run={}", source, summary)
+
+
+def _cmd_unlock_report() -> None:
+    """hhad/ttg 解锁判定报告（票 15：真实 AH/OU 线 vs 1X2 反推，十年分 era×联赛）。"""
+    with _corpus_handles() as (duck_con, store):
+        payload = unlock_report.build_unlock_report(store, duck_con)
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "unlock-report: {} 场 → reports/{}.json/.md（门=报告+用户点头，引擎不动）",
+        payload["n_matches"],
+        unlock_report.REPORT_BASENAME,
+    )
 
 
 def _cmd_calibrate_haircut() -> None:
@@ -945,6 +959,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
+    sub.add_parser(
+        "unlock-report",
+        help="hhad/ttg 解锁判定报告(票 15:真实线 vs 反推,分era×联赛,不改动引擎)",
+    )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
     elo_query = sub.add_parser(
@@ -1110,6 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
         "set-alias": lambda: _cmd_set_alias(args),
         "backtest": lambda: _cmd_backtest(args),
         "baseline-compare": _cmd_baseline_compare,
+        "unlock-report": _cmd_unlock_report,
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),

@@ -101,3 +101,51 @@ def fetch_decade_rows(
         seen[sid] = row
     version = next((str(row[-1]) for row in rows if row[-1] is not None), None)
     return list(seen.values()), version, "ok", duplicates
+
+
+# 报告面取数列（票 15 解锁判定）：era 收盘族 + AH/OU 收盘族（中位数共识）
+# + 赛果。同一卫生入口（已赛 + admin_excluded=false）+ 11 重叠联赛范围
+# （语料含杯赛/挪超等 CorpusScope 外联赛，correctness F3——报告口径=
+# 十年 11 联赛，与引擎面同范围）。
+_MARKET_FACE_SQL = """
+    SELECT sid, league,
+           strftime(CAST(kickoff AS DATE), '%Y-%m-%d') AS day,
+           season, era, home_goals, away_goals,
+           psc_home, psc_draw, psc_away,
+           avgc_home, avgc_draw, avgc_away,
+           close1x2_h, close1x2_d, close1x2_a,
+           close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
+           ah_close_line_med, ah_close_home_water_med, ah_close_away_water_med,
+           ou_close_line_med, ou_close_over_water_med, ou_close_under_water_med
+    FROM match_features
+    WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL
+      AND admin_excluded = false
+      AND league IN (SELECT unnest(?))
+    ORDER BY league, day, sid
+"""
+
+
+def fetch_market_face_rows(
+    duck_con: duckdb.DuckDBPyConnection,
+) -> list[dict[str, Any]]:
+    """
+    全量报告行（票 15：era 收盘 + AH/OU 收盘族中位数 + 赛果，dict 行）。
+
+    口径=11 重叠联赛（与引擎面同范围；语料含杯赛/挪超等 CorpusScope
+    外联赛，报告不采）。视图缺席（未建桥/空语料）抛 RuntimeError（报告
+    面非引擎面，缺席即运维前置缺失，不落"诚实空"报告）。sid 去重对齐
+    引擎面（定序取首）。
+    """
+    leagues = [FD_TO_LEAGUE[code] for code in sorted(FD_TO_LEAGUE)]
+    try:
+        result = duck_con.execute(_MARKET_FACE_SQL, [leagues])
+        names = [str(d[0]) for d in result.description]
+        rows = result.fetchall()
+    except (duckdb.CatalogException, duckdb.IOException) as exc:
+        raise RuntimeError(
+            "match_features 视图不可用（先跑 gold-build + 建桥）"
+        ) from exc
+    seen: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        seen.setdefault(str(row[0]), dict(zip(names, row, strict=True)))
+    return list(seen.values())

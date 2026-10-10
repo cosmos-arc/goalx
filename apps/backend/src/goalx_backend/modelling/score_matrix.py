@@ -137,12 +137,31 @@ class ScoreMatrix:
         return probs
 
     def hhad(self, goal_line: float) -> dict[str, float]:
-        """整数让球线三向（h/d/a，无 push；goal_line 为主队让球数，-1 即让 1 球）。"""
+        """
+        整数让球线三向（h/d/a，无 push；goal_line 为主队让球数，-1 即让 1 球）。
+
+        仅限整数线：半步长线经 ``int(h + goal_line)`` 截断会把 x.5 的
+        让球质量错记进平局格——半线赢盘概率用 ``cover_prob``。
+        """
         probs: dict[str, float] = dict.fromkeys(_WDL_CODES, 0.0)
         for h in range(self._size):
             for a in range(self._size):
                 probs[_outcome_sign(int(h + goal_line), a)] += self.grid[h][a]
         return probs
+
+    def cover_prob(self, goal_line: float) -> float:
+        """
+        主队赢盘概率（任意半步长线；goal_line 为主让，-1 即让 1 球）。
+
+        P(净胜球 + goal_line > 0)——半线无 push、整数线不含平局退款质量
+        （退款另计），与亚洲盘主队侧语义一致（票 15 解锁对照用）。
+        """
+        return sum(
+            self.grid[h][a]
+            for h in range(self._size)
+            for a in range(self._size)
+            if h + goal_line - a > 0
+        )
 
     def crs(self) -> dict[str, float]:
         """精确比分视图：官方 28 精确格 + 胜/平/负其他三档。"""
