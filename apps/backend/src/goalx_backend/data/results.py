@@ -155,10 +155,14 @@ def latest_hist_date(conn: sqlite3.Connection, competition: str) -> str | None:
 def hist_rows_through(
     conn: sqlite3.Connection, competition: str, as_of: str
 ) -> list[sqlite3.Row]:
-    """某联赛 as_of（含）之前的全部历史行（防前视：上界由调用方给出）。"""
+    """
+    某联赛 as_of（含）之前的全部历史行（防前视：上界由调用方给出）。
+
+    带 competition 列（票 14：训练面卫生过滤按联赛精确匹配排除窗）。
+    """
     return conn.execute(
         """
-        SELECT match_date, home_team, away_team, fthg, ftag
+        SELECT competition, match_date, home_team, away_team, fthg, ftag
         FROM hist_matches
         WHERE competition = ? AND match_date <= ?
         ORDER BY match_date
