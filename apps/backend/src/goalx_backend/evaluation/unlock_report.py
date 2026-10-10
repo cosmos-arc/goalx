@@ -43,6 +43,7 @@ from goalx_backend.modelling.score_matrix import ScoreMatrix
 
 REPORT_BASENAME = "unlock-hhad-ttg"
 _HALF_STEP_EPS = 1e-9  # 半步长线判定容差（浮点线 x.0/x.5 vs .25/.75）
+_OU_LINE_MAX = 7.0  # OU 线上界：ttg 桶 7=7+ 并桶，≥7 的 over 概率不可分辨
 WATER_SANITY_BAND = (0.5, 1.5)  # 马来/港式水位健全带（真树分布 1% 分位 0.80）
 
 
@@ -334,10 +335,19 @@ def _add_face_sample(
     赢盘=净胜球−线>0；反推矩阵侧等价 goal_line=−cid8线。
     """
     if face == "ou":
-        line = _clean_half_line(row["ou_close_line_med"])
+        # 半线（x.5）限定：x.0 落线=退款面，错记 under 会偏置校准
+        # （correctness F2，真树 9.9% 样本落线）；线 ≥7 超出 ttg 桶分辨率
+        line = (
+            _half_only(row["ou_close_line_med"])
+            if (
+                row["ou_close_line_med"] is not None
+                and float(row["ou_close_line_med"]) < _OU_LINE_MAX
+            )
+            else None
+        )
         waters = (row["ou_close_over_water_med"], row["ou_close_under_water_med"])
         side_a, side_b = "ou_close_over_water_med", "ou_close_under_water_med"
-        skip_key = "ou_no_clean_line"
+        skip_key = "ou_no_half_line"
     else:
         line = _half_only(row["ah_close_line_med"])
         waters = (row["ah_close_home_water_med"], row["ah_close_away_water_med"])
@@ -349,7 +359,7 @@ def _add_face_sample(
         model_p = _ttg_over_prob(matrix.ttg(), line)
         actual = gh + ga > line
     else:
-        model_p = matrix.hhad(-line)["h"]
+        model_p = matrix.cover_prob(-line)  # 半步长线：hhad() 的 int() 截断不适用
         actual = (gh - ga) - line > 0
     market_p = two_way_prob(float(row[side_a]), float(row[side_b]))
     for scope in scopes:

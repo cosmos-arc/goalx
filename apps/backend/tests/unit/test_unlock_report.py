@@ -107,7 +107,7 @@ def test_build_report_faces_and_ttg(gold_env) -> None:
         try:
             assert payload["n_matches"] == 5
             assert payload["skipped"]["ah_no_half_line"] == 2  # 整数线 + 越带
-            assert payload["skipped"]["ou_no_clean_line"] == 2  # 四分线 + 越带
+            assert payload["skipped"]["ou_no_half_line"] == 2  # 四分线 + 越带
             ou = payload["faces"]["ou"]["psc_proxy"]
             # era1 两场进 OU 面（9001 over / 9002 under）
             assert ou["n"] == 2
@@ -156,6 +156,68 @@ def test_ah_cover_convention_cid8_positive_home_gives(gold_env) -> None:
             assert ah["actual_rate"] == pytest.approx(0.5)
             # 反推侧同约定：hhad(-1.5)["h"] < 0.5（让一球半主胜概率低于半）
             assert ah["model_1x2_inverted"]["mean_prob"] < 0.5
+        finally:
+            duck_con.close()
+            face.close()
+
+
+def test_cover_prob_half_lines_match_grid_sum() -> None:
+    """correctness F1 回归：半线赢盘概率=格子和（hhad 的 int() 截断不适用半线）。"""
+    from goalx_backend.modelling.score_matrix import ScoreMatrix
+
+    matrix = ScoreMatrix.from_lambdas(1.5, 1.1)
+    for line in (-1.5, -0.5, 0.5, 1.5):
+        manual = sum(
+            matrix.cell(h, a)
+            for h in range(10)
+            for a in range(10)
+            if h - a + (-line) > 0
+        )
+        # cover_prob(goal_line) 主让口径：cid8 线 L=主让 → goal_line=-L
+        assert matrix.cover_prob(-line) == pytest.approx(manual, abs=1e-12)
+        assert 0.0 < matrix.cover_prob(-line) < 1.0
+    # 整数线与 hhad 一致性：cover_prob(-1) == hhad(-1)["h"] + hhad(-1)["d"]*0
+    # （-1 让一球：赢盘=h 净胜≥2？不对——净胜 1 为 push；cover 只算赢盘）
+    assert matrix.cover_prob(-1.0) == pytest.approx(
+        sum(
+            matrix.cell(h, a)
+            for h in range(10)
+            for a in range(10)
+            if h - a > 1  # 让一球：净胜>1 才赢盘（净胜1=push 不含）
+        ),
+        abs=1e-12,
+    )
+
+
+def test_ou_integer_and_high_lines_excluded(gold_env) -> None:
+    """correctness F2/F4 回归：OU 整数线（push 面）与 ≥7 线不入样。"""
+    rows = [
+        _row("9201", ou_close_line_med=3.0, home_goals=2, away_goals=1),  # 落线=退款
+        _row(
+            "9202", ou_close_line_med=7.5, home_goals=4, away_goals=4
+        ),  # 超 ttg 分辨率
+        _row("9203", ou_close_line_med=2.5, home_goals=2, away_goals=1),  # 正常半线
+    ]
+    with gold_env(rows) as (face, duck_con, store):
+        payload = ur.build_unlock_report(store, duck_con)
+        try:
+            assert payload["skipped"]["ou_no_half_line"] == 2
+            assert payload["faces"]["ou"]["psc_proxy"]["n"] == 1
+        finally:
+            duck_con.close()
+            face.close()
+
+
+def test_market_face_league_scope(gold_env) -> None:
+    """correctness F3 回归：报告口径=11 重叠联赛，杯赛/范围外联赛不入样。"""
+    rows = [
+        _row("9301"),
+        _row("9302", league="欧罗巴杯"),  # CorpusScope 外
+    ]
+    with gold_env(rows) as (face, duck_con, store):
+        payload = ur.build_unlock_report(store, duck_con)
+        try:
+            assert payload["n_matches"] == 1
         finally:
             duck_con.close()
             face.close()
