@@ -1,8 +1,9 @@
-"""历史基准分期/来源对照测试（票 34 验收 5）。"""
+"""历史基准分期/来源对照测试（票 34 验收 5；对照 run 随票 13 引擎走 gold）。"""
 
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline
@@ -57,53 +58,67 @@ def test_baseline_quality_report_periods_and_diffs(db) -> None:
     assert "不判定真概率" in report["limitations"]
 
 
-def test_run_baseline_comparison_creates_new_runs_and_keeps_old(db) -> None:
-    db.execute(
-        "INSERT INTO backtest_runs (label, params, status, created_at)"
-        " VALUES ('old-run', '{}', 'done', '2026-09-01T00:00:00+00:00')"
-    )
-    db.commit()
-    old_ids = {
-        int(r["id"]) for r in db.execute("SELECT id FROM backtest_runs").fetchall()
-    }
-    results = baseline.run_baseline_comparison(db, bt.BacktestParams())
-    labels = {
-        str(r["label"]): dict(r)
-        for r in db.execute(
-            "SELECT label, params, status FROM backtest_runs"
-        ).fetchall()
-    }
-    assert set(labels) == {"old-run", "baseline-psc", "baseline-avgc"}
-    assert labels["old-run"]["status"] == "done"  # 旧 run 保留
-    for source in ("psc", "avgc"):
-        params = json.loads(labels[f"baseline-{source}"]["params"])
-        assert params["fair_source"] == source
-        assert params["price_model"] == "simulated_jc"  # 合成价标注
-        assert "versions" in params
-        assert results[source]["run_id"] not in old_ids
+def test_run_baseline_comparison_creates_new_runs_and_keeps_old(gold_env) -> None:
+    """空 gold：对照 run 如实零预测（票 13 后与主回测同走 gold）。"""
+    with gold_env([]) as (face, duck_con, store):
+        face.execute(
+            "INSERT INTO backtest_runs (label, params, status, created_at)"
+            " VALUES ('old-run', '{}', 'done', '2026-09-01T00:00:00+00:00')"
+        )
+        face.commit()
+        old_ids = {
+            int(r["id"])
+            for r in face.execute("SELECT id FROM backtest_runs").fetchall()
+        }
+        results = baseline.run_baseline_comparison(
+            face, duck_con, store, bt.BacktestParams()
+        )
+        labels = {
+            str(r["label"]): dict(r)
+            for r in face.execute(
+                "SELECT label, params, status FROM backtest_runs"
+            ).fetchall()
+        }
+        assert set(labels) == {"old-run", "baseline-psc", "baseline-avgc"}
+        assert labels["old-run"]["status"] == "done"  # 旧 run 保留
+        for source in ("psc", "avgc"):
+            params = json.loads(str(labels[f"baseline-{source}"]["params"]))
+            assert params["fair_source"] == source
+            assert params["price_model"] == "simulated_jc"  # 合成价标注
+            assert "versions" in params
+            assert results[source]["run_id"] not in old_ids
 
 
-def test_fair_source_selection(db) -> None:
-    db.execute(
-        "INSERT INTO hist_matches (competition, season, match_date, home_team,"
-        " away_team, fthg, ftag, ftr, psc_home, psc_draw, psc_away,"
-        " avgc_home, avgc_draw, avgc_away)"
-        " VALUES ('E0','2526','2025-09-01','A','B',2,0,'H',2.0,3.4,3.8,2.2,3.4,3.8)"
+def test_fair_source_selection() -> None:
+    """fair 源选择器语义（票 34 对照）：强制源缺失=无基准不兜底。"""
+    from goalx_backend.evaluation.backtest import GoldMatch, fair_probs_from_gold
+
+    match = GoldMatch(
+        sid="s1",
+        competition="E0",
+        match_date="2025-09-01",
+        season="2025-26",
+        home="A",
+        away="B",
+        fthg=2,
+        ftag=0,
+        era="psc_proxy",
+        ref=0,
+        psc_odds=(2.0, 3.4, 3.8),
+        avgc_odds=(2.2, 3.4, 3.8),
+        anchor_odds=(None, None, None),
+        cons_probs=(None, None, None),
     )
-    db.commit()
-    row = db.execute("SELECT * FROM hist_matches").fetchone()
-    auto = bt.fair_probs_from_close(row)
+    auto = fair_probs_from_gold(match)
     assert auto is not None
     assert auto[1] == "psc"  # auto: PSC 优先
-    only_avgc = bt.fair_probs_from_close(row, fair_source="avgc")
+    only_avgc = fair_probs_from_gold(match, fair_source="avgc")
     assert only_avgc is not None
     assert only_avgc[1] == "avgc"
     assert only_avgc[0] != auto[0]  # 不同来源不同基准
     # PSC 缺失：强制 psc → 无基准；auto → AvgC 兜底
-    db.execute("UPDATE hist_matches SET psc_home = NULL")
-    db.commit()
-    no_psc = db.execute("SELECT * FROM hist_matches").fetchone()
-    assert bt.fair_probs_from_close(no_psc, fair_source="psc") is None
-    fallback = bt.fair_probs_from_close(no_psc)
+    no_psc = replace(match, psc_odds=(None, None, None))
+    assert fair_probs_from_gold(no_psc, fair_source="psc") is None
+    fallback = fair_probs_from_gold(no_psc)
     assert fallback is not None
     assert fallback[1] == "avgc"

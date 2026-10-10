@@ -1358,6 +1358,62 @@ def _apply_v24(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v25(conn: sqlite3.Connection) -> None:
+    """
+    v25（backtest-decade 票 13）：backtest_predictions 换键 gold sid。
+
+    引擎 v2 数据面切 gold match_features（ADR-0011 只读桥），预测行键从
+    hist_match_id（INTEGER FK hist_matches）改为 match_key（TEXT，gold
+    sid）；新增 era（时代分层正典声明）与 ftr（随行落库，指标计算不再
+    回查 hist_matches）；fair_source CHECK 扩 traj_anchor/traj_cons
+    （era2 轨迹派生收盘两档）。旧 M2 五联赛 run 行保留迁移（hist id 转
+    text，era/ftr 留空），审计不丢；旧行 ftr 为空=指标重算时如实跳过。
+    """
+    conn.execute("ALTER TABLE backtest_predictions RENAME TO backtest_predictions_v3")
+    conn.execute(
+        """
+        CREATE TABLE backtest_predictions (
+            id INTEGER PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+            match_key TEXT NOT NULL,
+            competition TEXT NOT NULL,
+            season TEXT NOT NULL,
+            match_date TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            era TEXT,
+            ftr TEXT CHECK (ftr IN ('H', 'D', 'A') OR ftr IS NULL),
+            had_probs TEXT NOT NULL,
+            fair_probs TEXT NOT NULL,
+            fair_source TEXT NOT NULL
+                CHECK (fair_source IN ('psc', 'avgc', 'traj_anchor', 'traj_cons')),
+            model_fingerprint TEXT NOT NULL,
+            train_window_end TEXT NOT NULL,
+            UNIQUE (run_id, match_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO backtest_predictions
+            (id, run_id, match_key, competition, season, match_date, home_team,
+             away_team, had_probs, fair_probs, fair_source,
+             model_fingerprint, train_window_end)
+        SELECT id, run_id, CAST(hist_match_id AS TEXT), competition, season,
+               match_date, home_team, away_team, had_probs, fair_probs,
+               fair_source, model_fingerprint, train_window_end
+        FROM backtest_predictions_v3
+        """
+    )
+    conn.execute("DROP TABLE backtest_predictions_v3")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_backtest_predictions_run
+            ON backtest_predictions(run_id)
+        """
+    )
+
+
 # 票 73：hist_matches 扩列清单单一事实源（(列名, SQLite 类型)）——
 # data/results.upsert_hist_matches 同源消费（v20 DDL ↔ upsert 列防漂移）。
 HIST_EXTENDED_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -1415,4 +1471,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (22, _apply_v22),
     (23, _apply_v23),
     (24, _apply_v24),
+    (25, _apply_v25),
 )

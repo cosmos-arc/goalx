@@ -26,7 +26,6 @@ from typing import Any
 
 from scipy.stats import norm
 
-from goalx_backend.data import results as rs_store
 from goalx_backend.markets import SELECTIONS
 
 ECE_BINS = 10
@@ -245,16 +244,17 @@ def compute_run_metrics(conn: sqlite3.Connection, run_id: int) -> dict[str, int]
         "SELECT * FROM backtest_predictions WHERE run_id = ?",
         (run_id,),
     ).fetchall()
-    ftr = rs_store.ftr_for_hist_ids(conn, [int(r["hist_match_id"]) for r in rows])
+    # ftr 随预测行落库（票 13）；v25 前旧 run 行 ftr 为空 → 如实跳过
     samples = [
         {
             "had_probs": json.loads(str(row["had_probs"])),
             "fair_probs": json.loads(str(row["fair_probs"])),
-            "ftr": ftr[int(row["hist_match_id"])],
+            "ftr": str(row["ftr"]),
             "competition": str(row["competition"]),
             "season": str(row["season"]),
         }
         for row in rows
+        if row["ftr"] is not None
     ]
 
     def store(scope: str, metrics: dict[str, Any]) -> None:

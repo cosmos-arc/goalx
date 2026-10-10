@@ -196,18 +196,6 @@ def settled_jingcai_fixtures(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def ftr_for_hist_ids(conn: sqlite3.Connection, ids: list[int]) -> dict[int, str]:
-    """历史行的全场胜负（H/D/A），按 hist id 索引（指标评分用）。"""
-    if not ids:
-        return {}
-    placeholders = ", ".join("?" for _ in ids)
-    rows = conn.execute(
-        f"SELECT id, ftr FROM hist_matches WHERE id IN ({placeholders})",  # noqa: S608
-        ids,
-    ).fetchall()
-    return {int(r["id"]): str(r["ftr"]) for r in rows}
-
-
 def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """历史底座的逐联赛队名清单（对齐覆盖率报告用）。"""
     return conn.execute(
@@ -217,22 +205,6 @@ def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         SELECT competition, away_team AS team FROM hist_matches
         ORDER BY competition, team
         """
-    ).fetchall()
-
-
-def hist_rows_in_seasons(
-    conn: sqlite3.Connection, competitions: tuple[str, ...], seasons: tuple[str, ...]
-) -> list[sqlite3.Row]:
-    """回测范围的历史行（联赛×赛季过滤，按联赛、日期排序）。"""
-    comp_ph = ", ".join("?" for _ in competitions)
-    season_ph = ", ".join("?" for _ in seasons)
-    return conn.execute(
-        f"""
-        SELECT * FROM hist_matches
-        WHERE competition IN ({comp_ph}) AND season IN ({season_ph})
-        ORDER BY competition, match_date
-        """,  # noqa: S608
-        (*competitions, *seasons),
     ).fetchall()
 
 

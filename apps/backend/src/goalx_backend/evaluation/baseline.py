@@ -16,10 +16,12 @@ import sqlite3
 from dataclasses import replace
 from typing import Any
 
+import duckdb
 from pydantic import BaseModel
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.markets import SELECTIONS
 
@@ -128,13 +130,25 @@ def baseline_quality_report(conn: sqlite3.Connection) -> BaselineQualityReport:
 
 
 def run_baseline_comparison(
-    conn: sqlite3.Connection, params: bt.BacktestParams, *, base_label: str = "baseline"
+    conn: sqlite3.Connection,
+    duck_con: duckdb.DuckDBPyConnection,
+    store: CorpusStore,
+    params: bt.BacktestParams,
+    *,
+    base_label: str = "baseline",
 ) -> dict[str, dict[str, Any]]:
-    """fair_source=psc/avgc 各跑一个对照 run（旧 run 保留，票 34 验收 5）。"""
+    """
+    fair_source=psc/avgc 各跑一个对照 run（旧 run 保留，票 34 验收 5）。
+
+    引擎 v2（票 13）后与主回测同走 gold match_features；psc/avgc 为源
+    选择器（作用于 fdhist 配对行），配对缺席的行两 run 同步无基准。
+    """
     results: dict[str, dict[str, Any]] = {}
     for source in ("psc", "avgc"):
         run_params = replace(params, fair_source=source)
-        result = bt.run_backtest(conn, run_params, label=f"{base_label}-{source}")
+        result = bt.run_backtest(
+            conn, duck_con, store, run_params, label=f"{base_label}-{source}"
+        )
         results[source] = {
             "run_id": result.run_id,
             "predictions": result.predictions,

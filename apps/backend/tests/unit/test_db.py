@@ -13,9 +13,9 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    # v7..v24 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表
-    assert db.migrate(conn) == 24
-    assert db.migrate(conn) == 24  # 重跑幂等
+    # v7..v25 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表 + 票 13 换键
+    assert db.migrate(conn) == 25
+    assert db.migrate(conn) == 25  # 重跑幂等
     # v16（票 48）：ev_assessments 脚手架 DROP
     dropped = {
         row["name"]
@@ -188,8 +188,68 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 24
+    assert db.migrate(conn) == 25
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before
     conn.close()
+
+
+def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> None:
+    """v25（票 13）：预测表换键 gold sid，旧 M2 行保留迁移（hist id 转 text）。"""
+    path = tmp_path / "legacy.db"
+    conn = db.connect(path)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "MIGRATIONS", db.MIGRATIONS[:24])
+            assert db.migrate(conn) == 24
+        conn.execute(
+            "INSERT INTO hist_matches (competition, season, match_date, home_team,"
+            " away_team, fthg, ftag, ftr)"
+            " VALUES ('E0','2324','2024-01-01','A','B',2,1,'H')"
+        )
+        conn.execute(
+            "INSERT INTO backtest_runs (label, params, status, created_at)"
+            " VALUES ('legacy', '{}', 'done', 't')"
+        )
+        conn.execute(
+            """
+            INSERT INTO backtest_predictions
+                (run_id, hist_match_id, competition, season, match_date, home_team,
+                 away_team, had_probs, fair_probs, fair_source, model_fingerprint,
+                 train_window_end)
+            VALUES (1, 1, 'E0', '2324', '2024-01-01', 'A', 'B',
+                    '{"h":0.4}', '{"h":0.5}', 'psc', 'fp', '2023-12-31')
+            """
+        )
+        assert db.migrate(conn) == 25
+        row = conn.execute(
+            "SELECT * FROM backtest_predictions WHERE run_id = 1"
+        ).fetchone()
+        assert row["match_key"] == "1"  # 旧 hist id 转 text，审计不丢
+        assert row["ftr"] is None  # 旧行无此面
+        assert row["era"] is None
+        # 新键与扩展 CHECK 生效
+        conn.execute(
+            """
+            INSERT INTO backtest_predictions
+                (run_id, match_key, competition, season, match_date, home_team,
+                 away_team, era, ftr, had_probs, fair_probs, fair_source,
+                 model_fingerprint, train_window_end)
+            VALUES (1, 'srct:1', 'E0', '2023-24', '2024-01-02', 'A', 'B',
+                    'trajectory', 'D', '{}', '{}', 'traj_anchor', 'fp', '2023-12-31')
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="fair_source"):
+            conn.execute(
+                """
+                INSERT INTO backtest_predictions
+                    (run_id, match_key, competition, season, match_date, home_team,
+                     away_team, had_probs, fair_probs, fair_source,
+                     model_fingerprint, train_window_end)
+                VALUES (1, 'srct:2', 'E0', '2023-24', '2024-01-03', 'A', 'B',
+                        '{}', '{}', 'bogus', 'fp', '2023-12-31')
+                """
+            )
+    finally:
+        conn.close()

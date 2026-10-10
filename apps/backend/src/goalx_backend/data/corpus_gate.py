@@ -62,25 +62,16 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded, psc_mature
 from goalx_backend.data.ingest import srct
 from goalx_backend.data.ingest.srct_night import phase1_dates
+
+# 联赛映射定义落零依赖叶子 leagues（下层消费面可达），此处再导出=公共面
+from goalx_backend.data.leagues import FD_TO_LEAGUE, LEAGUE_TO_FD
 from goalx_backend.data.results import UNDERSTAT_LEAGUES
 
 REPORTS_DIR = "reports"
 REPORT_BASENAME = "phase1-gate"
-# CorpusScope 中文联赛 ↔ fdhist 联赛码（ADR-0010：15 项中 11 项重叠）
-LEAGUE_TO_FD: dict[str, str] = {
-    "英超": "E0",
-    "西甲": "SP1",
-    "德甲": "D1",
-    "意甲": "I1",
-    "法甲": "F1",
-    "英冠": "E1",
-    "荷甲": "N1",
-    "葡超": "P1",
-    "土超": "T1",
-    "比甲": "B1",
-    "苏超": "SC0",
-}
-FD_TO_LEAGUE = {code: name for name, code in LEAGUE_TO_FD.items()}
+# CorpusScope 中文联赛 ↔ fdhist 联赛码（ADR-0010：15 项中 11 项重叠）：
+# 定义落零依赖叶子 data/leagues.py（下层消费面可达），顶部再导出=公共面
+
 # 门②比较锚：SHARP 尖货 cid177（跨源数据质量检查，不决定模型选书）。
 # gold 特征面轨迹锚同此一份（B 相单一真相源）
 ANCHOR_BOOK = "srct:1x2:177"
