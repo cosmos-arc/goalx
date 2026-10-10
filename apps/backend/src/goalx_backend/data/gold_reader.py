@@ -149,3 +149,27 @@ def fetch_market_face_rows(
     for row in rows:
         seen.setdefault(str(row[0]), dict(zip(names, row, strict=True)))
     return list(seen.values())
+
+
+def fetch_close_rows_by_sids(
+    duck_con: duckdb.DuckDBPyConnection, sids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """
+    按 sid 取 gold 收盘族行（票 17：JC SP×era 收盘配对用）。
+
+    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。
+    """
+    if not sids:
+        return {}
+    sql = """
+        SELECT sid, era,
+               psc_home, psc_draw, psc_away,
+               avgc_home, avgc_draw, avgc_away,
+               close1x2_h, close1x2_d, close1x2_a,
+               close1x2_cons_h, close1x2_cons_d, close1x2_cons_a
+        FROM match_features
+        WHERE sid IN (SELECT unnest(?))
+    """
+    result = duck_con.execute(sql, [sids])
+    names = [str(d[0]) for d in result.description]
+    return {str(r[0]): dict(zip(names, r, strict=True)) for r in result.fetchall()}

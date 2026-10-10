@@ -80,6 +80,7 @@ from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
+from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
@@ -309,6 +310,30 @@ def _cmd_unlock_report() -> None:
         payload["n_matches"],
         unlock_report.REPORT_BASENAME,
     )
+
+
+def _cmd_haircut_decade() -> None:
+    """Haircut 十年重估（票 17：JC SP×gold era 收盘 + overround 1.129 对照）。"""
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    duck_con = corpus_duckdb.connect(settings)
+    try:
+        with task_conn() as conn:
+            payload = hcd.calibrate_decade(conn, store, duck_con)
+    finally:
+        duck_con.close()
+        store.close()
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    for row in payload["calibrations"]:
+        logger.info(
+            "haircut-decade {} = {} (source={}, n={})",
+            row["scope"],
+            row["haircut"],
+            row["source"],
+            row["n_samples"],
+        )
 
 
 def _cmd_market_lambda_report() -> None:
@@ -974,6 +999,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     sub.add_parser(
+        "haircut-decade",
+        help="haircut 十年重估(票 17:JC SP×gold 收盘,sp-close:* 行,引擎默认不动)",
+    )
+    sub.add_parser(
         "market-lambda-report",
         help="market-λ 联合反推 P1(票 16:1X2+OU 联合 vs 单反推,不接引擎)",
     )
@@ -1148,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
         "baseline-compare": _cmd_baseline_compare,
         "unlock-report": _cmd_unlock_report,
         "market-lambda-report": _cmd_market_lambda_report,
+        "haircut-decade": _cmd_haircut_decade,
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
