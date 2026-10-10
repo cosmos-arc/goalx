@@ -261,6 +261,7 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             parlay2=not args.no_parlay,
             min_train_matches=args.min_train,
             fair_source=args.fair_source,
+            markets=tuple(args.markets),
         )
         result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
         ev.compute_run_metrics(conn, result.run_id)

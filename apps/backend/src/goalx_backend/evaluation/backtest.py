@@ -802,8 +802,14 @@ def _place_week_bets(
     result.profit += profit
 
 
+VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
+
+
 def _validate_window(params: BacktestParams) -> None:
-    """窗口日期 fail-loud（correctness F2：坏值不得冒充视图缺失/静默前视）。"""
+    """窗口日期+玩法 fail-loud（坏值不得静默变成零候选/静默前视）。"""
+    invalid = set(params.markets) - VALID_MARKETS
+    if invalid:
+        raise ValueError(f"未知玩法 {sorted(invalid)}（合法: {sorted(VALID_MARKETS)}）")
     for name, value in (("start", params.start), ("end", params.end)):
         if value is None:
             continue

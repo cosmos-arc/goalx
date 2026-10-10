@@ -657,3 +657,51 @@ def test_market_side_matrix_nil_paths() -> None:
     matrix = bt.market_side_matrix(usable, fair)
     assert matrix is not None  # 可用线 → 联合矩阵
     assert abs(sum(matrix.had().values()) - 1.0) < 1e-9
+
+
+def test_replay_deterministic_with_market_side(gold_env) -> None:
+    """票 23 correctness F2 回归：解锁路径（joint 拟合）重放逐字节一致。"""
+    with gold_env(_unlock_rows()) as (face, duck_con, store):
+        params = bt.BacktestParams(
+            competitions=("E0",), min_train_matches=9, ev_threshold=0.0
+        )
+        first = bt.run_backtest(face, duck_con, store, params, label="replay-mkt-a")
+        second = bt.run_backtest(face, duck_con, store, params, label="replay-mkt-b")
+
+        def bets(run_id: int) -> list[tuple[object, ...]]:
+            return [
+                tuple(row)
+                for row in face.execute(
+                    """
+                    SELECT kind, placed_week, stake, legs, ev, kelly, status,
+                           payout, profit
+                    FROM backtest_bets WHERE run_id = ?
+                    ORDER BY kind, placed_week, legs
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+
+        # 解锁路径确实激活（存在 hhad/ttg 注单）
+        legs = {
+            leg["market_code"]
+            for row in face.execute(
+                "SELECT legs FROM backtest_bets WHERE run_id = ?",
+                (first.run_id,),
+            ).fetchall()
+            for leg in json.loads(str(row["legs"]))
+        }
+        assert {"had", "hhad", "ttg"} <= legs
+        assert bets(first.run_id) == bets(second.run_id)
+
+
+def test_invalid_market_fails_loud(gold_env) -> None:
+    """票 23 correctness F3 回归：未知玩法 fail-loud（不静默零候选）。"""
+    with gold_env(_unlock_rows()) as (face, duck_con, store):
+        params = bt.BacktestParams(competitions=("E0",), markets=("had", "crs"))
+        try:
+            with pytest.raises(ValueError, match="未知玩法"):
+                bt.run_backtest(face, duck_con, store, params, label="bad-market")
+        finally:
+            duck_con.close()
+            face.close()
