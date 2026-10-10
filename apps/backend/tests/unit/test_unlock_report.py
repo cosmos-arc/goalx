@@ -69,9 +69,9 @@ def test_line_filters() -> None:
     assert ur._clean_half_line(2.75) is None
     assert ur._clean_half_line(None) is None
     # AH：仅半线（整数线有 push 退场）
-    assert ur._half_only(0.5) == 0.5
-    assert ur._half_only(1.0) is None
-    assert ur._half_only(-0.75) is None
+    assert ur.half_line_only(0.5) == 0.5
+    assert ur.half_line_only(1.0) is None
+    assert ur.half_line_only(-0.75) is None
 
 
 def test_build_report_faces_and_ttg(gold_env) -> None:
