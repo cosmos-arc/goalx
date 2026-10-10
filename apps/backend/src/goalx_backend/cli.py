@@ -77,7 +77,7 @@ from goalx_backend.data.ingest import (
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
-from goalx_backend.evaluation import baseline, unlock_report
+from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import metrics as ev
@@ -308,6 +308,20 @@ def _cmd_unlock_report() -> None:
         "unlock-report: {} 场 → reports/{}.json/.md（门=报告+用户点头，引擎不动）",
         payload["n_matches"],
         unlock_report.REPORT_BASENAME,
+    )
+
+
+def _cmd_market_lambda_report() -> None:
+    """market-λ 联合反推 P1（票 16：1X2+OU 联合 vs 单 1X2 反推对照）。"""
+    with _corpus_handles() as (duck_con, store):
+        payload = market_lambda.build_market_lambda_report(store, duck_con)
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "market-lambda-p1: {} 场 → reports/{}.json/.md（转正=用户裁决）",
+        payload["n_sampled"],
+        market_lambda.REPORT_BASENAME,
     )
 
 
@@ -960,6 +974,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     sub.add_parser(
+        "market-lambda-report",
+        help="market-λ 联合反推 P1(票 16:1X2+OU 联合 vs 单反推,不接引擎)",
+    )
+    sub.add_parser(
         "unlock-report",
         help="hhad/ttg 解锁判定报告(票 15:真实线 vs 反推,分era×联赛,不改动引擎)",
     )
@@ -1129,6 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
         "backtest": lambda: _cmd_backtest(args),
         "baseline-compare": _cmd_baseline_compare,
         "unlock-report": _cmd_unlock_report,
+        "market-lambda-report": _cmd_market_lambda_report,
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),

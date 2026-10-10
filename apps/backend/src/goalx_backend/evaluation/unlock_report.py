@@ -43,7 +43,7 @@ from goalx_backend.modelling.score_matrix import ScoreMatrix
 
 REPORT_BASENAME = "unlock-hhad-ttg"
 _HALF_STEP_EPS = 1e-9  # 半步长线判定容差（浮点线 x.0/x.5 vs .25/.75）
-_OU_LINE_MAX = 7.0  # OU 线上界：ttg 桶 7=7+ 并桶，≥7 的 over 概率不可分辨
+OU_LINE_MAX = 7.0  # OU 线上界：ttg 桶 7=7+ 并桶，≥7 的 over 概率不可分辨
 WATER_SANITY_BAND = (0.5, 1.5)  # 马来/港式水位健全带（真树分布 1% 分位 0.80）
 
 
@@ -140,7 +140,7 @@ def _clean_half_line(line: float | None) -> float | None:
     return line if abs(line * 2 - round(line * 2)) < _HALF_STEP_EPS else None
 
 
-def _half_only(line: float | None) -> float | None:
+def half_line_only(line: float | None) -> float | None:
     """仅半线（x.5，无平局退款）；整数线（有 push）与四分线返回 None。"""
     clean = _clean_half_line(line)
     if clean is None or clean == int(clean):
@@ -148,7 +148,8 @@ def _half_only(line: float | None) -> float | None:
     return clean
 
 
-def _sane(waters: tuple[float | None, ...]) -> bool:
+def waters_sane(waters: tuple[float | None, ...]) -> bool:
+    """水位三元组健全性（非空 + 有限 + 健全带内）。"""
     lo, hi = WATER_SANITY_BAND
     return all(w is not None and math.isfinite(w) and lo <= w <= hi for w in waters)
 
@@ -338,10 +339,10 @@ def _add_face_sample(
         # 半线（x.5）限定：x.0 落线=退款面，错记 under 会偏置校准
         # （correctness F2，真树 9.9% 样本落线）；线 ≥7 超出 ttg 桶分辨率
         line = (
-            _half_only(row["ou_close_line_med"])
+            half_line_only(row["ou_close_line_med"])
             if (
                 row["ou_close_line_med"] is not None
-                and float(row["ou_close_line_med"]) < _OU_LINE_MAX
+                and float(row["ou_close_line_med"]) < OU_LINE_MAX
             )
             else None
         )
@@ -349,11 +350,11 @@ def _add_face_sample(
         side_a, side_b = "ou_close_over_water_med", "ou_close_under_water_med"
         skip_key = "ou_no_half_line"
     else:
-        line = _half_only(row["ah_close_line_med"])
+        line = half_line_only(row["ah_close_line_med"])
         waters = (row["ah_close_home_water_med"], row["ah_close_away_water_med"])
         side_a, side_b = "ah_close_home_water_med", "ah_close_away_water_med"
         skip_key = "ah_no_half_line"
-    if line is None or not _sane(waters):
+    if line is None or not waters_sane(waters):
         return skip_key
     if face == "ou":
         model_p = _ttg_over_prob(matrix.ttg(), line)
