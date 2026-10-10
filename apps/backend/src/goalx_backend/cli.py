@@ -79,6 +79,7 @@ from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation import guardrail_report as gr
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
@@ -334,6 +335,20 @@ def _cmd_haircut_decade() -> None:
             row["source"],
             row["n_samples"],
         )
+
+
+def _cmd_guardrail_report(args: argparse.Namespace) -> None:
+    """护栏十年复验（票 18：触发面+被拦结局，只描述只举证，不改参数）。"""
+    with _corpus_handles() as (duck_con, store):
+        payload = gr.build_guardrail_report(store, duck_con, haircut=args.haircut)
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "guardrail-report: {} 场 → reports/{}.json/.md（参数变更=用户点头）",
+        payload["n_matches_with_fair"],
+        gr.REPORT_BASENAME,
+    )
 
 
 def _cmd_market_lambda_report() -> None:
@@ -998,6 +1013,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
+    guardrail = sub.add_parser(
+        "guardrail-report",
+        help="护栏十年复验(票 18:触发面+被拦结局,只描述不改参数)",
+    )
+    guardrail.add_argument(
+        "--haircut",
+        type=float,
+        default=0.10,
+        help="护栏阈值用的 haircut(与引擎 run 同值复验;默认 0.10)",
+    )
     sub.add_parser(
         "haircut-decade",
         help="haircut 十年重估(票 17:JC SP×gold 收盘,sp-close:* 行,引擎默认不动)",
@@ -1178,6 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
         "unlock-report": _cmd_unlock_report,
         "market-lambda-report": _cmd_market_lambda_report,
         "haircut-decade": _cmd_haircut_decade,
+        "guardrail-report": lambda: _cmd_guardrail_report(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
