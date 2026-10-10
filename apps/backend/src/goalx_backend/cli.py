@@ -37,7 +37,8 @@ import argparse
 import json
 import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from functools import partial
@@ -220,71 +221,70 @@ def _cmd_forecast(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_backtest(args: argparse.Namespace) -> None:
-    """跑一次十年回测（gold 消费，walk-forward）+ 指标分层汇总。"""
+@contextmanager
+def _corpus_handles() -> Generator[tuple[duckdb.DuckDBPyConnection, CorpusStore]]:
+    """回测消费面共享脚手架：corpus.duckdb 只读连接 + 语料树句柄。"""
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
     duck_con = corpus_duckdb.connect(settings)
     try:
-        with task_conn() as conn:
-            haircut, source, n = hc.calibrated_haircut(conn)
-            if args.haircut != "auto":
-                haircut, source = args.haircut, "cli"
-            logger.info("haircut={} (source={}, n={})", haircut, source, n)
-            params = bt.BacktestParams(
-                competitions=tuple(args.competitions),
-                start=args.start,
-                end=args.end,
-                haircut=haircut,
-                parlay2=not args.no_parlay,
-                min_train_matches=args.min_train,
-                fair_source=args.fair_source,
-            )
-            result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
-            ev.compute_run_metrics(conn, result.run_id)
-            logger.info(
-                "run={} predictions={} bets={} staked={:.2f} profit={:.2f} roi={:.2%}",
-                result.run_id,
-                result.predictions,
-                result.bets,
-                result.staked,
-                result.profit,
-                result.roi,
-            )
+        yield duck_con, store
     finally:
         duck_con.close()
         store.close()
+
+
+def _cmd_backtest(args: argparse.Namespace) -> None:
+    """跑一次十年回测（gold 消费，walk-forward）+ 指标分层汇总。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        haircut, source, n = hc.calibrated_haircut(conn)
+        if args.haircut != "auto":
+            haircut, source = args.haircut, "cli"
+        logger.info("haircut={} (source={}, n={})", haircut, source, n)
+        params = bt.BacktestParams(
+            competitions=tuple(args.competitions),
+            start=args.start,
+            end=args.end,
+            haircut=haircut,
+            parlay2=not args.no_parlay,
+            min_train_matches=args.min_train,
+            fair_source=args.fair_source,
+        )
+        result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
+        ev.compute_run_metrics(conn, result.run_id)
+        logger.info(
+            "run={} predictions={} bets={} staked={:.2f} profit={:.2f} roi={:.2%}",
+            result.run_id,
+            result.predictions,
+            result.bets,
+            result.staked,
+            result.profit,
+            result.roi,
+        )
 
 
 def _cmd_baseline_compare() -> None:
     """基准分期质检报告 + psc/avgc 对照新 run(旧 run 保留,票 34)。"""
-    settings = get_settings()
-    store = CorpusStore(settings.corpus_root)
-    duck_con = corpus_duckdb.connect(settings)
-    try:
-        with task_conn() as conn:
-            sys.stdout.write(
-                json.dumps(
-                    baseline.baseline_quality_report(conn).model_dump(),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n"
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        sys.stdout.write(
+            json.dumps(
+                baseline.baseline_quality_report(conn).model_dump(),
+                ensure_ascii=False,
+                indent=2,
             )
-            haircut, _, _ = hc.calibrated_haircut(conn)
-            results = baseline.run_baseline_comparison(
-                conn,
-                duck_con,
-                store,
-                bt.BacktestParams(haircut=haircut),
-                base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
-            )
-            for source, summary in results.items():
-                ev.compute_run_metrics(conn, int(summary["run_id"]))
-                logger.info("baseline {} run={}", source, summary)
-    finally:
-        duck_con.close()
-        store.close()
+            + "\n"
+        )
+        haircut, _, _ = hc.calibrated_haircut(conn)
+        results = baseline.run_baseline_comparison(
+            conn,
+            duck_con,
+            store,
+            bt.BacktestParams(haircut=haircut),
+            base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
+        )
+        for source, summary in results.items():
+            ev.compute_run_metrics(conn, int(summary["run_id"]))
+            logger.info("baseline {} run={}", source, summary)
 
 
 def _cmd_calibrate_haircut() -> None:

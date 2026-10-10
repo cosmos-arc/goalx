@@ -166,8 +166,7 @@ def seed_gold_league(*, rounds: int = 14) -> list[dict]:
 
 def test_compute_run_metrics_stratified(gold_env) -> None:
     # 用回测引擎产出真实预测，再算分层指标（31 号看板数据源；票 13 后走 gold）
-    face, duck_con, store = gold_env(seed_gold_league())
-    try:
+    with gold_env(seed_gold_league()) as (face, duck_con, store):
         params = bt.BacktestParams(
             competitions=("E0",),
             min_train_matches=9,
@@ -203,9 +202,6 @@ def test_compute_run_metrics_stratified(gold_env) -> None:
         ).fetchone()["c"]
         assert again["written"] == written["written"]
         assert count == written["written"]
-    finally:
-        duck_con.close()
-        face.close()
 
 
 # --- 票 34：串关玩法去重汇总、双 ROI 口径 ---

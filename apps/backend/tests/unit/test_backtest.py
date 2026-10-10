@@ -259,8 +259,7 @@ def test_candidates_had_only_respect_price_bounds() -> None:
 
 
 def test_run_backtest_end_to_end(gold_env) -> None:
-    face, duck_con, store = gold_env(seed_rows())
-    try:
+    with gold_env(seed_rows()) as (face, duck_con, store):
         params = bt.BacktestParams(
             competitions=("E0",),
             min_train_matches=9,
@@ -306,14 +305,10 @@ def test_run_backtest_end_to_end(gold_env) -> None:
         assert run_params["gold_input_digests"] == {"srct/fixture_universe": "deadbeef"}
         assert run_params["data_source"] == "gold/match_features"
         assert run_params["price_model"] == "simulated_jc"
-    finally:
-        duck_con.close()
-        face.close()
 
 
 def test_run_backtest_run_isolation(gold_env) -> None:
-    face, duck_con, store = gold_env(seed_rows())
-    try:
+    with gold_env(seed_rows()) as (face, duck_con, store):
         params = bt.BacktestParams(
             competitions=("E0",), min_train_matches=9, ev_threshold=0.0
         )
@@ -327,9 +322,6 @@ def test_run_backtest_run_isolation(gold_env) -> None:
         assert by_run[first.run_id] == by_run.get(second.run_id, 0)
         statuses = face.execute("SELECT status FROM backtest_runs").fetchall()
         assert {str(r["status"]) for r in statuses} == {"done"}
-    finally:
-        duck_con.close()
-        face.close()
 
 
 def test_run_backtest_window_and_hygiene(gold_env) -> None:
@@ -341,8 +333,7 @@ def test_run_backtest_window_and_hygiene(gold_env) -> None:
     rows.append(_era1_row("7003", "2016-08-20", "E", "F", 3, 0))
     rows[-1]["admin_excluded"] = True
     rows.append(_gold_row("7004", "2016-08-27", "A", "C", 0, 0, played=False))
-    face, duck_con, store = gold_env(rows)
-    try:
+    with gold_env(rows) as (face, duck_con, store):
         params = bt.BacktestParams(competitions=("E0",), min_train_matches=9)
         result = bt.run_backtest(face, duck_con, store, params, label="window")
         keys = {
@@ -363,15 +354,11 @@ def test_run_backtest_window_and_hygiene(gold_env) -> None:
         ]
         assert dates  # 窗口前只训练
         assert min(dates) >= bt.DECADE_START
-    finally:
-        duck_con.close()
-        face.close()
 
 
 def test_run_backtest_missing_gold_view_records_honest_empty(gold_env) -> None:
     """视图缺席（空语料/未建桥）= 合法初生态：run 完成并如实标注，不冒充数据。"""
-    face, duck_con, store = gold_env([])  # 空行集 → 无 parquet → 无视图
-    try:
+    with gold_env([]) as (face, duck_con, store):  # 空行集 → 无 parquet → 无视图
         params = bt.BacktestParams(competitions=("E0",))
         result = bt.run_backtest(face, duck_con, store, params, label="empty")
         assert result.predictions == 0
@@ -381,14 +368,11 @@ def test_run_backtest_missing_gold_view_records_honest_empty(gold_env) -> None:
         ).fetchone()
         assert str(run["status"]) == "done"
         assert json.loads(str(run["params"]))["gold_view"] == "missing"
-    finally:
-        duck_con.close()
-        face.close()
+        assert json.loads(str(run["params"]))["gold_rows"] == 0
 
 
 def test_run_backtest_marks_failed_run(gold_env, monkeypatch) -> None:
-    face, duck_con, store = gold_env(seed_rows())
-    try:
+    with gold_env(seed_rows()) as (face, duck_con, store):
         # 非 ValueError（引擎对 fit 的 ValueError 有容错跳周，RuntimeError 走失败面）
         def _boom(*args: object, **kwargs: object) -> None:
             raise RuntimeError("fit exploded")
@@ -401,15 +385,11 @@ def test_run_backtest_marks_failed_run(gold_env, monkeypatch) -> None:
             "SELECT status FROM backtest_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
         assert str(row["status"]) == "failed"
-    finally:
-        duck_con.close()
-        face.close()
 
 
 def test_backtest_lookahead_guard_via_weeks(gold_env) -> None:
     # 端到端防前视：训练截止取周最早日前一天，训练集不可能含当周比赛
-    face, duck_con, store = gold_env(seed_rows())
-    try:
+    with gold_env(seed_rows()) as (face, duck_con, store):
         params = bt.BacktestParams(competitions=("E0",), min_train_matches=9)
         result = bt.run_backtest(face, duck_con, store, params, label="wf")
         preds = face.execute(
@@ -421,6 +401,44 @@ def test_backtest_lookahead_guard_via_weeks(gold_env) -> None:
         ).fetchall()
         for row in preds:
             assert str(row["train_window_end"]) < str(row["match_date"])
-    finally:
-        duck_con.close()
-        face.close()
+
+
+def test_run_backtest_replay_deterministic(gold_env) -> None:
+    """十年窗一致性（spec 测试决策）：同输入重放输出逐字节一致（除 run 身份）。"""
+    with gold_env(seed_rows()) as (face, duck_con, store):
+        params = bt.BacktestParams(
+            competitions=("E0",), min_train_matches=9, ev_threshold=0.0
+        )
+        first = bt.run_backtest(face, duck_con, store, params, label="replay-a")
+        second = bt.run_backtest(face, duck_con, store, params, label="replay-b")
+
+        def predictions(run_id: int) -> list[tuple[object, ...]]:
+            return [
+                tuple(row)
+                for row in face.execute(
+                    """
+                    SELECT match_key, competition, season, match_date, home_team,
+                           away_team, era, ftr, had_probs, fair_probs, fair_source,
+                           model_fingerprint, train_window_end
+                    FROM backtest_predictions WHERE run_id = ? ORDER BY match_key
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+
+        def bets(run_id: int) -> list[tuple[object, ...]]:
+            return [
+                tuple(row)
+                for row in face.execute(
+                    """
+                    SELECT kind, competition, placed_week, stake, legs, ev, kelly,
+                           status, payout, profit, detail
+                    FROM backtest_bets WHERE run_id = ? ORDER BY kind, placed_week, legs
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+
+        assert predictions(first.run_id) == predictions(second.run_id)
+        assert bets(first.run_id) == bets(second.run_id)
+        assert bt.run_summary(face, first.run_id) == bt.run_summary(face, second.run_id)

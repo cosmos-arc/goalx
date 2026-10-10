@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -58,21 +59,22 @@ def db() -> Iterator[sqlite3.Connection]:
 
 @pytest.fixture
 def gold_env(tmp_path: Path):
-    """工厂：种 gold 行集 → 建桥 → (face, duck_con, store)。
+    """工厂：种 gold 行集 → 建桥 → 上下文管理器 yielding (face, duck_con, store)。
 
     face 为迁移后的运行面 sqlite（backtest 表就绪）；duck_con 挂
     match_features 视图与 face 只读 ATTACH。_meta 钉的成熟度基准日
-    = 2026-10-08（era1/era2 样本全放行）。用毕由调用方关闭（tmp_path
-    随测试回收）。
+    = 2026-10-08（era1/era2 样本全放行）。用法：
+    ``with gold_env(rows) as (face, duck_con, store): ...``
     """
     settings = Settings(
         corpus_root=tmp_path / "corpus",
         db_path=tmp_path / "goalx.db",
     )
 
+    @contextmanager
     def make(
         rows: list[dict[str, Any]],
-    ) -> tuple[sqlite3.Connection, duckdb.DuckDBPyConnection, CorpusStore]:
+    ) -> Iterator[tuple[sqlite3.Connection, duckdb.DuckDBPyConnection, CorpusStore]]:
         face = connect(settings.db_path)
         migrate(face)
         store = CorpusStore(settings.corpus_root)
@@ -91,6 +93,10 @@ def gold_env(tmp_path: Path):
         )
         corpus_duckdb.build_corpus_duckdb(store)
         duck_con = corpus_duckdb.connect(settings)
-        return face, duck_con, store
+        try:
+            yield face, duck_con, store
+        finally:
+            duck_con.close()
+            face.close()
 
     return make

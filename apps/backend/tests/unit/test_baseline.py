@@ -60,8 +60,7 @@ def test_baseline_quality_report_periods_and_diffs(db) -> None:
 
 def test_run_baseline_comparison_creates_new_runs_and_keeps_old(gold_env) -> None:
     """空 gold：对照 run 如实零预测（票 13 后与主回测同走 gold）。"""
-    face, duck_con, store = gold_env([])
-    try:
+    with gold_env([]) as (face, duck_con, store):
         face.execute(
             "INSERT INTO backtest_runs (label, params, status, created_at)"
             " VALUES ('old-run', '{}', 'done', '2026-09-01T00:00:00+00:00')"
@@ -88,9 +87,6 @@ def test_run_baseline_comparison_creates_new_runs_and_keeps_old(gold_env) -> Non
             assert params["price_model"] == "simulated_jc"  # 合成价标注
             assert "versions" in params
             assert results[source]["run_id"] not in old_ids
-    finally:
-        duck_con.close()
-        face.close()
 
 
 def test_fair_source_selection() -> None:

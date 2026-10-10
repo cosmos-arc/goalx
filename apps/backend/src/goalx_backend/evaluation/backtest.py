@@ -10,11 +10,12 @@ baseline 对照随本引擎走 gold 配对行）：
 - 按比赛周（ISO 年-周）重估：每联赛每周拟合一次时间衰减 DC，训练截止
   严格早于该周最早比赛日（``assert_no_lookahead`` 常开断言）；特征时间
   戳的 PIT 纪律在 gold 构建面把关（票 06 逐行断言）；
-- 公允基准时代分层（era 字段唯一真相源，断点常量落 data/gold.py）：
-  era1（psc_proxy）= PSC→AvgC（Shin）；era2（trajectory）= cid177 锚
-  收盘价（Shin，与 PSC 同为尖货收盘，方法学跨时代连续）→ 多书中位数
-  共识归一（traj_cons）兜底；``fair_source='psc'/'avgc'`` 语义保留为
-  源选择器（票 34 对照 run），``auto`` = 时代感知正典链；
+- 公允基准时代分层（era 字段唯一真相源，断点常量定义落 data/leagues.py
+  叶子、gold 再导出）：era1（psc_proxy）= PSC→AvgC（Shin）；era2
+  （trajectory）= cid177 锚收盘价（Shin，与 PSC 同为尖货收盘，方法学
+  跨时代连续）→ 多书中位数共识归一（traj_cons）兜底；
+  ``fair_source='psc'/'avgc'`` 语义保留为源选择器（票 34 对照 run），
+  ``auto`` = 时代感知正典链；
 - 卫生在引擎入口统一生效（单一取数口，不散落 if）：gold 行
   ``admin_excluded=false`` 过滤同时罩训练面与预测面（S4"训练集与对账
   集都剔除"由构造满足）；PSC 成熟度由 gold 快照承载（未成熟行 odds
@@ -41,7 +42,6 @@ baseline 对照随本引擎走 gold 配对行）：
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -52,15 +52,12 @@ import duckdb
 from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
-from goalx_backend.data.corpus_store import (
-    GOLD_DATASET,
-    GOLD_PROVIDER,
-    CorpusStore,
-)
+from goalx_backend.data import gold_reader
+from goalx_backend.data.corpus_store import CorpusStore
 
 # 联赛映射/era 常量经零依赖叶子引（corpus_gate/gold 传递依赖 data.ingest，
 # 分层执法 evaluation 不可达——见 data/leagues.py 模块注释）
-from goalx_backend.data.leagues import ERA_TRAJECTORY, FD_TO_LEAGUE, LEAGUE_TO_FD
+from goalx_backend.data.leagues import ERA_TRAJECTORY, LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 from goalx_backend.modelling.dc_model import (
@@ -72,9 +69,7 @@ from goalx_backend.modelling.dc_model import (
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
-logger = logging.getLogger(__name__)
-
-# 十年窗（spec S13：2016-08→2026-10）与 11 重叠联赛（corpus_gate 单一
+# 十年窗（spec S13：2016-08→2026-10）与 11 重叠联赛（data/leagues 单一
 # 真相源；2016-01~08 的 gold 历史行作首季训练热身池，不产生下注面）
 DECADE_COMPETITIONS = tuple(sorted(LEAGUE_TO_FD.values()))
 DECADE_START = "2016-08-01"
@@ -221,6 +216,8 @@ def fair_probs_from_gold(
     缺列/无效价 = 无基准返回 None。PSC 成熟度由 gold 快照承载：未成熟行
     odds 列整族置空（门=gold 构建一处，票 06），本引擎不二次判。
     """
+    if fair_source not in ("auto", "psc", "avgc"):
+        raise ValueError(f"未知 fair_source {fair_source!r}（合法: auto/psc/avgc）")
     candidates: tuple[tuple[tuple[float | None, float | None, float | None], str], ...]
     if fair_source == "psc":
         candidates = ((match.psc_odds, "psc"),)
@@ -311,57 +308,18 @@ class _Candidate:
         return self.model_prob * self.odds - 1.0
 
 
-def gold_meta(store: CorpusStore) -> dict[str, Any]:
-    """Gold `_meta.json`（版本/构建戳/输入 digest；缺席=空 dict 如实入档）。"""
-    path = store.gold_path(GOLD_PROVIDER, GOLD_DATASET) / "_meta.json"
-    try:
-        meta: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return dict(meta)  # type: ignore[arg-type]
-
-
 def fetch_decade_matches(
     duck_con: duckdb.DuckDBPyConnection, params: BacktestParams
 ) -> tuple[list[GoldMatch], str | None, str]:
     """
-    Gold match_features 引擎取数（卫生单一入口）。
+    Gold 引擎行集 → GoldMatch 投影（取数/卫生单一入口=``data.gold_reader``）。
 
-    过滤即卫生：已赛（双进球非空）+ ``admin_excluded=false``（训练面与
-    预测面同一份行集）。视图缺席（未建桥/空语料）= 合法初生态，返回
-    (空集, None, "missing") 由 run params 如实标注，不冒充零过滤数据。
+    视图缺席（未建桥/空语料）= 合法初生态，返回 (空集, None, "missing")
+    由 run params 如实标注，不冒充零过滤数据。
     """
-    try:
-        # SQL 侧按 gold 行的中文联赛名过滤（码→名），错误码在映射处 fail-loud
-        leagues = ",".join(f"'{FD_TO_LEAGUE[c]}'" for c in params.competitions)
-    except KeyError as exc:
-        raise ValueError(
-            f"未知联赛码 {exc.args[0]!r}（合法码见 corpus_gate.LEAGUE_TO_FD）"
-        ) from None
-    upper = " AND CAST(kickoff AS DATE) <= ?" if params.end is not None else ""
-    sql = f"""
-        SELECT sid, league,
-               strftime(CAST(kickoff AS DATE), '%Y-%m-%d') AS day,
-               season, home, away, home_goals, away_goals, era,
-               psc_home, psc_draw, psc_away,
-               avgc_home, avgc_draw, avgc_away,
-               close1x2_h, close1x2_d, close1x2_a,
-               close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
-               version
-        FROM match_features
-        WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL
-          AND admin_excluded = false
-          AND league IN ({leagues}){upper}
-        ORDER BY league, day, sid
-    """  # noqa: S608 联赛表=模块常量经 fd 码映射；窗口=绑定参数
-    try:
-        rows = duck_con.execute(
-            sql, [] if params.end is None else [params.end]
-        ).fetchall()
-    except duckdb.Error as exc:
-        logger.warning("match_features 视图不可用（先跑 gold-build + 建桥）: %s", exc)
-        return [], None, "missing"
-    version: str | None = None
+    rows, version, view_status = gold_reader.fetch_decade_rows(
+        duck_con, params.competitions, end=params.end
+    )
     matches: list[GoldMatch] = []
     for ref, row in enumerate(rows):
         (
@@ -375,10 +333,8 @@ def fetch_decade_matches(
             ftag,
             era,
             *odds_cols,
-            row_version,
+            _row_version,
         ) = row
-        if version is None and row_version is not None:
-            version = str(row_version)
         matches.append(
             GoldMatch(
                 sid=str(sid),
@@ -397,7 +353,7 @@ def fetch_decade_matches(
                 cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
             )
         )
-    return matches, version, "ok"
+    return matches, version, view_status
 
 
 def _candidates_for_match(
@@ -629,7 +585,7 @@ def run_backtest(
     入档 gold 版本/构建戳/输入 digest 与成熟度基准日（gold 构建侧钉的
     口径，非 run 日）——重放差异由该组字段解释。
     """
-    meta = gold_meta(store)
+    meta = gold_reader.read_gold_meta(store)
     matches, gold_version, view_status = fetch_decade_matches(duck_con, params)
     run_params = asdict(params) | {
         # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
@@ -637,6 +593,7 @@ def run_backtest(
         "versions": implementation_versions(),
         "data_source": "gold/match_features",
         "gold_view": view_status,
+        "gold_rows": len(matches),
         "gold_version": gold_version or meta.get("gold_version"),
         "gold_built_at": meta.get("built_at"),
         "gold_maturity_today": meta.get("maturity_today"),
