@@ -261,6 +261,7 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             parlay2=not args.no_parlay,
             min_train_matches=args.min_train,
             fair_source=args.fair_source,
+            markets=tuple(args.markets),
         )
         result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
         ev.compute_run_metrics(conn, result.run_id)
@@ -1000,6 +1001,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="窗口终点(北京墙钟日,含端点;缺省=数据尾)",
     )
     backtest.add_argument("--no-parlay", action="store_true", help="关闭 2串1 模拟")
+    backtest.add_argument(
+        "--markets",
+        nargs="*",
+        default=["had", "hhad", "ttg"],
+        help="下注玩法(2026-10-10 解锁裁决后缺省三玩法)",
+    )
     backtest.add_argument(
         "--min-train",
         type=int,
