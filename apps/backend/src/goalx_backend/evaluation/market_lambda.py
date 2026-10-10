@@ -28,23 +28,23 @@ from datetime import date
 from typing import Any
 
 import duckdb
-import numpy as np
-from scipy.optimize import minimize
 
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.evaluation.backtest import era_fair_probs, market_implied_matrix
+from goalx_backend.evaluation.backtest import (
+    era_fair_probs,
+    joint_lambdas,
+    market_implied_matrix,
+)
 from goalx_backend.evaluation.unlock_report import (
     OU_LINE_MAX,
     half_line_only,
     two_way_prob,
     waters_sane,
 )
-from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
+from goalx_backend.modelling.score_matrix import ScoreMatrix
 
 REPORT_BASENAME = "market-lambda-p1"
-_MATRIX_N = MATRIX_SIZE  # 联合拟合的泊松截断（与 canonical 矩阵同尺寸）
-_LAM_FLOOR = 0.05  # 强度下界护栏（防零/负强度退化）
 
 
 @dataclass
@@ -90,48 +90,6 @@ class _Accum:
             "over_prob_mean": round(self.over_prob_sum / self.n, 4),
             "actual_over_rate": round(self.actual_over / self.n, 4),
         }
-
-
-def joint_lambdas(
-    fair_probs: dict[str, float],
-    ou_line: float,
-    market_over: float,
-    *,
-    x0: tuple[float, float],
-) -> tuple[float, float] | None:
-    """
-    1X2 + OU 联合 NLS 反推 (λh, λa)（独立泊松；ρ=0 档）。
-
-    目标 = Σ_1X2 (模型概率−fair)² + (模型 P(over 线)−市场 P(over))²，
-    概率等权（同为概率尺度）。失败/退化返回 None。
-    """
-
-    def objective(x: np.ndarray[tuple[int], np.dtype[np.float64]]) -> float:
-        lam_h, lam_a = float(x[0]), float(x[1])
-        if lam_h <= _LAM_FLOOR or lam_a <= _LAM_FLOOR:
-            return 1e6
-        matrix = ScoreMatrix.from_lambdas(lam_h, lam_a, size=_MATRIX_N)
-        had = matrix.had()
-        ttg = matrix.ttg()
-        model_over = sum(p for b, p in ttg.items() if float(b) > ou_line)
-        err = (had["h"] - fair_probs["h"]) ** 2
-        err += (had["d"] - fair_probs["d"]) ** 2
-        err += (had["a"] - fair_probs["a"]) ** 2
-        return err + (model_over - market_over) ** 2
-
-    result = minimize(
-        objective,
-        np.array(x0, dtype=float),
-        method="Nelder-Mead",
-        options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 400},
-    )
-    if (
-        not result.success
-        or float(result.x[0]) <= _LAM_FLOOR
-        or float(result.x[1]) <= _LAM_FLOOR
-    ):
-        return None
-    return float(result.x[0]), float(result.x[1])
 
 
 def _fair_from_row(row: dict[str, Any]) -> dict[str, float] | None:
@@ -323,7 +281,7 @@ def _collect_row(
         skipped["joint_fit_failed"] += 1
         joint_matrix = single_matrix  # 失败回落 single（计数如实）
     else:
-        joint_matrix = ScoreMatrix.from_lambdas(joint[0], joint[1], size=_MATRIX_N)
+        joint_matrix = ScoreMatrix.from_lambdas(joint[0], joint[1])
     for scope in scopes:
         acc["joint"][scope].add(joint_matrix, fair_probs, ou_line, actual_over)
     ttg_actual[era][str(min(gh + ga, 7))] += 1

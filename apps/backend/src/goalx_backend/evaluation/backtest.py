@@ -23,11 +23,13 @@ baseline 对照随本引擎走 gold 配对行）：
   的 no-op，不二次判防两套口径；
 - 模拟竞彩价 = fair 赔率 × (1 − haircut)（默认 −10%，票 30 校准/票 17
   十年重估可替换）；收盘价只作定价/结算基准，不进模型特征；
-- 模拟玩法 had-only 维持（hhad/ttg 解锁 = 票 15 的门 = 报告+用户点头，
-  不因 AH/OU 数据可用自动放宽）：1X2→比分矩阵反推（goal_expectancy）
-  在总进球维度系统性欠分散——6,174 场全量对照 ttg 桶 4/5/6 隐含概率
-  低于实际 15-40%（桶5 7.1% vs 9.1%），hhad 实际命中率 33% 低于隐含
-  40%——反推价制造假 edge；
+- 模拟玩法 had+hhad+ttg（2026-10-10 解锁裁决，票 15 报告+用户点头）：
+  had 维持原口径（fair×(1−haircut)）；hhad/ttg 市场侧 = market-λ 联合
+  反推矩阵（``joint_lambdas``，票 16 转正）——单 1X2 反推
+  （goal_expectancy）在总进球维度系统性欠分散（M2 实测 ttg 桶 4/5/6
+  隐含低于实际 15-40%，十年复检 −2~−3pp），其反推价制造假 edge，故
+  v1 曾收窄 had-only；联合反推把 OU 信息收回（P1：Brier 0.2500 追平
+  真实线、1X2 代价 0.0006）后按裁决解锁。单 1X2 反推保留为诊断工具；
 - EV 阈值 τ + 1/4 Kelly（单注上限封顶）；单关 + 每周每联赛至多一笔
   2串1（取 EV 最高且不同场次的两注，按一笔联合 EV 判定）；
 - 结算复用 M1 Settlement 引擎（口径统一，票 12 第 4 条）：结算内核以
@@ -51,7 +53,9 @@ from datetime import date, timedelta
 from typing import Any
 
 import duckdb
+import numpy as np
 from penaltyblog.models import goal_expectancy
+from scipy.optimize import minimize
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import gold_reader
@@ -61,7 +65,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 # 分层执法 evaluation 不可达——见 data/leagues.py 模块注释）
 from goalx_backend.data.leagues import ERA_TRAJECTORY, LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
-from goalx_backend.markets import SELECTIONS
+from goalx_backend.markets import SELECTIONS, TTG_SELECTIONS
 from goalx_backend.modelling.dc_model import (
     DCArtifact,
     TrainingRow,
@@ -79,6 +83,10 @@ DECADE_COMPETITIONS = tuple(sorted(LEAGUE_TO_FD.values()))
 DECADE_START = "2016-08-01"
 
 MARKET_MAX_GOAL_ERROR = 0.02  # 市场隐含 λ 反推的 had 拟合误差上限
+HALF_STEP_EPS = 1e-9  # 半步长线判定容差（x.0/x.5 vs .25/.75）
+LAM_FLOOR = 0.05  # 联合反推强度下界护栏（防零/负强度退化）
+OU_LINE_MAX = 7.0  # OU 线上界（ttg 桶 7=7+ 并桶，≥7 的 over 不可分辨）
+WATER_SANITY_BAND = (0.5, 1.5)  # 马来/港式水位健全带（真树 1% 分位 0.80）
 _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
 # 模拟竞彩价天花板：真实竞彩不报价超过该量级的选项（ttg 极端档最高几十），
 # haircut 外推在市场隐含概率极低的尾部无效——两头（反推 λ 与 DC 模型）都
@@ -107,6 +115,8 @@ class BacktestParams:
     min_train_matches: int = 100
     parlay2: bool = True
     max_sim_odds: float = DEFAULT_MAX_SIM_ODDS
+    # 下注玩法（2026-10-10 解锁裁决：hhad/ttg 市场侧=market-λ 联合矩阵）
+    markets: tuple[str, ...] = ("had", "hhad", "ttg")
     # 公允基准来源：auto=时代感知正典链（era1 PSC→AvgC / era2 锚→共识）；
     # psc/avgc = 只用该源（票 34 分期/来源对照 run 用，跨 era 作用于配对行）
     fair_source: str = "auto"
@@ -147,6 +157,9 @@ class GoldMatch:
     avgc_odds: tuple[float | None, float | None, float | None]
     anchor_odds: tuple[float | None, float | None, float | None]  # cid177 锚收盘
     cons_probs: tuple[float | None, float | None, float | None]  # 多书中位数归一
+    ou_line: float | None = None  # OU 收盘中位线（market-λ 联合约束）
+    ou_over_water: float | None = None
+    ou_under_water: float | None = None
 
 
 def match_week_key(match_date: str) -> str:
@@ -312,6 +325,53 @@ def market_implied_matrix(
     )
 
 
+def joint_lambdas(
+    fair_probs: dict[str, float],
+    ou_line: float,
+    market_over: float,
+    *,
+    x0: tuple[float, float],
+) -> tuple[float, float] | None:
+    """
+    market-λ 联合反推（转正通道，票 16→23 用户裁决 2026-10-10）：
+
+    1X2 fair 三向 + OU 半线 P(over)（真实线水位去水）约束下 NLS 拟合
+    (λh, λa)（独立泊松，ρ=0 档；x0=单 1X2 反推热启动）。目标 =
+    Σ_1X2 (模型−fair)² + (模型 P(over)−市场 P(over))²，概率等权。
+    失败/退化返回 None（调用方按缺口跳过，不硬配）。
+
+    P1 实证（9,929 样本）：OU Brier 追平真实线市场（0.2500 vs 单反推
+    0.2587），1X2 拟合代价 0.0006，ttg 欠分散缺口收敛——hhad/ttg 市场
+    侧以此矩阵定价（票 15 解锁裁决）。
+    """
+
+    def objective(x: np.ndarray[tuple[int], np.dtype[np.float64]]) -> float:
+        lam_h, lam_a = float(x[0]), float(x[1])
+        if lam_h <= LAM_FLOOR or lam_a <= LAM_FLOOR:
+            return 1e6
+        matrix = ScoreMatrix.from_lambdas(lam_h, lam_a)
+        had = matrix.had()
+        model_over = sum(p for b, p in matrix.ttg().items() if float(b) > ou_line)
+        err = (had["h"] - fair_probs["h"]) ** 2
+        err += (had["d"] - fair_probs["d"]) ** 2
+        err += (had["a"] - fair_probs["a"]) ** 2
+        return err + (model_over - market_over) ** 2
+
+    result = minimize(
+        objective,
+        np.array(x0, dtype=float),
+        method="Nelder-Mead",
+        options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 400},
+    )
+    if (
+        not result.success
+        or float(result.x[0]) <= LAM_FLOOR
+        or float(result.x[1]) <= LAM_FLOOR
+    ):
+        return None
+    return float(result.x[0]), float(result.x[1])
+
+
 def pick_hhad_line(matrix: ScoreMatrix) -> int:
     """让球线近似：两侧概率最均衡的整数线（官方调线行为近似；hhad 预留）。"""
     best_line, best_gap = 0, float("inf")
@@ -378,6 +438,9 @@ def fetch_decade_matches(
             ftag,
             era,
             *odds_cols,
+            ou_line,
+            ou_over_water,
+            ou_under_water,
             _row_version,
         ) = row
         matches.append(
@@ -396,9 +459,122 @@ def fetch_decade_matches(
                 avgc_odds=(odds_cols[3], odds_cols[4], odds_cols[5]),
                 anchor_odds=(odds_cols[6], odds_cols[7], odds_cols[8]),
                 cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
+                ou_line=float(ou_line) if ou_line is not None else None,
+                ou_over_water=(
+                    float(ou_over_water) if ou_over_water is not None else None
+                ),
+                ou_under_water=(
+                    float(ou_under_water) if ou_under_water is not None else None
+                ),
             )
         )
     return matches, version, view_status, duplicates
+
+
+def market_side_matrix(
+    match: GoldMatch, fair_probs: dict[str, float]
+) -> ScoreMatrix | None:
+    """
+    hhad/ttg 市场侧比分矩阵（票 23 解锁裁决落地）。
+
+    market-λ 联合反推（1X2 fair + OU 半线水位去水 P(over)），x0=单 1X2
+    反推热启动；无干净 OU 线/水位越带/反推失败 → None（该场 hhad/ttg 无
+    市场侧不下注，had 不受影响）。
+    """
+    usable = _usable_ou(match)
+    if usable is None:
+        return None
+    line, over_water, under_water = usable
+    single = market_implied_matrix(fair_probs)
+    if single is None:
+        return None
+    joint = joint_lambdas(
+        fair_probs,
+        line,
+        two_way_devig(over_water, under_water),
+        x0=(single.lam_home, single.lam_away),
+    )
+    if joint is None:
+        return None
+    return ScoreMatrix.from_lambdas(joint[0], joint[1])
+
+
+def _usable_ou(match: GoldMatch) -> tuple[float, float, float] | None:
+    """
+    可用 OU（半线 x.5 无 push、水位健全带内）→ (线, over 水, under 水)。
+
+    四分线/整数线（push 面）/线≥桶分辨率/水位越带/缺列 → None。
+    """
+    line = match.ou_line
+    if line is None or not math.isfinite(line) or line >= OU_LINE_MAX:
+        return None
+    if abs(line * 2 - round(line * 2)) >= HALF_STEP_EPS or line == int(line):
+        return None  # 四分线 / 整数线（push 面）
+    waters = (match.ou_over_water, match.ou_under_water)
+    lo, hi = WATER_SANITY_BAND
+    if not all(w is not None and math.isfinite(w) and lo <= w <= hi for w in waters):
+        return None
+    return line, float(match.ou_over_water), float(match.ou_under_water)  # type: ignore[arg-type]
+
+
+def two_way_devig(over_water: float, under_water: float) -> float:
+    """OU 双向比例去水（马来/港式水位→欧赔 1+w；票 15 同式转引擎单一落点）。"""
+    inv_over = 1.0 / (1.0 + over_water)
+    inv_under = 1.0 / (1.0 + under_water)
+    return inv_over / (inv_over + inv_under)
+
+
+def _market_side_candidates(
+    market_matrix: ScoreMatrix,
+    model_matrix: ScoreMatrix,
+    params: BacktestParams,
+    match: GoldMatch,
+) -> list[_Candidate]:
+    """
+    Hhad + ttg 候选（市场侧=market-λ 矩阵，模型侧=DC 矩阵）。
+
+    - hhad：整数让球线=pick_hhad_line(market_matrix)（两侧均衡近似官方
+      调线；三向 h/d/a，settlement 口径 home+goal_line）；
+    - ttg：八档 0..7+；
+    - 模拟价 = (1/p_mkt)×(1−haircut)；护栏（MIN_MARKET_PROB/max_sim_
+      odds）逐 selection 与 had 同式。
+    """
+    candidates: list[_Candidate] = []
+    if "hhad" in params.markets:
+        line = pick_hhad_line(market_matrix)
+        market_view = market_matrix.hhad(float(line))
+        model_view = model_matrix.hhad(float(line))
+        for sel in SELECTIONS:
+            jc_odds = (1.0 / market_view[sel]) * (1.0 - params.haircut)
+            if 1.0 / jc_odds >= MIN_MARKET_PROB and jc_odds <= params.max_sim_odds:
+                candidates.append(
+                    _Candidate(
+                        match.ref,
+                        match.sid,
+                        "hhad",
+                        sel,
+                        jc_odds,
+                        model_view[sel],
+                        goal_line=float(line),
+                    )
+                )
+    if "ttg" in params.markets:
+        market_view = market_matrix.ttg()
+        model_view = model_matrix.ttg()
+        for bucket in TTG_SELECTIONS:
+            jc_odds = (1.0 / market_view[bucket]) * (1.0 - params.haircut)
+            if 1.0 / jc_odds >= MIN_MARKET_PROB and jc_odds <= params.max_sim_odds:
+                candidates.append(
+                    _Candidate(
+                        match.ref,
+                        match.sid,
+                        "ttg",
+                        bucket,
+                        jc_odds,
+                        model_view[bucket],
+                    )
+                )
+    return candidates
 
 
 def _candidates_for_match(
@@ -406,16 +582,23 @@ def _candidates_for_match(
     jc_had: dict[str, float],
     params: BacktestParams,
     match: GoldMatch,
+    *,
+    market_matrix: ScoreMatrix | None = None,
 ) -> list[_Candidate]:
-    """一场比赛的全部候选单关（had-only，用户裁决维持到票 15 门）。"""
+    """一场比赛的全部候选单关（had 常开；hhad/ttg 需市场侧联合矩阵）。"""
     candidates: list[_Candidate] = []
-    had = matrix.had()
-    for sel in SELECTIONS:
-        market_prob = 1.0 / jc_had[sel]
-        if market_prob >= MIN_MARKET_PROB and jc_had[sel] <= params.max_sim_odds:
-            candidates.append(
-                _Candidate(match.ref, match.sid, "had", sel, jc_had[sel], had[sel])
-            )
+    if "had" in params.markets:
+        had = matrix.had()
+        for sel in SELECTIONS:
+            market_prob = 1.0 / jc_had[sel]
+            if market_prob >= MIN_MARKET_PROB and jc_had[sel] <= params.max_sim_odds:
+                candidates.append(
+                    _Candidate(match.ref, match.sid, "had", sel, jc_had[sel], had[sel])
+                )
+    if market_matrix is not None and (
+        "hhad" in params.markets or "ttg" in params.markets
+    ):
+        candidates.extend(_market_side_candidates(market_matrix, matrix, params, match))
     return candidates
 
 
@@ -566,8 +749,13 @@ def _record_week_predictions(
         )
         result.predictions += 1
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
+        market_matrix = None
+        if "hhad" in params.markets or "ttg" in params.markets:
+            market_matrix = market_side_matrix(match, fair_probs)
+            if market_matrix is None:
+                skip("no_market_side")  # 无干净 OU 线/联合反推失败
         candidates_by_match[match.ref] = _candidates_for_match(
-            matrix, jc_had, params, match
+            matrix, jc_had, params, match, market_matrix=market_matrix
         )
     return candidates_by_match
 

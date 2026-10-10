@@ -562,3 +562,98 @@ def test_cli_backtest_without_bridge_exits_clean(monkeypatch, tmp_path) -> None:
     with pytest.raises(SystemExit) as excinfo:
         _cmd_backtest(args)
     assert excinfo.value.code == 2
+
+
+def _unlock_rows() -> list[dict]:
+    """票 23 解锁面：seed_rows 全行配 OU 半线+水位（market-λ 可用）。"""
+    rows = seed_rows()
+    for row in rows:
+        row["ou_close_line_med"] = 2.5
+        row["ou_close_over_water_med"] = 0.92
+        row["ou_close_under_water_med"] = 0.96
+    return rows
+
+
+def test_run_backtest_unlocks_hhad_ttg(gold_env) -> None:
+    """票 23：hhad/ttg 解锁——三玩法候选/注单落地并正确结算。"""
+    with gold_env(_unlock_rows()) as (face, duck_con, store):
+        params = bt.BacktestParams(
+            competitions=("E0",),
+            min_train_matches=9,
+            ev_threshold=0.0,
+        )
+        result = bt.run_backtest(face, duck_con, store, params, label="unlock")
+        try:
+            bets = face.execute(
+                "SELECT kind, legs, status FROM backtest_bets WHERE run_id = ?",
+                (result.run_id,),
+            ).fetchall()
+            markets = {
+                leg["market_code"]
+                for row in bets
+                for leg in json.loads(str(row["legs"]))
+            }
+            assert "had" in markets
+            assert "hhad" in markets  # 解锁生效
+            assert "ttg" in markets
+            for row in bets:  # 结算路径完整（历史赛果可判）
+                assert str(row["status"]) in ("won", "lost", "void")
+            # hhad 腿带整数让球线；ttg 腿八档码
+            for row in bets:
+                for leg in json.loads(str(row["legs"])):
+                    if leg["market_code"] == "hhad":
+                        assert leg["goal_line"] == int(leg["goal_line"])
+                    if leg["market_code"] == "ttg":
+                        assert leg["selection_code"] in {str(n) for n in range(8)}
+            # had-only 回退开关仍可用（params.markets 收窄）
+            only_had = bt.BacktestParams(
+                competitions=("E0",), min_train_matches=9, markets=("had",)
+            )
+            res2 = bt.run_backtest(face, duck_con, store, only_had, label="had-only")
+            legs2 = {
+                leg["market_code"]
+                for row in face.execute(
+                    "SELECT legs FROM backtest_bets WHERE run_id = ?",
+                    (res2.run_id,),
+                ).fetchall()
+                for leg in json.loads(str(row["legs"]))
+            }
+            assert legs2 == {"had"}
+        finally:
+            duck_con.close()
+            face.close()
+
+
+def test_market_side_matrix_nil_paths() -> None:
+    """无 OU 线/四分线/水位越带 → 无市场侧（该场 hhad/ttg 不下注）。"""
+    fair = {"h": 0.45, "d": 0.27, "a": 0.28}
+    base = {
+        "sid": "s1",
+        "competition": "E0",
+        "match_date": "2021-10-02",
+        "season": "2021-22",
+        "home": "A",
+        "away": "B",
+        "fthg": 2,
+        "ftag": 1,
+        "era": "psc_proxy",
+        "ref": 0,
+        "psc_odds": (2.2, 3.4, 3.2),
+        "avgc_odds": (None, None, None),
+        "anchor_odds": (None, None, None),
+        "cons_probs": (None, None, None),
+    }
+    no_line = bt.GoldMatch(**base)
+    assert bt.market_side_matrix(no_line, fair) is None
+    quarter = bt.GoldMatch(**(base | {"ou_line": 2.75}))
+    assert bt.market_side_matrix(quarter, fair) is None
+    bad_water = bt.GoldMatch(
+        **(base | {"ou_line": 2.5, "ou_over_water": 4.0, "ou_under_water": 0.95})
+    )
+    assert bt.market_side_matrix(bad_water, fair) is None
+    usable = bt.GoldMatch(
+        **(base | {"ou_line": 2.5, "ou_over_water": 0.92, "ou_under_water": 0.96})
+    )
+    matrix = bt.market_side_matrix(usable, fair)
+    assert matrix is not None  # 可用线 → 联合矩阵
+    assert abs(sum(matrix.had().values()) - 1.0) < 1e-9

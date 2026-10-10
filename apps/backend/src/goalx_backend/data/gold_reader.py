@@ -38,6 +38,7 @@ _DECADE_SQL = """
            avgc_home, avgc_draw, avgc_away,
            close1x2_h, close1x2_d, close1x2_a,
            close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
+           ou_close_line_med, ou_close_over_water_med, ou_close_under_water_med,
            version
     FROM match_features
     WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL

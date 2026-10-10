@@ -1001,6 +1001,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     backtest.add_argument("--no-parlay", action="store_true", help="关闭 2串1 模拟")
     backtest.add_argument(
+        "--markets",
+        nargs="*",
+        default=["had", "hhad", "ttg"],
+        help="下注玩法(2026-10-10 解锁裁决后缺省三玩法)",
+    )
+    backtest.add_argument(
         "--min-train",
         type=int,
         default=100,

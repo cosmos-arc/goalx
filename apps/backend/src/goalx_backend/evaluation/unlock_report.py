@@ -38,13 +38,18 @@ import duckdb
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import FD_TO_LEAGUE
-from goalx_backend.evaluation.backtest import era_fair_probs, market_implied_matrix
+from goalx_backend.evaluation.backtest import (
+    HALF_STEP_EPS,
+    OU_LINE_MAX,
+    WATER_SANITY_BAND,
+    era_fair_probs,
+    market_implied_matrix,
+)
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 
 REPORT_BASENAME = "unlock-hhad-ttg"
-_HALF_STEP_EPS = 1e-9  # 半步长线判定容差（浮点线 x.0/x.5 vs .25/.75）
-OU_LINE_MAX = 7.0  # OU 线上界：ttg 桶 7=7+ 并桶，≥7 的 over 概率不可分辨
-WATER_SANITY_BAND = (0.5, 1.5)  # 马来/港式水位健全带（真树分布 1% 分位 0.80）
+# 常量（OU 线上界/水位健全带/半步长容差）定义已随票 23 转正移入
+# evaluation.backtest（引擎单一落点），本模块经 import 复用
 
 
 @dataclass
@@ -137,7 +142,7 @@ def _clean_half_line(line: float | None) -> float | None:
     """半步长线（x.0/x.5）返回原值；四分之一线（.25/.75）返回 None。"""
     if line is None or not math.isfinite(line):
         return None
-    return line if abs(line * 2 - round(line * 2)) < _HALF_STEP_EPS else None
+    return line if abs(line * 2 - round(line * 2)) < HALF_STEP_EPS else None
 
 
 def half_line_only(line: float | None) -> float | None:
