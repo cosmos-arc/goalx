@@ -223,10 +223,20 @@ def _cmd_forecast(args: argparse.Namespace) -> None:
 
 @contextmanager
 def _corpus_handles() -> Generator[tuple[duckdb.DuckDBPyConnection, CorpusStore]]:
-    """回测消费面共享脚手架：corpus.duckdb 只读连接 + 语料树句柄。"""
+    """
+    回测消费面共享脚手架：corpus.duckdb 只读连接 + 语料树句柄。
+
+    未建桥（corpus.duckdb 不存在）= 运维前置缺失，干净退出而非裸栈
+    （correctness F5；引擎级 honest-missing 只覆盖"桥在、视图缺"形态）。
+    """
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
-    duck_con = corpus_duckdb.connect(settings)
+    try:
+        duck_con = corpus_duckdb.connect(settings)
+    except (duckdb.Error, OSError) as exc:
+        store.close()
+        sys.stderr.write(f"corpus.duckdb 不可用（先跑 gold-build 建桥）: {exc}\n")
+        raise SystemExit(2) from exc
     try:
         yield duck_con, store
     finally:

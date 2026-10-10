@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 import duckdb
@@ -62,13 +63,17 @@ def fetch_decade_rows(
     competitions: Sequence[str],
     *,
     end: str | None,
-) -> tuple[list[tuple[Any, ...]], str | None, str]:
+) -> tuple[list[tuple[Any, ...]], str | None, str, int]:
     """
     引擎行集（fd 联赛码过滤；end 含端点、None=数据尾）。
 
-    返回 (行集, gold 版本, 视图状态)。无 start 下界——窗口前历史行是
-    训练热身池，start 门由引擎的预测面施加。视图缺席（未建桥/空语料）
-    = 合法初生态返回 "missing" 由调用方入档，不冒充零过滤数据。
+    返回 (行集, gold 版本, 视图状态, 重复 sid 数)。无 start 下界——窗口
+    前历史行是训练热身池，start 门由引擎的预测面施加。重复 sid（上游
+    腐败/未来多分区布局）按 (league, day, sid) 定序取首行去重并计数，
+    保持审计面 UNIQUE(run_id, match_key) 与下注面身份一致（correctness
+    F3）。视图缺席（未建桥/空语料）= 合法初生态返回 "missing" 由调用方
+    入档，不冒充零过滤数据；**只捕视图缺席形态**（Catalog/IOException，
+    gold.py 同款）——参数/转换错误 fail-loud，不冒充基础设施缺失（F2）。
     """
     try:
         leagues = [FD_TO_LEAGUE[code] for code in competitions]
@@ -76,10 +81,23 @@ def fetch_decade_rows(
         raise ValueError(
             f"未知联赛码 {exc.args[0]!r}（合法码见 data/leagues.LEAGUE_TO_FD）"
         ) from None
+    if end is not None:
+        try:
+            date.fromisoformat(end)
+        except ValueError as exc:
+            raise ValueError(f"end={end!r} 非法：须零填充 YYYY-MM-DD") from exc
     try:
         rows = duck_con.execute(_DECADE_SQL, [leagues, end, end]).fetchall()
-    except duckdb.Error as exc:
-        logger.warning("match_features 视图不可用（先跑 gold-build + 建桥）: %s", exc)
-        return [], None, "missing"
+    except (duckdb.CatalogException, duckdb.IOException) as exc:
+        logger.warning("match_features 视图不可用（先跑 gold-build + 建桥）: {}", exc)
+        return [], None, "missing", 0
+    seen: dict[str, tuple[Any, ...]] = {}
+    duplicates = 0
+    for row in rows:
+        sid = str(row[0])
+        if sid in seen:
+            duplicates += 1
+            continue
+        seen[sid] = row
     version = next((str(row[-1]) for row in rows if row[-1] is not None), None)
-    return list(rows), version, "ok"
+    return list(seen.values()), version, "ok", duplicates

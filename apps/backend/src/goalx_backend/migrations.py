@@ -1396,10 +1396,10 @@ def _apply_v25(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         INSERT INTO backtest_predictions
-            (run_id, match_key, competition, season, match_date, home_team,
+            (id, run_id, match_key, competition, season, match_date, home_team,
              away_team, had_probs, fair_probs, fair_source,
              model_fingerprint, train_window_end)
-        SELECT run_id, CAST(hist_match_id AS TEXT), competition, season,
+        SELECT id, run_id, CAST(hist_match_id AS TEXT), competition, season,
                match_date, home_team, away_team, had_probs, fair_probs,
                fair_source, model_fingerprint, train_window_end
         FROM backtest_predictions_v3

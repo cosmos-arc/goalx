@@ -42,6 +42,8 @@ baseline 对照随本引擎走 gold 配对行）：
 from __future__ import annotations
 
 import json
+import logging
+import math
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -68,6 +70,8 @@ from goalx_backend.modelling.dc_model import (
 )
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
+
+logger = logging.getLogger(__name__)
 
 # 十年窗（spec S13：2016-08→2026-10）与 11 重叠联赛（data/leagues 单一
 # 真相源；2016-01~08 的 gold 历史行作首季训练热身池，不产生下注面）
@@ -182,24 +186,41 @@ def _ftr(fthg: int, ftag: int) -> str:
 def _valid_odds(
     odds: tuple[float | None, float | None, float | None],
 ) -> tuple[float, float, float] | None:
-    """收盘三元组校验并收窄：全部 >1.0 才可用，否则 None。"""
+    """
+    收盘三元组校验并收窄：全部有限且 >1.0 才可用，否则 None。
+
+    有限性必须显式判：NaN 满足 ``nan <= 1.0 == False``（否定式放行），
+    而 parquet float64 可承载 NaN（旧 sqlite REAL 面不可）——漏进 Shin
+    去水会让 scipy 抛 ValueError 炸整 run（correctness F1）。
+    """
     vals: list[float] = []
     for o in odds:
-        if not isinstance(o, (int, float)) or float(o) <= 1.0:
+        if not isinstance(o, (int, float)):
             return None
-        vals.append(float(o))
+        value = float(o)
+        if not math.isfinite(value) or value <= 1.0:
+            return None
+        vals.append(value)
     return vals[0], vals[1], vals[2]
 
 
 def _valid_probs(
     probs: tuple[float | None, float | None, float | None],
 ) -> tuple[float, float, float] | None:
-    """已归一概率三元组校验并收窄：全部 ∈(0,1) 才可用，否则 None。"""
+    """
+    已归一概率三元组校验并收窄：全部有限且 ∈(0,1) 才可用，否则 None。
+
+    链式 ``0.0 < p < 1.0`` 对 NaN 恒 False（比较链任一 False 即 False），
+    天然拒绝非有限值。
+    """
     vals: list[float] = []
     for p in probs:
-        if not isinstance(p, (int, float)) or not 0.0 < float(p) < 1.0:
+        if not isinstance(p, (int, float)):
             return None
-        vals.append(float(p))
+        value = float(p)
+        if not math.isfinite(value) or not 0.0 < value < 1.0:
+            return None
+        vals.append(value)
     return vals[0], vals[1], vals[2]
 
 
@@ -310,14 +331,15 @@ class _Candidate:
 
 def fetch_decade_matches(
     duck_con: duckdb.DuckDBPyConnection, params: BacktestParams
-) -> tuple[list[GoldMatch], str | None, str]:
+) -> tuple[list[GoldMatch], str | None, str, int]:
     """
     Gold 引擎行集 → GoldMatch 投影（取数/卫生单一入口=``data.gold_reader``）。
 
-    视图缺席（未建桥/空语料）= 合法初生态，返回 (空集, None, "missing")
-    由 run params 如实标注，不冒充零过滤数据。
+    视图缺席（未建桥/空语料）= 合法初生态，返回 (空集, None, "missing", 0)
+    由 run params 如实标注，不冒充零过滤数据；重复 sid 已在取数侧去重
+    （计数返回入档，保持预测/下注/审计三面身份一致）。
     """
-    rows, version, view_status = gold_reader.fetch_decade_rows(
+    rows, version, view_status, duplicates = gold_reader.fetch_decade_rows(
         duck_con, params.competitions, end=params.end
     )
     matches: list[GoldMatch] = []
@@ -353,7 +375,7 @@ def fetch_decade_matches(
                 cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
             )
         )
-    return matches, version, view_status
+    return matches, version, view_status, duplicates
 
 
 def _candidates_for_match(
@@ -569,6 +591,90 @@ def _place_week_bets(
     result.profit += profit
 
 
+def _validate_window(params: BacktestParams) -> None:
+    """窗口日期 fail-loud（correctness F2：坏值不得冒充视图缺失/静默前视）。"""
+    for name, value in (("start", params.start), ("end", params.end)):
+        if value is None:
+            continue
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{name}={value!r} 非法：须零填充 YYYY-MM-DD") from exc
+
+
+def _walk_competition(
+    conn: sqlite3.Connection,
+    run_id: int,
+    competition: str,
+    comp_rows: list[GoldMatch],
+    params: BacktestParams,
+    result: BacktestResult,
+) -> None:
+    """单联赛 walk-forward：训练池推进 + 周重估 + 预测/下注。"""
+    pool: list[TrainingRow] = []
+    ptr = 0
+    # ponytail: 每周全池重拟合（~11 联赛×~540 周，小时级 CLI 跑）；
+    # 周间增量拟合是缓存投机，量级不适配再议
+    for week_key, week_rows in group_by_week(comp_rows):
+        week_dates = [m.match_date for m in week_rows]
+        first_day = min(week_dates)
+        cutoff = (date.fromisoformat(first_day) - timedelta(days=1)).isoformat()
+        while ptr < len(comp_rows) and comp_rows[ptr].match_date <= cutoff:
+            row = comp_rows[ptr]
+            pool.append(
+                TrainingRow(
+                    match_date=row.match_date,
+                    home_team=row.home,
+                    away_team=row.away,
+                    fthg=row.fthg,
+                    ftag=row.ftag,
+                )
+            )
+            ptr += 1
+        # 窗口门逐场施加（correctness F4）：整周跳过会丢跨 start 周内的
+        # 窗口内场次；cutoff 仍按整周最早日算（窗口前行也不在训练池——
+        # 同周比赛一律晚于 cutoff）
+        in_window = [m for m in week_rows if m.match_date >= params.start]
+        pre_start = len(week_rows) - len(in_window)
+        if pre_start:
+            result.skipped["pre_start_matches"] = (
+                result.skipped.get("pre_start_matches", 0) + pre_start
+            )
+        if not in_window:
+            continue
+        if len(pool) < params.min_train_matches:
+            result.skipped["thin_train_weeks"] = (
+                result.skipped.get("thin_train_weeks", 0) + 1
+            )
+            continue
+        assert_no_lookahead(pool, week_dates)
+        try:
+            artifact = fit_dc_model(
+                pool,
+                competition=competition,
+                half_life_days=params.half_life_days,
+            )
+        except ValueError:
+            # 极小训练池可能数值不可辨识(ρ 越界等) → 跳过该周
+            result.skipped["fit_failed_weeks"] = (
+                result.skipped.get("fit_failed_weeks", 0) + 1
+            )
+            continue
+        results = {
+            m.ref: ResultFacts(home_goals=m.fthg, away_goals=m.ftag) for m in in_window
+        }
+        candidates_by_match = _record_week_predictions(
+            conn, run_id, in_window, artifact, params, result
+        )
+        _place_week_bets(
+            conn,
+            _WeekContext(run_id, competition, week_key, results),
+            candidates_by_match,
+            params,
+            result,
+        )
+
+
 def run_backtest(
     conn: sqlite3.Connection,
     duck_con: duckdb.DuckDBPyConnection,
@@ -585,8 +691,23 @@ def run_backtest(
     入档 gold 版本/构建戳/输入 digest 与成熟度基准日（gold 构建侧钉的
     口径，非 run 日）——重放差异由该组字段解释。
     """
+    _validate_window(params)
+    matches, gold_version, view_status, duplicates = fetch_decade_matches(
+        duck_con, params
+    )
+    # meta 后读（correctness F6）：行集与 _meta 两次独立读之间发生 gold
+    # 重建时，版本不一致=溯源已漂移，警告暴露（独占窗口纪律下不应发生）
     meta = gold_reader.read_gold_meta(store)
-    matches, gold_version, view_status = fetch_decade_matches(duck_con, params)
+    if (
+        gold_version is not None
+        and meta.get("gold_version") is not None
+        and gold_version != meta.get("gold_version")
+    ):
+        logger.warning(
+            "gold 版本漂移（行集 %s ≠ _meta %s）：重建与读取交错",
+            gold_version,
+            meta.get("gold_version"),
+        )
     run_params = asdict(params) | {
         # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
         "price_model": "simulated_jc",
@@ -594,6 +715,7 @@ def run_backtest(
         "data_source": "gold/match_features",
         "gold_view": view_status,
         "gold_rows": len(matches),
+        "gold_duplicate_sids": duplicates,
         "gold_version": gold_version or meta.get("gold_version"),
         "gold_built_at": meta.get("built_at"),
         "gold_maturity_today": meta.get("maturity_today"),
@@ -613,60 +735,7 @@ def run_backtest(
         for match in matches:
             by_comp.setdefault(match.competition, []).append(match)
         for competition, comp_rows in by_comp.items():
-            pool: list[TrainingRow] = []
-            ptr = 0
-            # ponytail: 每周全池重拟合（~11 联赛×~540 周，小时级 CLI 跑）；
-            # 周间增量拟合是缓存投机，量级不适配再议
-            for week_key, week_rows in group_by_week(comp_rows):
-                week_dates = [m.match_date for m in week_rows]
-                first_day = min(week_dates)
-                cutoff = (date.fromisoformat(first_day) - timedelta(days=1)).isoformat()
-                while ptr < len(comp_rows) and comp_rows[ptr].match_date <= cutoff:
-                    row = comp_rows[ptr]
-                    pool.append(
-                        TrainingRow(
-                            match_date=row.match_date,
-                            home_team=row.home,
-                            away_team=row.away,
-                            fthg=row.fthg,
-                            ftag=row.ftag,
-                        )
-                    )
-                    ptr += 1
-                if first_day < params.start:
-                    continue  # 窗口前：只贡献训练池，不产生下注面
-                if len(pool) < params.min_train_matches:
-                    result.skipped["thin_train_weeks"] = (
-                        result.skipped.get("thin_train_weeks", 0) + 1
-                    )
-                    continue
-                assert_no_lookahead(pool, week_dates)
-                try:
-                    artifact = fit_dc_model(
-                        pool,
-                        competition=competition,
-                        half_life_days=params.half_life_days,
-                    )
-                except ValueError:
-                    # 极小训练池可能数值不可辨识(ρ 越界等) → 跳过该周
-                    result.skipped["fit_failed_weeks"] = (
-                        result.skipped.get("fit_failed_weeks", 0) + 1
-                    )
-                    continue
-                results = {
-                    m.ref: ResultFacts(home_goals=m.fthg, away_goals=m.ftag)
-                    for m in week_rows
-                }
-                candidates_by_match = _record_week_predictions(
-                    conn, run_id, week_rows, artifact, params, result
-                )
-                _place_week_bets(
-                    conn,
-                    _WeekContext(run_id, competition, week_key, results),
-                    candidates_by_match,
-                    params,
-                    result,
-                )
+            _walk_competition(conn, run_id, competition, comp_rows, params, result)
         conn.execute(
             """
             UPDATE backtest_runs

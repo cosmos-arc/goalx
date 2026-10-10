@@ -442,3 +442,123 @@ def test_run_backtest_replay_deterministic(gold_env) -> None:
         assert predictions(first.run_id) == predictions(second.run_id)
         assert bets(first.run_id) == bets(second.run_id)
         assert bt.run_summary(face, first.run_id) == bt.run_summary(face, second.run_id)
+
+
+def test_fair_probs_nan_odds_is_no_baseline() -> None:
+    """correctness F1 回归：NaN 收盘价=无基准（否定式比较放行 NaN 会炸 Shin）。"""
+    nan = float("nan")
+    # era2 锚含 NaN → 回落共识，不抛
+    probs, source = bt.fair_probs_from_gold(
+        _gold_match(
+            era=gold_mod.ERA_TRAJECTORY,
+            anchor_odds=(nan, 3.40, 3.90),
+            cons_probs=ERA2_CONS,
+        )
+    )
+    assert source == "traj_cons"
+    assert probs["h"] == pytest.approx(ERA2_CONS[0])
+    # era1 psc 含 NaN → 该源无基准；avgc 兜底（候选链语义）
+    probs, source = bt.fair_probs_from_gold(_gold_match(psc_odds=(nan, 3.3, 3.1)))
+    assert source == "avgc"
+    # 两源皆不可用（psc 含 NaN、avgc 缺）→ 无基准，不得进 Shin
+    assert (
+        bt.fair_probs_from_gold(
+            _gold_match(psc_odds=(nan, 3.3, 3.1), avgc_odds=(None, None, None))
+        )
+        is None
+    )
+
+
+def test_run_backtest_invalid_window_raises(gold_env) -> None:
+    """correctness F2 回归：坏 start/end fail-loud，不冒充视图缺失的空 run。"""
+    with gold_env([]) as (face, duck_con, store):
+        for bad in (
+            bt.BacktestParams(competitions=("E0",), start="2016-8-1"),
+            bt.BacktestParams(competitions=("E0",), end="2026-13-45"),
+        ):
+            with pytest.raises(ValueError, match="非法"):
+                bt.run_backtest(face, duck_con, store, bad, label="bad-window")
+        assert face.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 0
+
+
+def test_duplicate_gold_sid_dedups(gold_env) -> None:
+    """correctness F3 回归：重复 sid 去重——三面身份一致，禁同场串关不破。"""
+    rows = seed_rows()
+    rows.append(dict(rows[-1]))  # 同 sid 同日重复行（上游腐败形态）
+    with gold_env(rows) as (face, duck_con, store):
+        params = bt.BacktestParams(
+            competitions=("E0",), min_train_matches=9, ev_threshold=0.0
+        )
+        result = bt.run_backtest(face, duck_con, store, params, label="dup-sid")
+        stored = face.execute(
+            "SELECT COUNT(*) FROM backtest_predictions WHERE run_id = ?",
+            (result.run_id,),
+        ).fetchone()[0]
+        assert result.predictions == stored  # 计数与表行一致（不再 OR IGNORE 吞）
+        for row in face.execute(
+            "SELECT legs FROM backtest_bets WHERE run_id = ? AND kind = 'parlay2'",
+            (result.run_id,),
+        ).fetchall():
+            legs = json.loads(str(row["legs"]))
+            assert legs[0]["match_key"] != legs[1]["match_key"]  # 禁同场串关
+        run = face.execute(
+            "SELECT params FROM backtest_runs WHERE id = ?", (result.run_id,)
+        ).fetchone()
+        assert json.loads(str(run["params"]))["gold_duplicate_sids"] == 1
+
+
+def test_mid_week_start_keeps_in_window_matches(gold_env) -> None:
+    """correctness F4 回归：start 门逐场——跨 start 周内的窗口内场次不丢。"""
+    # 7 月三轮热身（9 行泊松得分，让首 ISO 周即过 min_train 且 DC 可辨识；
+    # sid 加前缀避免与主段 seed 的 8001+ 撞号——那会被取数侧去重吃掉）
+    warmup = seed_rows(rounds=3, start=date(2016, 7, 5))
+    for row in warmup:
+        row["sid"] = f"j{row['sid']}"
+    rows = warmup
+    # 首 ISO 周（2016-W31）分两天：周二 08-02（窗口前）+ 周六 08-06（窗口内）
+    rows.append(_era1_row("6101", "2016-08-02", "A", "B", 1, 1))
+    rows.append(_era1_row("6102", "2016-08-02", "C", "D", 0, 2))
+    rows.extend(seed_rows(rounds=4, start=date(2016, 8, 6)))  # 首轮 08-06 周六
+    with gold_env(rows) as (face, duck_con, store):
+        params = bt.BacktestParams(
+            competitions=("E0",), start="2016-08-04", min_train_matches=9
+        )
+        result = bt.run_backtest(face, duck_con, store, params, label="mid-week")
+        dates = sorted(
+            {
+                str(r["match_date"])
+                for r in face.execute(
+                    "SELECT match_date FROM backtest_predictions WHERE run_id = ?",
+                    (result.run_id,),
+                ).fetchall()
+            }
+        )
+        # 首周内 ≥ start 的场次（08-06 周六）必须有预测；08-02 场次被逐场
+        # 门剔除并计入 skip——整周跳过（旧行为）会把 08-06 一起丢掉
+        assert "2016-08-06" in dates
+        assert "2016-08-02" not in dates
+        assert all(d >= "2016-08-04" for d in dates)
+        assert result.skipped.get("pre_start_matches", 0) == 11  # 9 热身 + 2×08-02
+
+
+def test_cli_backtest_without_bridge_exits_clean(monkeypatch, tmp_path) -> None:
+    """correctness F5 回归：corpus.duckdb 不存在=干净退出带指引，非裸栈。"""
+    import argparse
+
+    from goalx_backend.cli import _cmd_backtest
+
+    monkeypatch.setenv("GOALX_CORPUS_ROOT", str(tmp_path / "corpus"))
+    monkeypatch.setenv("GOALX_DB_PATH", str(tmp_path / "goalx.db"))
+    args = argparse.Namespace(
+        label="no-bridge",
+        haircut="0.10",
+        competitions=["E0"],
+        start=bt.DECADE_START,
+        end=None,
+        no_parlay=False,
+        min_train=100,
+        fair_source="auto",
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_backtest(args)
+    assert excinfo.value.code == 2
