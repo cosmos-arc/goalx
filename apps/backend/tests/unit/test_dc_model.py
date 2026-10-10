@@ -153,6 +153,57 @@ def test_training_rows_respects_as_of_cutoff(db) -> None:
     assert [r.match_date for r in rows] == ["2024-09-01", "2024-09-14"]
 
 
+def test_training_rows_excludes_admin_matches(db) -> None:
+    """票 14 正反用例：行政判赛行（假 3-0）不进 live 训练面，正常场不误伤。"""
+    for home, away, day in (
+        ("HomeX", "AwayY", "2024-09-01"),  # 窗内任一侧命中 → 剔除
+        ("AwayY", "OtherZ", "2024-09-08"),  # 客侧命中 → 剔除
+        ("OtherZ", "HomeQ", "2024-09-15"),  # 无关队 → 保留
+        ("HomeX", "AwayY", "2024-12-31"),  # 命中队但窗外 → 保留（含端点外）
+    ):
+        rs_store.upsert_hist_matches(
+            db,
+            [
+                {
+                    "competition": "E0",
+                    "season": "2425",
+                    "match_date": day,
+                    "home_team": home,
+                    "away_team": away,
+                    "fthg": 3,
+                    "ftag": 0,
+                    "ftr": "H",
+                    "psc_home": None,
+                    "psc_draw": None,
+                    "psc_away": None,
+                    "avgc_home": None,
+                    "avgc_draw": None,
+                    "avgc_away": None,
+                }
+            ],
+        )
+    db.execute(
+        "INSERT INTO admin_match_exclusions"
+        " (competition, team, date_start, date_end, reason, created_at)"
+        " VALUES ('E0', 'HomeX', '2024-09-01', '2024-09-30', '测试排除窗', 't'),"
+        " ('E0', 'AwayY', '2024-09-01', '2024-09-30', '测试排除窗', 't')"
+    )
+    db.commit()
+    rows = dcm.training_rows_for(db, "E0", as_of="2024-12-31")
+    assert [(r.home_team, r.away_team) for r in rows] == [
+        ("OtherZ", "HomeQ"),
+        ("HomeX", "AwayY"),
+    ]  # 剔除前两场（窗内命中），保留后两场（无关队/窗外）
+
+
+def test_training_rows_fail_closed_without_exclusion_table(db) -> None:
+    """排除表缺席=未迁移面：炸训练优于静默吃假 3-0（hygiene fail-closed 传导）。"""
+    db.execute("DROP TABLE admin_match_exclusions")
+    db.commit()
+    with pytest.raises(Exception, match="admin_match_exclusions"):
+        dcm.training_rows_for(db, "E0", as_of="2024-09-14")
+
+
 def test_train_competition_end_to_end(db, tmp_path) -> None:
     rows = synthetic_rows(n=90, seed=3)
     for row in rows:

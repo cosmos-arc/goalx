@@ -30,6 +30,7 @@ from numpy import random as np_random
 from penaltyblog.models import DixonColesGoalModel
 
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded
 from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
 
 # Tier1 五大 fd 代码（票 26：五大主动；Tier2 如 N1 荷甲扩导列为可选项）
@@ -286,7 +287,15 @@ def load_latest_run(models_dir: str | Path, competition: str) -> TrainingRun | N
 def training_rows_for(
     conn: sqlite3.Connection, competition: str, *, as_of: str
 ) -> list[TrainingRow]:
-    """某联赛 as_of（含）之前的全部 hist 行（防前视：上界由调用方给出）。"""
+    """
+    某联赛 as_of（含）之前的全部 hist 行（防前视：上界由调用方给出）。
+
+    训练集卫生（backtest-decade 票 14，S4）：行政判赛行（比分是真的、
+    比赛是假的）经 ``data/hygiene`` 单一取数口剔除——live 周训练面与
+    gold/回测面同规则；排除表缺席时 ``admin_exclusions`` fail-closed
+    （未迁移面炸训练优于静默吃假 3-0）。
+    """
+    exclusions = admin_exclusions(conn)
     return [
         TrainingRow(
             match_date=str(row["match_date"]),
@@ -296,6 +305,13 @@ def training_rows_for(
             ftag=int(row["ftag"]),
         )
         for row in rs_store.hist_rows_through(conn, competition, as_of)
+        if not is_admin_excluded(
+            str(row["competition"]),
+            str(row["home_team"]),
+            str(row["away_team"]),
+            str(row["match_date"]),
+            exclusions,
+        )
     ]
 
 
