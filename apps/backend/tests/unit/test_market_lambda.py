@@ -133,3 +133,22 @@ def test_build_report_skips_without_ou(gold_env) -> None:
         finally:
             duck_con.close()
             face.close()
+
+
+def test_joint_failure_falls_back_to_single(monkeypatch, gold_env) -> None:
+    """correctness F2 回归：joint 拟合失败回落 single 并如实计数（不静默混入）。"""
+    rows = [_row("9601"), _row("9602", home_goals=1, away_goals=1)]
+    with gold_env(rows) as (face, duck_con, store):
+        monkeypatch.setattr(ml, "joint_lambdas", lambda *a, **k: None)
+        payload = ml.build_market_lambda_report(store, duck_con)
+        try:
+            assert payload["n_sampled"] == 2
+            assert payload["skipped"]["joint_fit_failed"] == 2
+            s = payload["methods"]["single"]["psc_proxy"]
+            j = payload["methods"]["joint"]["psc_proxy"]
+            # 回落语义：joint 统计==single 统计（可判读、可归因）
+            assert j["ou_brier"] == s["ou_brier"]
+            assert j["had_fit_err"] == s["had_fit_err"]
+        finally:
+            duck_con.close()
+            face.close()
