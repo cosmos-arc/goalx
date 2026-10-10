@@ -11,8 +11,9 @@
 
 - 候选口径与引擎 `_candidates_for_match` 同：jc 价 = fair/(1−haircut)
   （缺省 −10%）；market_prob = 1/jc = fair_p/(1−haircut)。
-- ``MIN_MARKET_PROB=0.02`` 与 ``max_sim_odds=50`` 在 haircut=0.10 下
-  等价阈值 fair_p < 0.018——两栏触发几乎重合，合并报告并分别计数。
+- ``MIN_MARKET_PROB=0.02=1/50=1/max_sim_odds``：market_prob<0.02 ⇔
+  jc>50 是倒数恒等式（任意 haircut 下两栏必然同触发），分别计数并
+  以并集报告；阈值 fair_p < 0.02×(1−haircut)。
 - 被拦结局：被拦 selection 的实际命中率 vs 其隐含概率（命中率≈隐含 =
   拦的是无信息尾部；命中率≫隐含 = 拦掉了真信号——举证给用户）。
 - ``MARKET_MAX_GOAL_ERROR=0.02``：era 正典 fair → goal_expectancy 反推
@@ -31,7 +32,6 @@ import duckdb
 
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.leagues import FD_TO_LEAGUE
 from goalx_backend.evaluation.backtest import (
     DEFAULT_MAX_SIM_ODDS,
     MARKET_MAX_GOAL_ERROR,
@@ -104,8 +104,8 @@ def build_guardrail_report(
             continue
         n_fair += 1
         fair_probs, fair_source = fair
-        league = FD_TO_LEAGUE.get(str(row["league"]), str(row["league"]))
-        scopes = (str(row["era"]), f"{row['era']}:{league}")
+        era_scope = str(row["era"])
+        scopes = (era_scope, "{}:{}".format(era_scope, row["league"]))
         source_tally[str(row["era"])][fair_source] += 1
         if market_implied_matrix(fair_probs) is None:
             inversion_failed += 1
@@ -190,9 +190,9 @@ def _render_md(payload: dict[str, Any]) -> str:
             "| {} | {} | {} | {} | {} |".format(
                 scope,
                 face["n_selections"],
-                clipped.get("rate"),
-                clipped.get("implied_prob_mean"),
-                clipped.get("actual_hit_rate"),
+                clipped.get("rate", "—"),
+                clipped.get("implied_prob_mean", "—"),
+                clipped.get("actual_hit_rate", "—"),
             )
         )
     lines += [

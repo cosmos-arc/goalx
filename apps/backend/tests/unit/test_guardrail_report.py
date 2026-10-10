@@ -80,3 +80,29 @@ def test_guardrail_no_fair_rows_counted_honestly(gold_env) -> None:
         finally:
             duck_con.close()
             face.close()
+
+
+def test_guardrail_haircut_value_sensitivity(gold_env) -> None:
+    """correctness F1 回归：阈值随 haircut 移动——band 内选择在两值下判定相反。"""
+    # cons 概率直控（era2 共识路径无 Shin）：p_a=0.0179 落带——
+    # h=0.10 → market_prob 0.0199<0.02 触发；h=0.1128 → 0.0202 不触发
+    row = _row(
+        "9901",
+        era=gold_mod.ERA_TRAJECTORY,
+        psc_home=None,
+        psc_draw=None,
+        psc_away=None,
+        close1x2_cons_h=0.95,
+        close1x2_cons_d=0.032,
+        close1x2_cons_a=0.0179,
+    )
+    with gold_env([row]) as (face, duck_con, store):
+        try:
+            h10 = gr.build_guardrail_report(store, duck_con, haircut=0.10)
+            h11 = gr.build_guardrail_report(store, duck_con, haircut=0.1128)
+            a = h10["faces"]["trajectory"]["clipped_union"]["n"]
+            b = h11["faces"]["trajectory"]["clipped_union"]["n"]
+            assert (a, b) == (1, 0)  # haircut 值移动阈值，band 内判定相反
+        finally:
+            duck_con.close()
+            face.close()

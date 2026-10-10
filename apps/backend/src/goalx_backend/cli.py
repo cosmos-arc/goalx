@@ -337,10 +337,10 @@ def _cmd_haircut_decade() -> None:
         )
 
 
-def _cmd_guardrail_report() -> None:
+def _cmd_guardrail_report(args: argparse.Namespace) -> None:
     """护栏十年复验（票 18：触发面+被拦结局，只描述只举证，不改参数）。"""
     with _corpus_handles() as (duck_con, store):
-        payload = gr.build_guardrail_report(store, duck_con)
+        payload = gr.build_guardrail_report(store, duck_con, haircut=args.haircut)
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
     )
@@ -1013,9 +1013,15 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
-    sub.add_parser(
+    guardrail = sub.add_parser(
         "guardrail-report",
         help="护栏十年复验(票 18:触发面+被拦结局,只描述不改参数)",
+    )
+    guardrail.add_argument(
+        "--haircut",
+        type=float,
+        default=0.10,
+        help="护栏阈值用的 haircut(与引擎 run 同值复验;默认 0.10)",
     )
     sub.add_parser(
         "haircut-decade",
@@ -1197,7 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
         "unlock-report": _cmd_unlock_report,
         "market-lambda-report": _cmd_market_lambda_report,
         "haircut-decade": _cmd_haircut_decade,
-        "guardrail-report": _cmd_guardrail_report,
+        "guardrail-report": lambda: _cmd_guardrail_report(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
