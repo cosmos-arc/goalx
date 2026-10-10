@@ -62,6 +62,11 @@ from goalx_backend.data.corpus_store import (
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded, psc_mature
 from goalx_backend.data.ingest.srct_market import MARKET_AH
 from goalx_backend.data.ingest.srct_odds import AH_ANCHOR_CID, AH_ANCHOR_ID, beijing_ms
+from goalx_backend.data.leagues import (
+    ERA_PSC_PROXY,
+    ERA_TRAJECTORY,
+    ERA_TRAJECTORY_SEASON,
+)
 from goalx_backend.data.results import UNDERSTAT_LEAGUES
 from goalx_backend.data.silver import (
     dataset_digest,
@@ -74,9 +79,8 @@ from goalx_backend.db import utc_now_iso
 GOLD_VERSION = "gold_features_v1"
 
 # ---- 时代分层常量（spec 实现决策：集中一处，下游只读 era 字段）----
-ERA_TRAJECTORY_SEASON = "2023-24"  # 1x2 轨迹起点季（含）起 = trajectory 时代
-ERA_PSC_PROXY = "psc_proxy"
-ERA_TRAJECTORY = "trajectory"
+# 定义落零依赖叶子 data/leagues.py（票 13：evaluation 下层经叶子引，本模块
+# 传递依赖 data.ingest 对分层执法不可达），顶部再导出=公共面不变
 
 # 轨迹切片窗（开球前）：1h / 24h
 SLICE_1H_MS = 3_600_000

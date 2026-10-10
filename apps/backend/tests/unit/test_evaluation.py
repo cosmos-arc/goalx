@@ -119,85 +119,93 @@ def test_evaluate_predictions_structure() -> None:
 STRENGTH = {"A": 0.5, "B": 0.2, "C": -0.1, "D": -0.3, "E": 0.0, "F": -0.4}
 
 
-def seed_synthetic_league(db, *, rounds: int = 14, season: str = "2324") -> None:
-    """与 test_backtest 相同的合成联赛（importlib 模式下不跨文件导入）。"""
-    from datetime import date, timedelta
+def seed_gold_league(*, rounds: int = 14) -> list[dict]:
+    """与 test_backtest 相同的合成 gold 联赛（importlib 模式下不跨文件导入）。"""
+    from datetime import date, datetime, timedelta
 
-    from goalx_backend.data import results as rs_store
+    from goalx_backend.data import gold as gold_mod
 
     rng = np.random.default_rng(21)
     teams = sorted(STRENGTH)
+    rows: list[dict] = []
+    sid = 8000
     for round_no in range(rounds):
+        day = (date(2016, 8, 6) + timedelta(days=7 * round_no)).isoformat()
+        era2_week = round_no >= rounds - 2
         for i in range(3):
             home, away = teams[i], teams[5 - i]
             lam_h = float(np.exp(0.3 + STRENGTH[home] - STRENGTH[away]))
             lam_a = float(np.exp(STRENGTH[away] - STRENGTH[home]))
-            ftr = "H"
             gh, ga = int(rng.poisson(lam_h)), int(rng.poisson(lam_a))
-            ftr = "H" if gh > ga else ("A" if gh < ga else "D")
-            rs_store.upsert_hist_matches(
-                db,
-                [
-                    {
-                        "competition": "E0",
-                        "season": season,
-                        "match_date": (
-                            date(2024, 9, 2) + timedelta(days=7 * round_no)
-                        ).isoformat(),
-                        "home_team": home,
-                        "away_team": away,
-                        "fthg": gh,
-                        "ftag": ga,
-                        "ftr": ftr,
-                        "psc_home": 2.3,
-                        "psc_draw": 3.3,
-                        "psc_away": 3.1,
-                        "avgc_home": None,
-                        "avgc_draw": None,
-                        "avgc_away": None,
-                    }
-                ],
-            )
+            sid += 1
+            row = {
+                "sid": str(sid),
+                "league": "英超",
+                "kickoff": datetime.fromisoformat(f"{day}T20:00:00"),
+                "season": "2024-25" if era2_week else "2016-17",
+                "home": home,
+                "away": away,
+                "home_goals": gh,
+                "away_goals": ga,
+                "stage": "常规轮",
+                "era": gold_mod.ERA_TRAJECTORY if era2_week else gold_mod.ERA_PSC_PROXY,
+                "admin_excluded": False,
+                "version": gold_mod.GOLD_VERSION,
+            }
+            if era2_week:
+                row |= {
+                    "close1x2_h": 1.95,
+                    "close1x2_d": 3.40,
+                    "close1x2_a": 3.90,
+                }
+            else:
+                row |= {"psc_home": 2.30, "psc_draw": 3.30, "psc_away": 3.10}
+            rows.append(row)
+    return rows
 
 
-def test_compute_run_metrics_stratified(db) -> None:
-    # 用回测引擎产出真实预测，再算分层指标（31 号看板数据源）
-    seed_synthetic_league(db)
-    params = bt.BacktestParams(
-        competitions=("E0",),
-        seasons=("2324",),
-        min_train_matches=9,
-        ev_threshold=0.0,
-    )
-    result = bt.run_backtest(db, params, label="metrics-smoke")
-    written = ev.compute_run_metrics(db, result.run_id)
-    assert written["written"] >= 2
-    scopes = {
-        str(r["scope"])
-        for r in db.execute(
-            "SELECT scope FROM backtest_metrics WHERE run_id = ?",
+def test_compute_run_metrics_stratified(gold_env) -> None:
+    # 用回测引擎产出真实预测，再算分层指标（31 号看板数据源；票 13 后走 gold）
+    face, duck_con, store = gold_env(seed_gold_league())
+    try:
+        params = bt.BacktestParams(
+            competitions=("E0",),
+            min_train_matches=9,
+            ev_threshold=0.0,
+        )
+        result = bt.run_backtest(face, duck_con, store, params, label="metrics-smoke")
+        conn = face
+        written = ev.compute_run_metrics(conn, result.run_id)
+        assert written["written"] >= 2
+        scopes = {
+            str(r["scope"])
+            for r in conn.execute(
+                "SELECT scope FROM backtest_metrics WHERE run_id = ?",
+                (result.run_id,),
+            ).fetchall()
+        }
+        assert "overall" in scopes
+        assert "E0" in scopes
+        assert {"2016-17", "2024-25"} <= scopes  # era1/era2 两个赛季分层
+        overall = json.loads(
+            conn.execute(
+                "SELECT metrics FROM backtest_metrics WHERE run_id = ?"
+                " AND scope = 'overall'",
+                (result.run_id,),
+            ).fetchone()["metrics"]
+        )
+        assert overall["n"] >= 1
+        # 幂等：重算不重复
+        again = ev.compute_run_metrics(conn, result.run_id)
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM backtest_metrics WHERE run_id = ?",
             (result.run_id,),
-        ).fetchall()
-    }
-    assert "overall" in scopes
-    assert "E0" in scopes
-    assert "2324" in scopes
-    overall = json.loads(
-        db.execute(
-            "SELECT metrics FROM backtest_metrics WHERE run_id = ?"
-            " AND scope = 'overall'",
-            (result.run_id,),
-        ).fetchone()["metrics"]
-    )
-    assert overall["n"] >= 1
-    # 幂等：重算不重复
-    again = ev.compute_run_metrics(db, result.run_id)
-    count = db.execute(
-        "SELECT COUNT(*) AS c FROM backtest_metrics WHERE run_id = ?",
-        (result.run_id,),
-    ).fetchone()["c"]
-    assert again["written"] == written["written"]
-    assert count == written["written"]
+        ).fetchone()["c"]
+        assert again["written"] == written["written"]
+        assert count == written["written"]
+    finally:
+        duck_con.close()
+        face.close()
 
 
 # --- 票 34：串关玩法去重汇总、双 ROI 口径 ---

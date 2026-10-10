@@ -221,53 +221,70 @@ def _cmd_forecast(args: argparse.Namespace) -> None:
 
 
 def _cmd_backtest(args: argparse.Namespace) -> None:
-    """跑一次回测（walk-forward）+ 指标分层汇总。"""
-    with task_conn() as conn:
-        haircut, source, n = hc.calibrated_haircut(conn)
-        if args.haircut != "auto":
-            haircut, source = args.haircut, "cli"
-        logger.info("haircut={} (source={}, n={})", haircut, source, n)
-        params = bt.BacktestParams(
-            competitions=tuple(args.competitions),
-            seasons=tuple(args.seasons),
-            haircut=haircut,
-            parlay2=not args.no_parlay,
-            min_train_matches=args.min_train,
-            fair_source=args.fair_source,
-        )
-        result = bt.run_backtest(conn, params, label=args.label)
-        ev.compute_run_metrics(conn, result.run_id)
-        logger.info(
-            "run={} predictions={} bets={} staked={:.2f} profit={:.2f} roi={:.2%}",
-            result.run_id,
-            result.predictions,
-            result.bets,
-            result.staked,
-            result.profit,
-            result.roi,
-        )
+    """跑一次十年回测（gold 消费，walk-forward）+ 指标分层汇总。"""
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    duck_con = corpus_duckdb.connect(settings)
+    try:
+        with task_conn() as conn:
+            haircut, source, n = hc.calibrated_haircut(conn)
+            if args.haircut != "auto":
+                haircut, source = args.haircut, "cli"
+            logger.info("haircut={} (source={}, n={})", haircut, source, n)
+            params = bt.BacktestParams(
+                competitions=tuple(args.competitions),
+                start=args.start,
+                end=args.end,
+                haircut=haircut,
+                parlay2=not args.no_parlay,
+                min_train_matches=args.min_train,
+                fair_source=args.fair_source,
+            )
+            result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
+            ev.compute_run_metrics(conn, result.run_id)
+            logger.info(
+                "run={} predictions={} bets={} staked={:.2f} profit={:.2f} roi={:.2%}",
+                result.run_id,
+                result.predictions,
+                result.bets,
+                result.staked,
+                result.profit,
+                result.roi,
+            )
+    finally:
+        duck_con.close()
+        store.close()
 
 
 def _cmd_baseline_compare() -> None:
     """基准分期质检报告 + psc/avgc 对照新 run(旧 run 保留,票 34)。"""
-    with task_conn() as conn:
-        sys.stdout.write(
-            json.dumps(
-                baseline.baseline_quality_report(conn).model_dump(),
-                ensure_ascii=False,
-                indent=2,
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    duck_con = corpus_duckdb.connect(settings)
+    try:
+        with task_conn() as conn:
+            sys.stdout.write(
+                json.dumps(
+                    baseline.baseline_quality_report(conn).model_dump(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
             )
-            + "\n"
-        )
-        haircut, _, _ = hc.calibrated_haircut(conn)
-        results = baseline.run_baseline_comparison(
-            conn,
-            bt.BacktestParams(haircut=haircut),
-            base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
-        )
-        for source, summary in results.items():
-            ev.compute_run_metrics(conn, int(summary["run_id"]))
-            logger.info("baseline {} run={}", source, summary)
+            haircut, _, _ = hc.calibrated_haircut(conn)
+            results = baseline.run_baseline_comparison(
+                conn,
+                duck_con,
+                store,
+                bt.BacktestParams(haircut=haircut),
+                base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
+            )
+            for source, summary in results.items():
+                ev.compute_run_metrics(conn, int(summary["run_id"]))
+                logger.info("baseline {} run={}", source, summary)
+    finally:
+        duck_con.close()
+        store.close()
 
 
 def _cmd_calibrate_haircut() -> None:
@@ -879,7 +896,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     alias = sub.add_parser("set-alias", help="人工覆盖球队别名(票 25)")
     alias.add_argument("team", help="canonical 球队名(中文)")
     alias.add_argument("alias", help="外部别名(如 fd 英文名)")
-    backtest = sub.add_parser("backtest", help="跑一次 walk-forward 回测(票 28/29)")
+    backtest = sub.add_parser(
+        "backtest", help="跑一次十年回测(gold 消费,walk-forward,票 13)"
+    )
     backtest.add_argument("--label", default="manual", help="run 标签")
     backtest.add_argument(
         "--haircut",
@@ -889,14 +908,18 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     backtest.add_argument(
         "--competitions",
         nargs="*",
-        default=list(TIER1_COMPETITIONS),
-        help="fd 联赛代码",
+        default=list(bt.DECADE_COMPETITIONS),
+        help="fd 联赛代码(缺省=11 重叠联赛全量)",
     )
     backtest.add_argument(
-        "--seasons",
-        nargs="*",
-        default=["2324", "2425", "2526"],
-        help="回测赛季",
+        "--start",
+        default=bt.DECADE_START,
+        help="窗口起点(北京墙钟日,含端点;此前场次只进训练池)",
+    )
+    backtest.add_argument(
+        "--end",
+        default=None,
+        help="窗口终点(北京墙钟日,含端点;缺省=数据尾)",
     )
     backtest.add_argument("--no-parlay", action="store_true", help="关闭 2串1 模拟")
     backtest.add_argument(
@@ -909,7 +932,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--fair-source",
         choices=("auto", "psc", "avgc"),
         default="auto",
-        help="公允基准来源: auto=PSC 优先 AvgC 兜底; psc/avgc=只用该源(票 34)",
+        help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")

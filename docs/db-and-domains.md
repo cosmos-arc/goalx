@@ -260,7 +260,6 @@ erDiagram
     }
     backtest_bets }|--|| backtest_runs : run_id
     backtest_metrics }|--|| backtest_runs : run_id
-    backtest_predictions }|--|| hist_matches : hist_match_id
     backtest_predictions }|--|| backtest_runs : run_id
     bankroll_events }o--|| bet_slips : slip_id
     bankroll_events }o--|| bets : bet_id
@@ -1097,19 +1096,21 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | --- | --- | --- |
 | `id` | INTEGER | PK |
 | `run_id` | INTEGER | NOT NULL，FK→backtest_runs.id |
-| `hist_match_id` | INTEGER | NOT NULL，FK→hist_matches.id |
+| `match_key` | TEXT | NOT NULL |
 | `competition` | TEXT | NOT NULL |
 | `season` | TEXT | NOT NULL |
 | `match_date` | TEXT | NOT NULL |
 | `home_team` | TEXT | NOT NULL |
 | `away_team` | TEXT | NOT NULL |
+| `era` | TEXT | — |
+| `ftr` | TEXT | — |
 | `had_probs` | TEXT | NOT NULL |
 | `fair_probs` | TEXT | NOT NULL |
 | `fair_source` | TEXT | NOT NULL |
 | `model_fingerprint` | TEXT | NOT NULL |
 | `train_window_end` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`run_id`, `hist_match_id`)`
+唯一键 `UNIQUE(`run_id`, `match_key`)`
 <!-- schema-doc:END:table:backtest_predictions -->
 <!-- schema-doc:BEGIN:table:backtest_bets -->
 #### `backtest_bets`

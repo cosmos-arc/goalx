@@ -1,24 +1,38 @@
 """
-回测引擎核心（票 28，ADR 0007）：五大三季 walk-forward + 模拟竞彩价。
+回测引擎 v2（backtest-decade 票 13，ADR-0007/0011）：十年 11 联赛 walk-forward。
 
+数据面 = gold ``match_features``（corpus duckdb 只读视图，ADR-0011 只读桥
+纪律，不经运行面倒手；v1 五大三季版吃 hist_matches 的路径已退役，票 34
+baseline 对照随本引擎走 gold 配对行）：
+
+- 窗口：kickoff 北京墙钟日 ∈ [start, end]（缺省 2016-08-01 → 数据尾）；
+  训练池吃 cutoff 前全部 gold 历史（窗口前场次自然充当首季热身池）；
 - 按比赛周（ISO 年-周）重估：每联赛每周拟合一次时间衰减 DC，训练截止
-  严格早于该周最早比赛日（``assert_no_lookahead`` 常开断言）；
-- 公允基准 fair = Pinnacle 收盘 Shin（PSC），缺失行用 AvgC 兜底；开球
-  不足 6 个月的行收盘列未收敛（A5 纪律），视为无基准不下注；
-- 模拟竞彩价 = fair 赔率 × (1 − haircut)（默认 −10%，票 30 可替换校准值）；
-  hhad/ttg 的市场侧分布由 fair 1X2 经 penaltyblog goal_expectancy 反推
-  (λ_home, λ_away) 构造市场隐含矩阵后推导；
-- 模拟玩法 v1 收窄为 had-only：用户裁决原为 had+hhad+ttg，但实测发现
-  1X2→比分矩阵反推（goal_expectancy）在总进球维度系统性欠分散——6,174 场
-  全量对照中 ttg 桶 4/5/6 隐含概率低于实际 15-40%（桶5 7.1% vs 9.1%），
-  hhad 实际命中率 33% 也低于隐含 40%——由该反推派生的 hhad/ttg 模拟价
-  会制造假 edge（回测假阳性），故 v1 不从反推价下注这两个玩法；等真实
-  totals/handicap 市场报价接入（The Odds API totals）后再启用；
-- EV 阈值 τ=1.5% + 1/4 Kelly（单注 1% 参考资金上限）；单关 + 每周每联赛
-  至多一笔 2串1（取 EV 最高且不同场次的两注，按一笔联合 EV 判定）；
-- 结算复用 M1 Settlement 引擎（口径统一，票 12 第 4 条）；收盘价只作
-  定价/结算基准，不进模型特征；
-- run 维度隔离：每次运行独立 run_id（幂等可重跑）。
+  严格早于该周最早比赛日（``assert_no_lookahead`` 常开断言）；特征时间
+  戳的 PIT 纪律在 gold 构建面把关（票 06 逐行断言）；
+- 公允基准时代分层（era 字段唯一真相源，断点常量落 data/gold.py）：
+  era1（psc_proxy）= PSC→AvgC（Shin）；era2（trajectory）= cid177 锚
+  收盘价（Shin，与 PSC 同为尖货收盘，方法学跨时代连续）→ 多书中位数
+  共识归一（traj_cons）兜底；``fair_source='psc'/'avgc'`` 语义保留为
+  源选择器（票 34 对照 run），``auto`` = 时代感知正典链；
+- 卫生在引擎入口统一生效（单一取数口，不散落 if）：gold 行
+  ``admin_excluded=false`` 过滤同时罩训练面与预测面（S4"训练集与对账
+  集都剔除"由构造满足）；PSC 成熟度由 gold 快照承载（未成熟行 odds
+  列整族置空=无基准，门=gold 构建一处）——运行时再判只可能是空集上
+  的 no-op，不二次判防两套口径；
+- 模拟竞彩价 = fair 赔率 × (1 − haircut)（默认 −10%，票 30 校准/票 17
+  十年重估可替换）；收盘价只作定价/结算基准，不进模型特征；
+- 模拟玩法 had-only 维持（hhad/ttg 解锁 = 票 15 的门 = 报告+用户点头，
+  不因 AH/OU 数据可用自动放宽）：1X2→比分矩阵反推（goal_expectancy）
+  在总进球维度系统性欠分散——6,174 场全量对照 ttg 桶 4/5/6 隐含概率
+  低于实际 15-40%（桶5 7.1% vs 9.1%），hhad 实际命中率 33% 低于隐含
+  40%——反推价制造假 edge；
+- EV 阈值 τ + 1/4 Kelly（单注上限封顶）；单关 + 每周每联赛至多一笔
+  2串1（取 EV 最高且不同场次的两注，按一笔联合 EV 判定）；
+- 结算复用 M1 Settlement 引擎（口径统一，票 12 第 4 条）：结算内核以
+  run 内整数 ref 寻址，审计面（predictions/legs JSON）键 = gold sid；
+- run 维度隔离：每次运行独立 run_id（run 内确定可重放）；run params
+  入档 gold 版本/构建戳/输入 digest——重放可解释。
 """
 
 # penaltyblog 无 py.typed 存根，以下规则的第三方 unknown 在本文件放宽。
@@ -27,20 +41,29 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+import duckdb
 from penaltyblog.models import goal_expectancy
 
 from goalx_backend import odds_math as om
-from goalx_backend.data import hygiene
-from goalx_backend.data import results as rs_store
+from goalx_backend.data.corpus_store import (
+    GOLD_DATASET,
+    GOLD_PROVIDER,
+    CorpusStore,
+)
+
+# 联赛映射/era 常量经零依赖叶子引（corpus_gate/gold 传递依赖 data.ingest，
+# 分层执法 evaluation 不可达——见 data/leagues.py 模块注释）
+from goalx_backend.data.leagues import ERA_TRAJECTORY, FD_TO_LEAGUE, LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 from goalx_backend.modelling.dc_model import (
-    TIER1_COMPETITIONS,
     DCArtifact,
     TrainingRow,
     fit_dc_model,
@@ -48,6 +71,13 @@ from goalx_backend.modelling.dc_model import (
 )
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
+
+logger = logging.getLogger(__name__)
+
+# 十年窗（spec S13：2016-08→2026-10）与 11 重叠联赛（corpus_gate 单一
+# 真相源；2016-01~08 的 gold 历史行作首季训练热身池，不产生下注面）
+DECADE_COMPETITIONS = tuple(sorted(LEAGUE_TO_FD.values()))
+DECADE_START = "2016-08-01"
 
 MARKET_MAX_GOAL_ERROR = 0.02  # 市场隐含 λ 反推的 had 拟合误差上限
 _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
@@ -65,8 +95,10 @@ HHAD_LINE_RANGE = range(-3, 4)  # 竞彩整数让球线搜索范围
 class BacktestParams:
     """一次回测的全部可调参数（落盘到 backtest_runs.params）。"""
 
-    competitions: tuple[str, ...] = TIER1_COMPETITIONS
-    seasons: tuple[str, ...] = ("2324", "2425", "2526")
+    competitions: tuple[str, ...] = DECADE_COMPETITIONS
+    # kickoff 北京墙钟日窗口（含端点）；start 前的 gold 历史行只进训练池
+    start: str = DECADE_START
+    end: str | None = None
     haircut: float = 0.10
     ev_threshold: float = 0.015
     kelly_fraction: float = 0.25
@@ -76,8 +108,8 @@ class BacktestParams:
     min_train_matches: int = 100
     parlay2: bool = True
     max_sim_odds: float = DEFAULT_MAX_SIM_ODDS
-    # 公允基准来源：auto=PSC 优先、缺失用 AvgC 兜底；psc/avgc = 只用该源
-    # （票 34 分期/来源对照 run 用，缺失行跳过并计入 no_fair_baseline）
+    # 公允基准来源：auto=时代感知正典链（era1 PSC→AvgC / era2 锚→共识）；
+    # psc/avgc = 只用该源（票 34 分期/来源对照 run 用，跨 era 作用于配对行）
     fair_source: str = "auto"
 
 
@@ -98,21 +130,39 @@ class BacktestResult:
         return self.profit / self.staked if self.staked else 0.0
 
 
+@dataclass(frozen=True)
+class GoldMatch:
+    """gold match_features 一行的引擎投影（收盘族按候选链原样携带）。"""
+
+    sid: str
+    competition: str  # fd 联赛码
+    match_date: str  # kickoff 北京墙钟日
+    season: str
+    home: str
+    away: str
+    fthg: int
+    ftag: int
+    era: str
+    ref: int  # run 内整数寻址（结算内核）；审计面用 sid
+    psc_odds: tuple[float | None, float | None, float | None]
+    avgc_odds: tuple[float | None, float | None, float | None]
+    anchor_odds: tuple[float | None, float | None, float | None]  # cid177 锚收盘
+    cons_probs: tuple[float | None, float | None, float | None]  # 多书中位数归一
+
+
 def match_week_key(match_date: str) -> str:
     """比赛周键（ISO 年-周）。"""
     iso = date.fromisoformat(match_date).isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
-def group_by_week(
-    rows: list[sqlite3.Row],
-) -> list[tuple[str, list[sqlite3.Row]]]:
+def group_by_week(rows: Sequence[GoldMatch]) -> list[tuple[str, list[GoldMatch]]]:
     """按 ISO 比赛周分组（周内按日期排序）。"""
-    weeks: dict[str, list[sqlite3.Row]] = {}
+    weeks: dict[str, list[GoldMatch]] = {}
     for row in rows:
-        weeks.setdefault(match_week_key(str(row["match_date"])), []).append(row)
+        weeks.setdefault(match_week_key(row.match_date), []).append(row)
     return [
-        (key, sorted(week, key=lambda r: str(r["match_date"])))
+        (key, sorted(week, key=lambda r: r.match_date))
         for key, week in sorted(weeks.items())
     ]
 
@@ -129,34 +179,70 @@ def assert_no_lookahead(train_rows: list[TrainingRow], week_dates: list[str]) ->
         )
 
 
-def fair_probs_from_close(
-    row: sqlite3.Row,
-    *,
-    fair_source: str = "auto",
-    today: date | None = None,
+def _ftr(fthg: int, ftag: int) -> str:
+    """全场胜负（H/D/A）——随预测行落库，指标计算不回查运行面。"""
+    return "H" if fthg > ftag else ("A" if fthg < ftag else "D")
+
+
+def _valid_odds(
+    odds: tuple[float | None, float | None, float | None],
+) -> tuple[float, float, float] | None:
+    """收盘三元组校验并收窄：全部 >1.0 才可用，否则 None。"""
+    vals: list[float] = []
+    for o in odds:
+        if not isinstance(o, (int, float)) or float(o) <= 1.0:
+            return None
+        vals.append(float(o))
+    return vals[0], vals[1], vals[2]
+
+
+def _valid_probs(
+    probs: tuple[float | None, float | None, float | None],
+) -> tuple[float, float, float] | None:
+    """已归一概率三元组校验并收窄：全部 ∈(0,1) 才可用，否则 None。"""
+    vals: list[float] = []
+    for p in probs:
+        if not isinstance(p, (int, float)) or not 0.0 < float(p) < 1.0:
+            return None
+        vals.append(float(p))
+    return vals[0], vals[1], vals[2]
+
+
+def fair_probs_from_gold(
+    match: GoldMatch, *, fair_source: str = "auto"
 ) -> tuple[dict[str, float], str] | None:
     """
-    收盘公允概率：按 fair_source 选择 PSC/AvgC（ADR 0007；票 34 对照）。
+    收盘公允概率（时代分层正典链 / 源选择器；ADR-0007 修订）。
 
-    A5 成熟度硬规则：开球不足 6 个月的行 PSC/AvgC 视为暂定（未收敛），
-    一律视为无基准返回 None（today 缺省=当天；测试可注入固定日期）。
+    - auto：era1 = PSC→AvgC（Shin 去水）；era2 = cid177 锚收盘（Shin）→
+      多书中位数共识归一（traj_cons，构建侧已归一的概率直用）；
+    - psc/avgc：只用该源（票 34 对照 run；跨 era 作用于配对行）。
+
+    缺列/无效价 = 无基准返回 None。PSC 成熟度由 gold 快照承载：未成熟行
+    odds 列整族置空（门=gold 构建一处，票 06），本引擎不二次判。
     """
-    if not hygiene.psc_mature(str(row["match_date"]), today=today or date.today()):
-        return None
-    psc = (row["psc_home"], row["psc_draw"], row["psc_away"])
-    avgc = (row["avgc_home"], row["avgc_draw"], row["avgc_away"])
+    candidates: tuple[tuple[tuple[float | None, float | None, float | None], str], ...]
     if fair_source == "psc":
-        candidates: tuple[tuple[tuple[float | int | None, ...], str], ...] = (
-            (psc, "psc"),
-        )
+        candidates = ((match.psc_odds, "psc"),)
     elif fair_source == "avgc":
-        candidates = ((avgc, "avgc"),)
+        candidates = ((match.avgc_odds, "avgc"),)
+    elif match.era == ERA_TRAJECTORY:
+        candidates = (
+            (match.anchor_odds, "traj_anchor"),
+            (match.cons_probs, "traj_cons"),
+        )
     else:
-        candidates = ((psc, "psc"), (avgc, "avgc"))
-    for odds, source in candidates:
-        if all(isinstance(o, (int, float)) and o > 1.0 for o in odds):
-            probs = om.shin_implied(tuple(float(o) for o in odds))
-            return dict(zip(SELECTIONS, probs, strict=True)), source
+        candidates = ((match.psc_odds, "psc"), (match.avgc_odds, "avgc"))
+    for quote, source in candidates:
+        if source == "traj_cons":
+            probs3 = _valid_probs(quote)
+            if probs3 is not None:
+                return dict(zip(SELECTIONS, probs3, strict=True)), source
+        else:
+            odds3 = _valid_odds(quote)
+            if odds3 is not None:
+                probs = om.shin_implied(odds3)
+                return dict(zip(SELECTIONS, probs, strict=True)), source
     return None
 
 
@@ -172,7 +258,7 @@ def market_implied_matrix(
     从市场 fair 1X2 反推 (λ_home, λ_away) 构造市场隐含比分矩阵。
 
     仅作诊断/预留工具：实测其总进球维度系统性欠分散（见模块 docstring），
-    不用于定价；待真实 totals/handicap 报价接入后由报价直接构造市场侧。
+    不用于定价；真实 AH/OU 收盘线解锁判定 = 票 15（报告+用户点头）。
     """
     raw = goal_expectancy(
         fair_probs["h"], fair_probs["d"], fair_probs["a"], max_goals=10
@@ -212,7 +298,8 @@ def kelly_stake(
 class _Candidate:
     """一笔候选单关（结算前）。"""
 
-    hist_match_id: int
+    match_ref: int  # 结算内核寻址（run 内唯一）
+    match_key: str  # gold sid（审计面）
     market_code: str
     selection_code: str
     odds: float
@@ -224,32 +311,109 @@ class _Candidate:
         return self.model_prob * self.odds - 1.0
 
 
-def _backtest_rows(
-    conn: sqlite3.Connection, params: BacktestParams
-) -> dict[str, list[sqlite3.Row]]:
-    """取回测范围内的 hist 行（按联赛分组、按日期排序）。"""
-    rows = rs_store.hist_rows_in_seasons(conn, params.competitions, params.seasons)
-    by_comp: dict[str, list[sqlite3.Row]] = {}
-    for row in rows:
-        by_comp.setdefault(str(row["competition"]), []).append(row)
-    return by_comp
+def gold_meta(store: CorpusStore) -> dict[str, Any]:
+    """Gold `_meta.json`（版本/构建戳/输入 digest；缺席=空 dict 如实入档）。"""
+    path = store.gold_path(GOLD_PROVIDER, GOLD_DATASET) / "_meta.json"
+    try:
+        meta: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dict(meta)  # type: ignore[arg-type]
+
+
+def fetch_decade_matches(
+    duck_con: duckdb.DuckDBPyConnection, params: BacktestParams
+) -> tuple[list[GoldMatch], str | None, str]:
+    """
+    Gold match_features 引擎取数（卫生单一入口）。
+
+    过滤即卫生：已赛（双进球非空）+ ``admin_excluded=false``（训练面与
+    预测面同一份行集）。视图缺席（未建桥/空语料）= 合法初生态，返回
+    (空集, None, "missing") 由 run params 如实标注，不冒充零过滤数据。
+    """
+    try:
+        # SQL 侧按 gold 行的中文联赛名过滤（码→名），错误码在映射处 fail-loud
+        leagues = ",".join(f"'{FD_TO_LEAGUE[c]}'" for c in params.competitions)
+    except KeyError as exc:
+        raise ValueError(
+            f"未知联赛码 {exc.args[0]!r}（合法码见 corpus_gate.LEAGUE_TO_FD）"
+        ) from None
+    upper = " AND CAST(kickoff AS DATE) <= ?" if params.end is not None else ""
+    sql = f"""
+        SELECT sid, league,
+               strftime(CAST(kickoff AS DATE), '%Y-%m-%d') AS day,
+               season, home, away, home_goals, away_goals, era,
+               psc_home, psc_draw, psc_away,
+               avgc_home, avgc_draw, avgc_away,
+               close1x2_h, close1x2_d, close1x2_a,
+               close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
+               version
+        FROM match_features
+        WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL
+          AND admin_excluded = false
+          AND league IN ({leagues}){upper}
+        ORDER BY league, day, sid
+    """  # noqa: S608 联赛表=模块常量经 fd 码映射；窗口=绑定参数
+    try:
+        rows = duck_con.execute(
+            sql, [] if params.end is None else [params.end]
+        ).fetchall()
+    except duckdb.Error as exc:
+        logger.warning("match_features 视图不可用（先跑 gold-build + 建桥）: %s", exc)
+        return [], None, "missing"
+    version: str | None = None
+    matches: list[GoldMatch] = []
+    for ref, row in enumerate(rows):
+        (
+            sid,
+            _league,
+            day,
+            season,
+            home,
+            away,
+            fthg,
+            ftag,
+            era,
+            *odds_cols,
+            row_version,
+        ) = row
+        if version is None and row_version is not None:
+            version = str(row_version)
+        matches.append(
+            GoldMatch(
+                sid=str(sid),
+                competition=LEAGUE_TO_FD[str(_league)],
+                match_date=str(day),
+                season=str(season),
+                home=str(home),
+                away=str(away),
+                fthg=int(fthg),
+                ftag=int(ftag),
+                era=str(era),
+                ref=ref,
+                psc_odds=(odds_cols[0], odds_cols[1], odds_cols[2]),
+                avgc_odds=(odds_cols[3], odds_cols[4], odds_cols[5]),
+                anchor_odds=(odds_cols[6], odds_cols[7], odds_cols[8]),
+                cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
+            )
+        )
+    return matches, version, "ok"
 
 
 def _candidates_for_match(
     matrix: ScoreMatrix,
     jc_had: dict[str, float],
     params: BacktestParams,
-    hist_match_id: int,
+    match: GoldMatch,
 ) -> list[_Candidate]:
-    """一场比赛的全部候选单关（had + hhad + ttg，用户裁决）。"""
-    # v1 had-only（见模块 docstring：hhad/ttg 反推价不可信，待真实市场价接入）
+    """一场比赛的全部候选单关（had-only，用户裁决维持到票 15 门）。"""
     candidates: list[_Candidate] = []
     had = matrix.had()
     for sel in SELECTIONS:
         market_prob = 1.0 / jc_had[sel]
         if market_prob >= MIN_MARKET_PROB and jc_had[sel] <= params.max_sim_odds:
             candidates.append(
-                _Candidate(hist_match_id, "had", sel, jc_had[sel], had[sel])
+                _Candidate(match.ref, match.sid, "had", sel, jc_had[sel], had[sel])
             )
     return candidates
 
@@ -276,7 +440,7 @@ def _settle_and_store(
     """用 M1 Settlement 引擎结算一注并落库；返回 profit。"""
     specs = [
         LegSpec(
-            fixture_id=leg.hist_match_id,
+            fixture_id=leg.match_ref,
             market_code=leg.market_code,
             selection_code=leg.selection_code,
             locked_odds=leg.odds,
@@ -301,7 +465,20 @@ def _settle_and_store(
             ctx.competition,
             ctx.placed_week,
             stake,
-            json.dumps([asdict(leg) for leg in legs], ensure_ascii=False),
+            json.dumps(
+                [
+                    {
+                        "match_key": leg.match_key,
+                        "market_code": leg.market_code,
+                        "selection_code": leg.selection_code,
+                        "odds": leg.odds,
+                        "model_prob": leg.model_prob,
+                        "goal_line": leg.goal_line,
+                    }
+                    for leg in legs
+                ],
+                ensure_ascii=False,
+            ),
             round((legs[0].ev if kind == "single" else _parlay_ev(legs)), 6),
             round(kelly, 6),
             outcome.status,
@@ -331,60 +508,31 @@ def _parlay_ev(legs: list[_Candidate]) -> float:
     return prob * odds - 1.0
 
 
-def _week_training_rows(
-    conn: sqlite3.Connection, competition: str, week_dates: list[str]
-) -> list[TrainingRow]:
-    """该比赛周的训练集：match_date 严格早于周内最早比赛日（防前视）。"""
-    cutoff = (date.fromisoformat(min(week_dates)) - timedelta(days=1)).isoformat()
-    hist_rows = rs_store.hist_rows_through(conn, competition, cutoff)
-    return [
-        TrainingRow(
-            match_date=str(r["match_date"]),
-            home_team=str(r["home_team"]),
-            away_team=str(r["away_team"]),
-            fthg=int(r["fthg"]),
-            ftag=int(r["ftag"]),
-        )
-        for r in hist_rows
-    ]
-
-
 def _record_week_predictions(
     conn: sqlite3.Connection,
     run_id: int,
-    week_rows: list[sqlite3.Row],
+    week_rows: list[GoldMatch],
     artifact: DCArtifact,
     params: BacktestParams,
     result: BacktestResult,
-    *,
-    fair_today: date,
 ) -> dict[int, list[_Candidate]]:
-    """
-    逐场落预测行并构造候选单关；返回 hist_match_id → candidates。
-
-    fair_today：本次 run 钉住的成熟度基准日（A5），由 run_backtest 统一
-    捕获传入——跨午夜/逐调用墙钟会让同一 run 混用两套成熟口径。
-    """
+    """逐场落预测行并构造候选单关；返回 ref → candidates。"""
 
     def skip(key: str) -> None:
         result.skipped[key] = result.skipped.get(key, 0) + 1
 
     candidates_by_match: dict[int, list[_Candidate]] = {}
-    for row in week_rows:
-        hist_id = int(row["id"])
-        home, away = str(row["home_team"]), str(row["away_team"])
-        if home not in artifact.teams or away not in artifact.teams:
+    for match in week_rows:
+        if match.home not in artifact.teams or match.away not in artifact.teams:
             skip("untrained_teams")
             continue
-        fair = fair_probs_from_close(
-            row, fair_source=params.fair_source, today=fair_today
-        )
+        fair = fair_probs_from_gold(match, fair_source=params.fair_source)
         if fair is None:
             skip("no_fair_baseline")
             continue
         fair_probs, fair_source = fair
         try:
-            matrix = artifact.predict(home, away)
+            matrix = artifact.predict(match.home, match.away)
         except ValueError:
             # 小训练池 ρ 数值越界 → 该场不产生预测/候选
             skip("predict_failed")
@@ -393,19 +541,21 @@ def _record_week_predictions(
         conn.execute(
             """
             INSERT OR IGNORE INTO backtest_predictions
-            (run_id, hist_match_id, competition, season, match_date,
-             home_team, away_team, had_probs, fair_probs, fair_source,
-             model_fingerprint, train_window_end)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (run_id, match_key, competition, season, match_date,
+             home_team, away_team, era, ftr, had_probs, fair_probs,
+             fair_source, model_fingerprint, train_window_end)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
-                hist_id,
-                str(row["competition"]),
-                str(row["season"]),
-                str(row["match_date"]),
-                home,
-                away,
+                match.sid,
+                match.competition,
+                match.season,
+                match.match_date,
+                match.home,
+                match.away,
+                match.era,
+                _ftr(match.fthg, match.ftag),
                 json.dumps(had),
                 json.dumps(fair_probs),
                 fair_source,
@@ -415,8 +565,8 @@ def _record_week_predictions(
         )
         result.predictions += 1
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
-        candidates_by_match[hist_id] = _candidates_for_match(
-            matrix, jc_had, params, hist_id
+        candidates_by_match[match.ref] = _candidates_for_match(
+            matrix, jc_had, params, match
         )
     return candidates_by_match
 
@@ -446,9 +596,7 @@ def _place_week_bets(
         return
     ordered = sorted(qualified, key=lambda c: c.ev, reverse=True)
     first = ordered[0]
-    second = next(
-        (c for c in ordered[1:] if c.hist_match_id != first.hist_match_id), None
-    )
+    second = next((c for c in ordered[1:] if c.match_ref != first.match_ref), None)
     if second is None:
         return
     legs = [first, second]
@@ -466,23 +614,33 @@ def _place_week_bets(
 
 
 def run_backtest(
-    conn: sqlite3.Connection, params: BacktestParams, *, label: str
+    conn: sqlite3.Connection,
+    duck_con: duckdb.DuckDBPyConnection,
+    store: CorpusStore,
+    params: BacktestParams,
+    *,
+    label: str,
 ) -> BacktestResult:
     """
     执行一次完整回测（run 维度隔离，同参数重跑产生新 run）。
 
     结算实时完成（历史赛果已知）；逐注记录 EV/Kelly/盈亏，走与纸面/实盘
-    相同的 ``settle_fixed_bet`` 代码路径。
+    相同的 ``settle_fixed_bet`` 代码路径。数据面 = gold 快照：run params
+    入档 gold 版本/构建戳/输入 digest 与成熟度基准日（gold 构建侧钉的
+    口径，非 run 日）——重放差异由该组字段解释。
     """
-    # A5：成熟度基准日钉住一次（跨午夜不换口径）并入档 params——重放可
-    # 解释：同输入不同日跑，近 6 个月尾窗行的 fair 判定可不同，差异由该
-    # 字段说明
-    fair_today = date.today()
+    meta = gold_meta(store)
+    matches, gold_version, view_status = fetch_decade_matches(duck_con, params)
     run_params = asdict(params) | {
         # 票 34：合成价实验明确标注，不得称真实陈盘回放；实现/依赖版本入档
         "price_model": "simulated_jc",
         "versions": implementation_versions(),
-        "fair_maturity_today": fair_today.isoformat(),
+        "data_source": "gold/match_features",
+        "gold_view": view_status,
+        "gold_version": gold_version or meta.get("gold_version"),
+        "gold_built_at": meta.get("built_at"),
+        "gold_maturity_today": meta.get("maturity_today"),
+        "gold_input_digests": meta.get("input_digests"),
     }
     cur = conn.execute(
         """
@@ -494,19 +652,41 @@ def run_backtest(
     run_id = int(cur.lastrowid or 0)
     result = BacktestResult(run_id=run_id)
     try:
-        for competition, comp_rows in _backtest_rows(conn, params).items():
+        by_comp: dict[str, list[GoldMatch]] = {}
+        for match in matches:
+            by_comp.setdefault(match.competition, []).append(match)
+        for competition, comp_rows in by_comp.items():
+            pool: list[TrainingRow] = []
+            ptr = 0
+            # ponytail: 每周全池重拟合（~11 联赛×~540 周，小时级 CLI 跑）；
+            # 周间增量拟合是缓存投机，量级不适配再议
             for week_key, week_rows in group_by_week(comp_rows):
-                week_dates = [str(r["match_date"]) for r in week_rows]
-                train_rows = _week_training_rows(conn, competition, week_dates)
-                if len(train_rows) < params.min_train_matches:
+                week_dates = [m.match_date for m in week_rows]
+                first_day = min(week_dates)
+                cutoff = (date.fromisoformat(first_day) - timedelta(days=1)).isoformat()
+                while ptr < len(comp_rows) and comp_rows[ptr].match_date <= cutoff:
+                    row = comp_rows[ptr]
+                    pool.append(
+                        TrainingRow(
+                            match_date=row.match_date,
+                            home_team=row.home,
+                            away_team=row.away,
+                            fthg=row.fthg,
+                            ftag=row.ftag,
+                        )
+                    )
+                    ptr += 1
+                if first_day < params.start:
+                    continue  # 窗口前：只贡献训练池，不产生下注面
+                if len(pool) < params.min_train_matches:
                     result.skipped["thin_train_weeks"] = (
                         result.skipped.get("thin_train_weeks", 0) + 1
                     )
                     continue
-                assert_no_lookahead(train_rows, week_dates)
+                assert_no_lookahead(pool, week_dates)
                 try:
                     artifact = fit_dc_model(
-                        train_rows,
+                        pool,
                         competition=competition,
                         half_life_days=params.half_life_days,
                     )
@@ -517,19 +697,11 @@ def run_backtest(
                     )
                     continue
                 results = {
-                    int(r["id"]): ResultFacts(
-                        home_goals=int(r["fthg"]), away_goals=int(r["ftag"])
-                    )
-                    for r in week_rows
+                    m.ref: ResultFacts(home_goals=m.fthg, away_goals=m.ftag)
+                    for m in week_rows
                 }
                 candidates_by_match = _record_week_predictions(
-                    conn,
-                    run_id,
-                    week_rows,
-                    artifact,
-                    params,
-                    result,
-                    fair_today=fair_today,
+                    conn, run_id, week_rows, artifact, params, result
                 )
                 _place_week_bets(
                     conn,

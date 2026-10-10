@@ -220,22 +220,6 @@ def hist_team_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def hist_rows_in_seasons(
-    conn: sqlite3.Connection, competitions: tuple[str, ...], seasons: tuple[str, ...]
-) -> list[sqlite3.Row]:
-    """回测范围的历史行（联赛×赛季过滤，按联赛、日期排序）。"""
-    comp_ph = ", ".join("?" for _ in competitions)
-    season_ph = ", ".join("?" for _ in seasons)
-    return conn.execute(
-        f"""
-        SELECT * FROM hist_matches
-        WHERE competition IN ({comp_ph}) AND season IN ({season_ph})
-        ORDER BY competition, match_date
-        """,  # noqa: S608
-        (*competitions, *seasons),
-    ).fetchall()
-
-
 def hist_close_odds_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """全量历史行的收盘基准列（PSC/AvgC，基准分期质检用）。"""
     return conn.execute(
