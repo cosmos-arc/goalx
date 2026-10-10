@@ -617,3 +617,47 @@ def _resolve_sid_fallback(
             [beijing, home],
         ).fetchone()
     return str(sid_row[0]) if sid_row else None
+
+
+def jc_sp_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """
+    JC 官方 SP 行（uniform 彩果，void=0 三向全；票 17 配对面）。
+
+    表归属取数口（ADR-0008）：evaluation 侧（haircut 十年重估）经此引，
+    不散写第二份 SQL。betting_single 供单关 overround 分层。
+    """
+    return conn.execute(
+        """
+        SELECT fixture_id, league_name, match_date,
+               odds_h, odds_d, odds_a, betting_single
+        FROM uniform_result_observations
+        WHERE fixture_id IS NOT NULL AND void_flag = 0
+          AND odds_h IS NOT NULL AND odds_d IS NOT NULL AND odds_a IS NOT NULL
+          AND trim(odds_h) <> '' AND trim(odds_d) <> '' AND trim(odds_a) <> ''
+          AND CAST(odds_h AS REAL) > 1.0
+          AND CAST(odds_d AS REAL) > 1.0
+          AND CAST(odds_a AS REAL) > 1.0
+        ORDER BY id
+        """
+    ).fetchall()
+
+
+def jc_sp_overround_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """
+    全量 JC SP 面的 overround 行（不需 fixture 链；1.129 基线对照）。
+
+    odds 列是 TEXT：数值比较必须 CAST（TEXT 与数字比是字典序，
+    'abc'>1 为真——correctness F1）；坏值行在此拦下不出 NULL overround。
+    """
+    return conn.execute(
+        """
+        SELECT 1.0 / odds_h + 1.0 / odds_d + 1.0 / odds_a AS overround,
+               betting_single
+        FROM uniform_result_observations
+        WHERE void_flag = 0
+          AND trim(odds_h) <> '' AND trim(odds_d) <> '' AND trim(odds_a) <> ''
+          AND CAST(odds_h AS REAL) > 1.0
+          AND CAST(odds_d AS REAL) > 1.0
+          AND CAST(odds_a AS REAL) > 1.0
+        """
+    ).fetchall()

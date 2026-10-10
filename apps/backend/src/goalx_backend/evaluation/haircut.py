@@ -200,7 +200,7 @@ def method_sensitivity(samples: list[HaircutSample]) -> dict[str, dict[str, floa
     return report
 
 
-def _quartiles(values: list[float]) -> list[float]:
+def quartiles_of(values: list[float]) -> list[float]:
     """升序四分位（inclusive 线性插值）；空列表返回 [0,0,0]。"""
     if not values:
         return [0.0, 0.0, 0.0]
@@ -226,7 +226,7 @@ def calibrate_haircuts(
     written: list[dict[str, Any]] = []
     for scope, group in sorted(by_scope.items()):
         values = [s.haircut for s in group]
-        quartiles = _quartiles(values)
+        quartiles = quartiles_of(values)
         if len(values) >= min_samples:
             haircut, source = quartiles[1], "calibrated"
         else:
