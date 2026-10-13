@@ -257,7 +257,7 @@ def test_three_sided_residuals(gold_env):
 
 def test_skips_counted_honestly(gold_env):
     """ftr 空/no gold 行/fair 缺字段：各自计数，不进样本。"""
-    rows = [_gold_row("s1"), _gold_row("s4")]
+    rows = [_gold_row("s1"), _gold_row("s4"), _gold_row("s5")]
     with gold_env(rows) as (face, duck_con, store):
         run_id = _seed_run(face)
         _seed_pred(face, run_id, "s1")  # 正常
@@ -278,13 +278,24 @@ def test_skips_counted_honestly(gold_env):
                 json.dumps({"h": 0.4, "d": 0.3}),
             ),
         )
+        face.execute(  # s5 非对象 JSON（旧形态）：no_fair 计数不炸（F2 回归）
+            """
+            INSERT INTO backtest_predictions
+            (run_id, match_key, competition, season, match_date, home_team,
+             away_team, era, ftr, had_probs, fair_probs, fair_source,
+             model_fingerprint, train_window_end)
+            VALUES (?, 's5', 'E0', '2025-26', '2025-10-01', 'A', 'B', NULL,
+                    'H', ?, 'null', 'psc', 'fp', '2025-09-25')
+            """,
+            (run_id, json.dumps(MODEL)),
+        )
         payload = sig.build_signal_attribution_report(
             face, duck_con, store, run_id=run_id
         )
     assert payload["n_samples"] == 1
     assert payload["skipped"]["no_gold"] == 1
     assert payload["skipped"]["no_ftr"] == 1
-    assert payload["skipped"]["no_fair"] == 1
+    assert payload["skipped"]["no_fair"] == 2
 
 
 def test_verdict_lines_dual_lists(gold_env):

@@ -50,7 +50,7 @@ EPS = 1e-9
 # 字面量拼接只为行宽；参数绑定注入面为零（S608 误报豁免）
 _PREDICTIONS_SQL = (
     "SELECT match_key, era, ftr, had_probs, fair_probs"  # noqa: S608
-    + " FROM backtest_predictions WHERE run_id = ?"
+    + " FROM backtest_predictions WHERE run_id = ? ORDER BY id"
 )
 
 # 特征清单：(特征键, gold 列, 桶型)；桶型 drift=符号三分，dist=分位三分。
@@ -220,15 +220,21 @@ def _collect_samples(
         if gold_row is None:
             skipped["no_gold"] += 1
             continue
-        fair = json.loads(str(row["fair_probs"]))
-        model = json.loads(str(row["had_probs"]))
-        if not all(
-            isinstance(fair.get(c), int | float)
-            and isinstance(model.get(c), int | float)
-            for c in ("h", "d", "a")
+        fair_raw = json.loads(str(row["fair_probs"]))
+        model_raw = json.loads(str(row["had_probs"]))
+        if (
+            not isinstance(fair_raw, dict)
+            or not isinstance(model_raw, dict)
+            or not all(
+                isinstance(fair_raw.get(c), int | float)
+                and isinstance(model_raw.get(c), int | float)
+                for c in _SIDES
+            )
         ):
             skipped["no_fair"] += 1
             continue
+        fair: dict[str, Any] = fair_raw
+        model: dict[str, Any] = model_raw
         samples.append(_signal_of(row, gold_row, fair, model))
     return samples, skipped
 
