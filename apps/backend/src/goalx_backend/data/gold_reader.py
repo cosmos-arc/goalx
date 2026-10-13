@@ -181,6 +181,51 @@ def fetch_close_rows_by_sids(
     return seen
 
 
+# 信号归因面取数列（票 21）：AH/OU 收盘族特征全列（漂移/共识/分歧/
+# 相位/水位/临场切片）+ era/联赛。同 by-sid 定序首行谱系。
+_SIGNAL_FACE_SQL = """
+    SELECT sid, league, era,
+           ah_line_drift, ah_anchor_drift, ou_line_drift,
+           ah_close_dispersion, ou_close_dispersion,
+           ah_n_books, ou_n_books,
+           ah_n_early, ah_n_pre, ah_n_inplay,
+           ou_n_early, ou_n_pre, ou_n_inplay,
+           ah_close_home_water_med, ah_close_away_water_med,
+           ou_close_over_water_med, ou_close_under_water_med,
+           q1h1x2_h, q1h1x2_d, q1h1x2_a,
+           q24h1x2_h, q24h1x2_d, q24h1x2_a,
+           close1x2_h, close1x2_d, close1x2_a
+    FROM match_features
+    WHERE sid IN (SELECT unnest(?))
+    ORDER BY league, strftime(CAST(kickoff AS DATE), '%Y-%m-%d'), sid
+"""
+
+
+def fetch_signal_rows_by_sids(
+    duck_con: duckdb.DuckDBPyConnection, sids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """
+    按 sid 取 gold 信号归因面行（票 21）。
+
+    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。重复 sid
+    定序取首行（同引擎面谱系）。视图缺席抛 RuntimeError（报告面惯例）。
+    """
+    if not sids:
+        return {}
+    try:
+        result = duck_con.execute(_SIGNAL_FACE_SQL, [sids])
+        names = [str(d[0]) for d in result.description]
+        rows = result.fetchall()
+    except (duckdb.CatalogException, duckdb.IOException) as exc:
+        raise RuntimeError(
+            "match_features 视图不可用（先跑 gold-build + 建桥）"
+        ) from exc
+    seen: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        seen.setdefault(str(row[0]), dict(zip(names, row, strict=True)))
+    return seen
+
+
 # 早锁/CLV 面取数列（票 20）：同族早晚价对——era1=PSH（开盘）→PSC（收盘
 # 代理）fdhist 族；era2=q24h/q1h 1x2 锚切片→close1x2 锚（cid177 族）；
 # AH/OU 线漂移仅描述面携带。两条族内自比对，不跨族。
