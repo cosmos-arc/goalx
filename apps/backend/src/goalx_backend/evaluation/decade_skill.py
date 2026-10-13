@@ -33,15 +33,16 @@ from typing import Any
 
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_PSC_PROXY, ERA_TRAJECTORY
-from goalx_backend.evaluation.metrics import evaluate_predictions, flat_stake_stats
+from goalx_backend.evaluation.metrics import (
+    evaluate_predictions,
+    flat_stake_stats,
+    load_backtest_run,
+)
 
 REPORT_BASENAME = "decade-skill"
 ERA_ORDER = (ERA_PSC_PROXY, ERA_TRAJECTORY)
 MIN_FACE_SAMPLES = 30  # 分层面低于此 n 只计数不下结论（探索纪律）
 MIN_SEASON_TREND = 2  # 赛季走向句最少季数
-_LATEST_DONE_SQL = (
-    "SELECT id FROM backtest_runs WHERE status = 'done' ORDER BY id DESC LIMIT 1"
-)
 
 
 @dataclass
@@ -129,26 +130,6 @@ class _LegFace:
             "implied_mean": round(self.implied_sum / settled, 4) if settled else None,
             "hit_rate": round(self.hit / settled, 4) if settled else None,
         }
-
-
-def _load_run(
-    conn: sqlite3.Connection, run_id: int | None
-) -> tuple[int, str, dict[str, Any], str]:
-    """取目标 run（缺省=最新 done；显式 id 允许任意状态供中途检视）。"""
-    if run_id is None:
-        row = conn.execute(_LATEST_DONE_SQL).fetchone()
-        if row is None:
-            raise ValueError("没有可用的 done 回测 run（先跑 backtest）")
-        rid = int(row["id"])
-    else:
-        rid = run_id
-    meta = conn.execute(
-        "SELECT label, params, status FROM backtest_runs WHERE id = ?", (rid,)
-    ).fetchone()
-    if meta is None:
-        raise ValueError(f"run {rid} 不存在")
-    params: dict[str, Any] = json.loads(str(meta["params"])) if meta["params"] else {}
-    return rid, str(meta["label"]), params, str(meta["status"])
 
 
 def _bucket_of(values: list[str | None]) -> str:
@@ -367,7 +348,7 @@ def build_decade_skill_report(
     today: date | None = None,
 ) -> dict[str, Any]:
     """十年技能报告：run 数据四轴分层 → reports/ 双视图。"""
-    rid, label, params, run_status = _load_run(conn, run_id)
+    rid, label, params, run_status = load_backtest_run(conn, run_id)
     haircut = float(params.get("haircut", 0.10))
     pred_rows = conn.execute(
         "SELECT * FROM backtest_predictions WHERE run_id = ? ORDER BY id",
