@@ -53,7 +53,8 @@ _PREDICTIONS_SQL = (
     + " FROM backtest_predictions WHERE run_id = ?"
 )
 
-# 特征清单：(特征键, gold 列, 桶型)；桶型 drift=符号三分，dist=分位三分
+# 特征清单：(特征键, gold 列, 桶型)；桶型 drift=符号三分，dist=分位三分。
+# 特征键贯穿存储与分桶（Spec 审查：键/列错位曾致六轴静默消失）。
 _FEATURES: tuple[tuple[str, str, str], ...] = (
     ("ah_line_drift", "ah_line_drift", "drift"),
     ("ah_anchor_drift", "ah_anchor_drift", "drift"),
@@ -62,22 +63,32 @@ _FEATURES: tuple[tuple[str, str, str], ...] = (
     ("ou_dispersion", "ou_close_dispersion", "dist"),
     ("ah_n_books", "ah_n_books", "dist"),
     ("ou_n_books", "ou_n_books", "dist"),
+    ("ah_phase_early", "ah_n_early", "dist"),
     ("ah_phase_pre", "ah_n_pre", "dist"),
+    ("ah_phase_inplay", "ah_n_inplay", "dist"),
+    ("ou_phase_early", "ou_n_early", "dist"),
     ("ou_phase_pre", "ou_n_pre", "dist"),
+    ("ou_phase_inplay", "ou_n_inplay", "dist"),
     ("ah_home_water", "ah_close_home_water_med", "dist"),
     ("ou_over_water", "ou_close_over_water_med", "dist"),
 )
+# 派生特征（_signal_of 内计算，键=列名注册）：1x2 临场位移（1h/24h 两档）
+# + AH 锚同线水位位移（两向 malay 归一，同法两端）
+_DERIVED_FEATURES: tuple[tuple[str, str], ...] = (
+    ("late_move_h", "drift"),
+    ("late_move24_h", "drift"),
+    ("late_move_ah_home", "drift"),
+)
+_SIDES = ("h", "d", "a")
 
 
 @dataclass(frozen=True)
 class _MatchSignal:
-    """一场的归因样本（主队侧 + 平局侧）。"""
+    """一场的归因样本（三向：主队/平局/客队侧）。"""
 
     era: str
-    model_edge_h: float
-    model_edge_d: float
-    realized_h: float
-    realized_d: float
+    model_edges: dict[str, float]
+    realized: dict[str, float]
     features: dict[str, float]
 
 
@@ -130,28 +141,23 @@ def _tertile_cuts(values: list[float]) -> tuple[float, float]:
 
 
 def _bucket_stats(samples: list[_MatchSignal]) -> dict[str, Any]:
-    """一桶的归因面：市场可预测面 + 模型捕捉面（era 混布随行）。"""
-    edges_h = [s.model_edge_h for s in samples]
-    edges_d = [s.model_edge_d for s in samples]
-    real_h = [s.realized_h for s in samples]
-    real_d = [s.realized_d for s in samples]
-    mean_h, t_h = _mean_t(real_h)
-    mean_d, t_d = _mean_t(real_d)
+    """一桶的归因面：市场可预测面 + 模型捕捉面（三向，era 混布随行）。"""
     era_counts: dict[str, int] = defaultdict(int)
     for s in samples:
         era_counts[s.era] += 1
-    return {
+    face: dict[str, Any] = {
         "n": len(samples),
         "era_mix": dict(sorted(era_counts.items())),
-        "market_bias_h": round(mean_h, 4) if mean_h is not None else None,
-        "market_bias_h_t": round(t_h, 2) if t_h is not None else None,
-        "market_bias_d": round(mean_d, 4) if mean_d is not None else None,
-        "market_bias_d_t": round(t_d, 2) if t_d is not None else None,
-        "model_edge_h_mean": round(fmean(edges_h), 4) if edges_h else None,
-        "model_edge_d_mean": round(fmean(edges_d), 4) if edges_d else None,
-        "capture_h": _round_or_none(_pearson(edges_h, real_h)),
-        "capture_d": _round_or_none(_pearson(edges_d, real_d)),
     }
+    for side in _SIDES:
+        edges = [s.model_edges[side] for s in samples]
+        real = [s.realized[side] for s in samples]
+        mean, t_stat = _mean_t(real)
+        face[f"market_bias_{side}"] = round(mean, 4) if mean is not None else None
+        face[f"market_bias_{side}_t"] = round(t_stat, 2) if t_stat is not None else None
+        face[f"model_edge_{side}_mean"] = round(fmean(edges), 4) if edges else None
+        face[f"capture_{side}"] = _round_or_none(_pearson(edges, real))
+    return face
 
 
 def _round_or_none(value: float | None) -> float | None:
@@ -172,7 +178,7 @@ def _verdict_lines(payload_faces: dict[str, dict[str, dict[str, Any]]]) -> list[
         for bucket, stats in buckets.items():
             if stats["n"] < MIN_BUCKET_N:
                 continue
-            for side in ("h", "d"):
+            for side in _SIDES:
                 t_stat = stats.get(f"market_bias_{side}_t")
                 bias = stats.get(f"market_bias_{side}")
                 capture = stats.get(f"capture_{side}")
@@ -240,42 +246,70 @@ def _signal_of(
         value = gold_row.get(column)
         if value is not None:
             features[key] = float(value)
-    # 临场切片特征：q1h→close 的主队概率位移（比例 devig 两端同法）
-    q1h = _devig_probs(
-        gold_row.get("q1h1x2_h"), gold_row.get("q1h1x2_d"), gold_row.get("q1h1x2_a")
-    )
+    # 临场切片特征（1x2 锚族，比例 devig 两端同法）：1h/24h → close 主队位移
     close = _devig_probs(
         gold_row.get("close1x2_h"),
         gold_row.get("close1x2_d"),
         gold_row.get("close1x2_a"),
     )
-    if q1h is not None and close is not None:
-        features["late_move_h"] = close[0] - q1h[0]
+    for ref, feature_key in (("q1h1x2", "late_move_h"), ("q24h1x2", "late_move24_h")):
+        early = _devig_probs(
+            gold_row.get(f"{ref}_h"), gold_row.get(f"{ref}_d"), gold_row.get(f"{ref}_a")
+        )
+        if early is not None and close is not None:
+            features[feature_key] = close[0] - early[0]
+    # AH 锚同线水位位移（q24h→close；两向 malay 水位归一，同法两端；
+    # 线不同/水位越 (0,1) 带则缺——不跨线硬比）
+    ah_early = _malay_home_prob(
+        gold_row.get("q24hah_home_water"), gold_row.get("q24hah_away_water")
+    )
+    ah_close = _malay_home_prob(
+        gold_row.get("ah_anchor_close_home_water"),
+        gold_row.get("ah_anchor_close_away_water"),
+    )
+    same_line = gold_row.get("q24hah_line") is not None and (
+        float(gold_row["q24hah_line"]) == float(gold_row["ah_anchor_close_line"])
+        if gold_row.get("ah_anchor_close_line") is not None
+        else False
+    )
+    if same_line and ah_early is not None and ah_close is not None:
+        features["late_move_ah_home"] = ah_close - ah_early
     return _MatchSignal(
         era=str(gold_row["era"]) if gold_row["era"] is not None else "unknown",
-        model_edge_h=float(model["h"]) - float(fair["h"]),
-        model_edge_d=float(model["d"]) - float(fair["d"]),
-        realized_h=(1.0 if ftr == "h" else 0.0) - float(fair["h"]),
-        realized_d=(1.0 if ftr == "d" else 0.0) - float(fair["d"]),
+        model_edges={side: float(model[side]) - float(fair[side]) for side in _SIDES},
+        realized={
+            side: (1.0 if ftr == side else 0.0) - float(fair[side]) for side in _SIDES
+        },
         features=features,
     )
+
+
+def _malay_home_prob(w_home: float | None, w_away: float | None) -> float | None:
+    """两向 malay 水位归一的主队概率（w/(w_h+w_a)；水位越 (0,1) 带→None）。"""
+    if w_home is None or w_away is None:
+        return None
+    if not (0.0 < w_home < 1.0 and 0.0 < w_away < 1.0):
+        return None
+    return w_home / (w_home + w_away)
 
 
 def _feature_faces(
     samples: list[_MatchSignal],
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    """特征×桶分层面（漂移按符号三分；分布类按分位三分）。"""
+    """特征×桶分层面（漂移按符号三分；分布类按分位三分；键贯穿存取）。"""
     faces: dict[str, dict[str, dict[str, Any]]] = {}
-    feature_defs = (*_FEATURES, ("late_move_h", "late_move_h", "drift"))
-    for key, column, kind in feature_defs:
-        present = [s for s in samples if column in s.features]
+    feature_defs = [(key, kind) for key, _column, kind in _FEATURES] + list(
+        _DERIVED_FEATURES
+    )
+    for key, kind in feature_defs:
+        present = [s for s in samples if key in s.features]
         if not present:
             continue
-        values = [s.features[column] for s in present]
+        values = [s.features[key] for s in present]
         cuts = _tertile_cuts(values) if kind == "dist" else (0.0, 0.0)
         groups: dict[str, list[_MatchSignal]] = defaultdict(list)
         for sample in present:
-            groups[_bucket_of(sample.features[column], kind, cuts)].append(sample)
+            groups[_bucket_of(sample.features[key], kind, cuts)].append(sample)
         faces[key] = {
             bucket: _bucket_stats(group) for bucket, group in sorted(groups.items())
         }
@@ -364,42 +398,48 @@ def _render_md(payload: dict[str, Any]) -> str:
         "",
         "## 总体面（不分桶基线）",
         "",
-        f"- 市场偏差 h={overall.get('market_bias_h')}"
-        + f"（t={overall.get('market_bias_h_t')}）"
-        + f" d={overall.get('market_bias_d')}"
-        + f"（t={overall.get('market_bias_d_t')}）",
-        f"- 模型捕捉 r_h={overall.get('capture_h')} r_d={overall.get('capture_d')}"
+        "- 市场偏差 "
+        + " ".join(
+            f"{s}={overall.get(f'market_bias_{s}')}"
+            + f"（t={overall.get(f'market_bias_{s}_t')}）"
+            for s in _SIDES
+        ),
+        "- 模型捕捉 "
+        + " ".join(f"r_{s}={overall.get(f'capture_{s}')}" for s in _SIDES)
         + "（>0=模型残差与市场误差同向）",
         "",
         "## 特征面（桶级摘要）",
         "",
-        "| 特征 | 桶 | n | 市场偏差h(t) | 捕捉r_h | 市场偏差d(t) | 捕捉r_d |",
-        "|---|---|---|---|---|---|---|",
+        "| 特征 | 桶 | n | 偏差h(t) | 残差h | 捕获h | 偏差d(t) | 捕获d"
+        + " | 偏差a(t) | 捕获a |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for feature, buckets in payload["faces"].items():
         for bucket, stats in buckets.items():
             if stats["n"] == 0:
                 continue
-            bias_h = stats.get("market_bias_h")
-            t_h = stats.get("market_bias_h_t")
-            bias_d = stats.get("market_bias_d")
-            t_d = stats.get("market_bias_d_t")
-            lines.append(
-                "| {} | {} | {} | {}({}) | {} | {}({}) | {} |".format(
-                    feature,
-                    bucket,
-                    stats["n"],
-                    bias_h,
-                    t_h,
-                    stats.get("capture_h"),
-                    bias_d,
-                    t_d,
-                    stats.get("capture_d"),
-                )
-            )
+            cells = [
+                feature,
+                bucket,
+                str(stats["n"]),
+                "{}({})".format(
+                    stats.get("market_bias_h"), stats.get("market_bias_h_t")
+                ),
+                str(stats.get("model_edge_h_mean")),
+                str(stats.get("capture_h")),
+                "{}({})".format(
+                    stats.get("market_bias_d"), stats.get("market_bias_d_t")
+                ),
+                str(stats.get("capture_d")),
+                "{}({})".format(
+                    stats.get("market_bias_a"), stats.get("market_bias_a_t")
+                ),
+                str(stats.get("capture_a")),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
     lines += [
         "",
         "- 判读注意：" + payload["note"],
-        "- 完整 era 混布与模型残差均值见 signal-attribution.json。",
+        "- 完整 era 混布与三向残差均值见 signal-attribution.json。",
     ]
     return "\n".join(lines) + "\n"

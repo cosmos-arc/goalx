@@ -182,9 +182,9 @@ def fetch_close_rows_by_sids(
 
 
 # 信号归因面取数列（票 21）：AH/OU 收盘族特征全列（漂移/共识/分歧/
-# 相位/水位/临场切片）+ era/联赛。同 by-sid 定序首行谱系。
+# 相位/水位/临场切片 1x2+AH 锚）+ era。同 by-sid 定序首行谱系。
 _SIGNAL_FACE_SQL = """
-    SELECT sid, league, era,
+    SELECT sid, era,
            ah_line_drift, ah_anchor_drift, ou_line_drift,
            ah_close_dispersion, ou_close_dispersion,
            ah_n_books, ou_n_books,
@@ -194,7 +194,10 @@ _SIGNAL_FACE_SQL = """
            ou_close_over_water_med, ou_close_under_water_med,
            q1h1x2_h, q1h1x2_d, q1h1x2_a,
            q24h1x2_h, q24h1x2_d, q24h1x2_a,
-           close1x2_h, close1x2_d, close1x2_a
+           close1x2_h, close1x2_d, close1x2_a,
+           q24hah_line, q24hah_home_water, q24hah_away_water,
+           ah_anchor_close_line, ah_anchor_close_home_water,
+           ah_anchor_close_away_water
     FROM match_features
     WHERE sid IN (SELECT unnest(?))
     ORDER BY league, strftime(CAST(kickoff AS DATE), '%Y-%m-%d'), sid

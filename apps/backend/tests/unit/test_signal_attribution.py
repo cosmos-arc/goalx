@@ -185,6 +185,76 @@ def test_missing_feature_rows_excluded_per_feature(gold_env):
     assert payload["faces"]["ah_line_drift"]["pos"]["n"] == 1
 
 
+def test_keyed_features_all_axes_present(gold_env):
+    """键/列错位回归（Spec 审查）：key≠column 的轴（分歧/相位/水位）
+    必须出面——曾整族静默消失。"""
+    rows = [
+        _gold_row(
+            "s1",
+            ah_close_dispersion=0.1,
+            ah_n_pre=5,
+            ah_close_home_water_med=0.95,
+        ),
+        _gold_row(
+            "s2",
+            ah_close_dispersion=0.3,
+            ah_n_pre=15,
+            ah_close_home_water_med=1.05,
+        ),
+        _gold_row(
+            "s3",
+            ah_close_dispersion=0.6,
+            ah_n_pre=25,
+            ah_close_home_water_med=1.15,
+        ),
+    ]
+    payload = _build(gold_env, rows)
+    for feature in ("ah_dispersion", "ah_phase_pre", "ah_home_water"):
+        assert feature in payload["faces"], f"{feature} 面缺席（键/列错位回归）"
+        assert payload["faces"][feature]["low"]["n"] == 1
+        assert payload["faces"][feature]["high"]["n"] == 1
+
+
+def test_late_move24_and_ah_same_line_slices(gold_env):
+    """q24h 1x2 位移与 AH 锚同线水位位移都成面；AH 跨线不比。"""
+    rows = [
+        _gold_row(
+            "s1",
+            q24h1x2_h=2.4,
+            q24h1x2_d=3.4,
+            q24h1x2_a=3.8,
+            close1x2_h=2.0,
+            close1x2_d=3.4,
+            close1x2_a=3.8,
+            q24hah_line=-1.0,
+            q24hah_home_water=0.90,
+            q24hah_away_water=0.95,
+            ah_anchor_close_line=-1.0,  # 同线 → 面出现
+            ah_anchor_close_home_water=0.85,
+            ah_anchor_close_away_water=0.95,
+        ),
+        _gold_row(
+            "s2",
+            q24hah_line=-0.5,
+            ah_anchor_close_line=-1.0,  # 跨线 → late_move_ah_home 缺
+        ),
+    ]
+    payload = _build(gold_env, rows)
+    assert payload["faces"]["late_move24_h"]["pos"]["n"] == 1
+    # s1 同线：close 主水 0.85 < q24h 0.90 → 主队概率降 = neg 桶；
+    # s2 跨线缺位不进该面
+    assert payload["faces"]["late_move_ah_home"]["neg"]["n"] == 1
+
+
+def test_three_sided_residuals(gold_env):
+    """三向残差：a 侧与 h/d 同行落面。"""
+    payload = _build(gold_env, [_gold_row("s1")])
+    overall = payload["overall"]
+    # model a=0.20 fair a=0.30 → edge −0.10；ftr=H → realized=−0.30
+    assert overall["model_edge_a_mean"] == pytest.approx(-0.10)
+    assert overall["market_bias_a"] == pytest.approx(-0.30)
+
+
 def test_skips_counted_honestly(gold_env):
     """ftr 空/no gold 行/fair 缺字段：各自计数，不进样本。"""
     rows = [_gold_row("s1"), _gold_row("s4")]
