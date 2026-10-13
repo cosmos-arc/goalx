@@ -274,6 +274,48 @@ def test_unknown_era_bet_goes_to_unknown_bucket(db, store):
     assert "era:mixed" not in payload["betting_faces"]
 
 
+def test_partially_unknown_parlay_taints_whole_bet(db, store):
+    """串关一腿 era 不可解析：整注归 unknown，不静默归另一腿的单值 era。"""
+    run_id = _seed_run(db, "t19")
+    _seed_pred(db, run_id, "s1", era=None)
+    _seed_pred(db, run_id, "s2", era="trajectory")
+    _seed_bet(
+        db,
+        run_id,
+        legs=[_leg("s1"), _leg("s2")],
+        hit_flags=[{"hit": True, "void": False}, {"hit": True, "void": False}],
+    )
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    assert payload["betting_faces"]["era:unknown"]["n"] == 1
+    assert "era:trajectory" not in payload["betting_faces"]
+    assert "era:trajectory:mkt:had" not in payload["betting_faces"]
+
+
+def test_running_run_report_is_marked_partial(db, store):
+    """显式检视 running run：payload/MD 标注状态，不冒充全量结论。"""
+    cur = db.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('mid', ?, 'running', '2026-10-14T00:00:00+00:00')",
+        (json.dumps({"haircut": 0.1, "markets": ["had"]}),),
+    )
+    run_id = int(cur.lastrowid or 0)
+    _seed_pred(db, run_id, "s1", era="psc_proxy")
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    assert payload["run_status"] == "running"
+    md = (store.root / "reports" / "decade-skill.md").read_text(encoding="utf-8")
+    assert "run 状态=running" in md
+    assert "不代表全量" in md
+
+
+def test_ftr_missing_predictions_counted(db, store):
+    """ftr 空的旧行：计数 n_ftr_missing_predictions，不出裸面。"""
+    run_id = _seed_run(db, "old")
+    _seed_pred(db, run_id, "s1", era="psc_proxy", ftr=None)
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    assert payload["n_ftr_missing_predictions"] == 1
+    assert "era:psc_proxy" not in payload["prediction_faces"]
+
+
 def test_era_season_cross_prediction_face(db, store):
     """era:season 交叉面落位（2023-24 跨两时代的断层面）。"""
     run_id = _seed_run(db, "t19")

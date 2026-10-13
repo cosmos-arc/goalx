@@ -133,7 +133,7 @@ class _LegFace:
 
 def _load_run(
     conn: sqlite3.Connection, run_id: int | None
-) -> tuple[int, str, dict[str, Any]]:
+) -> tuple[int, str, dict[str, Any], str]:
     """取目标 run（缺省=最新 done；显式 id 允许任意状态供中途检视）。"""
     if run_id is None:
         row = conn.execute(_LATEST_DONE_SQL).fetchone()
@@ -143,31 +143,36 @@ def _load_run(
     else:
         rid = run_id
     meta = conn.execute(
-        "SELECT label, params FROM backtest_runs WHERE id = ?", (rid,)
+        "SELECT label, params, status FROM backtest_runs WHERE id = ?", (rid,)
     ).fetchone()
     if meta is None:
         raise ValueError(f"run {rid} 不存在")
     params: dict[str, Any] = json.loads(str(meta["params"])) if meta["params"] else {}
-    return rid, str(meta["label"]), params
+    return rid, str(meta["label"]), params, str(meta["status"])
 
 
-def _single_or_bucket(values: set[str]) -> str:
-    """腿集映射到单值；空=unknown（预测行缺 era/season），多值=mixed。"""
-    if len(values) == 1:
-        return next(iter(values))
-    return "mixed" if values else "unknown"
+def _bucket_of(values: list[str | None]) -> str:
+    """腿集映射到单值；任一腿不可解析即整注归 unknown（不静默归单值）。"""
+    if any(v is None for v in values):
+        return "unknown"
+    known = {str(v) for v in values}
+    if len(known) == 1:
+        return next(iter(known))
+    return "mixed"
 
 
 def _prediction_faces(
     rows: list[sqlite3.Row],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, int]], int]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, int]], int, int]:
     """预测面分层（overall / era / era:联赛 / era:赛季 / 赛季）+ 混布。"""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     source_mix: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     era_missing = 0
+    ftr_missing = 0
     for row in rows:
         if row["ftr"] is None:
-            continue  # v25 前旧 run 行：指标面如实跳过
+            ftr_missing += 1  # v25 前旧 run 行：指标面如实跳过并计数
+            continue
         sample = {
             "had_probs": json.loads(str(row["had_probs"])),
             "fair_probs": json.loads(str(row["fair_probs"])),
@@ -191,6 +196,7 @@ def _prediction_faces(
         faces,
         {era: dict(t) for era, t in sorted(source_mix.items())},
         era_missing,
+        ftr_missing,
     )
 
 
@@ -215,8 +221,8 @@ def _bet_faces(
         profit = float(bet["profit"])
         status = str(bet["status"])
         keys = [str(leg["match_key"]) for leg in leg_rows]
-        era = _single_or_bucket({e for e in map(era_of, keys) if e is not None})
-        season = _single_or_bucket({s for s in map(season_of, keys) if s is not None})
+        era = _bucket_of([era_of(key) for key in keys])
+        season = _bucket_of([season_of(key) for key in keys])
         competition = str(bet["competition"])
         markets = {str(leg["market_code"]) for leg in leg_rows}
         bets[f"era:{era}"].add(stake, profit, status)
@@ -361,7 +367,7 @@ def build_decade_skill_report(
     today: date | None = None,
 ) -> dict[str, Any]:
     """十年技能报告：run 数据四轴分层 → reports/ 双视图。"""
-    rid, label, params = _load_run(conn, run_id)
+    rid, label, params, run_status = _load_run(conn, run_id)
     haircut = float(params.get("haircut", 0.10))
     pred_rows = conn.execute(
         "SELECT * FROM backtest_predictions WHERE run_id = ? ORDER BY id",
@@ -377,7 +383,7 @@ def build_decade_skill_report(
     }
     season_of = {str(row["match_key"]): str(row["season"]) for row in pred_rows}
 
-    pred_faces, source_mix, era_missing = _prediction_faces(pred_rows)
+    pred_faces, source_mix, era_missing, ftr_missing = _prediction_faces(pred_rows)
     bet_faces, leg_faces, ev_faces = _bet_faces(
         bet_rows, era_of.get, season_of.get, haircut
     )
@@ -386,10 +392,12 @@ def build_decade_skill_report(
         "built_at": (today or date.today()).isoformat(),
         "run_id": rid,
         "label": label,
+        "run_status": run_status,
         "haircut": haircut,
         "markets": params.get("markets", []),
         "window": {"start": params.get("start"), "end": params.get("end")},
         "n_predictions": len(pred_rows),
+        "n_ftr_missing_predictions": ftr_missing,
         "n_era_missing_predictions": era_missing,
         "n_bets": len(bet_rows),
         "prediction_faces": pred_faces,
@@ -405,24 +413,39 @@ def build_decade_skill_report(
     }
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / f"{REPORT_BASENAME}.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # md 先写、json 最后写（json 为真源，落成即成对完整）
     (reports / f"{REPORT_BASENAME}.md").write_text(
         _render_md(payload), encoding="utf-8"
     )
+    (reports / f"{REPORT_BASENAME}.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return payload
+
+
+def _cell(value: float | int | str | None, fmt: str = "{}") -> str:
+    """表格单元格：None 渲染为 —（不落裸 None 字样）。"""
+    return "—" if value is None else fmt.format(value)
 
 
 def _render_md(payload: dict[str, Any]) -> str:
     """人读视图：结论句先行，分层表随后（完整面在 JSON）。"""
     end = payload["window"]["end"] or "数据尾"
+    start = payload["window"]["start"] or "—"
+    header = (
+        f"run={payload['run_id']}（{payload['label']}）"
+        + f" 窗口 {start}→{end}"
+        + f" haircut={payload['haircut']}"
+    )
+    if payload.get("run_status") not in (None, "done"):
+        header += (
+            f"\n\n> ⚠ run 状态={payload['run_status']}：部分窗口的中途检视，"
+            + "结论不代表全量十年"
+        )
     lines = [
         "# 十年分时代技能报告（票 19）",
         "",
-        f"run={payload['run_id']}（{payload['label']}）"
-        + f" 窗口 {payload['window']['start']}→{end}"
-        + f" haircut={payload['haircut']}",
+        header,
         f"预测 {payload['n_predictions']} 场 / 下注 {payload['n_bets']} 注，玩法 "
         + ",".join(payload["markets"]),
         "",
@@ -437,14 +460,13 @@ def _render_md(payload: dict[str, Any]) -> str:
     ]
     for era in ERA_ORDER:
         row = payload["era_contrast"][era]
-        roi = row["bet_roi"]
         lines.append(
             "| {} | {} | {} | {} | {} |".format(
                 era,
                 row["pred_n"],
-                row["skill_rps"],
+                _cell(row["skill_rps"]),
                 row["bet_n"],
-                f"{roi:+.2%}" if roi is not None else "—",
+                _cell(row["bet_roi"], "{:+.2%}"),
             )
         )
     gap = payload["era_contrast"].get("skill_gap")
@@ -458,7 +480,6 @@ def _render_md(payload: dict[str, Any]) -> str:
         "|---|---|---|---|---|---|---|---|",
     ]
     for scope, face in payload["betting_faces"].items():
-        roi = face["roi_stake_weighted"]
         lines.append(
             "| {} | {} | {}/{}/{} | {} | {} | {} | {} | {} |".format(
                 scope,
@@ -466,10 +487,10 @@ def _render_md(payload: dict[str, Any]) -> str:
                 face["won"],
                 face["lost"],
                 face["void"],
-                face["hit_rate"],
+                _cell(face["hit_rate"]),
                 face["staked"],
                 face["profit"],
-                f"{roi:+.2%}" if roi is not None else "—",
+                _cell(face["roi_stake_weighted"], "{:+.2%}"),
                 face["t_stat"],
             )
         )
