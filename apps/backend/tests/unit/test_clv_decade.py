@@ -265,6 +265,83 @@ def test_devig_guards_skip_degenerate_family(gold_env):
     assert payload["early_lock"] == {}
 
 
+def test_degenerate_leg_odds_counted_not_fatal(gold_env):
+    """odds=0/缺失的腐败腿：计数 degenerate，报告照常（correctness W1）。"""
+    rows = [_gold_row("s1")]
+    with gold_env(rows) as (face, duck_con, store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s1")
+        leg0 = _leg("s1", "had", 2.0)
+        leg0["odds"] = 0.0
+        leg_missing = _leg("s1", "hhad", 1.8)
+        del leg_missing["odds"]
+        _seed_bet(face, run_id, [leg0])
+        _seed_bet(face, run_id, [leg_missing])
+        payload = clvd.build_clv_decade_report(face, duck_con, store, run_id=run_id)
+    assert payload["structural"]["had"]["degenerate"] == 1
+    assert payload["structural"]["hhad"]["degenerate"] == 1
+    assert payload["structural"]["had"]["n"] == 1
+
+
+def test_duplicate_sid_gold_rows_first_wins(gold_env):
+    """重复 sid gold 行：定序取首（与引擎面同谱系，correctness W2）。"""
+    rows = [
+        _gold_row(
+            "s1",
+            league="英超",
+            q24h1x2_h=2.4,
+            q24h1x2_d=3.4,
+            q24h1x2_a=3.8,
+            close1x2_h=2.0,
+            close1x2_d=3.4,
+            close1x2_a=3.8,
+        ),
+        _gold_row(  # 同 sid 更晚日：重复行不得顶替首行
+            "s1",
+            league="英超",
+            kickoff=datetime.fromisoformat("2025-10-02T20:00:00"),
+            q24h1x2_h=5.0,
+            q24h1x2_d=3.4,
+            q24h1x2_a=3.8,
+            close1x2_h=2.0,
+            close1x2_d=3.4,
+            close1x2_a=3.8,
+        ),
+    ]
+    with gold_env(rows) as (face, duck_con, store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s1")
+        _seed_bet(face, run_id, [_leg("s1", "had", 2.0)])
+        payload = clvd.build_clv_decade_report(face, duck_con, store, run_id=run_id)
+    clv = payload["early_lock"]["q24h:trajectory"]["clv_median"]
+    assert clv == pytest.approx(
+        _devig_h(2.0, 3.4, 3.8) - _devig_h(2.4, 3.4, 3.8), abs=1e-6
+    )
+
+
+def test_beats_half_survives_rounding(gold_env):
+    """beat 判定用未圆整计数：2/3 过半不被 round(0.6667) 类圆整吞掉。"""
+    face = clvd._EarlyFace()
+    face.add(0.01)
+    face.add(0.02)
+    face.add(-0.03)
+    as_dict = face.as_dict()
+    assert as_dict["beat_rate"] == 0.6667
+    assert as_dict["beats_half"] is True
+
+
+def test_era_null_gold_row_goes_to_unknown_bucket(gold_env):
+    """gold 行 era 为空：归 unknown 桶，不落字面 'None'（correctness I2）。"""
+    rows = [_gold_row("s1", era=None)]
+    with gold_env(rows) as (face, duck_con, store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s1")
+        _seed_bet(face, run_id, [_leg("s1", "had", 2.0)])
+        payload = clvd.build_clv_decade_report(face, duck_con, store, run_id=run_id)
+    assert payload["coverage"]["had:unknown"]["legs"] == 1
+    assert not any(":None" in key for key in payload["coverage"])
+
+
 def test_report_files_written(gold_env):
     """reports/ 双视图落盘，MD 含三面标题与判读注意。"""
     rows = [

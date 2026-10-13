@@ -39,7 +39,6 @@ from goalx_backend.evaluation.metrics import load_backtest_run
 
 REPORT_BASENAME = "clv-decade"
 MIN_EARLY_SAMPLES = 30  # 早锁面低于此 n 只计数不下结论
-BEAT_THRESHOLD = 0.5  # beat 率过半=市场系统向选中侧前移
 ODDS_SANITY = 1.0  # devig 前提：三向赔率均 >1
 # 结构性恒等式容差（腿价由浮点构造，非逐位比较）
 STRUCT_TOL = 0.005
@@ -62,12 +61,28 @@ class _StructFace:
     """一个玩法的结构性面累计。"""
 
     n: int = 0
+    degenerate: int = 0  # odds 缺失/≤0/非有限（旧形态/腐败腿）：只计数不进分布
     had_fair_products: list[float] = field(default_factory=list)  # odds×fair_p
     implied_probs: list[float] = field(default_factory=list)  # (1−h)/odds
+
+    def add_leg(self, odds_raw: float | None, haircut: float) -> float | None:
+        """一条腿入面；返回验过的 odds（退化 → 计数后 None，不进隐含分布）。"""
+        self.n += 1
+        if isinstance(odds_raw, bool) or not isinstance(odds_raw, int | float):
+            self.degenerate += 1
+            return None
+        odds = float(odds_raw)
+        if not math.isfinite(odds) or odds <= 0.0:
+            self.degenerate += 1
+            return None
+        self.implied_probs.append((1.0 - haircut) / odds)
+        return odds
 
     def as_dict(self, haircut: float) -> dict[str, Any]:
         """had：恒等式偏离计数；全玩法：隐含概率分布带内计数。"""
         face: dict[str, Any] = {"n": self.n}
+        if self.degenerate:
+            face["degenerate"] = self.degenerate
         if self.had_fair_products:
             band = 1.0 - haircut
             outside = [v for v in self.had_fair_products if abs(v - band) > STRUCT_TOL]
@@ -104,10 +119,12 @@ class _EarlyFace:
         self.clvs.append(clv)
 
     def as_dict(self) -> dict[str, Any]:
-        """早锁面行：beat 率 + 概率位移（中位/均值）。"""
+        """早锁面行：beat 率（判定用未圆整计数）+ 概率位移（中位/均值）。"""
         return {
             "n": self.n,
             "beat_rate": round(self.beats / self.n, 4) if self.n else None,
+            # 圆整到 4 位后 0.5000 会吞掉真过半（n=18067/beats=9034 实证）
+            "beats_half": 2 * self.beats > self.n,
             "clv_mean": round(fmean(self.clvs), 6) if self.clvs else None,
             "clv_median": round(median(self.clvs), 6) if self.clvs else None,
         }
@@ -178,10 +195,10 @@ def _structural_face(
     struct: dict[str, _StructFace] = defaultdict(_StructFace)
     for leg in legs:
         market = str(leg["market_code"])
-        odds = float(leg["odds"])
         face = struct[market]
-        face.n += 1
-        face.implied_probs.append((1.0 - haircut) / odds)
+        odds = face.add_leg(leg.get("odds"), haircut)
+        if odds is None:
+            continue  # 退化腿（odds 缺失/≤0/非有限）：计数不进分布
         if market == "had":
             fair = fair_of.get(str(leg["match_key"]))
             sel = str(leg["selection_code"])
@@ -215,8 +232,11 @@ def _early_lock_face(
         market = str(leg["market_code"])
         sel = str(leg["selection_code"])
         row = gold.get(sid)
-        era = str(row["era"]) if row is not None else "no_gold"
-        league = str(row["league"]) if row is not None else "no_gold"
+        if row is None:
+            era = league = "no_gold"
+        else:
+            era = str(row["era"]) if row["era"] is not None else "unknown"
+            league = str(row["league"]) if row["league"] is not None else "unknown"
         coverage[f"{market}:{era}"]["legs"] += 1
         if market != "had":
             coverage[f"{market}:{era}"]["early_n_a"] += 1  # 无同族早价可比
@@ -348,9 +368,12 @@ def _render_md(payload: dict[str, Any]) -> str:
     for market, face in payload["structural"].items():
         identity = face.get("identity_median")
         expected = face.get("identity_expected")
-        identity_cell = (
-            f"{identity}({expected})" if identity is not None else "—(构造恒等)"
-        )
+        if identity is not None:
+            identity_cell = f"{identity}({expected})"
+        elif market == "had":
+            identity_cell = "—(无fair可验)"
+        else:
+            identity_cell = "—(构造恒等)"
         lines.append(
             "| {} | {} | {} | {} | {} | {} |".format(
                 market,
@@ -382,7 +405,7 @@ def _render_md(payload: dict[str, Any]) -> str:
         beat = face["beat_rate"]
         verdict = ""
         if face["n"] >= MIN_EARLY_SAMPLES and beat is not None:
-            verdict = "（模型领先）" if beat > BEAT_THRESHOLD else "（跟随/噪声）"
+            verdict = "（模型领先）" if face["beats_half"] else "（跟随/噪声）"
         lines.append(
             "| {} | {} | {} {} | {} | {} |".format(
                 scope,

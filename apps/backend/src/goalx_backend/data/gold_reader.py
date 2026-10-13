@@ -158,7 +158,8 @@ def fetch_close_rows_by_sids(
     """
     按 sid 取 gold 收盘族行（票 17：JC SP×era 收盘配对用）。
 
-    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。
+    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。重复 sid
+    按 (league, day, sid) 定序取首行（同引擎面谱系，correctness F3）。
     """
     if not sids:
         return {}
@@ -170,10 +171,14 @@ def fetch_close_rows_by_sids(
                close1x2_cons_h, close1x2_cons_d, close1x2_cons_a
         FROM match_features
         WHERE sid IN (SELECT unnest(?))
+        ORDER BY league, strftime(CAST(kickoff AS DATE), '%Y-%m-%d'), sid
     """
     result = duck_con.execute(sql, [sids])
     names = [str(d[0]) for d in result.description]
-    return {str(r[0]): dict(zip(names, r, strict=True)) for r in result.fetchall()}
+    seen: dict[str, dict[str, Any]] = {}
+    for row in result.fetchall():
+        seen.setdefault(str(row[0]), dict(zip(names, row, strict=True)))
+    return seen
 
 
 # 早锁/CLV 面取数列（票 20）：同族早晚价对——era1=PSH（开盘）→PSC（收盘
@@ -189,6 +194,7 @@ _CLV_FACE_SQL = """
            ah_line_drift, ah_anchor_drift, ou_line_drift
     FROM match_features
     WHERE sid IN (SELECT unnest(?))
+    ORDER BY league, strftime(CAST(kickoff AS DATE), '%Y-%m-%d'), sid
 """
 
 
@@ -198,8 +204,10 @@ def fetch_clv_rows_by_sids(
     """
     按 sid 取 gold 早锁/CLV 面行（票 20）。
 
-    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。视图缺席
-    抛 RuntimeError（报告面：运维前置缺失 fail-loud，同
+    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。重复 sid
+    按 (league, day, sid) 定序取首行去重——与引擎面 fetch_decade_rows
+    同谱系（correctness F3：报告腿用引擎下注的那一行）。视图缺席抛
+    RuntimeError（报告面：运维前置缺失 fail-loud，同
     fetch_market_face_rows）。
     """
     if not sids:
@@ -212,4 +220,7 @@ def fetch_clv_rows_by_sids(
         raise RuntimeError(
             "match_features 视图不可用（先跑 gold-build + 建桥）"
         ) from exc
-    return {str(r[0]): dict(zip(names, r, strict=True)) for r in rows}
+    seen: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        seen.setdefault(str(row[0]), dict(zip(names, row, strict=True)))
+    return seen
