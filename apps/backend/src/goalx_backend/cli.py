@@ -79,6 +79,7 @@ from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation import clv_decade as clvd
 from goalx_backend.evaluation import decade_skill as dsk
 from goalx_backend.evaluation import guardrail_report as gr
 from goalx_backend.evaluation import haircut as hc
@@ -370,6 +371,24 @@ def _cmd_decade_skill(args: argparse.Namespace) -> None:
         payload["n_predictions"],
         payload["n_bets"],
         dsk.REPORT_BASENAME,
+    )
+
+
+def _cmd_clv_decade(args: argparse.Namespace) -> None:
+    """CLV 十年仪表盘（票 20：结构校验+早锁价值+线漂移，观察性不回写）。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        payload = clvd.build_clv_decade_report(
+            conn, duck_con, store, run_id=args.run_id
+        )
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "clv-decade-report: run={}（{} 腿/had 独立选样 {}）→ reports/{}.json/.md",
+        payload["run_id"],
+        payload["n_legs"],
+        payload["n_unique_had_picks"],
+        clvd.REPORT_BASENAME,
     )
 
 
@@ -1074,6 +1093,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="目标 run(缺省=最新 done run;冒烟 run 会顶替同名报告,"
         + "十年报告建议显式指定 run-id)",
     )
+    clv_decade_parser = sub.add_parser(
+        "clv-decade-report",
+        help="CLV 十年仪表盘(票 20:结构校验+早锁价值+线漂移,观察性)",
+    )
+    clv_decade_parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="目标 run(缺省=最新 done run;十年报告建议显式指定)",
+    )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
     elo_query = sub.add_parser(
@@ -1244,6 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
         "haircut-decade": _cmd_haircut_decade,
         "guardrail-report": lambda: _cmd_guardrail_report(args),
         "decade-skill-report": lambda: _cmd_decade_skill(args),
+        "clv-decade-report": lambda: _cmd_clv_decade(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),

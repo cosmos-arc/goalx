@@ -31,6 +31,34 @@ from goalx_backend.markets import SELECTIONS
 ECE_BINS = 10
 MIN_DM_SAMPLES = 3  # DM 检验最少样本
 MIN_TSTAT_SAMPLES = 2  # t 统计量最少样本
+_LATEST_DONE_SQL = (
+    "SELECT id FROM backtest_runs WHERE status = 'done' ORDER BY id DESC LIMIT 1"
+)
+
+
+def load_backtest_run(
+    conn: sqlite3.Connection, run_id: int | None
+) -> tuple[int, str, dict[str, Any], str]:
+    """
+    取目标回测 run 元数据（报告面共享加载器）。
+
+    缺省 run_id=最新 done；显式 id 允许任意状态（running 中途检视由
+    调用方标注，不冒充全量）。返回 (run_id, label, params dict, status)。
+    """
+    if run_id is None:
+        row = conn.execute(_LATEST_DONE_SQL).fetchone()
+        if row is None:
+            raise ValueError("没有可用的 done 回测 run（先跑 backtest）")
+        rid = int(row["id"])
+    else:
+        rid = run_id
+    meta = conn.execute(
+        "SELECT label, params, status FROM backtest_runs WHERE id = ?", (rid,)
+    ).fetchone()
+    if meta is None:
+        raise ValueError(f"run {rid} 不存在")
+    params: dict[str, Any] = json.loads(str(meta["params"])) if meta["params"] else {}
+    return rid, str(meta["label"]), params, str(meta["status"])
 
 
 def rps(probs: Sequence[float], outcome_index: int) -> float:

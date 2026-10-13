@@ -174,3 +174,42 @@ def fetch_close_rows_by_sids(
     result = duck_con.execute(sql, [sids])
     names = [str(d[0]) for d in result.description]
     return {str(r[0]): dict(zip(names, r, strict=True)) for r in result.fetchall()}
+
+
+# 早锁/CLV 面取数列（票 20）：同族早晚价对——era1=PSH（开盘）→PSC（收盘
+# 代理）fdhist 族；era2=q24h/q1h 1x2 锚切片→close1x2 锚（cid177 族）；
+# AH/OU 线漂移仅描述面携带。两条族内自比对，不跨族。
+_CLV_FACE_SQL = """
+    SELECT sid, league, era,
+           psc_home, psc_draw, psc_away,
+           psh_home, psh_draw, psh_away,
+           q1h1x2_h, q1h1x2_d, q1h1x2_a,
+           q24h1x2_h, q24h1x2_d, q24h1x2_a,
+           close1x2_h, close1x2_d, close1x2_a,
+           ah_line_drift, ah_anchor_drift, ou_line_drift
+    FROM match_features
+    WHERE sid IN (SELECT unnest(?))
+"""
+
+
+def fetch_clv_rows_by_sids(
+    duck_con: duckdb.DuckDBPyConnection, sids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """
+    按 sid 取 gold 早锁/CLV 面行（票 20）。
+
+    dict[sid, row]；缺席 sid 不在结果里（调用方按缺口计数）。视图缺席
+    抛 RuntimeError（报告面：运维前置缺失 fail-loud，同
+    fetch_market_face_rows）。
+    """
+    if not sids:
+        return {}
+    try:
+        result = duck_con.execute(_CLV_FACE_SQL, [sids])
+        names = [str(d[0]) for d in result.description]
+        rows = result.fetchall()
+    except (duckdb.CatalogException, duckdb.IOException) as exc:
+        raise RuntimeError(
+            "match_features 视图不可用（先跑 gold-build + 建桥）"
+        ) from exc
+    return {str(r[0]): dict(zip(names, r, strict=True)) for r in rows}
