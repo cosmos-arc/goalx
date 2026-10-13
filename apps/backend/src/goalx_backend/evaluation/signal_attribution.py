@@ -34,7 +34,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from statistics import fmean, stdev
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 
@@ -220,23 +220,27 @@ def _collect_samples(
         if gold_row is None:
             skipped["no_gold"] += 1
             continue
-        fair_raw = json.loads(str(row["fair_probs"]))
-        model_raw = json.loads(str(row["had_probs"]))
-        if (
-            not isinstance(fair_raw, dict)
-            or not isinstance(model_raw, dict)
-            or not all(
-                isinstance(fair_raw.get(c), int | float)
-                and isinstance(model_raw.get(c), int | float)
-                for c in _SIDES
-            )
-        ):
+        fair = _probs_dict(json.loads(str(row["fair_probs"])))
+        model = _probs_dict(json.loads(str(row["had_probs"])))
+        if fair is None or model is None:
             skipped["no_fair"] += 1
             continue
-        fair: dict[str, Any] = fair_raw
-        model: dict[str, Any] = model_raw
         samples.append(_signal_of(row, gold_row, fair, model))
     return samples, skipped
+
+
+def _probs_dict(raw: object) -> dict[str, float] | None:
+    """JSON → 三向概率 dict（非对象/缺数值成员 → None，correctness F2）。"""
+    if not isinstance(raw, dict):
+        return None
+    mapping = cast("dict[str, Any]", raw)
+    probs: dict[str, float] = {}
+    for side in _SIDES:
+        value = mapping.get(side)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        probs[side] = float(value)
+    return probs
 
 
 def _signal_of(
