@@ -44,9 +44,17 @@ ODDS_SANITY = 1.0  # devig 前提：三向赔率均 >1
 # 结构性恒等式容差（腿价由浮点构造，非逐位比较）
 STRUCT_TOL = 0.005
 
-# 1x2 族列后缀：era2 切片/锚用字母，fdhist 族用全名
-_LETTER = {"h": "h", "d": "d", "a": "a"}
-_FULL = {"h": "home", "d": "draw", "a": "away"}
+# 早参考单一定义：(ref 名, 早族, 收盘族)；族内自比对（q24h/q1h 切片对
+# close1x2 锚=cid177 族；psh 对 psc=fdhist 族）
+_REFERENCES: tuple[tuple[str, str, str], ...] = (
+    ("q24h", "q24h1x2", "close1x2"),
+    ("q1h", "q1h1x2", "close1x2"),
+    ("psh_open", "psh", "psc"),
+)
+# 锚族列后缀用字母（close1x2_h），fdhist 族用全名（psc_home）
+_ANCHOR_FAMILIES = frozenset({"q24h1x2", "q1h1x2", "close1x2"})
+_LETTER_SUFFIXES = ("h", "d", "a")
+_FULL_SUFFIXES = ("home", "draw", "away")
 
 
 @dataclass
@@ -119,9 +127,9 @@ def _prop_devig(odds: tuple[float, float, float]) -> tuple[float, float, float] 
 
 def _probs_of(row: dict[str, Any], family: str) -> tuple[float, float, float] | None:
     """一个 1x2 族的 devig 概率（族内任一列缺失 → 整族不可用）。"""
-    suffixes = _LETTER if family in ("q24h1x2", "q1h1x2", "close1x2") else _FULL
+    suffixes = _LETTER_SUFFIXES if family in _ANCHOR_FAMILIES else _FULL_SUFFIXES
     odds: list[float] = []
-    for sfx in suffixes.values():
+    for sfx in suffixes:
         value = row.get(f"{family}_{sfx}")
         if value is None:
             return None
@@ -135,22 +143,16 @@ def _early_pairs(
     """
     每场可用的 (sid, 早参考, selection) → (p_early, p_close) 同族对。
 
-    早参考族内自比对：q24h/q1h 切片对 close1x2 锚（cid177 族）；
-    psh_open 对 psc（fdhist 族）。同一切片族多个可用时各成对（面按
-    参考分列，不合并口径）。
+    同一切片族多个可用时各成对（面按参考分列，不合并口径）。
     """
     pairs: dict[tuple[str, str, str], tuple[float, float]] = {}
     for sid, row in gold.items():
-        for ref, early_family, close_family in (
-            ("q24h", "q24h1x2", "close1x2"),
-            ("q1h", "q1h1x2", "close1x2"),
-            ("psh_open", "psh", "psc"),
-        ):
+        for ref, early_family, close_family in _REFERENCES:
             early = _probs_of(row, early_family)
             close = _probs_of(row, close_family)
             if early is None or close is None:
                 continue
-            for sel, p_e, p_c in zip(("h", "d", "a"), early, close, strict=True):
+            for sel, p_e, p_c in zip(_LETTER_SUFFIXES, early, close, strict=True):
                 pairs[(sid, ref, sel)] = (p_e, p_c)
     return pairs
 
@@ -192,16 +194,29 @@ def _early_lock_face(
     legs: list[dict[str, Any]],
     gold: dict[str, dict[str, Any]],
     pairs: dict[tuple[str, str, str], tuple[float, float]],
-) -> tuple[dict[tuple[str, str], _EarlyFace], dict[str, dict[str, int]], int]:
-    """早锁价值面（had 腿，同 (sid,sel) 去重）+ 覆盖计数；返回 (面, 覆盖, 选样数)。"""
+) -> tuple[
+    dict[tuple[str, str], _EarlyFace],
+    dict[str, dict[str, int]],
+    dict[str, _EarlyFace],
+    int,
+]:
+    """
+    早锁价值面（had 腿，同 (sid,sel) 去重）+ 覆盖计数 + 联赛分层。
+
+    返回 (era 面, 覆盖, 联赛面, 选样数)；联赛面键 ref:era:league（JSON 详
+    细层，MD 只渲染 era 层）。
+    """
     early: dict[tuple[str, str], _EarlyFace] = defaultdict(_EarlyFace)
+    by_league: dict[str, _EarlyFace] = defaultdict(_EarlyFace)
     coverage: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     seen_pick: set[tuple[str, str]] = set()
     for leg in legs:
         sid = str(leg["match_key"])
         market = str(leg["market_code"])
         sel = str(leg["selection_code"])
-        era = str(gold[sid]["era"]) if sid in gold else "no_gold"
+        row = gold.get(sid)
+        era = str(row["era"]) if row is not None else "no_gold"
+        league = str(row["league"]) if row is not None else "no_gold"
         coverage[f"{market}:{era}"]["legs"] += 1
         if market != "had":
             coverage[f"{market}:{era}"]["early_n_a"] += 1  # 无同族早价可比
@@ -209,14 +224,15 @@ def _early_lock_face(
         if (sid, sel) in seen_pick:
             continue
         seen_pick.add((sid, sel))
-        for ref in ("q24h", "q1h", "psh_open"):
+        for ref, _, _ in _REFERENCES:
             pair = pairs.get((sid, ref, sel))
             if pair is None:
                 continue
             p_early, p_close = pair
             early[(ref, era)].add(p_close - p_early)
+            by_league[f"{ref}:{era}:{league}"].add(p_close - p_early)
             coverage[f"{market}:{era}"][f"ref:{ref}"] += 1
-    return early, coverage, len(seen_pick)
+    return early, coverage, by_league, len(seen_pick)
 
 
 def _drift_face(
@@ -265,7 +281,9 @@ def build_clv_decade_report(
     picked_sids = {str(leg["match_key"]) for leg in legs}
 
     struct = _structural_face(legs, fair_of, haircut)
-    early, coverage, n_picks = _early_lock_face(legs, gold, _early_pairs(gold))
+    early, coverage, early_league, n_picks = _early_lock_face(
+        legs, gold, _early_pairs(gold)
+    )
 
     payload = {
         "built_at": (today or date.today()).isoformat(),
@@ -282,11 +300,18 @@ def build_clv_decade_report(
         "early_lock": {
             f"{ref}:{era}": face.as_dict() for (ref, era), face in sorted(early.items())
         },
+        "early_lock_by_league": {
+            key: face.as_dict() for key, face in sorted(early_league.items())
+        },
         "coverage": {key: dict(c) for key, c in sorted(coverage.items())},
         "drift": _drift_face(gold, picked_sids, set(fair_of)),
         "note": (
             "hhad/ttg 选择=联合矩阵派生，无同族早价可比（early 面覆盖缺口）；"
-            + "era1 PSC 为收盘代理（PSC≠轨迹末价）；观察性报告不回写引擎参数"
+            + "AH 锚为两向带 push 语义市场，与 hhad 三向选择不同构，早晚锚差"
+            + "只入线漂移描述面不冒充选择级 CLV；era1 PSC 为收盘代理"
+            + "（PSC≠轨迹末价）；早锁 clv=两端同法 devig 后的概率位移"
+            + "（clv.py 口径的归一化变体，beat=clv>0 同向）；"
+            + "观察性报告不回写引擎参数"
         ),
     }
     reports = store.root / "reports"
@@ -336,6 +361,16 @@ def _render_md(payload: dict[str, Any]) -> str:
                 face.get("implied_out_of_band", "—"),
             )
         )
+    outside_total = sum(
+        int(face.get("identity_outside", 0)) for face in payload["structural"].values()
+    )
+    if outside_total:
+        # 票面"逐类解释"：护栏只拦不剪（带外候选整条丢弃、价不改写），
+        # 落库腿的恒等式偏离只可能是价链 bug——不是护栏剪切类。
+        lines.append(
+            f"\n恒等式偏离 {outside_total} 腿：护栏不剪价（带外候选整条丢弃），"
+            + "偏离即价链 bug，须逐腿排查（对照票 18 触发计数）"
+        )
     lines += [
         "",
         "## 早锁价值（had 选样：同族早晚价对；beat=市场向选中侧前移）",
@@ -382,6 +417,7 @@ def _render_md(payload: dict[str, Any]) -> str:
     lines += [
         "",
         "- 判读注意：" + payload["note"],
-        "- 完整覆盖计数（玩法×era×参考）见 clv-decade.json。",
+        "- 完整覆盖计数（玩法×era×参考）与联赛分层早锁面"
+        + "（early_lock_by_league）见 clv-decade.json。",
     ]
     return "\n".join(lines) + "\n"

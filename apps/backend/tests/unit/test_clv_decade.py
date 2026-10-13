@@ -145,6 +145,9 @@ def test_early_lock_beat_math_q24h(gold_env):
     assert face_row["n"] == 1
     assert face_row["beat_rate"] == 1.0
     assert face_row["clv_median"] == pytest.approx(expected_clv, abs=1e-6)
+    # 联赛分层面（gold league 列）与 era 面同值
+    league_row = payload["early_lock_by_league"]["q24h:trajectory:英超"]
+    assert league_row["clv_median"] == pytest.approx(expected_clv, abs=1e-6)
 
 
 def test_early_lock_psh_pair_era1_and_family_split(gold_env):
