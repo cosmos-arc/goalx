@@ -79,6 +79,7 @@ from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation import decade_skill as dsk
 from goalx_backend.evaluation import guardrail_report as gr
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
@@ -349,6 +350,26 @@ def _cmd_guardrail_report(args: argparse.Namespace) -> None:
         "guardrail-report: {} 场 → reports/{}.json/.md（参数变更=用户点头）",
         payload["n_matches_with_fair"],
         gr.REPORT_BASENAME,
+    )
+
+
+def _cmd_decade_skill(args: argparse.Namespace) -> None:
+    """十年分时代技能报告（票 19：era×联赛×玩法，预测面+下注面+EV 实现率）。"""
+    store = CorpusStore(get_settings().corpus_root)
+    try:
+        with task_conn() as conn:
+            payload = dsk.build_decade_skill_report(conn, store, run_id=args.run_id)
+    finally:
+        store.close()
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "decade-skill-report: run={}（{} 预测/{} 注）→ reports/{}.json/.md",
+        payload["run_id"],
+        payload["n_predictions"],
+        payload["n_bets"],
+        dsk.REPORT_BASENAME,
     )
 
 
@@ -1042,6 +1063,17 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "unlock-report",
         help="hhad/ttg 解锁判定报告(票 15:真实线 vs 反推,分era×联赛,不改动引擎)",
     )
+    decade_skill_parser = sub.add_parser(
+        "decade-skill-report",
+        help="十年分时代技能报告(票 19:era×联赛×玩法,预测面+下注面)",
+    )
+    decade_skill_parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="目标 run(缺省=最新 done run;冒烟 run 会顶替同名报告,"
+        + "十年报告建议显式指定 run-id)",
+    )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
     elo_query = sub.add_parser(
@@ -1211,6 +1243,7 @@ def main(argv: list[str] | None = None) -> int:
         "market-lambda-report": _cmd_market_lambda_report,
         "haircut-decade": _cmd_haircut_decade,
         "guardrail-report": lambda: _cmd_guardrail_report(args),
+        "decade-skill-report": lambda: _cmd_decade_skill(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
