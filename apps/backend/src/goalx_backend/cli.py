@@ -85,6 +85,7 @@ from goalx_backend.evaluation import guardrail_report as gr
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
+from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
@@ -389,6 +390,23 @@ def _cmd_clv_decade(args: argparse.Namespace) -> None:
         payload["n_legs"],
         payload["n_unique_had_picks"],
         clvd.REPORT_BASENAME,
+    )
+
+
+def _cmd_signal_attribution(args: argparse.Namespace) -> None:
+    """信号级归因（票 21：残差×收盘族特征分桶，观察性探索报告）。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        payload = sig.build_signal_attribution_report(
+            conn, duck_con, store, run_id=args.run_id
+        )
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "signal-attribution-report: run={}（{} 样本）→ reports/{}.json/.md",
+        payload["run_id"],
+        payload["n_samples"],
+        sig.REPORT_BASENAME,
     )
 
 
@@ -1103,6 +1121,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=None,
         help="目标 run(缺省=最新 done run;十年报告建议显式指定)",
     )
+    signal_parser = sub.add_parser(
+        "signal-attribution-report",
+        help="信号级归因(票 21:残差×收盘族特征分桶,观察性探索)",
+    )
+    signal_parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="目标 run(缺省=最新 done run;十年报告建议显式指定)",
+    )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
     elo_query = sub.add_parser(
@@ -1274,6 +1302,7 @@ def main(argv: list[str] | None = None) -> int:
         "guardrail-report": lambda: _cmd_guardrail_report(args),
         "decade-skill-report": lambda: _cmd_decade_skill(args),
         "clv-decade-report": lambda: _cmd_clv_decade(args),
+        "signal-attribution-report": lambda: _cmd_signal_attribution(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
