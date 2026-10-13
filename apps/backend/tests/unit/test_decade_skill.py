@@ -205,10 +205,10 @@ def test_bet_faces_market_dedup_and_hit_rate(db, store):
 
 
 def test_mixed_era_parlay_goes_to_mixed_face(db, store):
-    """跨时代串关：era 归 mixed（只计数），不进单时代面。"""
+    """跨时代/跨赛季串关：era、season 各归 mixed（只计数）。"""
     run_id = _seed_run(db, "t19")
-    _seed_pred(db, run_id, "s1", era="psc_proxy")
-    _seed_pred(db, run_id, "s2", era="trajectory")
+    _seed_pred(db, run_id, "s1", era="psc_proxy", season="2023-24")
+    _seed_pred(db, run_id, "s2", era="trajectory", season="2024-25")
     _seed_bet(
         db,
         run_id,
@@ -217,8 +217,74 @@ def test_mixed_era_parlay_goes_to_mixed_face(db, store):
     )
     payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
     assert payload["betting_faces"]["era:mixed"]["n"] == 1
+    assert payload["betting_faces"]["season:mixed"]["n"] == 1
     assert "era:psc_proxy" not in payload["betting_faces"]
     assert "era:trajectory" not in payload["betting_faces"]
+
+
+def test_league_season_bet_faces_and_ev_market_faces(db, store):
+    """联赛轴（注行 competition）/赛季轴（腿→预测行 season）下注面 +
+    EV 实现率按玩法与 overall 分层。"""
+    run_id = _seed_run(db, "t19")
+    _seed_pred(db, run_id, "s1", era="psc_proxy", competition="E0")
+    _seed_pred(
+        db,
+        run_id,
+        "s2",
+        era="psc_proxy",
+        competition="E0",
+        season="2024-25",
+    )
+    _seed_bet(  # E0/2023-24
+        db,
+        run_id,
+        legs=[_leg("s1")],
+        hit_flags=[{"hit": True, "void": False}],
+    )
+    _seed_bet(  # E0/2024-25
+        db,
+        run_id,
+        legs=[_leg("s2", market="ttg")],
+        hit_flags=[{"hit": False, "void": False}],
+        status="lost",
+        profit=-100.0,
+    )
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    faces = payload["betting_faces"]
+    assert faces["era:psc_proxy:lg:E0"]["n"] == 2
+    assert faces["season:2023-24"]["n"] == 1
+    assert faces["season:2024-25"]["n"] == 1
+    ev = payload["ev_realization"]
+    assert set(ev) == {"overall", "psc_proxy", "mkt:had", "mkt:ttg"}
+    assert ev["overall"]["n"] == 2
+
+
+def test_unknown_era_bet_goes_to_unknown_bucket(db, store):
+    """腿的预测行缺 era（旧形态）：归 unknown，不混入 mixed。"""
+    run_id = _seed_run(db, "t19")
+    _seed_pred(db, run_id, "s1", era=None)
+    _seed_bet(
+        db,
+        run_id,
+        legs=[_leg("s1")],
+        hit_flags=[{"hit": True, "void": False}],
+    )
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    assert payload["betting_faces"]["era:unknown"]["n"] == 1
+    assert "era:mixed" not in payload["betting_faces"]
+
+
+def test_era_season_cross_prediction_face(db, store):
+    """era:season 交叉面落位（2023-24 跨两时代的断层面）。"""
+    run_id = _seed_run(db, "t19")
+    _seed_pred(db, run_id, "s1", era="psc_proxy", season="2023-24")
+    _seed_pred(db, run_id, "s2", era="trajectory", season="2023-24")
+    _seed_pred(db, run_id, "s3", era="trajectory", season="2024-25")
+    payload = dsk.build_decade_skill_report(db, store, run_id=run_id)
+    faces = payload["prediction_faces"]
+    assert faces["era:psc_proxy:season:2023-24"]["n"] == 1
+    assert faces["era:trajectory:season:2023-24"]["n"] == 1
+    assert faces["era:trajectory:season:2024-25"]["n"] == 1
 
 
 def test_leg_face_brier_skill_and_calibration(db, store):

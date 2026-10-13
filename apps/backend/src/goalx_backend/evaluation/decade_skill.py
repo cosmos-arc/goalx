@@ -6,13 +6,15 @@ vs trajectory 2023/24+）×联赛×赛季×玩法四轴，预测面与下注面�
 
 - **预测面**（分母=run 预测集，非下注集）：RPS skill vs 同链公平基准
   （evaluate_predictions 复用，DM p 为探索性参考）；
-- **下注面**（同 run 的 bets）：等权/加权 ROI 分列（票 34 口径）、命中
-  率、投入与盈利、t 统计量；玩法归属沿 compute_run_metrics 口径
-  （串关进其每条腿的玩法，同玩法只计一次）；
-- **腿级概率面**（下注子集）：p_model vs 隐含 p_mkt=(1−haircut)/odds 的
-  Brier skill——had 之外玩法唯一的概率面对照，口径标"下注集"
-  （选择有偏，不能外推全集）；
-- **EV 实现率**：Σ利润 / Σ(ev×stake)，账面 EV 是否兑现；
+- **下注面**（同 run 的 bets）：等权/加权 ROI 分列（票 34 口径，统计经
+  metrics.flat_stake_stats 单一定义）、命中率、投入与盈利、t 统计量；
+  玩法归属沿 compute_run_metrics 口径（串关进其每条腿的玩法，同玩法只
+  计一次）；联赛轴用注行的 competition，赛季轴经腿→预测行 season 映射；
+- **腿级概率面**（下注子集）：p_model vs 隐含 p=(1−haircut)/odds 的
+  Brier skill。价由 (1/p_mkt)×(1−haircut) 构造 ⇒ 隐含概率代数还原即
+  引擎市场侧概率（had=公平链、hhad/ttg=联合矩阵，票面不变量"市场基准
+  =引擎市场侧同源"由此满足）；口径标"下注集"（选择有偏，不外推全集）；
+- **EV 实现率**：Σ利润 / Σ(ev×stake)，账面 EV 是否兑现（era/玩法/overall）；
 - **era 对照**：两时代预测 skill 与下注 ROI 的差 + 样本量（粗判）。
 
 纯 sqlite 读面（v25 预测行自带 era/ftr，不回查 gold）；报告落语料树
@@ -22,23 +24,21 @@ reports/ MD+JSON（与判门同惯例）。
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
-from statistics import fmean, stdev
 from typing import Any
 
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_PSC_PROXY, ERA_TRAJECTORY
-from goalx_backend.evaluation.metrics import evaluate_predictions
+from goalx_backend.evaluation.metrics import evaluate_predictions, flat_stake_stats
 
 REPORT_BASENAME = "decade-skill"
 ERA_ORDER = (ERA_PSC_PROXY, ERA_TRAJECTORY)
 MIN_FACE_SAMPLES = 30  # 分层面低于此 n 只计数不下结论（探索纪律）
-MIN_TSTAT_SAMPLES = 2  # t 统计量最少样本（与 metrics 口径一致）
+MIN_SEASON_TREND = 2  # 赛季走向句最少季数
 _LATEST_DONE_SQL = (
     "SELECT id FROM backtest_runs WHERE status = 'done' ORDER BY id DESC LIMIT 1"
 )
@@ -46,7 +46,7 @@ _LATEST_DONE_SQL = (
 
 @dataclass
 class _BetFace:
-    """一个分层的下注面累计（等权收益率序列供 t 统计量）。"""
+    """一个分层的下注面累计（收益统计经 flat_stake_stats 单一定义）。"""
 
     n: int = 0
     won: int = 0
@@ -54,7 +54,7 @@ class _BetFace:
     void: int = 0
     staked: float = 0.0
     profit: float = 0.0
-    returns: list[float] = field(default_factory=list)
+    pairs: list[tuple[float, float]] = field(default_factory=list)  # (profit, stake)
 
     def add(self, stake: float, profit: float, status: str) -> None:
         self.n += 1
@@ -66,16 +66,11 @@ class _BetFace:
             self.void += 1
         self.staked += stake
         self.profit += profit
-        if stake > 0:
-            self.returns.append(profit / stake)
+        self.pairs.append((profit, stake))
 
     def as_dict(self) -> dict[str, Any]:
         """下注面行：等权 roi / 加权 ROI 分列（票 34：不得混称）。"""
-        if len(self.returns) >= MIN_TSTAT_SAMPLES:
-            std = stdev(self.returns)
-            t_stat = fmean(self.returns) / (std / math.sqrt(len(self.returns)))
-        else:
-            t_stat = 0.0
+        stats = flat_stake_stats([p for p, _ in self.pairs], [s for _, s in self.pairs])
         return {
             "n": self.n,
             "won": self.won,
@@ -86,11 +81,9 @@ class _BetFace:
             else None,
             "staked": round(self.staked, 2),
             "profit": round(self.profit, 2),
-            "roi_equal": round(fmean(self.returns), 4) if self.returns else None,
-            "roi_stake_weighted": round(self.profit / self.staked, 4)
-            if self.staked
-            else None,
-            "t_stat": round(t_stat, 3),
+            "roi_equal": round(stats["roi"], 4),
+            "roi_stake_weighted": round(stats["roi_stake_weighted"], 4),
+            "t_stat": round(stats["t_stat"], 3),
         }
 
 
@@ -158,10 +151,17 @@ def _load_run(
     return rid, str(meta["label"]), params
 
 
+def _single_or_bucket(values: set[str]) -> str:
+    """腿集映射到单值；空=unknown（预测行缺 era/season），多值=mixed。"""
+    if len(values) == 1:
+        return next(iter(values))
+    return "mixed" if values else "unknown"
+
+
 def _prediction_faces(
     rows: list[sqlite3.Row],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, int]], int]:
-    """预测面分层（overall / era / era:联赛 / 赛季）+ era×fair_source 混布。"""
+    """预测面分层（overall / era / era:联赛 / era:赛季 / 赛季）+ 混布。"""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     source_mix: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     era_missing = 0
@@ -181,9 +181,11 @@ def _prediction_faces(
         if era is None:
             era_missing += 1
             continue
-        source_mix[str(era)][str(row["fair_source"])] += 1
+        era = str(era)
+        source_mix[era][str(row["fair_source"])] += 1
         groups[f"era:{era}"].append(sample)
         groups[f"era:{era}:lg:{sample['competition']}"].append(sample)
+        groups[f"era:{era}:season:{sample['season']}"].append(sample)
     faces = {scope: evaluate_predictions(group) for scope, group in groups.items()}
     return (
         faces,
@@ -195,9 +197,10 @@ def _prediction_faces(
 def _bet_faces(
     bet_rows: list[sqlite3.Row],
     era_of: Callable[[str], str | None],
+    season_of: Callable[[str], str | None],
     haircut: float,
 ) -> tuple[dict[str, _BetFace], dict[str, _LegFace], dict[str, dict[str, Any]]]:
-    """下注面（era / era:玩法）+ 腿级概率面（玩法）+ EV 实现率（era）。"""
+    """下注面（era / era:联赛 / era:玩法 / 赛季）+ 腿面 + EV 实现率。"""
     bets: dict[str, _BetFace] = defaultdict(_BetFace)
     legs: dict[str, _LegFace] = defaultdict(_LegFace)
     ev_pairs: dict[str, list[tuple[float, float]]] = defaultdict(list)
@@ -211,17 +214,20 @@ def _bet_faces(
         stake = float(bet["stake"])
         profit = float(bet["profit"])
         status = str(bet["status"])
-        eras = {
-            era
-            for leg in leg_rows
-            if (era := era_of(str(leg["match_key"]))) is not None
-        }
-        era = next(iter(eras)) if len(eras) == 1 else "mixed"
+        keys = [str(leg["match_key"]) for leg in leg_rows]
+        era = _single_or_bucket({e for e in map(era_of, keys) if e is not None})
+        season = _single_or_bucket({s for s in map(season_of, keys) if s is not None})
+        competition = str(bet["competition"])
         markets = {str(leg["market_code"]) for leg in leg_rows}
         bets[f"era:{era}"].add(stake, profit, status)
-        ev_pairs[era].append((float(bet["ev"]) * stake, profit))
+        bets[f"era:{era}:lg:{competition}"].add(stake, profit, status)
+        bets[f"season:{season}"].add(stake, profit, status)
+        expected = float(bet["ev"]) * stake
+        ev_pairs[era].append((expected, profit))
+        ev_pairs["overall"].append((expected, profit))
         for market in markets:  # 同玩法串关只计一次（compute_run_metrics 口径）
             bets[f"era:{era}:mkt:{market}"].add(stake, profit, status)
+            ev_pairs[f"mkt:{market}"].append((expected, profit))
         for leg, hit_info in zip(leg_rows, leg_hits, strict=True):
             legs[str(leg["market_code"])].add(
                 float(leg["model_prob"]),
@@ -230,7 +236,7 @@ def _bet_faces(
                 bool(hit_info["void"]),
             )
 
-    ev = {era: _ev_stats(pairs) for era, pairs in sorted(ev_pairs.items())}
+    ev = {key: _ev_stats(pairs) for key, pairs in sorted(ev_pairs.items())}
     return dict(bets), dict(legs), ev
 
 
@@ -267,8 +273,8 @@ def _era_contrast(
     return contrast
 
 
-def _verdict_lines(payload: dict[str, Any]) -> list[str]:
-    """每轴结论句（阈值机械生成，n 不足只报数不下结论）。"""
+def _axis_verdicts(payload: dict[str, Any]) -> list[str]:
+    """结论句（阈值机械生成，n 不足只报数不下结论）。"""
     lines: list[str] = []
     for era in ERA_ORDER:
         face = payload["prediction_faces"].get(f"era:{era}")
@@ -285,6 +291,40 @@ def _verdict_lines(payload: dict[str, Any]) -> list[str]:
         lines.append(
             f"- {era}: 预测 n={n} skill_rps={skill:+.4f}"
             + f"（DM p={face['dm_p']:.3f}，探索性）→ 模型{verdict}"
+        )
+    # 联赛轴：每 era 预测面 n 最大的前三联赛（完整面在 JSON）
+    for era in ERA_ORDER:
+        lg_faces = sorted(
+            (
+                (scope, face)
+                for scope, face in payload["prediction_faces"].items()
+                if scope.startswith(f"era:{era}:lg:")
+                and face.get("n", 0) >= MIN_FACE_SAMPLES
+            ),
+            key=lambda kv: -kv[1]["n"],
+        )[:3]
+        for scope, face in lg_faces:
+            skill = face["skill_rps"]
+            league = scope.rsplit(":", 1)[-1]
+            lines.append(
+                f"- {era}:{league}: n={face['n']} skill_rps={skill:+.4f}"
+                + ("（优于基准）" if skill >= 0 else "（劣于基准）")
+            )
+    # 赛季轴：首末赛季 skill 走向
+    seasons = sorted(
+        (scope, face)
+        for scope, face in payload["prediction_faces"].items()
+        if scope.startswith("season:") and face.get("n", 0) >= MIN_FACE_SAMPLES
+    )
+    if len(seasons) >= MIN_SEASON_TREND:
+        first, last = seasons[0], seasons[-1]
+        lines.append(
+            "- 赛季走向: {} skill={:+.4f} → {} skill={:+.4f}".format(
+                first[0].removeprefix("season:"),
+                first[1]["skill_rps"],
+                last[0].removeprefix("season:"),
+                last[1]["skill_rps"],
+            )
         )
     for era in ERA_ORDER:
         face = payload["betting_faces"].get(f"era:{era}")
@@ -335,9 +375,12 @@ def build_decade_skill_report(
         for row in pred_rows
         if row["era"] is not None
     }
+    season_of = {str(row["match_key"]): str(row["season"]) for row in pred_rows}
 
     pred_faces, source_mix, era_missing = _prediction_faces(pred_rows)
-    bet_faces, leg_faces, ev_faces = _bet_faces(bet_rows, era_of.get, haircut)
+    bet_faces, leg_faces, ev_faces = _bet_faces(
+        bet_rows, era_of.get, season_of.get, haircut
+    )
 
     payload = {
         "built_at": (today or date.today()).isoformat(),
@@ -373,18 +416,19 @@ def build_decade_skill_report(
 
 def _render_md(payload: dict[str, Any]) -> str:
     """人读视图：结论句先行，分层表随后（完整面在 JSON）。"""
+    end = payload["window"]["end"] or "数据尾"
     lines = [
         "# 十年分时代技能报告（票 19）",
         "",
         f"run={payload['run_id']}（{payload['label']}）"
-        + f" 窗口 {payload['window']['start']}→{payload['window']['end']}"
+        + f" 窗口 {payload['window']['start']}→{end}"
         + f" haircut={payload['haircut']}",
         f"预测 {payload['n_predictions']} 场 / 下注 {payload['n_bets']} 注，玩法 "
         + ",".join(payload["markets"]),
         "",
         "## 结论",
         "",
-        *_verdict_lines(payload),
+        *_axis_verdicts(payload),
         "",
         "## era 对照",
         "",
@@ -403,9 +447,12 @@ def _render_md(payload: dict[str, Any]) -> str:
                 f"{roi:+.2%}" if roi is not None else "—",
             )
         )
+    gap = payload["era_contrast"].get("skill_gap")
+    if gap is not None:
+        lines.append(f"\n两时代 skill 差（trajectory−psc_proxy）= {gap:+.4f}")
     lines += [
         "",
-        "## 下注面（era×玩法）",
+        "## 下注面（era / era×联赛 / era×玩法 / 赛季）",
         "",
         "| scope | n | won/lost/void | hit | staked | profit | ROI | t |",
         "|---|---|---|---|---|---|---|---|",
@@ -428,7 +475,7 @@ def _render_md(payload: dict[str, Any]) -> str:
         )
     lines += [
         "",
-        "完整分层（era:联赛 / 赛季 / 腿级概率面 / EV 实现率 / fair_source 混布）"
-        + "见 decade-skill.json。",
+        "完整分层（era:联赛:赛季交叉 / 腿级概率面 / EV 实现率 / fair_source "
+        + "混布）见 decade-skill.json。",
     ]
     return "\n".join(lines) + "\n"

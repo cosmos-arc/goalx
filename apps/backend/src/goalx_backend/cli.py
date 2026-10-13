@@ -1071,7 +1071,8 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--run-id",
         type=int,
         default=None,
-        help="目标 run(缺省=最新 done run)",
+        help="目标 run(缺省=最新 done run;冒烟 run 会顶替同名报告,"
+        + "十年报告建议显式指定 run-id)",
     )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
