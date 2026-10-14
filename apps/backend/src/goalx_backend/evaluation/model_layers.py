@@ -189,10 +189,13 @@ def _verdicts(
         )
         alpha = payload.get("fusion_alpha")
         if alpha and alpha.get("n_weeks"):
+            quantiles = alpha.get("alpha_quantiles") or {}
             lines.append(
-                f"  - 融合 α：均值 {alpha.get('alpha_mean')} / 中位 "
-                + f"{alpha.get('alpha_median')}，存活率（α≥0.05）"
-                + f"{alpha.get('survival_rate')}，分时代 {alpha.get('per_era')}"
+                f"  - 融合 α：均值 {alpha.get('alpha_mean')}"
+                + f" / p50 {quantiles.get('p50', alpha.get('alpha_median'))}"
+                + f" / p95 {quantiles.get('p95')}"
+                + f"，存活率（α≥0.05）{alpha.get('survival_rate')}"
+                + f"，分时代 {alpha.get('per_era')}"
             )
     return lines
 
