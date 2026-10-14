@@ -176,10 +176,14 @@ class IsotonicCalibrator:
         )
 
 
+# 校准词表单一定义（引擎 VALID_CALIBRATION 与 CLI choices 皆从此取）
+CALIBRATION_KINDS = ("off", "temperature", "isotonic")
+
+
 def make_calibrator(kind: str) -> Calibrator:
-    """工厂：off/temperature/isotonic（未知值 fail-loud）。"""
+    """工厂：temperature/isotonic（off 由调用方短路；未知值 fail-loud）。"""
     if kind == "temperature":
         return TemperatureCalibrator()
     if kind == "isotonic":
         return IsotonicCalibrator()
-    raise ValueError(f"未知校准 {kind!r}（合法: off/temperature/isotonic）")
+    raise ValueError(f"未知校准 {kind!r}（合法: {list(CALIBRATION_KINDS)}）")

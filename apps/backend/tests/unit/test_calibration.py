@@ -244,6 +244,24 @@ def test_engine_calibration_invalid_fails_loud(gold_env):
 # ---- 对照报告 ----
 
 
+def test_calibration_state_freeze_semantics():
+    """PIT 冻结：fit_for_week 返回的校准器不受后续 record 影响。"""
+    from goalx_backend.evaluation import backtest as bt
+
+    state = bt._CalibrationState(IsotonicCalibrator())
+    for i in range(40):
+        state.record(
+            {"h": 0.4 + (i % 3) * 0.05, "d": 0.3, "a": 0.3}, "H" if i % 2 else "A"
+        )
+    params = bt.BacktestParams(calibration_min_samples=30)
+    frozen = state.fit_for_week(params)
+    assert frozen is not None
+    probs = {"h": 0.5, "d": 0.3, "a": 0.2}
+    first = frozen.apply(probs)
+    state.record({"h": 0.1, "d": 0.1, "a": 0.8}, "A")  # 赛后新史不回灌
+    assert frozen.apply(probs) == first
+
+
 def test_model_layers_report_pairs_and_verdicts(gold_env, tmp_path):
     """两 run 对照：配对样本 n 一致、三元组/ECE 落位、结论句生成。"""
     from goalx_backend.data.corpus_store import CorpusStore

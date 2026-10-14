@@ -107,11 +107,12 @@ def _bet_face(
     一次。
     """
     rows = conn.execute(
-        "SELECT stake, profit, legs FROM backtest_bets WHERE run_id = ?",
+        "SELECT stake, profit, ev, legs FROM backtest_bets WHERE run_id = ?",
         (run_id,),
     ).fetchall()
     stakes: list[float] = []
     profits: list[float] = []
+    expected = 0.0
     for row in rows:
         if market is not None:
             legs = json.loads(str(row["legs"]))
@@ -119,12 +120,15 @@ def _bet_face(
                 continue
         stakes.append(float(row["stake"]))
         profits.append(float(row["profit"]))
+        expected += float(row["ev"]) * float(row["stake"])
     staked = sum(stakes)
+    profit_sum = sum(profits)
     return {
         "n": len(stakes),
         "staked": round(staked, 2),
-        "profit": round(sum(profits), 2),
-        "roi": round(sum(profits) / staked, 4) if staked else None,
+        "profit": round(profit_sum, 2),
+        "roi": round(profit_sum / staked, 4) if staked else None,
+        "ev_realization": round(profit_sum / expected, 4) if expected > 0 else None,
     }
 
 
@@ -238,8 +242,9 @@ def build_model_layers_report(
         "treatments": treatment_payloads,
         "note": (
             "配对面=两 run match_key 交集（ftr 齐备）；had 注面口径同"
-            + " compute_run_metrics（串关进其每条腿的玩法）；EV 收缩→注量"
-            + "下降是校准/融合的预期行为"
+            + " compute_run_metrics（串关进其每条腿的玩法）；三元组在"
+            + "**全预测集**判读——票 19 的 0.334/0.246/0.236 高估三元组"
+            + "在**下注子集**（选择偏差），两口径不可互比"
         ),
     }
     reports = store.root / "reports"

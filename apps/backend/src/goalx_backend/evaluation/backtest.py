@@ -66,7 +66,11 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_TRAJECTORY, LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS, TTG_SELECTIONS
-from goalx_backend.modelling.calibration import Calibrator, make_calibrator
+from goalx_backend.modelling.calibration import (
+    CALIBRATION_KINDS,
+    Calibrator,
+    make_calibrator,
+)
 from goalx_backend.modelling.dc_model import (
     DCArtifact,
     TrainingRow,
@@ -811,7 +815,8 @@ def _record_week_predictions(
             params,
             match,
             market_matrix=market_matrix,
-            had_probs=had_out if frozen is not None else None,
+            # 未冻结时 had_out 即原始三向，直传语义不变
+            had_probs=had_out,
         )
     return candidates_by_match
 
@@ -859,7 +864,6 @@ def _place_week_bets(
 
 
 VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
-VALID_CALIBRATION = frozenset({"off", "temperature", "isotonic"})
 
 
 def _validate_window(params: BacktestParams) -> None:
@@ -867,9 +871,9 @@ def _validate_window(params: BacktestParams) -> None:
     invalid = set(params.markets) - VALID_MARKETS
     if invalid:
         raise ValueError(f"未知玩法 {sorted(invalid)}（合法: {sorted(VALID_MARKETS)}）")
-    if params.calibration not in VALID_CALIBRATION:
+    if params.calibration not in CALIBRATION_KINDS:
         raise ValueError(
-            f"未知校准 {params.calibration!r}（合法: {sorted(VALID_CALIBRATION)}）"
+            f"未知校准 {params.calibration!r}（合法: {list(CALIBRATION_KINDS)}）"
         )
     for name, value in (("start", params.start), ("end", params.end)):
         if value is None:

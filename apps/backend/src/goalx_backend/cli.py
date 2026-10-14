@@ -91,6 +91,7 @@ from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
 from goalx_backend.modelling import team_align
+from goalx_backend.modelling.calibration import CALIBRATION_KINDS
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.tasks import (
     clubelo_elo_for_team,
@@ -1117,7 +1118,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     backtest.add_argument(
         "--calibration",
-        choices=("off", "temperature", "isotonic"),
+        choices=list(CALIBRATION_KINDS),
         default="off",
         help="校准层(票 01):off=缺省不变;temperature/isotonic=按联赛walk-forward",
     )
