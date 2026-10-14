@@ -74,6 +74,7 @@ from goalx_backend.data.ingest import (
     srct_silver,
     uniform,
 )
+from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
@@ -403,6 +404,27 @@ def _cmd_clv_decade(args: argparse.Namespace) -> None:
         payload["n_legs"],
         payload["n_unique_had_picks"],
         clvd.REPORT_BASENAME,
+    )
+
+
+def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
+    """NewsShock P0 抽取器试点（票 04：卫报→事件 silver，有界范围）。"""
+    settings = get_settings()
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        report = gs.build_news_events(
+            gs.NewsContext(duck_con=duck_con, conn=conn, settings=settings),
+            store,
+            competition=args.competition,
+            seasons=tuple(args.seasons),
+            article_limit=args.limit,
+        )
+    sys.stdout.write(json.dumps(report.as_dict(), ensure_ascii=False, indent=2) + "\n")
+    logger.info(
+        "guardian-news-pilot: {} 场链接 / {} 候选 / {} 事件（{} 次调用）",
+        report.linked_sids,
+        report.candidates,
+        report.events,
+        report.llm_calls,
     )
 
 
@@ -1233,6 +1255,25 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=None,
         help="目标 run(缺省=最新 done run;十年报告建议显式指定)",
     )
+    news_parser = sub.add_parser(
+        "guardian-news-pilot",
+        help="NewsShock P0 抽取器试点(票 04:卫报→事件silver,有界)",
+    )
+    news_parser.add_argument(
+        "--competition", default="E0", help="fd 联赛码(缺省 E0 英超)"
+    )
+    news_parser.add_argument(
+        "--seasons",
+        nargs="*",
+        default=["2023-24", "2024-25"],
+        help="试点赛季(缺省 2023-24+2024-25)",
+    )
+    news_parser.add_argument(
+        "--limit",
+        type=int,
+        default=400,
+        help="LLM 抽取文章上限(成本护栏)",
+    )
     model_layers_parser = sub.add_parser(
         "model-layers-report",
         help="模型层对照(model-iterate 票 01:校准变体 vs 基线)",
@@ -1422,6 +1463,7 @@ def main(argv: list[str] | None = None) -> int:
         "clv-decade-report": lambda: _cmd_clv_decade(args),
         "signal-attribution-report": lambda: _cmd_signal_attribution(args),
         "model-layers-report": lambda: _cmd_model_layers(args),
+        "guardian-news-pilot": lambda: _cmd_guardian_news_pilot(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
