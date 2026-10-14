@@ -175,11 +175,12 @@ def _verdicts(
         bets_treat = payload.get("bets_had", {})
         n_base = bets_base.get("n", 0)
         n_treat = bets_treat.get("n", 0)
-        direction = (
-            "注量上升（校准重排 EV 面，非预期收缩）"
-            if n_treat > n_base
-            else "EV 收缩致注量下降=预期行为"
-        )
+        if n_treat > n_base:
+            direction = "注量上升（校准重排 EV 面，非预期收缩）"
+        elif n_treat < n_base:
+            direction = "EV 收缩致注量下降=预期行为"
+        else:
+            direction = "注量持平"
         lines.append(
             f"  - had 注量 {n_base}→{n_treat}"
             + f"（ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
@@ -196,16 +197,30 @@ def build_model_layers_report(
     today: date | None = None,
 ) -> dict[str, Any]:
     """多 treatment vs 基线的模型层对照 → reports/ 双视图。"""
+    labels = [label for label, _ in treatments]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"--treatment 标签重复：{labels}")
     base_rid, base_label, base_params, base_status = load_backtest_run(
         conn, baseline_run_id
     )
-    base_samples = _samples_of(conn, base_rid)
-    paired_keys = set(base_samples)
+    # 配对面=全部 run 键交集（correctness F3：基线也须过滤到交集，
+    # 覆盖不对称时不得拿全集对照子集）
+    base_all = _samples_of(conn, base_rid)
+    paired_keys = set(base_all)
+    treatment_samples: dict[str, dict[str, dict[str, Any]]] = {}
+    for label, run_id in treatments:
+        rid, _label, params, status = load_backtest_run(conn, run_id)
+        samples = _samples_of(conn, rid)
+        paired_keys &= set(samples)
+        treatment_samples[label] = samples
+    base_samples = {k: v for k, v in base_all.items() if k in paired_keys}
 
     treatment_payloads: dict[str, dict[str, Any]] = {}
     for label, run_id in treatments:
         rid, _label, params, status = load_backtest_run(conn, run_id)
-        treat_samples = _samples_of(conn, rid, keys=paired_keys)
+        treat_samples = {
+            k: v for k, v in treatment_samples[label].items() if k in paired_keys
+        }
         face = _PredFace(list(treat_samples.values())).as_dict()
         treatment_payloads[label] = {
             "run_id": rid,
@@ -238,6 +253,8 @@ def build_model_layers_report(
 
     payload = {
         "built_at": (today or date.today()).isoformat(),
+        "n_baseline_total": len(base_all),
+        "n_paired": len(paired_keys),
         "baseline": baseline_payload,
         "treatments": treatment_payloads,
         "note": (

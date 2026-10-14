@@ -68,6 +68,7 @@ from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS, TTG_SELECTIONS
 from goalx_backend.modelling.calibration import (
     CALIBRATION_KINDS,
+    MIN_FIT_SAMPLES,
     Calibrator,
     make_calibrator,
 )
@@ -754,7 +755,7 @@ def _record_week_predictions(
 
     frozen = cal_state.fit_for_week(params) if cal_state is not None else None
     if cal_state is not None and frozen is None:
-        skip("calibration_cold_matches")
+        skip("calibration_cold_weeks")  # 计数单位=周（同 thin_train_weeks）
 
     candidates_by_match: dict[int, list[_Candidate]] = {}
     for match in week_rows:
@@ -875,6 +876,14 @@ def _validate_window(params: BacktestParams) -> None:
         raise ValueError(
             f"未知校准 {params.calibration!r}（合法: {list(CALIBRATION_KINDS)}）"
         )
+    if params.calibration != "off":
+        # correctness F2：坏参数开跑前 fail-loud，不半路炸掉已计费的 run
+        if params.calibration_min_samples < MIN_FIT_SAMPLES:
+            raise ValueError(
+                f"calibration_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
+            )
+        if params.calibration_window < 0 or params.calibration_window == 1:
+            raise ValueError("calibration_window 须为 0（全历史）或 ≥2")
     for name, value in (("start", params.start), ("end", params.end)):
         if value is None:
             continue

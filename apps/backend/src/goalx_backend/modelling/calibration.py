@@ -168,12 +168,19 @@ class IsotonicCalibrator:
         self._curves = curves
 
     def apply(self, probs: dict[str, float]) -> dict[str, float]:
-        """分侧阶梯映射后重归一（未拟合即用=程序错误）。"""
+        """
+        分侧阶梯映射后重归一（未拟合即用=程序错误）。
+
+        曲线输出退化（三向和≤0，correctness F1 实证：查询点三相邻阶梯
+        全落零块）→ 回退**原始输入三向**（合法分布），不落非概率向量。
+        """
         if self._curves is None:
             raise RuntimeError("IsotonicCalibrator 未拟合即应用")
-        return _renormalize(
-            {side: self._curves[side](probs[side]) for side in SELECTIONS}
-        )
+        mapped = {side: self._curves[side](probs[side]) for side in SELECTIONS}
+        total = sum(mapped.values())
+        if total <= 0.0 or not np.isfinite(total):
+            return dict(probs)
+        return _renormalize(mapped)
 
 
 # 校准词表单一定义（引擎 VALID_CALIBRATION 与 CLI choices 皆从此取）

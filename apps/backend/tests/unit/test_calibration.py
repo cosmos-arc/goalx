@@ -183,7 +183,7 @@ def test_engine_calibration_off_is_default(gold_env):
             "SELECT params FROM backtest_runs WHERE id=?", (result.run_id,)
         ).fetchone()
         assert json.loads(run["params"])["calibration"] == "off"
-        assert "calibration_cold_matches" not in result.skipped
+        assert "calibration_cold_weeks" not in result.skipped
 
 
 def test_engine_isotonic_warms_up_and_changes_probs(gold_env):
@@ -208,7 +208,7 @@ def test_engine_isotonic_warms_up_and_changes_probs(gold_env):
             label="cal-iso",
         )
         assert base.predictions == iso.predictions  # 校准不改预测覆盖
-        assert iso.skipped.get("calibration_cold_matches", 0) > 0  # 冷启动有计数
+        assert iso.skipped.get("calibration_cold_weeks", 0) > 0  # 冷启动有计数
         diff = face.execute(
             """
             SELECT COUNT(*) FROM backtest_predictions p
@@ -260,6 +260,36 @@ def test_calibration_state_freeze_semantics():
     first = frozen.apply(probs)
     state.record({"h": 0.1, "d": 0.1, "a": 0.8}, "A")  # 赛后新史不回灌
     assert frozen.apply(probs) == first
+    state.fit_for_week(params)  # 下周原地重拟合：已算出的输出不变（F7）
+    assert frozen.apply(probs) == first
+
+
+def test_isotonic_degenerate_output_falls_back_to_input():
+    """correctness F1 实证反例：查询点三侧阶梯全零 → 回退原始三向，
+    不落非概率向量。"""
+    samples = []
+    for _ in range(10):
+        samples.append(_sample((0.2, 0.55, 0.25), "D"))
+        samples.append(_sample((0.3, 0.5, 0.2), "H"))
+        samples.append(_sample((0.5, 0.2, 0.3), "H"))
+    calibrator = IsotonicCalibrator()
+    calibrator.fit(samples)
+    out = calibrator.apply({"h": 0.2, "d": 0.5, "a": 0.3})
+    assert sum(out.values()) == pytest.approx(1.0)
+    assert all(v >= 0 and math.isfinite(v) for v in out.values())
+
+
+def test_calibration_param_validation_fails_loud():
+    """correctness F2：min_samples<2 / window 负或 1 → 开跑前拒绝。"""
+    from goalx_backend.evaluation import backtest as bt
+
+    for bad in (
+        {"calibration": "isotonic", "calibration_min_samples": 1},
+        {"calibration": "temperature", "calibration_window": 1},
+        {"calibration": "temperature", "calibration_window": -5},
+    ):
+        with pytest.raises(ValueError):
+            bt._validate_window(bt.BacktestParams(**bad))
 
 
 def test_model_layers_report_pairs_and_verdicts(gold_env, tmp_path):
