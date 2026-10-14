@@ -114,6 +114,7 @@ _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
 DEFAULT_MAX_SIM_ODDS = 50.0
 # 市场隐含概率下限：1X2 → 比分分布的反推在极低概率尾部不可辨识（不同 λ 组合
 # 拟合出同一 1X2，尾部概率却相差数倍），低于该下限的选项不定价不下注。
+ODDS_SANITY = 1.0  # 三向赔率下界（devig 前提；与 clv_decade 同名同值）
 MIN_MARKET_PROB = 0.02
 HHAD_LINE_RANGE = range(-3, 4)  # 竞彩整数让球线搜索范围
 
@@ -538,8 +539,10 @@ def fetch_decade_matches(
 
 
 def _f(value: float | None) -> float | None:
-    """特征列原值透传（None 保持缺失）。"""
-    return None if value is None else float(value)
+    """特征列原值透传（None/非有限=缺失——correctness F1 同款 NaN 守卫）。"""
+    if value is None or not math.isfinite(float(value)):
+        return None
+    return float(value)
 
 
 def _late_move(
@@ -549,11 +552,14 @@ def _late_move(
     """切片→收盘的主队概率位移（比例 devig 两端同法；缺端→None）。"""
     probs = []
     for odds in (early, close):
-        if any(o is None or float(o) <= 1.0 for o in odds):
+        valid = [o for o in odds if o is not None and math.isfinite(float(o))]
+        if len(valid) != len(odds) or any(float(o) <= ODDS_SANITY for o in valid):
+            return None  # 缺端/NaN/≤1：无位移（否定式守卫会放 NaN，F1 类）
+        inv = [1.0 / float(o) for o in valid]
+        total = sum(inv)
+        if not math.isfinite(total) or total <= 0:
             return None
-        valid = [float(o) for o in odds if o is not None]
-        inv = [1.0 / o for o in valid]
-        probs.append(inv[0] / sum(inv))
+        probs.append(inv[0] / total)
     return probs[1] - probs[0]
 
 

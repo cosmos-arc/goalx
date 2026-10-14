@@ -20,6 +20,7 @@ signal-attribution 发现 8 个 |t|≥2 市场错价桶（特征可预测市场�
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple, cast
@@ -54,22 +55,32 @@ FEATURE_NAMES = FeatureTuple._fields
 
 
 def feature_vector(features: Sequence[float | None]) -> np.ndarray:
-    """特征元组 → 向量（缺失→0）。"""
-    return np.array([0.0 if v is None else float(v) for v in features])
+    """特征元组 → 向量（缺失/非有限→0，层内自防御）。"""
+    return np.array(
+        [
+            0.0 if v is None or not math.isfinite(float(v)) else float(v)
+            for v in features
+        ]
+    )
 
 
 def placebo_entries(
     entries: list[tuple[np.ndarray, dict[str, float], str]],
 ) -> list[tuple[np.ndarray, dict[str, float], str]]:
     """
-    确定性大步长置换：特征行与（概率,结局）行按 (i*7+3) % n 重配。
+    确定性大步长置换：特征行与（概率,结局）行按 (i·s) % n 重配。
 
     大步长破坏周内自相关（shift-by-1 会被相邻场关联穿透，安慰剂偏热）；
-    同边际分布、特征↔结局无关联。状态与测试共用此单一定义。
+    s 取与 n 互素的最小 ≥7 步长（correctness F1：s=7 在 7|n 时非双射，
+    (fused,ftr) 多重集被破坏）；双射 ⇒ 同边际、特征↔结局无关联。
+    状态与测试共用此单一定义。
     """
     n = len(entries)
+    stride = 7
+    while math.gcd(stride, n) > 1:
+        stride += 1
     return [
-        (entries[i][0], entries[(i * 7 + 3) % n][1], entries[(i * 7 + 3) % n][2])
+        (entries[i][0], entries[(i * stride) % n][1], entries[(i * stride) % n][2])
         for i in range(n)
     ]
 

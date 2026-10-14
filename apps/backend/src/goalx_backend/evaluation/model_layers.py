@@ -191,8 +191,10 @@ def _verdicts(
         if residual and residual.get("n_weeks"):
             weights: dict[str, Any] = residual.get("mean_abs_w") or {}
             top = sorted(weights.items(), key=lambda kv: -kv[1])[:3]
+            mode = payload.get("params", {}).get("residual", "off")
+            arm = "安慰剂系数面" if mode == "placebo" else "判别层系数面"
             lines.append(
-                "  - 判别层系数面 mean|w| 前三："
+                f"  - {arm} mean|w| 前三："
                 + ", ".join(f"{k}={v}" for k, v in top)
                 + f"（n_weeks={residual.get('n_weeks')}，探索性）"
             )
@@ -257,6 +259,9 @@ def build_model_layers_report(
                     "fusion",
                     "fusion_min_samples",
                     "fusion_window",
+                    "residual",
+                    "residual_min_samples",
+                    "residual_window",
                 )
             },
             "fusion_alpha": summary.get("fusion_alpha"),

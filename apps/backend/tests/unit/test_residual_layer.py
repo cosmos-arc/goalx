@@ -123,6 +123,44 @@ def test_placebo_breaks_feature_outcome_link():
     assert abs(_holdout_gain(placebo, holdout)) < 0.02  # 无关联：≈0
 
 
+def test_placebo_permutation_is_bijective_all_lengths():
+    """correctness F1：任意窗长（含 7 的倍数）置换保 (fused,ftr) 多重集。"""
+    from collections import Counter
+
+    for n in [*range(2, 60), 301, 308, 700, 994, 1001]:
+        entries = [
+            (np.array([float(i)]), _triplet(0.4, 0.3, 0.3), "H" if i % 3 else "A")
+            for i in range(n)
+        ]
+        shuffled = rl.placebo_entries(entries)
+        assert Counter(e[2] for e in entries) == Counter(e[2] for e in shuffled), n
+        # 特征集与概率行集合各自保序完整（双射）
+        assert [id(e[0]) for e in shuffled] == [id(e[0]) for e in entries]
+
+
+def test_nan_features_are_missing_not_poison():
+    """correctness F2：NaN 切片/特征 → 缺失（None/0），不穿透拟合与下注。"""
+    from goalx_backend.evaluation import backtest as bt
+
+    assert bt._f(float("nan")) is None
+    assert bt._f(float("inf")) is None
+    assert bt._late_move((float("nan"), 3.4, 3.8), (2.0, 3.4, 3.8)) is None
+    # NaN 特征进历史 → feature_vector 0 化，拟合不产 NaN 权重
+    entries = [
+        (
+            feature_vector((float("nan") if i == 0 else 0.1, 0, 5, 2, 0, 0, 0.9, 0.9)),
+            _triplet(0.4, 0.3, 0.3),
+            "H" if i % 2 else "A",
+        )
+        for i in range(30)
+    ]
+    model = rl._fit_softmax(entries, l2=0.5)
+    out = model.apply(
+        _triplet(0.4, 0.3, 0.3), feature_vector((0.1, 0, 5, 2, 0, 0, 0.9, 0.9))
+    )
+    assert all(np.isfinite(v) for v in out.values())
+
+
 # ---- 引擎接线 ----
 
 
