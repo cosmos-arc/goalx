@@ -1,5 +1,5 @@
 """
-模型层对照报告（model-iterate 票 01，spec S1）。
+模型层对照报告（model-iterate 票 01/02：校准与融合变体 vs 基线）。
 
 校准层（可扩展至 K2 融合/K3 判别）变体 run vs 基线 run 的十年对照：
 
@@ -22,6 +22,7 @@ from datetime import date
 from typing import Any
 
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.evaluation.backtest import run_summary
 from goalx_backend.evaluation.metrics import (
     ece_per_class,
     evaluate_predictions,
@@ -183,8 +184,20 @@ def _verdicts(
             direction = "注量持平"
         lines.append(
             f"  - had 注量 {n_base}→{n_treat}"
-            + f"（ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
+            + f"（staked {bets_base.get('staked')}→{bets_treat.get('staked')}"
+            + f"，ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
         )
+        alpha = payload.get("fusion_alpha")
+        if alpha and alpha.get("n_weeks"):
+            quantiles: dict[str, Any] = alpha.get("alpha_quantiles") or {}
+            p50 = quantiles.get("p50", alpha.get("alpha_median"))
+            lines.append(
+                f"  - 融合 α：均值 {alpha.get('alpha_mean')}"
+                + f" / p50 {p50}"
+                + f" / p95 {quantiles.get('p95')}"
+                + f"，存活率（α≥0.05）{alpha.get('survival_rate')}"
+                + f"，分时代 {alpha.get('per_era')}"
+            )
     return lines
 
 
@@ -222,6 +235,7 @@ def build_model_layers_report(
             k: v for k, v in treatment_samples[label].items() if k in paired_keys
         }
         face = _PredFace(list(treat_samples.values())).as_dict()
+        summary = run_summary(conn, rid) or {}
         treatment_payloads[label] = {
             "run_id": rid,
             "run_status": status,
@@ -231,8 +245,12 @@ def build_model_layers_report(
                     "calibration",
                     "calibration_min_samples",
                     "calibration_window",
+                    "fusion",
+                    "fusion_min_samples",
+                    "fusion_window",
                 )
             },
+            "fusion_alpha": summary.get("fusion_alpha"),
             "prediction": face,
             "bets_had": _bet_face(conn, rid, "had"),
             "bets_all": _bet_face(conn, rid),
@@ -279,7 +297,7 @@ def _render_md(payload: dict[str, Any]) -> str:
     """人读视图：结论句 + 三元组表。"""
     base = payload["baseline"]
     lines = [
-        "# 模型层对照（model-iterate 票 01）",
+        "# 模型层对照（model-iterate 校准/融合）",
         "",
         f"基线 run={base['run_id']}（calibration={base['params'].get('calibration')}）"
         + f" 配对样本 n={base['prediction'].get('n', 0)}",
