@@ -219,8 +219,9 @@ def test_build_news_events_with_fake_extractor(tmp_path):
                 },
                 "fake-model",
                 0.0,
+                False,
             )
-        return {"relevant": False, "events": []}, "fake-model", 0.0
+        return {"relevant": False, "events": []}, "fake-model", 0.0, False
 
     ctx = gs.NewsContext(
         duck_con=con,
@@ -279,3 +280,51 @@ def test_pit_violation_fails_loud(tmp_path):
             gs.GuardianEventReport(),
         )
     store.close()
+
+
+def test_checkpoint_resume_skips_done_articles(tmp_path):
+    """断点续跑：checkpoint 已有文章不再抽取；成功后 checkpoint 清除。"""
+    from goalx_backend.config import Settings
+
+    con = _pilot_duck()
+    store = CorpusStore(tmp_path)
+    store.append_bronze(
+        gs.PROVIDER,
+        gs.BRONZE_DATASET,
+        [_bronze_row("a1", "Arsenal news", "2024-03-09T10:00:00Z", "body")],
+    )
+    ctx = gs.NewsContext(
+        duck_con=con,
+        conn=None,
+        settings=Settings(),  # type: ignore[arg-type]
+    )
+    checkpoint = gs._checkpoint_path(store)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "article_sid": "a1",
+                "filtered": False,
+                "parsed": {"relevant": True, "events": []},
+                "model": "cached",
+                "cost": 0.0,
+                "empty": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def counting_extractor(candidate):
+        calls.append(candidate.article_sid)
+        return None, "should-not-run", 0.0, True
+
+    report = gs.build_news_events(
+        ctx, store, seasons=("2023-24",), extractor=counting_extractor
+    )
+    assert calls == []  # 全部命中 checkpoint，零新调用
+    assert report.model == "cached"
+    assert not checkpoint.exists()  # 成功后清除
+    store.close()
+    con.close()

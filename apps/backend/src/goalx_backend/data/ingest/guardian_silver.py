@@ -12,7 +12,7 @@ NewsShock P0 抽取器（model-iterate 票 04，spec S4；research/26 P0 落地�
    match_fixtures（v3 名字身份轮，与 gold 同机）配到 sid——卫报正文
    是英文队名，中文语料名不直接匹配；
 3. **候选文章预筛**（纯代码零成本）：标题词边界命中英文队名 × 发布日
-   在 [match_date−3d, kickoff) 窗（PIT：发布必须早于开球，赛后稿
+   在 [kickoff−3d, kickoff) 窗（时刻锚定）（PIT：发布必须早于开球，赛后稿
    计数剔除）；
 4. **LLM 抽取**（scout 档零牌价，走 llm/client 熔断+记账）：约束
    JSON schema，违例 fail-loud 计数不静默丢；
@@ -33,6 +33,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -46,7 +47,13 @@ from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import FD_TO_LEAGUE
 from goalx_backend.data.silver import write_dataset_meta, write_partition
-from goalx_backend.llm.client import ModelTier, Purpose, glm_chat
+from goalx_backend.llm.client import (
+    LlmBudgetExceeded,
+    LlmKeyMissing,
+    ModelTier,
+    Purpose,
+    glm_chat,
+)
 
 PROVIDER = "guardian"
 BRONZE_DATASET = "news_article"
@@ -55,7 +62,7 @@ EVENT_VERSION = "1"
 
 EVENT_TYPES = ("injury", "suspension", "manager_change", "rotation_hint", "other")
 VALID_SIDES = ("home", "away")
-LINK_WINDOW_DAYS = 3  # 发布日窗：[match_date−3d, kickoff)
+LINK_WINDOW_DAYS = 3  # 发布窗：[kickoff−3d, kickoff)（时刻锚定）
 MAX_BODY_CHARS = 6000  # 抽取输入截断（成本护栏）
 
 _SYSTEM_PROMPT = (
@@ -114,8 +121,10 @@ class GuardianEventReport:
     relevant_articles: int = 0
     events: int = 0
     schema_violations: int = 0
+    empty_responses: int = 0
     content_filtered: int = 0
-    post_kickoff_dropped: int = 0
+    post_kickoff_hits: int = 0
+    limit_reached: bool = False
     linked_sids: int = 0
     unlinked_hist_rows: int = 0
     model: str = ""
@@ -225,6 +234,14 @@ def english_links(
     return links, len(matched.gaps)
 
 
+def _parse_instant(value: str) -> datetime | None:
+    """ISO 时间戳（Z/偏移）→ aware datetime。"""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _kickoff_instant(link: _Link) -> datetime | None:
     """真实开球时刻（北京墙钟 naive → UTC aware：−8h；PIT 判定）。"""
     try:
@@ -299,7 +316,9 @@ def _link_article(
     found: list[_Candidate] = []
     seen_pairs: set[tuple[str, str]] = set()
     post_kickoff = 0
-    pub = datetime.fromisoformat(published.replace("Z", "+00:00"))
+    pub = _parse_instant(published)
+    if pub is None:
+        return found, post_kickoff  # 非法时间戳：不产候选
     for name, entries in by_name.items():
         if not _word_boundary(name, title):
             continue
@@ -308,7 +327,7 @@ def _link_article(
             if kickoff is None or pub >= kickoff:
                 post_kickoff += 1
                 continue
-            if pub < kickoff - timedelta(days=window_days + 1):
+            if pub < kickoff - timedelta(days=window_days):
                 continue
             key = (article_sid, link.sid)
             if key in seen_pairs:
@@ -385,8 +404,8 @@ class ContentFiltered(RuntimeError):
 
 def _extract_with_llm(
     conn: sqlite3.Connection, settings: Settings, candidate: _Candidate
-) -> tuple[dict[str, Any] | None, str, float]:
-    """单篇 LLM 抽取（scout 档）；返回 (结构 dict|None, model, 估算成本)。"""
+) -> tuple[dict[str, Any] | None, str, float, bool]:
+    """单篇 LLM 抽取（scout 档）；返回 (parsed|None, model, 成本, 原文空)。"""
     link = candidate.link
     user_prompt = (
         f"Fixture: {link.en_home} (home) vs {link.en_away} (away), "
@@ -399,11 +418,18 @@ def _extract_with_llm(
         {"role": "user", "content": user_prompt},
     ]
     try:
-        return _glm_once(conn, settings, messages)
-    except ContentFiltered:
+        parsed, model, cost, empty = _glm_once(conn, settings, messages)
+    except (ContentFiltered, LlmBudgetExceeded, LlmKeyMissing):
         raise
     except Exception:  # 网络瞬断等——重试一次
-        return _glm_once(conn, settings, messages, temperature=0.2)
+        parsed, model, cost, empty = _glm_once(
+            conn, settings, messages, temperature=0.2
+        )
+    if parsed is not None:
+        return parsed, model, cost, empty
+    # 空响应/违例重试一次（真树实测温度 0 偶发空串）
+    parsed, model, cost2, empty = _glm_once(conn, settings, messages, temperature=0.2)
+    return parsed, model, cost + cost2, empty
 
 
 def _glm_once(
@@ -412,7 +438,7 @@ def _glm_once(
     messages: list[ChatCompletionMessageParam],
     *,
     temperature: float = 0.0,
-) -> tuple[dict[str, Any] | None, str, float]:
+) -> tuple[dict[str, Any] | None, str, float, bool]:
     try:
         result = glm_chat(
             conn,
@@ -427,10 +453,17 @@ def _glm_once(
         if "1301" in str(exc) or "contentFilter" in str(exc):
             raise ContentFiltered(str(exc)) from exc
         raise
-    return parse_extraction(result.content), result.model, result.estimated_cny
+    content = result.content.strip()
+    return (
+        parse_extraction(content),
+        result.model,
+        result.estimated_cny,
+        content == "",
+    )
 
 
-Extractor = Callable[[_Candidate], tuple[dict[str, Any] | None, str, float]]
+# 抽取结果四元组：(parsed|None, model, cost, raw_content_was_empty)
+Extractor = Callable[[_Candidate], tuple[dict[str, Any] | None, str, float, bool]]
 
 
 @dataclass(frozen=True)
@@ -459,66 +492,121 @@ def build_news_events(
     fixtures = fixture_index(ctx.duck_con, competition, seasons)
     links, unlinked = english_links(ctx.duck_con, fixtures, competition)
     candidates, scanned, post_kickoff = candidate_articles(store, links)
-    season_of = {f.sid: _season_of(fixtures, f.sid) for f in fixtures}
+    season_of = {f.sid: f.season for f in fixtures}
 
     report = GuardianEventReport(
         articles_scanned=scanned,
         candidates=len(candidates),
-        post_kickoff_dropped=post_kickoff,
+        post_kickoff_hits=post_kickoff,
         linked_sids=len(links),
         unlinked_hist_rows=unlinked,
     )
 
     def default_extract(
         candidate: _Candidate,
-    ) -> tuple[dict[str, Any] | None, str, float]:
+    ) -> tuple[dict[str, Any] | None, str, float, bool]:
         return _extract_with_llm(ctx.conn, ctx.settings, candidate)
 
     extract = extractor or default_extract
+    selected = candidates[:article_limit]
+    report.limit_reached = len(candidates) > article_limit
+    checkpoint = _checkpoint_path(store)
+    done = _load_checkpoint(checkpoint)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)  # 首跑建目录
     event_rows: list[dict[str, Any]] = []
-    for candidate in candidates[:article_limit]:
-        try:
-            parsed, model, cost = extract(candidate)
-        except ContentFiltered:
-            report.content_filtered += 1
-            report.llm_calls += 1
-            continue
-        report.llm_calls += 1
-        report.estimated_cny += cost
-        report.model = model
-        if parsed is None:
-            report.schema_violations += 1
-            continue
-        report.extracted_articles += 1
-        if not parsed["relevant"]:
-            continue
-        report.relevant_articles += 1
-        for event in parsed["events"]:
-            report.events += 1
-            event_rows.append(
-                {
-                    "article_sid": candidate.article_sid,
-                    "sid": candidate.link.sid,
-                    "league": competition,
-                    "season": season_of.get(candidate.link.sid, ""),
-                    "published_at": candidate.published_at,
-                    "kickoff_day": candidate.link.kickoff_day,
-                    "kickoff_iso": candidate.link.kickoff_iso,
-                    "event_type": event["type"],
-                    "side": event["side"],
-                    "player": event["player"],
-                    "confidence": event["confidence"],
-                    "model": model,
-                    "version": EVENT_VERSION,
-                }
-            )
+    for candidate in selected:
+        entry = done.get(candidate.article_sid)
+        if entry is None:
+            entry = _extract_one(extract, candidate)
+            with checkpoint.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _tally_entry(entry, candidate, report, season_of, event_rows, competition)
     _write_silver(store, event_rows, competition, seasons, report)
+    checkpoint.unlink(missing_ok=True)  # 全量落盘成功——checkpoint 使命完成
     return report
 
 
-def _season_of(fixtures: list[_Fixture], sid: str) -> str:
-    """Sid → 赛季（缺=空串如实入档）。"""
-    return next((f.season for f in fixtures if f.sid == sid), "")
+def _extract_one(extract: Extractor, candidate: _Candidate) -> dict[str, Any]:
+    """单篇抽取（含内容过滤分账）→ checkpoint 条目。"""
+    try:
+        parsed, model, cost, empty = extract(candidate)
+    except ContentFiltered as exc:
+        return {
+            "article_sid": candidate.article_sid,
+            "filtered": True,
+            "error": str(exc)[:120],
+        }
+    return {
+        "article_sid": candidate.article_sid,
+        "filtered": False,
+        "parsed": parsed,
+        "model": model,
+        "cost": cost,
+        "empty": empty,
+    }
+
+
+def _load_checkpoint(checkpoint: Path) -> dict[str, dict[str, Any]]:
+    """断点续跑：已抽取文章（熔断/中断后重跑跳过）。"""
+    done: dict[str, dict[str, Any]] = {}
+    if checkpoint.exists():
+        for line in checkpoint.read_text(encoding="utf-8").splitlines():
+            if line:
+                entry = json.loads(line)
+                done[str(entry["article_sid"])] = entry
+    return done
+
+
+def _tally_entry(
+    entry: dict[str, Any],
+    candidate: _Candidate,
+    report: GuardianEventReport,
+    season_of: dict[str, str],
+    event_rows: list[dict[str, Any]],
+    competition: str,
+) -> None:
+    """一条抽取结果入计数器与事件行集。"""
+    report.llm_calls += 1
+    if entry.get("filtered"):
+        report.content_filtered += 1
+        return
+    report.estimated_cny += float(entry.get("cost", 0.0))
+    report.model = str(entry.get("model", ""))
+    parsed = entry.get("parsed")
+    if parsed is None:
+        if entry.get("empty"):
+            report.empty_responses += 1
+        else:
+            report.schema_violations += 1
+        return
+    report.extracted_articles += 1
+    if not parsed["relevant"]:
+        return
+    report.relevant_articles += 1
+    for event in parsed["events"]:
+        report.events += 1
+        event_rows.append(
+            {
+                "article_sid": candidate.article_sid,
+                "sid": candidate.link.sid,
+                "league": competition,
+                "season": season_of.get(candidate.link.sid, ""),
+                "published_at": candidate.published_at,
+                "kickoff_day": candidate.link.kickoff_day,
+                "kickoff_iso": candidate.link.kickoff_iso,
+                "event_type": event["type"],
+                "side": event["side"],
+                "player": event["player"],
+                "confidence": event["confidence"],
+                "model": str(entry.get("model", "")),
+                "version": EVENT_VERSION,
+            }
+        )
+
+
+def _checkpoint_path(store: CorpusStore) -> Path:
+    """断点续跑文件（silver 数据集根 _checkpoint.jsonl）。"""
+    return store.silver_path(PROVIDER, EVENT_DATASET) / "_checkpoint.jsonl"
 
 
 def _write_silver(
@@ -539,10 +627,16 @@ def _write_silver(
         digest = hasher.hexdigest()[:16]
     # PIT 终检：逐行断言发布时刻早于真实开球时刻（与候选过滤同口径）
     for row in event_rows:
-        naive = datetime.fromisoformat(row["kickoff_iso"].replace(" ", "T"))
-        kickoff = naive.replace(tzinfo=UTC) - timedelta(hours=8)
-        pub = datetime.fromisoformat(row["published_at"].replace("Z", "+00:00"))
-        if pub >= kickoff:
+        link = _Link(
+            sid=row["sid"],
+            kickoff_day=row["kickoff_day"],
+            kickoff_iso=row["kickoff_iso"],
+            en_home="",
+            en_away="",
+        )
+        kickoff = _kickoff_instant(link)
+        pub = _parse_instant(row["published_at"])
+        if kickoff is None or pub is None or pub >= kickoff:
             raise ValueError(f"PIT 违例：{row['article_sid']} 发布不早于开球")
     root = store.silver_path(PROVIDER, EVENT_DATASET)
     write_partition(root / "all", event_rows, _event_schema())
@@ -564,7 +658,7 @@ def _write_silver(
         report.candidates,
         report.events,
         report.schema_violations,
-        report.post_kickoff_dropped,
+        report.post_kickoff_hits,
     )
 
 
