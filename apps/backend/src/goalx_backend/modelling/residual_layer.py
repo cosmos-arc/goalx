@@ -10,17 +10,19 @@ signal-attribution 发现 8 个 |t|≥2 市场错价桶（特征可预测市场�
 
 - **带偏置的 softmax 残差调整**：logit_c = log p_fused_c + w_c·x，
   x=错价桶特征向量（窗内标准化）；w 三类各自（3×(F+1) 含截距）；
-- **L2 岭罚** λ 固定正则；numpy 梯度下降零初始化定步长定迭代——
-  纯确定性（无随机源，重放确定性友好）；
+- **L2 岭罚** λ（数据梯度按 n 均值、罚项不除——λ 即有效强度）；
+  numpy 梯度下降零初始化定步长定迭代——纯确定性；
 - **walk-forward 协议同 K1/K2**（尾随窗拟合、本周冻结、PIT）；特征
-  全为 gold 既有 PIT 列；**安慰剂**：特征按确定性置换变体跑同管线
-  （真特征增量 ≈ 安慰剂增量 ⇒ 无真信号）。
+  全为 gold 既有 PIT 列；**安慰剂**：特征按确定性大步长置换跑同管线
+  （真特征增量 ≈ 安慰剂增量 ⇒ 无真信号）；周级权重轨迹入 run summary
+  供对照报告的系数面（票面"特征重要性/系数表"义务）。
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import NamedTuple, cast
 
 import numpy as np
 
@@ -28,16 +30,48 @@ from goalx_backend.markets import SELECTIONS
 
 # 判别层词表（引擎校验与 CLI choices 皆从此取）
 RESIDUAL_MODES = ("off", "on", "placebo")
-L2_LAMBDA = 0.5  # 岭罚系数（特征窗内标准化后量级）
+L2_LAMBDA = 0.5  # 岭罚系数（特征窗内标准化后量级；数据项按 n 均值）
 GRAD_ITERATIONS = 300  # 梯度下降迭代（固定=确定性）
 GRAD_STEP = 0.5
 MIN_FIT_ENTRIES = 2
 _EPS = 1e-15
 
 
+class FeatureTuple(NamedTuple):
+    """错价桶八特征（signal-attribution 八桶连续化；None=缺失）。"""
+
+    ah_line_drift: float | None = None
+    ou_line_drift: float | None = None
+    ah_phase_pre: float | None = None
+    ah_phase_inplay: float | None = None
+    late_move_h: float | None = None
+    late_move24_h: float | None = None
+    ah_home_water: float | None = None
+    ou_over_water: float | None = None
+
+
+FEATURE_NAMES = FeatureTuple._fields
+
+
 def feature_vector(features: Sequence[float | None]) -> np.ndarray:
-    """错价桶特征向量（8 维，signal-attribution 八桶连续化；缺失→0）。"""
+    """特征元组 → 向量（缺失→0）。"""
     return np.array([0.0 if v is None else float(v) for v in features])
+
+
+def placebo_entries(
+    entries: list[tuple[np.ndarray, dict[str, float], str]],
+) -> list[tuple[np.ndarray, dict[str, float], str]]:
+    """
+    确定性大步长置换：特征行与（概率,结局）行按 (i*7+3) % n 重配。
+
+    大步长破坏周内自相关（shift-by-1 会被相邻场关联穿透，安慰剂偏热）；
+    同边际分布、特征↔结局无关联。状态与测试共用此单一定义。
+    """
+    n = len(entries)
+    return [
+        (entries[i][0], entries[(i * 7 + 3) % n][1], entries[(i * 7 + 3) % n][2])
+        for i in range(n)
+    ]
 
 
 class ResidualModel:
@@ -47,6 +81,11 @@ class ResidualModel:
         self._weights = weights  # (3, F+1)
         self._mean = mean
         self._std = std
+
+    @property
+    def weights(self) -> np.ndarray:
+        """冻结权重（系数面报告读取）。"""
+        return self._weights
 
     def apply(self, fused: dict[str, float], features: np.ndarray) -> dict[str, float]:
         """p_adj = softmax(log p_fused + W·[x_std, 1])。"""
@@ -64,8 +103,8 @@ class ResidualState:
     """
     联赛作用域判别层状态（K1/K2 同款冻结协议）。
 
-    历史条目=（特征, 融合后三向, ftr）；placebo 模式特征按行号确定性
-    置换（同管线同分布、无真信号——安慰剂对照）。
+    历史条目=（特征, 融合后三向, ftr）；placebo 模式经 placebo_entries
+    置换（断关联、保边际）；weights_log 记周级特征侧 |w| 均值轨迹。
     """
 
     mode: str
@@ -75,6 +114,7 @@ class ResidualState:
     history: list[tuple[np.ndarray, dict[str, float], str]] = field(
         default_factory=list
     )
+    weights_log: list[dict[str, object]] = field(default_factory=list)
 
     def _window(self) -> list[tuple[np.ndarray, dict[str, float], str]]:
         return self.history[-self.window :] if self.window > 0 else list(self.history)
@@ -84,20 +124,17 @@ class ResidualState:
         window = self._window()
         if len(window) < self.min_samples:
             return None
-        if self.mode == "placebo":
-            # 确定性置换：特征与（结局,概率）行整体错位——断特征↔结局
-            # 关联、保边际分布（概率行随结局错位才保 offset 语义）
-            entries = [
-                (
-                    window[i][0],
-                    window[(i + 1) % len(window)][1],
-                    window[(i + 1) % len(window)][2],
-                )
-                for i in range(len(window))
-            ]
-        else:
-            entries = window
-        return _fit_softmax(entries, self.l2)
+        entries = placebo_entries(window) if self.mode == "placebo" else window
+        model = _fit_softmax(entries, self.l2)
+        self.weights_log.append(
+            {
+                "feature_abs_w": {
+                    name: round(float(np.abs(model.weights[:, i]).mean()), 5)
+                    for i, name in enumerate(FEATURE_NAMES)
+                }
+            }
+        )
+        return model
 
     def record(self, features: np.ndarray, applied: dict[str, float], ftr: str) -> None:
         """一场（特征, 融合后三向, 赛果）入史（本周冻结完毕后调用）。"""
@@ -112,9 +149,7 @@ def _fit_softmax(
         raise ValueError("判别层拟合窗样本不足")
     x = np.stack([e[0] for e in entries])  # (n, F)
     outcomes = np.array([SELECTIONS.index(e[2].lower()) for e in entries])  # (n,)
-    fused = np.array(
-        [[max(e[1][s], _EPS) for s in SELECTIONS] for e in entries]
-    )  # (n, 3)
+    fused = np.array([[max(e[1][s], _EPS) for s in SELECTIONS] for e in entries])
     mean = x.mean(axis=0)
     std = x.std(axis=0)
     std = np.where(std < _EPS, 1.0, std)  # 零方差特征不除零
@@ -129,6 +164,27 @@ def _fit_softmax(
         probs = np.exp(logits)
         probs /= probs.sum(axis=1, keepdims=True)
         probs[np.arange(n), outcomes] -= 1.0  # dNLL/dlogit
-        grad = probs.T @ design / n + l2 * weights / n  # (3, F+1) 岭罚
+        grad = probs.T @ design / n + l2 * weights  # 数据项按 n 均值，罚项不除
         weights -= GRAD_STEP * grad
     return ResidualModel(weights, mean, std)
+
+
+def residual_weights_summary(
+    weights_log: list[dict[str, object]],
+) -> dict[str, object]:
+    """周级权重轨迹 → 系数面汇总（run summary / 对照报告共用）。"""
+    if not weights_log:
+        return {"n_weeks": 0}
+    sums = dict.fromkeys(FEATURE_NAMES, 0.0)
+    n = len(weights_log)
+    for entry in weights_log:
+        per_feature = cast("dict[str, float] | None", entry.get("feature_abs_w"))
+        if per_feature is not None:
+            for name, value in per_feature.items():
+                sums[str(name)] += float(value)
+    return {
+        "n_weeks": n,
+        "mean_abs_w": {
+            name: round(value / n, 5) for name, value in sorted(sums.items())
+        },
+    }

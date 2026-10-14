@@ -86,9 +86,11 @@ from goalx_backend.modelling.fusion import (
 )
 from goalx_backend.modelling.residual_layer import (
     RESIDUAL_MODES,
+    FeatureTuple,
     ResidualModel,
     ResidualState,
     feature_vector,
+    residual_weights_summary,
 )
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
@@ -170,6 +172,8 @@ class BacktestResult:
     skipped: dict[str, int] = field(default_factory=dict)
     # 融合 α 周级轨迹（票 02；off 融合=空），入 run summary 供存活报告
     alpha_log: list[dict[str, object]] = field(default_factory=list)
+    # 判别层周级权重轨迹（票 03；off=空），入 run summary 供系数面
+    residual_log: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def roi(self) -> float:
@@ -199,7 +203,7 @@ class GoldMatch:
     ou_over_water: float | None = None
     ou_under_water: float | None = None
     # 错价桶特征（票 03：signal-attribution 八桶连续化；缺失=None）
-    features: tuple[float | None, ...] = ()
+    features: FeatureTuple = field(default_factory=FeatureTuple)
 
 
 def match_week_key(match_date: str) -> str:
@@ -486,7 +490,6 @@ def fetch_decade_matches(
             ah_n_pre,
             ah_n_inplay,
             ah_home_water,
-            ou_over_water_med,
             q1h_h,
             q1h_d,
             q1h_a,
@@ -510,7 +513,7 @@ def fetch_decade_matches(
                 ref=ref,
                 psc_odds=(odds_cols[0], odds_cols[1], odds_cols[2]),
                 avgc_odds=(odds_cols[3], odds_cols[4], odds_cols[5]),
-                anchor_odds=(odds_cols[6], odds_cols[7], odds_cols[8]),
+                anchor_odds=close,
                 cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
                 ou_line=float(ou_line) if ou_line is not None else None,
                 ou_over_water=(
@@ -519,15 +522,15 @@ def fetch_decade_matches(
                 ou_under_water=(
                     float(ou_under_water) if ou_under_water is not None else None
                 ),
-                features=(
-                    _f(ah_line_drift),
-                    _f(ou_line_drift),
-                    _f(ah_n_pre),
-                    _f(ah_n_inplay),
-                    _late_move((q1h_h, q1h_d, q1h_a), close),
-                    _late_move((q24h_h, q24h_d, q24h_a), close),
-                    _f(ah_home_water),
-                    _f(ou_over_water_med),
+                features=FeatureTuple(
+                    ah_line_drift=_f(ah_line_drift),
+                    ou_line_drift=_f(ou_line_drift),
+                    ah_phase_pre=_f(ah_n_pre),
+                    ah_phase_inplay=_f(ah_n_inplay),
+                    late_move_h=_late_move((q1h_h, q1h_d, q1h_a), close),
+                    late_move24_h=_late_move((q24h_h, q24h_d, q24h_a), close),
+                    ah_home_water=_f(ah_home_water),
+                    ou_over_water=_f(ou_over_water),
                 ),
             )
         )
@@ -548,7 +551,8 @@ def _late_move(
     for odds in (early, close):
         if any(o is None or float(o) <= 1.0 for o in odds):
             return None
-        inv = [1.0 / float(o) for o in odds if o is not None]
+        valid = [float(o) for o in odds if o is not None]
+        inv = [1.0 / o for o in valid]
         probs.append(inv[0] / sum(inv))
     return probs[1] - probs[0]
 
@@ -826,17 +830,13 @@ class _WeekLayers:
             out = fuse(out, fair_probs, self.alpha)
         return out
 
-    def apply(
-        self,
-        had: dict[str, float],
-        fair_probs: dict[str, float],
-        features: np.ndarray,
+    def finalize(
+        self, fused: dict[str, float], features: np.ndarray
     ) -> dict[str, float]:
-        """原始三向 → 校准 → 融合 → 判别（全链；全透传时恒等）。"""
-        out = self.fused(had, fair_probs)
-        if self.residual is not None:
-            out = self.residual.apply(out, features)
-        return out
+        """融合后三向 → 判别调整（判别透传时恒等）。"""
+        if self.residual is None:
+            return fused
+        return self.residual.apply(fused, features)
 
 
 @dataclass
@@ -947,7 +947,8 @@ def _record_week_predictions(
             continue
         had = matrix.had()
         features = feature_vector(match.features)
-        had_out = layer_state.current.apply(had, fair_probs, features)
+        had_fused = layer_state.current.fused(had, fair_probs)
+        had_out = layer_state.current.finalize(had_fused, features)
         ftr = _ftr(match.fthg, match.ftag)
         conn.execute(
             """
@@ -976,7 +977,6 @@ def _record_week_predictions(
         )
         result.predictions += 1
         # 判别史存融合后（判别前）三向——判别不学在自己的输出上
-        had_fused = layer_state.current.fused(had, fair_probs)
         layer_state.record(had, had_fused, fair_probs, ftr, match.era, features)
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
@@ -1211,6 +1211,8 @@ def _walk_competition(
         )
     if layer_state.fusion is not None:
         result.alpha_log.extend(layer_state.fusion.alpha_log)
+    if layer_state.residual is not None:
+        result.residual_log.extend(layer_state.residual.weights_log)
 
 
 def run_backtest(
@@ -1293,6 +1295,11 @@ def run_backtest(
                     | (
                         {"fusion_alpha": alpha_survival(result.alpha_log)}
                         if result.alpha_log
+                        else {}
+                    )
+                    | (
+                        {"residual": residual_weights_summary(result.residual_log)}
+                        if result.residual_log
                         else {}
                     ),
                     ensure_ascii=False,
