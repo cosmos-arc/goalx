@@ -5,13 +5,15 @@ N1 试点事件（silver guardian/news_event）× gold PIT 面 × run 预测残�
 ——"第二信息源存在与否"的诚实回答（研究 26 N2 评估协议自建）：
 
 - **事件面**：事件计数/类型分布/侧分布/距开球时距（描述基线）；
-- **对照面一（市场未消化？）**：事件场 vs 无事件场的模型残差
-  （signal-attribution 同口径 realized）分布对照——事件场市场误差
-  显著偏移=事件携带市场未消化信息；
+- **对照面一（市场未消化？）**：事件侧锚定的 realized 对照——每条
+  事件取其 side 的 realized（1[ftr=side]−p_fair[side]，事件加权），
+  事件场 vs 周匹配无事件场对照（三向平铺池化均值恒≈0 为构造退化，
+  弃用——correctness 审查钉死）；分侧 realized 随行供判读；
 - **对照面二（安慰剂）**：随机同时段无事件场对照（事件效应≠时段
   效应——豪门新闻多≠信息多）；
-- **price-in 面**：发布→收盘的市场位移方向（q1h 切片 vs close）——
-  事件后市场是否已动（动了=price-in，剩余空间小）。
+- **price-in 面**：事件场临场 1h→收盘主队位移（q1h 切片 vs close）
+  ——只覆盖反应窗口的末 1 小时（发布中位早于开球 47.5h，发布→1h 的
+  主反应窗未测），只报方向不作"未 price-in"结论。
 
 样本量诚实（n≈几十事件场）：效应量+方向为主，显著性只作探索性参考。
 观察性报告：不进模型不改参数。纯读面（事件 parquet + gold 只读桥 +
@@ -128,50 +130,50 @@ def build_news_signal_report(
         "hours_to_kickoff_p90": hours[int(len(hours) * 0.9)] if hours else None,
     }
 
-    # 对照面一：事件场 vs 无事件场残差
+    # 对照面一（事件侧锚定）：每条事件取其 side 的 realized
     non_event = [s for s in residuals if s not in event_sids]
-    control_sids = _placebo_sids(non_event, len(event_sids))
-    groups = {
-        "event": _Group(),
-        "control": _Group(),
-    }
-    for sid in event_sids:
-        groups["event"].values.extend(residuals[sid].values())
+    week_of = _week_index(conn, rid)
+    control_sids = _time_matched_control(
+        non_event, [week_of.get(s) for s in event_sids], week_of, len(event_sids)
+    )
+    event_side_values = _Group()
+    by_side_event = {s: _Group() for s in SELECTIONS}
+    by_side_control = {s: _Group() for s in SELECTIONS}
+    for event in events:
+        sid = str(event["sid"])
+        team_side = str(event["side"])  # 队伍侧 home/away
+        outcome_side = {"home": "h", "away": "a"}.get(team_side)
+        if outcome_side and sid in residuals:
+            value = residuals[sid][outcome_side]
+            event_side_values.values.append(value)
+            by_side_event[outcome_side].values.append(value)
     for sid in control_sids:
-        groups["control"].values.extend(residuals[sid].values())
+        if sid in residuals:
+            for side in SELECTIONS:
+                by_side_control[side].values.append(residuals[sid][side])
 
-    # price-in 面：事件场的 q1h→close 主队位移（gold signal 面）
-    signal_rows = gold_reader.fetch_signal_rows_by_sids(duck_con, sids)
-    price_in_moves = []
-    for sid in sids:
-        row = signal_rows.get(sid)
-        if row is None:
-            continue
-        early = _devig_home(
-            row.get("q1h1x2_h"), row.get("q1h1x2_d"), row.get("q1h1x2_a")
-        )
-        close = _devig_home(
-            row.get("close1x2_h"), row.get("close1x2_d"), row.get("close1x2_a")
-        )
-        if early is not None and close is not None:
-            price_in_moves.append(close - early)
-    price_in = {
-        "n": len(price_in_moves),
-        "mean": round(fmean(price_in_moves), 5) if price_in_moves else None,
-    }
+    price_in = _price_in_face(duck_con, sids)
 
     payload = {
         "built_at": (today or date.today()).isoformat(),
         "run_id": rid,
         "run_status": status,
         "event_face": event_face,
-        "residual_contrast": {name: group.stats() for name, group in groups.items()},
+        "residual_contrast": {
+            "event_side_anchored": event_side_values.stats(),
+            "by_side_event": {s: g.stats() for s, g in by_side_event.items()},
+            "by_side_control": {s: g.stats() for s, g in by_side_control.items()},
+        },
         "price_in": price_in,
         "note": (
-            "样本量诚实（n=事件场数级）：效应量+方向为主，显著性不报；"
-            + "对照=同时段随机无事件场（安慰剂语义）；realized 口径同"
-            + " signal-attribution（1[ftr]−p_fair 三向平铺）；观察性报告"
-            + " 不进模型不改参数；全量回填=门后另裁"
+            "样本量诚实（n=事件条数级）：效应量+方向为主，显著性不报；"
+            + "对照=事件同 ISO 周的无事件场（周匹配安慰剂）；主对照="
+            + "事件侧锚定 realized（三向平铺池化均值恒≈0 为构造退化，"
+            + "弃用）；price-in 面只覆盖临场 1h→收盘（发布→1h 主反应窗"
+            + "未测）；试点=2024-25 完整季+2025-26 进行中季（E0 2023-24 "
+            + "轨迹收盘 0/380 无引擎面，2025-26 为覆盖引擎预测所需，"
+            + "进行中季部分数据如实记档）；观察性报告不进模型不改参数；"
+            + "全量回填=门后另裁"
         ),
     }
     reports = store.root / "reports"
@@ -185,12 +187,66 @@ def build_news_signal_report(
     return payload
 
 
-def _placebo_sids(pool: list[str], n: int) -> list[str]:
-    """确定性安慰剂对照（无事件场池均匀取 n 个）。"""
-    if not pool or n <= 0:
-        return []
-    step = max(1, len(pool) // max(n, 1))
-    return pool[::step][:n]
+def _price_in_face(
+    duck_con: duckdb.DuckDBPyConnection, sids: list[str]
+) -> dict[str, Any]:
+    """事件场临场 1h→收盘主队位移（只覆盖反应窗末段，方向面）。"""
+    signal_rows = gold_reader.fetch_signal_rows_by_sids(duck_con, sids)
+    moves = []
+    for sid in sids:
+        row = signal_rows.get(sid)
+        if row is None:
+            continue
+        early = _devig_home(
+            row.get("q1h1x2_h"), row.get("q1h1x2_d"), row.get("q1h1x2_a")
+        )
+        close = _devig_home(
+            row.get("close1x2_h"), row.get("close1x2_d"), row.get("close1x2_a")
+        )
+        if early is not None and close is not None:
+            moves.append(close - early)
+    return {"n": len(moves), "mean": round(fmean(moves), 5) if moves else None}
+
+
+def _week_index(conn: sqlite3.Connection, run_id: int) -> dict[str, str]:
+    """
+    Sid → ISO 年-周。
+
+    周匹配安慰剂时段锚；run 预测自有面，Python 算 ISO 周——sqlite
+    strftime 无 %G/%V。
+    """
+    rows = conn.execute(
+        "SELECT match_key, match_date FROM backtest_predictions WHERE run_id = ?",
+        (run_id,),
+    ).fetchall()
+    out: dict[str, str] = {}
+    for key, match_date in rows:
+        try:
+            iso = date.fromisoformat(str(match_date)).isocalendar()
+        except ValueError:
+            continue
+        out[str(key)] = f"{iso[0]}-W{iso[1]:02d}"
+    return out
+
+
+def _time_matched_control(
+    pool: list[str],
+    event_weeks: list[str | None],
+    week_of: dict[str, str],
+    n: int,
+) -> list[str]:
+    """周匹配安慰剂：从事件所在 ISO 周的无事件场取对照（同时段语义）。"""
+    wanted = {w for w in event_weeks if w}
+    by_week: dict[str, list[str]] = {}
+    for sid in pool:
+        week = week_of.get(sid)
+        if week in wanted:
+            by_week.setdefault(week, []).append(sid)
+    picked: list[str] = []
+    for week in sorted(by_week):
+        candidates = by_week[week]
+        picked.extend(candidates[:: max(1, len(candidates) // 3)][:3])
+    return picked[:n]
 
 
 def _devig_home(h: float | None, d: float | None, a: float | None) -> float | None:
@@ -209,8 +265,10 @@ def _render_md(payload: dict[str, Any]) -> str:
     """人读视图。"""
     face = payload["event_face"]
     contrast = payload["residual_contrast"]
-    event_stats = contrast["event"]
-    control_stats = contrast["control"]
+    anchored = contrast["event_side_anchored"]
+    sides = " / ".join(
+        f"{s}:{contrast['by_side_event'][s].get('mean')}" for s in ("h", "d", "a")
+    )
     lines = [
         "# 事件信号回放（票 05）",
         "",
@@ -222,16 +280,15 @@ def _render_md(payload: dict[str, Any]) -> str:
         "",
         "## 残差对照（事件场 vs 无事件场安慰剂）",
         "",
-        f"- 事件场 realized 均值 {event_stats.get('mean')}（n 场"
-        + f" {face['n_fixtures_with_events']}，值 n={event_stats.get('n')}）",
-        f"- 对照场 realized 均值 {control_stats.get('mean')}"
-        + f"（值 n={control_stats.get('n')}）",
-        "- 判读：|差| ≥0.01 且方向稳定=事件携带信息候选；样本小只作方向参考",
+        f"- 事件侧锚定 realized 均值 {anchored.get('mean')}"
+        + f"（n={anchored.get('n')} 条事件）",
+        f"- 分侧（事件场）：{sides}",
+        "- 判读：|均值| ≥0.01 且方向跨侧稳定=事件携带信息候选；样本小只作方向参考",
         "",
-        "## price-in 面（事件场 q1h→close 主队位移）",
+        "## price-in 面（事件场临场 1h→收盘主队位移）",
         "",
         f"- n={payload['price_in']['n']} 均值 {payload['price_in']['mean']}"
-        + "（≈0=事件后市场未动=未 price-in；负值=主队价走弱）",
+        + "（只覆盖反应窗末 1h；发布→1h 主反应窗未测，不作未 price-in 结论）",
         "",
         "- 判读注意：" + payload["note"],
     ]

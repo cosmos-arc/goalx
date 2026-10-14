@@ -133,11 +133,14 @@ def test_news_signal_faces(gold_env, tmp_path):
         assert payload["event_face"]["n_events"] == 4
         assert payload["event_face"]["n_fixtures_with_events"] == 4
         assert payload["event_face"]["by_type"]["injury"] == 3
-        # 残差对照：事件场均值=三向 realized 均值（H:0.6/D:-0.3/A:-0.3 → 0）
-        event_stats = payload["residual_contrast"]["event"]
-        assert event_stats["n"] == 12  # 4 场 × 3 向
-        assert event_stats["mean"] == pytest.approx(0.0, abs=0.01)
-        assert payload["residual_contrast"]["control"]["n"] > 0
+        # 残差对照（事件侧锚定）：side=home，s0/s2 是 A（−0.4）
+        # s1/s3 是 H（+0.6）→ 均值 (−0.4+0.6−0.4+0.6)/4 = 0.1
+        anchored = payload["residual_contrast"]["event_side_anchored"]
+        assert anchored["n"] == 4  # 4 条事件（每条取其队伍侧）
+        assert anchored["mean"] == pytest.approx(0.1)
+        by_side = payload["residual_contrast"]["by_side_event"]
+        assert by_side["h"]["mean"] == pytest.approx(0.1)
+        assert payload["residual_contrast"]["by_side_control"]["h"]["n"] > 0
         # price-in：q1h 2.4→close 2.0 主队概率上移 → 均值>0
         assert payload["price_in"]["n"] == 4
         assert payload["price_in"]["mean"] > 0
@@ -163,13 +166,17 @@ def test_news_signal_empty_events_honest(gold_env, tmp_path):
         report_store.close()
 
 
-def test_placebo_sids_deterministic_and_bounded():
+def test_time_matched_control_week_anchored():
+    """周匹配安慰剂：只从事件周取、确定性、量有界。"""
     pool = [f"x{i}" for i in range(100)]
-    first = nsw._placebo_sids(pool, 10)
-    second = nsw._placebo_sids(pool, 10)
+    week_of = {f"x{i}": "2024-W10" if i < 50 else "2024-W20" for i in range(100)}
+    event_weeks = ["2024-W10"]
+    first = nsw._time_matched_control(pool, event_weeks, week_of, 5)
+    second = nsw._time_matched_control(pool, event_weeks, week_of, 5)
     assert first == second  # 确定性
-    assert len(first) == 10
-    assert nsw._placebo_sids([], 10) == []
+    assert first  # 非空
+    assert all(week_of[s] == "2024-W10" for s in first)  # 只取事件周
+    assert nsw._time_matched_control([], ["2024-W10"], week_of, 5) == []
 
 
 def test_devig_home_guards():
