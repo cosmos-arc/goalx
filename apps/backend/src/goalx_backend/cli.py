@@ -87,6 +87,7 @@ from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation import model_layers as mlp
+from goalx_backend.evaluation import news_signal as nsw
 from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
@@ -404,6 +405,24 @@ def _cmd_clv_decade(args: argparse.Namespace) -> None:
         payload["n_legs"],
         payload["n_unique_had_picks"],
         clvd.REPORT_BASENAME,
+    )
+
+
+def _cmd_news_signal(args: argparse.Namespace) -> None:
+    """事件信号 PIT 回放（票 05：事件×残差×price-in，观察性）。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        payload = nsw.build_news_signal_report(
+            conn, duck_con, store, run_id=args.run_id
+        )
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "news-signal-report: run={}（{} 事件/{} 场）→ reports/{}.json/.md",
+        payload["run_id"],
+        payload["event_face"]["n_events"],
+        payload["event_face"]["n_fixtures_with_events"],
+        nsw.REPORT_BASENAME,
     )
 
 
@@ -1265,14 +1284,25 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     news_parser.add_argument(
         "--seasons",
         nargs="*",
-        default=["2023-24", "2024-25"],
-        help="试点赛季(缺省 2023-24+2024-25)",
+        default=["2024-25", "2025-26"],
+        help="试点赛季(缺省 2024-25+2025-26;注意 E0 轨迹收盘自 2024-25 起,"
+        + "2023-24 无引擎预测面)",
     )
     news_parser.add_argument(
         "--limit",
         type=int,
         default=400,
         help="LLM 抽取文章上限(成本护栏)",
+    )
+    news_signal_parser = sub.add_parser(
+        "news-signal-report",
+        help="事件信号PIT回放(票 05:事件×残差×price-in,观察性)",
+    )
+    news_signal_parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="预测 run(残差来源;缺省=最新 done)",
     )
     model_layers_parser = sub.add_parser(
         "model-layers-report",
@@ -1464,6 +1494,7 @@ def main(argv: list[str] | None = None) -> int:
         "signal-attribution-report": lambda: _cmd_signal_attribution(args),
         "model-layers-report": lambda: _cmd_model_layers(args),
         "guardian-news-pilot": lambda: _cmd_guardian_news_pilot(args),
+        "news-signal-report": lambda: _cmd_news_signal(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
