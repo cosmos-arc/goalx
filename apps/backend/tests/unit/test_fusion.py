@@ -37,14 +37,14 @@ def _norm(model: dict[str, float], fair: dict[str, float]) -> float:
 
 def test_fit_alpha_prefers_model_when_model_is_right():
     """模型优于市场（喊得准）→ α 高；市场优于模型 → α 低/0。"""
-    good_model = [
-        (_triplet(0.7, 0.2, 0.1), _triplet(0.4, 0.3, 0.3), "H"),
+    good = [
+        fu._HistoryEntry(_triplet(0.7, 0.2, 0.1), _triplet(0.4, 0.3, 0.3), "H", "x")
     ] * 20
-    assert fit_alpha(good_model) >= 0.5
-    bad_model = [
-        (_triplet(0.1, 0.2, 0.7), _triplet(0.45, 0.3, 0.25), "H"),
+    assert fit_alpha(good) >= 0.5
+    bad = [
+        fu._HistoryEntry(_triplet(0.1, 0.2, 0.7), _triplet(0.45, 0.3, 0.25), "H", "x")
     ] * 20
-    assert fit_alpha(bad_model) <= 0.1  # 市场对 → 模型权重压到 0 附近
+    assert fit_alpha(bad) <= 0.1  # 市场对 → 模型权重压到 0 附近
 
 
 def test_fusion_state_freeze_and_era_fallback():
@@ -61,6 +61,24 @@ def test_fusion_state_freeze_and_era_fallback():
     before = alpha
     state.record(_triplet(0.1, 0.1, 0.8), _triplet(0.4, 0.3, 0.3), "A", "psc_proxy")
     assert state.fit_for_week("trajectory") == before  # 冻结不受赛后新史影响
+
+
+def test_fusion_era_specific_alpha_when_samples_sufficient():
+    """era 窗 ≥MIN_ERA_SAMPLES：两时代各自拟合（专属 α 可不同于全局）。"""
+    state = FusionState(mode="era", min_samples=10, window=0)
+    # psc 时代：模型优于市场（α 高）；trajectory 时代：市场优于模型（α=0）
+    for _ in range(30):
+        state.record(_triplet(0.7, 0.2, 0.1), _triplet(0.4, 0.3, 0.3), "H", "psc_proxy")
+    for _ in range(30):
+        state.record(
+            _triplet(0.1, 0.2, 0.7), _triplet(0.45, 0.3, 0.25), "H", "trajectory"
+        )
+    alpha_psc = state.fit_for_week("psc_proxy")
+    alpha_traj = state.fit_for_week("trajectory")
+    assert alpha_psc is not None
+    assert alpha_psc >= 0.5  # 时代专属：模型信号强
+    assert alpha_traj is not None
+    assert alpha_traj == 0.0  # 时代专属：模型反向 → α=0
 
 
 def test_alpha_survival_stats():

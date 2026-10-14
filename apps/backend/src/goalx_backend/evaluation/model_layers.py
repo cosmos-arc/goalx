@@ -1,5 +1,5 @@
 """
-模型层对照报告（model-iterate 票 01，spec S1）。
+模型层对照报告（model-iterate 票 01/02：校准与融合变体 vs 基线）。
 
 校准层（可扩展至 K2 融合/K3 判别）变体 run vs 基线 run 的十年对照：
 
@@ -184,7 +184,8 @@ def _verdicts(
             direction = "注量持平"
         lines.append(
             f"  - had 注量 {n_base}→{n_treat}"
-            + f"（ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
+            + f"（staked {bets_base.get('staked')}→{bets_treat.get('staked')}"
+            + f"，ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
         )
         alpha = payload.get("fusion_alpha")
         if alpha and alpha.get("n_weeks"):
@@ -292,7 +293,7 @@ def _render_md(payload: dict[str, Any]) -> str:
     """人读视图：结论句 + 三元组表。"""
     base = payload["baseline"]
     lines = [
-        "# 模型层对照（model-iterate 票 01）",
+        "# 模型层对照（model-iterate 校准/融合）",
         "",
         f"基线 run={base['run_id']}（calibration={base['params'].get('calibration')}）"
         + f" 配对样本 n={base['prediction'].get('n', 0)}",

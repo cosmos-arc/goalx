@@ -794,20 +794,20 @@ class _LayerState:
         week_key: str,
     ) -> None:
         """拟合本周冻结层挂 current；冷启动计数（单位=周）。"""
+
+        def skip_week(key: str) -> None:
+            result.skipped[key] = result.skipped.get(key, 0) + 1
+
         calibrator = None
         if self.cal is not None:
             calibrator = self.cal.fit_for_week(params)
             if calibrator is None:
-                result.skipped["calibration_cold_weeks"] = (
-                    result.skipped.get("calibration_cold_weeks", 0) + 1
-                )
+                skip_week("calibration_cold_weeks")
         alpha = None
         if self.fusion is not None:
             alpha = self.fusion.fit_for_week(week_era)
             if alpha is None:
-                result.skipped["fusion_cold_weeks"] = (
-                    result.skipped.get("fusion_cold_weeks", 0) + 1
-                )
+                skip_week("fusion_cold_weeks")
             else:
                 self.fusion.log_week(
                     {
@@ -963,22 +963,30 @@ def _validate_layer_params(params: BacktestParams) -> None:
         raise ValueError(
             f"未知校准 {params.calibration!r}（合法: {list(CALIBRATION_KINDS)}）"
         )
-    if params.calibration != "off":
-        if params.calibration_min_samples < MIN_FIT_SAMPLES:
-            raise ValueError(
-                f"calibration_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
-            )
-        if params.calibration_window < 0 or params.calibration_window == 1:
-            raise ValueError("calibration_window 须为 0（全历史）或 ≥2")
     if params.fusion not in FUSION_MODES:
         raise ValueError(f"未知融合 {params.fusion!r}（合法: {list(FUSION_MODES)}）")
-    if params.fusion != "off":
-        if params.fusion_min_samples < MIN_FIT_SAMPLES:
+    for enabled, min_samples, window, name in (
+        (
+            params.calibration != "off",
+            params.calibration_min_samples,
+            params.calibration_window,
+            "calibration",
+        ),
+        (
+            params.fusion != "off",
+            params.fusion_min_samples,
+            params.fusion_window,
+            "fusion",
+        ),
+    ):
+        if not enabled:
+            continue
+        if min_samples < MIN_FIT_SAMPLES:
             raise ValueError(
-                f"fusion_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
+                f"{name}_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
             )
-        if params.fusion_window < 0 or params.fusion_window == 1:
-            raise ValueError("fusion_window 须为 0（全历史）或 ≥2")
+        if window < 0 or window == 1:
+            raise ValueError(f"{name}_window 须为 0（全历史）或 ≥2")
 
 
 def _validate_window(params: BacktestParams) -> None:
