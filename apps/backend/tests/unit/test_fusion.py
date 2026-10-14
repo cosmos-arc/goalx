@@ -81,6 +81,25 @@ def test_fusion_era_specific_alpha_when_samples_sufficient():
     assert alpha_traj == 0.0  # 时代专属：模型反向 → α=0
 
 
+def test_fusion_cold_gate_uses_full_history():
+    """correctness F2：冷启动按全历史（window 只裁拟合样本，不挡热身）。"""
+    state = FusionState(mode="global", min_samples=200, window=100)
+    for _ in range(150):
+        state.record(_triplet(0.5, 0.3, 0.2), _triplet(0.4, 0.3, 0.3), "H", "x")
+    assert state.fit_for_week("x") is None  # 全历史 150 < 200
+    for _ in range(60):  # 全历史 210 ≥ 200（虽然窗=100）
+        state.record(_triplet(0.7, 0.2, 0.1), _triplet(0.4, 0.3, 0.3), "H", "x")
+    assert state.fit_for_week("x") is not None
+
+
+def test_fit_alpha_tie_returns_zero_under_float_noise():
+    """correctness F3：模型==市场（浮点噪声级并列）→ α=0 不是 0.05。"""
+    entries = [
+        fu._HistoryEntry(_triplet(0.45, 0.3, 0.25), _triplet(0.45, 0.3, 0.25), "H", "x")
+    ] * 50
+    assert fit_alpha(entries) == 0.0
+
+
 def test_alpha_survival_stats():
     """存活统计：n/均值/中位/存活率/分时代。"""
     log = [
@@ -93,6 +112,16 @@ def test_alpha_survival_stats():
     assert stats["alpha_mean"] == pytest.approx(0.2)
     assert stats["survival_rate"] == pytest.approx(2 / 3, abs=1e-3)  # 4 位圆整
     assert stats["per_era"]["trajectory"]["alpha_mean"] == 0.5
+
+
+def test_alpha_survival_mixed_weeks_not_an_era():
+    """correctness F4：mixed 周（全局回退拟合）不进分时代桶。"""
+    log = [
+        {"era": "psc_proxy", "alpha": 0.2, "week": "2020-W10"},
+        {"era": "mixed", "alpha": 0.9, "week": "2023-W40"},
+    ]
+    stats = fu.alpha_survival(log)  # type: ignore[arg-type]
+    assert set(stats["per_era"]) == {"psc_proxy"}
 
 
 # ---- 引擎接线 ----

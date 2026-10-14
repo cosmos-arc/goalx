@@ -77,7 +77,8 @@ def fit_alpha(entries: list[_HistoryEntry]) -> float:
     scaled -= scaled.max(axis=1, keepdims=True)  # 数值稳定
     log_probs = scaled - np.log(np.exp(scaled).sum(axis=1, keepdims=True))  # (n,3,A)
     scores = log_probs[np.arange(len(outcomes)), outcomes, :].mean(axis=0)  # (A,)
-    return float(ALPHA_GRID[int(np.argmax(scores))])  # 并列取首个=最小 α
+    # 并列取首个=最小 α；先圆到 1e-12 防浮点噪声把 α=0.0 抬成 0.05
+    return float(ALPHA_GRID[int(np.argmax(np.round(scores, 12)))])
 
 
 @dataclass
@@ -94,10 +95,15 @@ class FusionState:
         return self.history[-self.window :] if self.window > 0 else list(self.history)
 
     def fit_for_week(self, week_era: str) -> float | None:
-        """热身充分 → 返回冻结 α（era 模式先按该时代窗，不足回落全局）。"""
-        window = self._window()
-        if len(window) < self.min_samples:
+        """
+        热身充分 → 返回冻结 α（era 模式先按该时代窗，不足回落全局）。
+
+        冷启动门槛按**全历史**长度（correctness F2：与校准同语义——
+        联赛内历史不足即不融合，尾随窗只是拟合样本集）。
+        """
+        if len(self.history) < self.min_samples:
             return None
+        window = self._window()
         if self.mode == "era":
             era_entries = [e for e in window if e.era == week_era]
             if len(era_entries) >= MIN_ERA_SAMPLES:
@@ -134,9 +140,11 @@ def alpha_survival(alpha_log: list[dict[str, object]]) -> dict[str, object]:
     per_year: dict[str, dict[str, float]] = {}
     for entry in alpha_log:
         era = str(entry.get("era", "unknown"))
-        stats = per_era.setdefault(era, {"n": 0.0, "alpha_sum": 0.0})
-        stats["n"] += 1
-        stats["alpha_sum"] += float(entry["alpha"])  # type: ignore[arg-type]
+        # mixed 周=全局回退拟合（correctness F4），不冒充时代桶
+        if era != "mixed":
+            stats = per_era.setdefault(era, {"n": 0.0, "alpha_sum": 0.0})
+            stats["n"] += 1
+            stats["alpha_sum"] += float(entry["alpha"])  # type: ignore[arg-type]
         # week 形如 "2023-W40"（ISO 年-周）——按 ISO 年聚合
         week = str(entry.get("week") or "")
         year = week[:4] if week[:4].isdigit() else "unknown"
