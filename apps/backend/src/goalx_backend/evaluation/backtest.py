@@ -84,6 +84,14 @@ from goalx_backend.modelling.fusion import (
     alpha_survival,
     fuse,
 )
+from goalx_backend.modelling.residual_layer import (
+    RESIDUAL_MODES,
+    FeatureTuple,
+    ResidualModel,
+    ResidualState,
+    feature_vector,
+    residual_weights_summary,
+)
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
@@ -106,6 +114,7 @@ _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
 DEFAULT_MAX_SIM_ODDS = 50.0
 # 市场隐含概率下限：1X2 → 比分分布的反推在极低概率尾部不可辨识（不同 λ 组合
 # 拟合出同一 1X2，尾部概率却相差数倍），低于该下限的选项不定价不下注。
+ODDS_SANITY = 1.0  # 三向赔率下界（devig 前提；与 clv_decade 同名同值）
 MIN_MARKET_PROB = 0.02
 HHAD_LINE_RANGE = range(-3, 4)  # 竞彩整数让球线搜索范围
 
@@ -144,6 +153,12 @@ class BacktestParams:
     fusion: str = "off"
     fusion_min_samples: int = 200  # 冷启动阈值（不足即不融合）
     fusion_window: int = 1000  # α 学习尾随窗样本数（0=全历史）
+    # 判别层（票 03）：off=缺省不变；on=错价桶特征残差调整（带偏置
+    # softmax + L2，walk-forward 冻结）；placebo=同管线特征错位一行
+    # （安慰剂对照 run）。链序：校准→融合→判别。
+    residual: str = "off"
+    residual_min_samples: int = 300
+    residual_window: int = 1000
 
 
 @dataclass
@@ -158,6 +173,8 @@ class BacktestResult:
     skipped: dict[str, int] = field(default_factory=dict)
     # 融合 α 周级轨迹（票 02；off 融合=空），入 run summary 供存活报告
     alpha_log: list[dict[str, object]] = field(default_factory=list)
+    # 判别层周级权重轨迹（票 03；off=空），入 run summary 供系数面
+    residual_log: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def roi(self) -> float:
@@ -186,6 +203,8 @@ class GoldMatch:
     ou_line: float | None = None  # OU 收盘中位线（market-λ 联合约束）
     ou_over_water: float | None = None
     ou_under_water: float | None = None
+    # 错价桶特征（票 03：signal-attribution 八桶连续化；缺失=None）
+    features: FeatureTuple = field(default_factory=FeatureTuple)
 
 
 def match_week_key(match_date: str) -> str:
@@ -467,8 +486,20 @@ def fetch_decade_matches(
             ou_line,
             ou_over_water,
             ou_under_water,
+            ah_line_drift,
+            ou_line_drift,
+            ah_n_pre,
+            ah_n_inplay,
+            ah_home_water,
+            q1h_h,
+            q1h_d,
+            q1h_a,
+            q24h_h,
+            q24h_d,
+            q24h_a,
             _row_version,
         ) = row
+        close = (odds_cols[6], odds_cols[7], odds_cols[8])  # cid177 锚收盘
         matches.append(
             GoldMatch(
                 sid=str(sid),
@@ -483,7 +514,7 @@ def fetch_decade_matches(
                 ref=ref,
                 psc_odds=(odds_cols[0], odds_cols[1], odds_cols[2]),
                 avgc_odds=(odds_cols[3], odds_cols[4], odds_cols[5]),
-                anchor_odds=(odds_cols[6], odds_cols[7], odds_cols[8]),
+                anchor_odds=close,
                 cons_probs=(odds_cols[9], odds_cols[10], odds_cols[11]),
                 ou_line=float(ou_line) if ou_line is not None else None,
                 ou_over_water=(
@@ -492,9 +523,44 @@ def fetch_decade_matches(
                 ou_under_water=(
                     float(ou_under_water) if ou_under_water is not None else None
                 ),
+                features=FeatureTuple(
+                    ah_line_drift=_f(ah_line_drift),
+                    ou_line_drift=_f(ou_line_drift),
+                    ah_phase_pre=_f(ah_n_pre),
+                    ah_phase_inplay=_f(ah_n_inplay),
+                    late_move_h=_late_move((q1h_h, q1h_d, q1h_a), close),
+                    late_move24_h=_late_move((q24h_h, q24h_d, q24h_a), close),
+                    ah_home_water=_f(ah_home_water),
+                    ou_over_water=_f(ou_over_water),
+                ),
             )
         )
     return matches, version, view_status, duplicates
+
+
+def _f(value: float | None) -> float | None:
+    """特征列原值透传（None/非有限=缺失——correctness F1 同款 NaN 守卫）。"""
+    if value is None or not math.isfinite(float(value)):
+        return None
+    return float(value)
+
+
+def _late_move(
+    early: tuple[float | None, float | None, float | None],
+    close: tuple[float | None, float | None, float | None],
+) -> float | None:
+    """切片→收盘的主队概率位移（比例 devig 两端同法；缺端→None）。"""
+    probs = []
+    for odds in (early, close):
+        valid = [o for o in odds if o is not None and math.isfinite(float(o))]
+        if len(valid) != len(odds) or any(float(o) <= ODDS_SANITY for o in valid):
+            return None  # 缺端/NaN/≤1：无位移（否定式守卫会放 NaN，F1 类）
+        inv = [1.0 / float(o) for o in valid]
+        total = sum(inv)
+        if not math.isfinite(total) or total <= 0:
+            return None
+        probs.append(inv[0] / total)
+    return probs[1] - probs[0]
 
 
 def market_side_matrix(
@@ -755,33 +821,44 @@ class _CalibrationState:
 
 @dataclass
 class _WeekLayers:
-    """一周冻结的模型层变换（校准器 + 融合 α；None=透传）。"""
+    """一周冻结的模型层变换（校准器+融合 α+判别模型；None=透传）。"""
 
     calibrator: Calibrator | None = None
     alpha: float | None = None
+    residual: ResidualModel | None = None
 
-    def apply(
+    def fused(
         self, had: dict[str, float], fair_probs: dict[str, float]
     ) -> dict[str, float]:
-        """原始三向 → 校准 → 融合（链式；两层都透传时恒等）。"""
+        """原始三向 → 校准 → 融合（判别前的链头；全透传时恒等）。"""
         out = self.calibrator.apply(had) if self.calibrator is not None else had
         if self.alpha is not None:
             out = fuse(out, fair_probs, self.alpha)
         return out
 
+    def finalize(
+        self, fused: dict[str, float], features: np.ndarray
+    ) -> dict[str, float]:
+        """融合后三向 → 判别调整（判别透传时恒等）。"""
+        if self.residual is None:
+            return fused
+        return self.residual.apply(fused, features)
+
 
 @dataclass
 class _LayerState:
     """
-    联赛作用域模型层状态（票 01 校准 + 票 02 融合，同冻结协议）。
+    联赛作用域模型层状态（票 01 校准 + 票 02 融合 + 票 03 判别，同冻结协议）。
 
     prepare_week 拟合冻结挂 current（本周赛果不进拟合=PIT）；record 在
     本周全部预测落库后入史。校准历史=原始三向（防套娃漂移）；融合
-    历史=融合后已应用三向（α 在实际输出上学习）。
+    历史=融合后已应用三向（α 在实际输出上学习）；判别历史=（特征,
+    融合后三向, 赛果）。
     """
 
     cal: _CalibrationState | None
     fusion: FusionState | None
+    residual: ResidualState | None
     current: _WeekLayers = field(default_factory=_WeekLayers)
 
     def prepare_week(
@@ -817,7 +894,14 @@ class _LayerState:
                         "alpha": alpha,
                     }
                 )
-        self.current = _WeekLayers(calibrator=calibrator, alpha=alpha)
+        residual_model = None
+        if self.residual is not None:
+            residual_model = self.residual.fit_for_week()
+            if residual_model is None:
+                skip_week("residual_cold_weeks")
+        self.current = _WeekLayers(
+            calibrator=calibrator, alpha=alpha, residual=residual_model
+        )
 
     def record(
         self,
@@ -826,12 +910,15 @@ class _LayerState:
         fair_probs: dict[str, float],
         ftr: str,
         era: str,
+        features: np.ndarray,
     ) -> None:
-        """一场入史（本周冻结完毕后调用）。"""
+        """一场入史（本周冻结完毕后调用；features 供判别层学习）。"""
         if self.cal is not None:
             self.cal.record(had_raw, ftr)
         if self.fusion is not None:
             self.fusion.record(had_applied, fair_probs, ftr, era)
+        if self.residual is not None:
+            self.residual.record(features, had_applied, ftr)
 
 
 def _record_week_predictions(
@@ -865,7 +952,9 @@ def _record_week_predictions(
             skip("predict_failed")
             continue
         had = matrix.had()
-        had_out = layer_state.current.apply(had, fair_probs)
+        features = feature_vector(match.features)
+        had_fused = layer_state.current.fused(had, fair_probs)
+        had_out = layer_state.current.finalize(had_fused, features)
         ftr = _ftr(match.fthg, match.ftag)
         conn.execute(
             """
@@ -893,7 +982,8 @@ def _record_week_predictions(
             ),
         )
         result.predictions += 1
-        layer_state.record(had, had_out, fair_probs, ftr, match.era)
+        # 判别史存融合后（判别前）三向——判别不学在自己的输出上
+        layer_state.record(had, had_fused, fair_probs, ftr, match.era, features)
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
         if "hhad" in params.markets or "ttg" in params.markets:
@@ -965,6 +1055,10 @@ def _validate_layer_params(params: BacktestParams) -> None:
         )
     if params.fusion not in FUSION_MODES:
         raise ValueError(f"未知融合 {params.fusion!r}（合法: {list(FUSION_MODES)}）")
+    if params.residual not in RESIDUAL_MODES:
+        raise ValueError(
+            f"未知判别层 {params.residual!r}（合法: {list(RESIDUAL_MODES)}）"
+        )
     for enabled, min_samples, window, name in (
         (
             params.calibration != "off",
@@ -977,6 +1071,12 @@ def _validate_layer_params(params: BacktestParams) -> None:
             params.fusion_min_samples,
             params.fusion_window,
             "fusion",
+        ),
+        (
+            params.residual != "off",
+            params.residual_min_samples,
+            params.residual_window,
+            "residual",
         ),
     ):
         if not enabled:
@@ -1031,6 +1131,15 @@ def _walk_competition(
                 min_samples=params.fusion_min_samples,
             )
             if params.fusion != "off"
+            else None
+        ),
+        residual=(
+            ResidualState(
+                mode=params.residual,
+                window=params.residual_window,
+                min_samples=params.residual_min_samples,
+            )
+            if params.residual != "off"
             else None
         ),
     )
@@ -1108,6 +1217,8 @@ def _walk_competition(
         )
     if layer_state.fusion is not None:
         result.alpha_log.extend(layer_state.fusion.alpha_log)
+    if layer_state.residual is not None:
+        result.residual_log.extend(layer_state.residual.weights_log)
 
 
 def run_backtest(
@@ -1190,6 +1301,11 @@ def run_backtest(
                     | (
                         {"fusion_alpha": alpha_survival(result.alpha_log)}
                         if result.alpha_log
+                        else {}
+                    )
+                    | (
+                        {"residual": residual_weights_summary(result.residual_log)}
+                        if result.residual_log
                         else {}
                     ),
                     ensure_ascii=False,

@@ -187,6 +187,17 @@ def _verdicts(
             + f"（staked {bets_base.get('staked')}→{bets_treat.get('staked')}"
             + f"，ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
         )
+        residual = payload.get("residual")
+        if residual and residual.get("n_weeks"):
+            weights: dict[str, Any] = residual.get("mean_abs_w") or {}
+            top = sorted(weights.items(), key=lambda kv: -kv[1])[:3]
+            mode = payload.get("params", {}).get("residual", "off")
+            arm = "安慰剂系数面" if mode == "placebo" else "判别层系数面"
+            lines.append(
+                f"  - {arm} mean|w| 前三："
+                + ", ".join(f"{k}={v}" for k, v in top)
+                + f"（n_weeks={residual.get('n_weeks')}，探索性）"
+            )
         alpha = payload.get("fusion_alpha")
         if alpha and alpha.get("n_weeks"):
             quantiles: dict[str, Any] = alpha.get("alpha_quantiles") or {}
@@ -248,9 +259,13 @@ def build_model_layers_report(
                     "fusion",
                     "fusion_min_samples",
                     "fusion_window",
+                    "residual",
+                    "residual_min_samples",
+                    "residual_window",
                 )
             },
             "fusion_alpha": summary.get("fusion_alpha"),
+            "residual": summary.get("residual"),
             "prediction": face,
             "bets_had": _bet_face(conn, rid, "had"),
             "bets_all": _bet_face(conn, rid),
