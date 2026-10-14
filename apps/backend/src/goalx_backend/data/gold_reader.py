@@ -29,7 +29,9 @@ from goalx_backend.data.corpus_store import (
 )
 from goalx_backend.data.leagues import FD_TO_LEAGUE
 
-# 十年引擎取数列（收盘族按候选链原样携带，era 声明正典；投影归调用方）
+# 十年引擎取数列（收盘族按候选链原样携带，era 声明正典；投影归调用方）。
+# 特征列组（票 03 错价桶判别层）：drift/相位/水位直取 + 1x2 切片供临场
+# 位移派生（q1h/q24h→close，比例 devig 由调用方做）。
 _DECADE_SQL = """
     SELECT sid, league,
            strftime(CAST(kickoff AS DATE), '%Y-%m-%d') AS day,
@@ -39,6 +41,11 @@ _DECADE_SQL = """
            close1x2_h, close1x2_d, close1x2_a,
            close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
            ou_close_line_med, ou_close_over_water_med, ou_close_under_water_med,
+           ah_line_drift, ou_line_drift,
+           ah_n_pre, ah_n_inplay,
+           ah_close_home_water_med, ou_close_over_water_med,
+           q1h1x2_h, q1h1x2_d, q1h1x2_a,
+           q24h1x2_h, q24h1x2_d, q24h1x2_a,
            version
     FROM match_features
     WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL

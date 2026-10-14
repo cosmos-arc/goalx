@@ -94,6 +94,7 @@ from goalx_backend.modelling import team_align
 from goalx_backend.modelling.calibration import CALIBRATION_KINDS
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.modelling.fusion import FUSION_MODES
+from goalx_backend.modelling.residual_layer import RESIDUAL_MODES
 from goalx_backend.tasks import (
     clubelo_elo_for_team,
     corpus_anchor,
@@ -274,6 +275,9 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             fusion=args.fusion,
             fusion_min_samples=args.fusion_min_samples,
             fusion_window=args.fusion_window,
+            residual=args.residual,
+            residual_min_samples=args.residual_min_samples,
+            residual_window=args.residual_window,
         )
         result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
         ev.compute_run_metrics(conn, result.run_id)
@@ -1155,6 +1159,25 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         type=int,
         default=1000,
         help="α 学习尾随窗样本数(0=全历史)",
+    )
+    backtest.add_argument(
+        "--residual",
+        choices=list(RESIDUAL_MODES),
+        default="off",
+        help="判别层(票 03):off=缺省不变;on=错价桶特征残差调整;"
+        + "placebo=特征错位安慰剂对照",
+    )
+    backtest.add_argument(
+        "--residual-min-samples",
+        type=int,
+        default=300,
+        help="判别层冷启动阈值(联赛内历史不足即透传)",
+    )
+    backtest.add_argument(
+        "--residual-window",
+        type=int,
+        default=1000,
+        help="判别层拟合尾随窗样本数(0=全历史)",
     )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     guardrail = sub.add_parser(
