@@ -85,6 +85,7 @@ from goalx_backend.evaluation import guardrail_report as gr
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
+from goalx_backend.evaluation import model_layers as mlp
 from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
@@ -265,6 +266,9 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             min_train_matches=args.min_train,
             fair_source=args.fair_source,
             markets=tuple(args.markets),
+            calibration=args.calibration,
+            calibration_min_samples=args.calibration_min_samples,
+            calibration_window=args.calibration_window,
         )
         result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
         ev.compute_run_metrics(conn, result.run_id)
@@ -407,6 +411,40 @@ def _cmd_signal_attribution(args: argparse.Namespace) -> None:
         payload["run_id"],
         payload["n_samples"],
         sig.REPORT_BASENAME,
+    )
+
+
+def _cmd_model_layers(args: argparse.Namespace) -> None:
+    """模型层对照（model-iterate 票 01：校准变体 vs 基线十年对照）。"""
+    treatments: list[tuple[str, int]] = []
+    raw = list(args.treatment or [])
+    for item in raw:
+        spec = str(item)
+        label, _, run_id = spec.rpartition(":")
+        if not label or not run_id.isdigit():
+            raise SystemExit(f"--treatment 格式 label:run_id（得到 {spec!r}）")
+        treatments.append((label, int(run_id)))
+    if not treatments:
+        raise SystemExit("至少一个 --treatment label:run_id")
+    store = CorpusStore(get_settings().corpus_root)
+    try:
+        with task_conn() as conn:
+            payload = mlp.build_model_layers_report(
+                conn,
+                store,
+                treatments=treatments,
+                baseline_run_id=args.baseline_run_id,
+            )
+    finally:
+        store.close()
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "model-layers-report: 基线 run={} × {} 变体 → reports/{}.json/.md",
+        payload["baseline"]["run_id"],
+        len(treatments),
+        mlp.REPORT_BASENAME,
     )
 
 
@@ -1077,6 +1115,24 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default="auto",
         help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
     )
+    backtest.add_argument(
+        "--calibration",
+        choices=("off", "temperature", "isotonic"),
+        default="off",
+        help="校准层(票 01):off=缺省不变;temperature/isotonic=按联赛walk-forward",
+    )
+    backtest.add_argument(
+        "--calibration-min-samples",
+        type=int,
+        default=200,
+        help="校准冷启动阈值(联赛内历史不足即透传)",
+    )
+    backtest.add_argument(
+        "--calibration-window",
+        type=int,
+        default=1000,
+        help="校准拟合尾随窗样本数(0=全历史)",
+    )
     sub.add_parser("baseline-compare", help="基准分期质检+psc/avgc 对照新 run(票 34)")
     guardrail = sub.add_parser(
         "guardrail-report",
@@ -1130,6 +1186,22 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         type=int,
         default=None,
         help="目标 run(缺省=最新 done run;十年报告建议显式指定)",
+    )
+    model_layers_parser = sub.add_parser(
+        "model-layers-report",
+        help="模型层对照(model-iterate 票 01:校准变体 vs 基线)",
+    )
+    model_layers_parser.add_argument(
+        "--baseline-run-id",
+        type=int,
+        required=True,
+        help="基线 run(通常=十年基线 run=5)",
+    )
+    model_layers_parser.add_argument(
+        "--treatment",
+        action="append",
+        required=True,
+        help="变体 label:run_id(可重复,如 t01-iso:6)",
     )
     sub.add_parser("calibrate-haircut", help="haircut 配对样本校准(票 30)")
     sub.add_parser("clv-reconcile", help="已结算注单 CLV 对账+报表(票 32)")
@@ -1303,6 +1375,7 @@ def main(argv: list[str] | None = None) -> int:
         "decade-skill-report": lambda: _cmd_decade_skill(args),
         "clv-decade-report": lambda: _cmd_clv_decade(args),
         "signal-attribution-report": lambda: _cmd_signal_attribution(args),
+        "model-layers-report": lambda: _cmd_model_layers(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),

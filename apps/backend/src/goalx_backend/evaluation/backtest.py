@@ -66,6 +66,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_TRAJECTORY, LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS, TTG_SELECTIONS
+from goalx_backend.modelling.calibration import Calibrator, make_calibrator
 from goalx_backend.modelling.dc_model import (
     DCArtifact,
     TrainingRow,
@@ -120,6 +121,12 @@ class BacktestParams:
     # 公允基准来源：auto=时代感知正典链（era1 PSC→AvgC / era2 锚→共识）；
     # psc/avgc = 只用该源（票 34 分期/来源对照 run 用，跨 era 作用于配对行）
     fair_source: str = "auto"
+    # 校准层（model-iterate 票 01）：off=行为不变（缺省）；temperature/
+    # isotonic=按联赛 walk-forward（尾随窗内拟合、赛前冻结，作用于
+    # 1X2 预测面与 had 下注侧；hhad/ttg 模型侧=比分矩阵不变）
+    calibration: str = "off"
+    calibration_min_samples: int = 200  # 冷启动阈值（不足即透传不校准）
+    calibration_window: int = 1000  # 拟合尾随窗样本数（0=全历史）
 
 
 @dataclass
@@ -584,11 +591,17 @@ def _candidates_for_match(
     match: GoldMatch,
     *,
     market_matrix: ScoreMatrix | None = None,
+    had_probs: dict[str, float] | None = None,
 ) -> list[_Candidate]:
-    """一场比赛的全部候选单关（had 常开；hhad/ttg 需市场侧联合矩阵）。"""
+    """
+    一场比赛的全部候选单关（had 常开；hhad/ttg 需市场侧联合矩阵）。
+
+    had_probs=校准后的 1X2 三向（票 01：预测面与下注面同源校准）；
+    None=未校准透传（含 hhad/ttg 模型侧=原始比分矩阵，不进校准）。
+    """
     candidates: list[_Candidate] = []
     if "had" in params.markets:
-        had = matrix.had()
+        had = had_probs if had_probs is not None else matrix.had()
         for sel in SELECTIONS:
             market_prob = 1.0 / jc_had[sel]
             if market_prob >= MIN_MARKET_PROB and jc_had[sel] <= params.max_sim_odds:
@@ -692,6 +705,35 @@ def _parlay_ev(legs: list[_Candidate]) -> float:
     return prob * odds - 1.0
 
 
+@dataclass
+class _CalibrationState:
+    """
+    联赛作用域校准状态（票 01：walk-forward 冻结协议的载体）。
+
+    历史只累积**原始**（未校准）三向，防校准套校准漂移；本周预测用
+    上周及更早历史拟合后冻结（本周赛果不进拟合=PIT）。
+    """
+
+    calibrator: Calibrator
+    history: list[tuple[dict[str, float], str]] = field(default_factory=list)
+
+    def fit_for_week(self, params: BacktestParams) -> Calibrator | None:
+        """热身充分→尾随窗拟合返回冻结校准器；冷启动→None（透传）。"""
+        if len(self.history) < params.calibration_min_samples:
+            return None
+        window = (
+            self.history[-params.calibration_window :]
+            if params.calibration_window > 0
+            else self.history
+        )
+        self.calibrator.fit(window)
+        return self.calibrator
+
+    def record(self, had: dict[str, float], ftr: str) -> None:
+        """一场的原始三向+赛果入史（本周冻结完毕后调用）。"""
+        self.history.append((had, ftr))
+
+
 def _record_week_predictions(
     conn: sqlite3.Connection,
     run_id: int,
@@ -699,11 +741,16 @@ def _record_week_predictions(
     artifact: DCArtifact,
     params: BacktestParams,
     result: BacktestResult,
+    cal_state: _CalibrationState | None = None,
 ) -> dict[int, list[_Candidate]]:
     """逐场落预测行并构造候选单关；返回 ref → candidates。"""
 
     def skip(key: str) -> None:
         result.skipped[key] = result.skipped.get(key, 0) + 1
+
+    frozen = cal_state.fit_for_week(params) if cal_state is not None else None
+    if cal_state is not None and frozen is None:
+        skip("calibration_cold_matches")
 
     candidates_by_match: dict[int, list[_Candidate]] = {}
     for match in week_rows:
@@ -722,6 +769,8 @@ def _record_week_predictions(
             skip("predict_failed")
             continue
         had = matrix.had()
+        had_out = frozen.apply(had) if frozen is not None else had
+        ftr = _ftr(match.fthg, match.ftag)
         conn.execute(
             """
             INSERT OR IGNORE INTO backtest_predictions
@@ -739,8 +788,8 @@ def _record_week_predictions(
                 match.home,
                 match.away,
                 match.era,
-                _ftr(match.fthg, match.ftag),
-                json.dumps(had),
+                ftr,
+                json.dumps(had_out),
                 json.dumps(fair_probs),
                 fair_source,
                 artifact.data_fingerprint,
@@ -748,6 +797,8 @@ def _record_week_predictions(
             ),
         )
         result.predictions += 1
+        if cal_state is not None:
+            cal_state.record(had, ftr)  # 原始三向入史（本周已冻结完毕）
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
         if "hhad" in params.markets or "ttg" in params.markets:
@@ -755,7 +806,12 @@ def _record_week_predictions(
             if market_matrix is None:
                 skip("no_market_side")  # 无干净 OU 线/联合反推失败
         candidates_by_match[match.ref] = _candidates_for_match(
-            matrix, jc_had, params, match, market_matrix=market_matrix
+            matrix,
+            jc_had,
+            params,
+            match,
+            market_matrix=market_matrix,
+            had_probs=had_out if frozen is not None else None,
         )
     return candidates_by_match
 
@@ -803,13 +859,18 @@ def _place_week_bets(
 
 
 VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
+VALID_CALIBRATION = frozenset({"off", "temperature", "isotonic"})
 
 
 def _validate_window(params: BacktestParams) -> None:
-    """窗口日期+玩法 fail-loud（坏值不得静默变成零候选/静默前视）。"""
+    """窗口日期+玩法+校准 fail-loud（坏值不得静默变成零候选/静默前视）。"""
     invalid = set(params.markets) - VALID_MARKETS
     if invalid:
         raise ValueError(f"未知玩法 {sorted(invalid)}（合法: {sorted(VALID_MARKETS)}）")
+    if params.calibration not in VALID_CALIBRATION:
+        raise ValueError(
+            f"未知校准 {params.calibration!r}（合法: {sorted(VALID_CALIBRATION)}）"
+        )
     for name, value in (("start", params.start), ("end", params.end)):
         if value is None:
             continue
@@ -830,6 +891,13 @@ def _walk_competition(
     """单联赛 walk-forward：训练池推进 + 周重估 + 预测/下注。"""
     pool: list[TrainingRow] = []
     ptr = 0
+    # 校准器按联赛作用域（票 01：联赛逐个走全十年，跨联赛共享状态会
+    # 用 A 联赛晚年校准 B 联赛早年=时序泄漏）；历史=本联赛周内累积
+    cal_state: _CalibrationState | None = (
+        _CalibrationState(make_calibrator(params.calibration))
+        if params.calibration != "off"
+        else None
+    )
     # ponytail: 每周全池重拟合（~11 联赛×~540 周，小时级 CLI 跑）；
     # 周间增量拟合是缓存投机，量级不适配再议
     for week_key, week_rows in group_by_week(comp_rows):
@@ -881,7 +949,13 @@ def _walk_competition(
             m.ref: ResultFacts(home_goals=m.fthg, away_goals=m.ftag) for m in in_window
         }
         candidates_by_match = _record_week_predictions(
-            conn, run_id, in_window, artifact, params, result
+            conn,
+            run_id,
+            in_window,
+            artifact,
+            params,
+            result,
+            cal_state=cal_state,
         )
         _place_week_bets(
             conn,
