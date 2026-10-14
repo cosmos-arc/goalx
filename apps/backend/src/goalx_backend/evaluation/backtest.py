@@ -78,6 +78,12 @@ from goalx_backend.modelling.dc_model import (
     fit_dc_model,
     implementation_versions,
 )
+from goalx_backend.modelling.fusion import (
+    FUSION_MODES,
+    FusionState,
+    alpha_survival,
+    fuse,
+)
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
@@ -132,6 +138,12 @@ class BacktestParams:
     calibration: str = "off"
     calibration_min_samples: int = 200  # 冷启动阈值（不足即透传不校准）
     calibration_window: int = 1000  # 拟合尾随窗样本数（0=全历史）
+    # 融合层（model-iterate 票 02）：off=行为不变（缺省）；global=单一 α；
+    # era=两时代各自 α（窗内该时代样本不足回落全局）。p ∝ p_model^α ×
+    # p_fair^(1−α)，α 尾随窗网格学习赛前冻结；作用于校准后的 1X2 三向
+    fusion: str = "off"
+    fusion_min_samples: int = 200  # 冷启动阈值（不足即不融合）
+    fusion_window: int = 1000  # α 学习尾随窗样本数（0=全历史）
 
 
 @dataclass
@@ -144,6 +156,8 @@ class BacktestResult:
     staked: float = 0.0
     profit: float = 0.0
     skipped: dict[str, int] = field(default_factory=dict)
+    # 融合 α 周级轨迹（票 02；off 融合=空），入 run summary 供存活报告
+    alpha_log: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def roi(self) -> float:
@@ -739,6 +753,87 @@ class _CalibrationState:
         self.history.append((had, ftr))
 
 
+@dataclass
+class _WeekLayers:
+    """一周冻结的模型层变换（校准器 + 融合 α；None=透传）。"""
+
+    calibrator: Calibrator | None = None
+    alpha: float | None = None
+
+    def apply(
+        self, had: dict[str, float], fair_probs: dict[str, float]
+    ) -> dict[str, float]:
+        """原始三向 → 校准 → 融合（链式；两层都透传时恒等）。"""
+        out = self.calibrator.apply(had) if self.calibrator is not None else had
+        if self.alpha is not None:
+            out = fuse(out, fair_probs, self.alpha)
+        return out
+
+
+@dataclass
+class _LayerState:
+    """
+    联赛作用域模型层状态（票 01 校准 + 票 02 融合，同冻结协议）。
+
+    prepare_week 拟合冻结挂 current（本周赛果不进拟合=PIT）；record 在
+    本周全部预测落库后入史。校准历史=原始三向（防套娃漂移）；融合
+    历史=融合后已应用三向（α 在实际输出上学习）。
+    """
+
+    cal: _CalibrationState | None
+    fusion: FusionState | None
+    current: _WeekLayers = field(default_factory=_WeekLayers)
+
+    def prepare_week(
+        self,
+        params: BacktestParams,
+        week_era: str,
+        result: BacktestResult,
+        *,
+        competition: str,
+        week_key: str,
+    ) -> None:
+        """拟合本周冻结层挂 current；冷启动计数（单位=周）。"""
+        calibrator = None
+        if self.cal is not None:
+            calibrator = self.cal.fit_for_week(params)
+            if calibrator is None:
+                result.skipped["calibration_cold_weeks"] = (
+                    result.skipped.get("calibration_cold_weeks", 0) + 1
+                )
+        alpha = None
+        if self.fusion is not None:
+            alpha = self.fusion.fit_for_week(week_era)
+            if alpha is None:
+                result.skipped["fusion_cold_weeks"] = (
+                    result.skipped.get("fusion_cold_weeks", 0) + 1
+                )
+            else:
+                self.fusion.log_week(
+                    {
+                        "competition": competition,
+                        "week": week_key,
+                        "era": week_era,
+                        "alpha": alpha,
+                    }
+                )
+        self.current = _WeekLayers(calibrator=calibrator, alpha=alpha)
+
+    def record(
+        self,
+        had_raw: dict[str, float],
+        had_applied: dict[str, float],
+        fair_probs: dict[str, float],
+        ftr: str,
+        era: str,
+    ) -> None:
+        """一场入史（本周冻结完毕后调用）。"""
+        if self.cal is not None:
+            self.cal.record(had_raw, ftr)
+        if self.fusion is not None:
+            self.fusion.record(had_applied, fair_probs, ftr, era)
+
+
 def _record_week_predictions(
     conn: sqlite3.Connection,
     run_id: int,
@@ -746,16 +841,12 @@ def _record_week_predictions(
     artifact: DCArtifact,
     params: BacktestParams,
     result: BacktestResult,
-    cal_state: _CalibrationState | None = None,
+    layer_state: _LayerState,
 ) -> dict[int, list[_Candidate]]:
     """逐场落预测行并构造候选单关；返回 ref → candidates。"""
 
     def skip(key: str) -> None:
         result.skipped[key] = result.skipped.get(key, 0) + 1
-
-    frozen = cal_state.fit_for_week(params) if cal_state is not None else None
-    if cal_state is not None and frozen is None:
-        skip("calibration_cold_weeks")  # 计数单位=周（同 thin_train_weeks）
 
     candidates_by_match: dict[int, list[_Candidate]] = {}
     for match in week_rows:
@@ -774,7 +865,7 @@ def _record_week_predictions(
             skip("predict_failed")
             continue
         had = matrix.had()
-        had_out = frozen.apply(had) if frozen is not None else had
+        had_out = layer_state.current.apply(had, fair_probs)
         ftr = _ftr(match.fthg, match.ftag)
         conn.execute(
             """
@@ -802,8 +893,7 @@ def _record_week_predictions(
             ),
         )
         result.predictions += 1
-        if cal_state is not None:
-            cal_state.record(had, ftr)  # 原始三向入史（本周已冻结完毕）
+        layer_state.record(had, had_out, fair_probs, ftr, match.era)
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
         if "hhad" in params.markets or "ttg" in params.markets:
@@ -867,23 +957,36 @@ def _place_week_bets(
 VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
 
 
-def _validate_window(params: BacktestParams) -> None:
-    """窗口日期+玩法+校准 fail-loud（坏值不得静默变成零候选/静默前视）。"""
-    invalid = set(params.markets) - VALID_MARKETS
-    if invalid:
-        raise ValueError(f"未知玩法 {sorted(invalid)}（合法: {sorted(VALID_MARKETS)}）")
+def _validate_layer_params(params: BacktestParams) -> None:
+    """模型层参数 fail-loud（correctness F2：开跑前拒绝，不半路炸 run）。"""
     if params.calibration not in CALIBRATION_KINDS:
         raise ValueError(
             f"未知校准 {params.calibration!r}（合法: {list(CALIBRATION_KINDS)}）"
         )
     if params.calibration != "off":
-        # correctness F2：坏参数开跑前 fail-loud，不半路炸掉已计费的 run
         if params.calibration_min_samples < MIN_FIT_SAMPLES:
             raise ValueError(
                 f"calibration_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
             )
         if params.calibration_window < 0 or params.calibration_window == 1:
             raise ValueError("calibration_window 须为 0（全历史）或 ≥2")
+    if params.fusion not in FUSION_MODES:
+        raise ValueError(f"未知融合 {params.fusion!r}（合法: {list(FUSION_MODES)}）")
+    if params.fusion != "off":
+        if params.fusion_min_samples < MIN_FIT_SAMPLES:
+            raise ValueError(
+                f"fusion_min_samples 须 ≥{MIN_FIT_SAMPLES}（拟合最少样本）"
+            )
+        if params.fusion_window < 0 or params.fusion_window == 1:
+            raise ValueError("fusion_window 须为 0（全历史）或 ≥2")
+
+
+def _validate_window(params: BacktestParams) -> None:
+    """窗口日期+玩法+模型层 fail-loud（坏值不得静默变成零候选/静默前视）。"""
+    invalid = set(params.markets) - VALID_MARKETS
+    if invalid:
+        raise ValueError(f"未知玩法 {sorted(invalid)}（合法: {sorted(VALID_MARKETS)}）")
+    _validate_layer_params(params)
     for name, value in (("start", params.start), ("end", params.end)):
         if value is None:
             continue
@@ -904,12 +1007,24 @@ def _walk_competition(
     """单联赛 walk-forward：训练池推进 + 周重估 + 预测/下注。"""
     pool: list[TrainingRow] = []
     ptr = 0
-    # 校准器按联赛作用域（票 01：联赛逐个走全十年，跨联赛共享状态会
-    # 用 A 联赛晚年校准 B 联赛早年=时序泄漏）；历史=本联赛周内累积
-    cal_state: _CalibrationState | None = (
-        _CalibrationState(make_calibrator(params.calibration))
-        if params.calibration != "off"
-        else None
+    # 校准/融合状态按联赛作用域（票 01/02：联赛逐个走全十年，跨联赛
+    # 共享状态会用 A 联赛晚年校准 B 联赛早年=时序泄漏）；历史=本联赛
+    # 周内累积；融合 α 轨迹入 result 供 run summary 落档
+    layer_state = _LayerState(
+        cal=(
+            _CalibrationState(make_calibrator(params.calibration))
+            if params.calibration != "off"
+            else None
+        ),
+        fusion=(
+            FusionState(
+                mode=params.fusion,
+                window=params.fusion_window,
+                min_samples=params.fusion_min_samples,
+            )
+            if params.fusion != "off"
+            else None
+        ),
     )
     # ponytail: 每周全池重拟合（~11 联赛×~540 周，小时级 CLI 跑）；
     # 周间增量拟合是缓存投机，量级不适配再议
@@ -961,6 +1076,12 @@ def _walk_competition(
         results = {
             m.ref: ResultFacts(home_goals=m.fthg, away_goals=m.ftag) for m in in_window
         }
+        # 本周冻结层（票 01 校准 + 票 02 融合；era 混杂周记 mixed）
+        week_eras = {m.era for m in in_window}
+        week_era = next(iter(week_eras)) if len(week_eras) == 1 else "mixed"
+        layer_state.prepare_week(
+            params, week_era, result, competition=competition, week_key=week_key
+        )
         candidates_by_match = _record_week_predictions(
             conn,
             run_id,
@@ -968,7 +1089,7 @@ def _walk_competition(
             artifact,
             params,
             result,
-            cal_state=cal_state,
+            layer_state,
         )
         _place_week_bets(
             conn,
@@ -977,6 +1098,8 @@ def _walk_competition(
             params,
             result,
         )
+    if layer_state.fusion is not None:
+        result.alpha_log.extend(layer_state.fusion.alpha_log)
 
 
 def run_backtest(
@@ -1055,7 +1178,12 @@ def run_backtest(
                         "profit": round(result.profit, 2),
                         "roi": round(result.roi, 6),
                         "skipped": result.skipped,
-                    },
+                    }
+                    | (
+                        {"fusion_alpha": alpha_survival(result.alpha_log)}
+                        if result.alpha_log
+                        else {}
+                    ),
                     ensure_ascii=False,
                 ),
                 run_id,

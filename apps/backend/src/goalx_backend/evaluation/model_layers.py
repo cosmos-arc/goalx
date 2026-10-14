@@ -22,6 +22,7 @@ from datetime import date
 from typing import Any
 
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.evaluation.backtest import run_summary
 from goalx_backend.evaluation.metrics import (
     ece_per_class,
     evaluate_predictions,
@@ -185,6 +186,13 @@ def _verdicts(
             f"  - had 注量 {n_base}→{n_treat}"
             + f"（ROI {bets_base.get('roi')}→{bets_treat.get('roi')}；{direction}）"
         )
+        alpha = payload.get("fusion_alpha")
+        if alpha and alpha.get("n_weeks"):
+            lines.append(
+                f"  - 融合 α：均值 {alpha.get('alpha_mean')} / 中位 "
+                + f"{alpha.get('alpha_median')}，存活率（α≥0.05）"
+                + f"{alpha.get('survival_rate')}，分时代 {alpha.get('per_era')}"
+            )
     return lines
 
 
@@ -222,6 +230,7 @@ def build_model_layers_report(
             k: v for k, v in treatment_samples[label].items() if k in paired_keys
         }
         face = _PredFace(list(treat_samples.values())).as_dict()
+        summary = run_summary(conn, rid) or {}
         treatment_payloads[label] = {
             "run_id": rid,
             "run_status": status,
@@ -231,8 +240,12 @@ def build_model_layers_report(
                     "calibration",
                     "calibration_min_samples",
                     "calibration_window",
+                    "fusion",
+                    "fusion_min_samples",
+                    "fusion_window",
                 )
             },
+            "fusion_alpha": summary.get("fusion_alpha"),
             "prediction": face,
             "bets_had": _bet_face(conn, rid, "had"),
             "bets_all": _bet_face(conn, rid),
