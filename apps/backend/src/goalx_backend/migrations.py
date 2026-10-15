@@ -1537,6 +1537,45 @@ def _apply_v27(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v28(conn: sqlite3.Connection) -> None:
+    """
+    v28（caliber-loop 票 06）：冻结决策快照与执行对账。
+
+    每漏斗合格卡（fixture×selection）每日一条冻结记录：决策
+    would_bet/not+原因码（no_edge/stale_quote/ineligible/below_
+    threshold/would_bet）+当时价值代理；规则版本号进记录（前瞻样本
+    规则冻结可审计）。执行对账列（锁后漂移/收盘 p_sharp/结算）可空
+    回填。**不写 bets 表**（人裁决：冻结记录先行观测 2-4 周）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS frozen_decisions (
+            id INTEGER PRIMARY KEY,
+            business_date TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL,
+            selection_code TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK (decision IN ('would_bet', 'not')),
+            reason_code TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            odds REAL,
+            p_sharp REAL,
+            value_proxy REAL,
+            drift_after_lock REAL,
+            p_sharp_close REAL,
+            settled_outcome TEXT,
+            settled_profit REAL,
+            reconciled_at TEXT,
+            UNIQUE (business_date, fixture_id, selection_code)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_frozen_decisions_date"
+        + " ON frozen_decisions (business_date)"
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1565,4 +1604,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (25, _apply_v25),
     (26, _apply_v26),
     (27, _apply_v27),
+    (28, _apply_v28),
 )

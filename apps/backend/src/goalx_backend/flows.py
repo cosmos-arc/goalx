@@ -114,6 +114,7 @@ def daily_wrap_flow() -> dict[str, object]:
     settlement = settlement_flow()
     funnel = tasks.funnel_day()
     m3 = tasks.m3_evaluation()
+    frozen_recon = tasks.frozen_reconcile()
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
         # （corpus_anchor 库缺席降级 None，不打断对账）
@@ -133,6 +134,7 @@ def daily_wrap_flow() -> dict[str, object]:
     return {
         "settlement": settlement,
         "funnel": funnel,
+        "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
         "audit_findings": findings,
     }
