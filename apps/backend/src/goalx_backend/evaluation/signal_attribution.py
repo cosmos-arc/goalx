@@ -48,9 +48,11 @@ T_SIGNAL = 2.0  # realized 均值 |t| 过线才算市场错价
 MIN_CORR_SAMPLES = 3  # 相关/t 统计最少样本
 EPS = 1e-9
 # 字面量拼接只为行宽；参数绑定注入面为零（S608 误报豁免）
-_PREDICTIONS_SQL = (
-    "SELECT match_key, era, ftr, had_probs, fair_probs"  # noqa: S608
-    + " FROM backtest_predictions WHERE run_id = ? ORDER BY id"
+_PREDICTIONS_SQL = " ".join(
+    (
+        "SELECT match_key, era, competition, match_date, ftr, had_probs, fair_probs",
+        "FROM backtest_predictions WHERE run_id = ? ORDER BY id",
+    )
 )
 
 # 特征清单：(特征键, gold 列, 桶型)；桶型 drift=符号三分，dist=分位三分。
@@ -209,24 +211,9 @@ def _collect_samples(
     pred_rows: list[sqlite3.Row],
     gold: dict[str, dict[str, Any]],
 ) -> tuple[list[_MatchSignal], dict[str, int]]:
-    """Run 预测 × gold 特征 → 归因样本（缺口按类计数）。"""
-    samples: list[_MatchSignal] = []
-    skipped = {"no_ftr": 0, "no_gold": 0, "no_fair": 0}
-    for row in pred_rows:
-        if row["ftr"] is None:
-            skipped["no_ftr"] += 1
-            continue
-        gold_row = gold.get(str(row["match_key"]))
-        if gold_row is None:
-            skipped["no_gold"] += 1
-            continue
-        fair = _probs_dict(json.loads(str(row["fair_probs"])))
-        model = _probs_dict(json.loads(str(row["had_probs"])))
-        if fair is None or model is None:
-            skipped["no_fair"] += 1
-            continue
-        samples.append(_signal_of(row, gold_row, fair, model))
-    return samples, skipped
+    """归因样本（委托 ``enumerate_match_samples`` 单一枚举口——零漂移）。"""
+    samples, skipped = enumerate_match_samples(pred_rows, gold)
+    return [s.signal for s in samples], skipped
 
 
 def _probs_dict(raw: object) -> dict[str, float] | None:

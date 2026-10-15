@@ -216,14 +216,18 @@ def _make_bet(sample: MatchSample, side: str, predicate: str, haircut: float) ->
 
 def _two_arms(
     samples: list[MatchSample], labels: dict[str, dict[str, str]], haircut: float
-) -> tuple[list[_Bet], list[_Bet], list[dict[str, Any]]]:
-    """桶臂全体 + 等量分层对照臂（+短缺层账）。"""
+) -> tuple[list[_Bet], list[_Bet], list[dict[str, Any]], int]:
+    """桶臂全体 + 等量分层对照臂（+短缺层账+双桶重叠数）。"""
     mapped = {(f, b) for f, b, _s in NAMED_PREDICATES}
     arm: list[_Bet] = []
     pool: dict[tuple[str, str, str, int], list[_Bet]] = {}
+    overlap = 0
     for sample in samples:
         row = labels.get(sample.sid, {})
         hit: tuple[str, str, str] | None = None
+        hits = sum(1 for f, b, _s in NAMED_PREDICATES if row.get(f) == b)
+        if hits > 1:
+            overlap += 1
         for feature, bucket, side in NAMED_PREDICATES:
             if row.get(feature) == bucket:
                 hit = (feature, bucket, side)
@@ -239,7 +243,7 @@ def _two_arms(
             bet = _make_bet(sample, side, "control", haircut)
             pool.setdefault(bet.stratum, []).append(bet)
     control, shortfall = _stratified_control(arm, pool)
-    return arm, control, shortfall
+    return arm, control, shortfall, overlap
 
 
 def _stratified_control(
@@ -373,7 +377,7 @@ def build_bucket_reaudit_report(
     )
     mapping = _verify_mapping(source_report)
     labels = _bucket_labels(samples)
-    arm, control, shortfall = _two_arms(samples, labels, haircut)
+    arm, control, shortfall, overlap = _two_arms(samples, labels, haircut)
     dim_diffs = _dim_diffs(arm, control)
     if dim_diffs and not shortfall:
         raise ValueError(f"分维计数差非零（等量分层被破坏）：{dim_diffs}")
@@ -386,10 +390,14 @@ def build_bucket_reaudit_report(
         if arm_face["roi_flat"] is not None and ctrl_face["roi_flat"] is not None
         else None
     )
-    if diff_roi is not None and diff_roi > 0:
+    if ctrl_face["n"] == 0:
+        conclusion = "无法对照（对照臂空）"
+    elif diff_roi is not None and diff_roi > 0:
         conclusion = "方向映射后探索性一致"
     else:
         conclusion = "方向映射后探索性不一致"
+    if shortfall:
+        conclusion += f"（对照臂 {len(shortfall)} 层短缺，配对不完全）"
     payload = {
         "built_at": (today or date.today()).isoformat(),
         "run_id": rid,
@@ -407,6 +415,7 @@ def build_bucket_reaudit_report(
             "odds_band_width": ODDS_BAND_WIDTH,
             "control_seed": CONTROL_SEED,
             "candidate_denominator": "桶成员全体（非 DC 愿下注子集）",
+            "overlap_attribution": "双桶场次按谓词顺序先到先得（一注）",
         },
         "mapping_provenance": mapping,
         "n_samples": len(samples),
@@ -417,6 +426,7 @@ def build_bucket_reaudit_report(
         "week_joint_bootstrap": boot,
         "dim_count_diffs": dim_diffs,
         "control_shortfall": shortfall,
+        "overlap_double_bucket": overlap,
         "by_predicate": {
             name: _ArmStats([b for b in arm if b.predicate == name]).face()
             for name in sorted({b.predicate for b in arm})
@@ -453,6 +463,8 @@ def _render_md(payload: dict[str, Any]) -> str:
         f"run={payload['run_id']}（{payload['label']}）样本 {payload['n_samples']}",
         f"映射：{payload['params']['predicates']}"
         + f"（{payload['params']['mapping_rule']}）",
+        f"价面：{payload['params']['odds_face']}"
+        + f"；双桶重叠 {payload['overlap_double_bucket']} 场（先到先得一注）",
         "",
         "## 两臂对照（固定注额，不经 EV/Kelly/串关）",
         "",
