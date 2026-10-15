@@ -242,13 +242,23 @@ def _parse_instant(value: str) -> datetime | None:
         return None
 
 
-def _kickoff_instant(link: _Link) -> datetime | None:
-    """真实开球时刻（北京墙钟 naive → UTC aware：−8h；PIT 判定）。"""
+def beijing_naive_to_utc(value: str) -> datetime | None:
+    """
+    北京墙钟 naive 串 → UTC aware（−8h 真转换）。
+
+    kickoff 时刻口径的单一真相源：抽取器 PIT 判定与评测侧时距面共用，
+    不许各写一份（caliber-loop 票 01）。
+    """
     try:
-        naive = datetime.fromisoformat(link.kickoff_iso.replace(" ", "T"))
+        naive = datetime.fromisoformat(value.replace(" ", "T"))
     except ValueError:
         return None
     return naive.replace(tzinfo=UTC) - timedelta(hours=8)
+
+
+def _kickoff_instant(link: _Link) -> datetime | None:
+    """真实开球时刻（PIT 判定；转换单一真相源=``beijing_naive_to_utc``）。"""
+    return beijing_naive_to_utc(link.kickoff_iso)
 
 
 def _word_boundary(name: str, text: str) -> bool:

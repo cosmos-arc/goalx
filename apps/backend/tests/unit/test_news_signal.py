@@ -1,4 +1,4 @@
-"""事件信号 PIT 回放（model-iterate 票 05）的行为断言。"""
+"""事件信号 PIT 回放（caliber-loop 票 01：场次级口径）的行为断言。"""
 
 from __future__ import annotations
 
@@ -6,9 +6,8 @@ import json
 import sqlite3
 from typing import Any
 
-import pytest
-
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest.guardian_silver import beijing_naive_to_utc
 from goalx_backend.evaluation import news_signal as nsw
 
 
@@ -21,18 +20,37 @@ def _seed_run(face: sqlite3.Connection) -> int:
     return int(cur.lastrowid or 0)
 
 
-def _seed_pred(face: sqlite3.Connection, run_id: int, key: str, ftr: str = "H") -> None:
-    fair = {"h": 0.4, "d": 0.3, "a": 0.3}
+def _seed_pred(
+    face: sqlite3.Connection,
+    run_id: int,
+    key: str,
+    *,
+    ftr: str = "H",
+    fair: dict[str, float] | None = None,
+    match_date: str = "2024-03-10",
+    competition: str = "E0",
+    season: str = "2023-24",
+) -> None:
+    probs = fair or {"h": 0.4, "d": 0.3, "a": 0.3}
     face.execute(
         """
         INSERT INTO backtest_predictions
         (run_id, match_key, competition, season, match_date, home_team, away_team,
          era, ftr, had_probs, fair_probs, fair_source, model_fingerprint,
          train_window_end)
-        VALUES (?, ?, 'E0', '2023-24', '2024-03-10', 'A', 'B', NULL, ?, ?, ?,
+        VALUES (?, ?, ?, ?, ?, 'A', 'B', NULL, ?, ?, ?,
                 'psc', 'fp', '2024-03-01')
         """,
-        (run_id, key, ftr, json.dumps(fair), json.dumps(fair)),
+        (
+            run_id,
+            key,
+            competition,
+            season,
+            match_date,
+            ftr,
+            json.dumps(probs),
+            json.dumps(probs),
+        ),
     )
 
 
@@ -67,17 +85,25 @@ def _write_events(store: CorpusStore, rows: list[dict[str, Any]]) -> None:
     )
 
 
-def _event(sid: str, etype: str = "injury") -> dict[str, Any]:
+def _event(
+    sid: str,
+    *,
+    etype: str = "injury",
+    side: str = "home",
+    article: str | None = None,
+    published_at: str = "2024-03-09T10:00:00Z",
+    kickoff_iso: str = "2024-03-10T20:00:00",
+) -> dict[str, Any]:
     return {
-        "article_sid": f"art-{sid}-{etype}",
+        "article_sid": article or f"art-{sid}-{etype}-{side}",
         "sid": sid,
         "league": "E0",
         "season": "2023-24",
-        "published_at": "2024-03-09T10:00:00Z",
-        "kickoff_day": "2024-03-10",
-        "kickoff_iso": "2024-03-10T20:00:00",
+        "published_at": published_at,
+        "kickoff_day": kickoff_iso[:10],
+        "kickoff_iso": kickoff_iso,
         "event_type": etype,
-        "side": "home",
+        "side": side,
         "player": None,
         "confidence": 0.8,
         "model": "test",
@@ -115,43 +141,137 @@ def _gold_env_rows(count: int) -> list[dict[str, Any]]:
     return rows
 
 
-def test_news_signal_faces(gold_env, tmp_path):
-    """事件面/残差对照/price-in 三面落位；报告双视图落盘。"""
+def test_fixture_level_uniqueness_and_matched_contrast(gold_env, tmp_path):
+    """主面=fixture×side 唯一：同场同侧两事件只计一个样本；对照=匹配池。"""
     with gold_env(_gold_env_rows(20)) as (face, duck_con, _store):
         run_id = _seed_run(face)
         for i in range(20):
-            _seed_pred(face, run_id, f"s{i}", "H" if i % 2 else "A")
+            _seed_pred(face, run_id, f"s{i}", ftr="H" if i % 2 else "A")
         report_store = CorpusStore(tmp_path)
-        # 事件覆盖 s0..s3（事件场 realized h=+0.6 全 H；对照场混合）
+        # s0 同场同侧两条事件（剂量 2）；s1 一条 → h 侧样本=2、独立场次=2
         _write_events(
             report_store,
-            [_event("s0"), _event("s1", "suspension"), _event("s2"), _event("s3")],
+            [
+                _event("s0", article="a1"),
+                _event("s0", etype="suspension", article="a2"),
+                _event("s1"),
+            ],
         )
         payload = nsw.build_news_signal_report(
             face, duck_con, report_store, run_id=run_id
         )
-        assert payload["event_face"]["n_events"] == 4
-        assert payload["event_face"]["n_fixtures_with_events"] == 4
-        assert payload["event_face"]["by_type"]["injury"] == 3
-        # 残差对照（事件侧锚定）：side=home，s0/s2 是 A（−0.4）
-        # s1/s3 是 H（+0.6）→ 均值 (−0.4+0.6−0.4+0.6)/4 = 0.1
-        anchored = payload["residual_contrast"]["event_side_anchored"]
-        assert anchored["n"] == 4  # 4 条事件（每条取其队伍侧）
-        assert anchored["mean"] == pytest.approx(0.1)
-        by_side = payload["residual_contrast"]["by_side_event"]
-        assert by_side["h"]["mean"] == pytest.approx(0.1)
-        assert payload["residual_contrast"]["by_side_control"]["h"]["n"] > 0
-        # price-in：q1h 2.4→close 2.0 主队概率上移 → 均值>0
-        assert payload["price_in"]["n"] == 4
-        assert payload["price_in"]["mean"] > 0
+        fixture = payload["fixture_face"]
+        assert payload["event_face"]["n_events"] == 3
+        assert fixture["n_fixtures"] == 2  # headline 独立场次数
+        assert fixture["n_samples"] == 2  # 同场同侧两事件只计一次
+        h_face = fixture["by_side"]["h"]
+        assert h_face["event"]["n"] == 2
+        assert h_face["dose"]["2+"]["n"] == 1  # s0 剂量=2+
+        assert h_face["dose"]["1"]["n"] == 1
+        # 对照=s2..s19 同联赛+同季+同周+同档（fair h=0.4 → 档 2）
+        assert h_face["control"]["n"] == 18
+        assert h_face["unmatched_event_fixtures"] == 0
+        assert h_face["week_block_bootstrap"]["draws"] == 1000
+        # 事件加权次面保留条数口径并标注非独立
+        assert payload["event_weighted_secondary"]["event_side_anchored"]["n"] == 3
+        assert "非独立样本" in payload["event_weighted_secondary"]["label"]
+        assert payload["match_params"]["prob_band_width"] == 0.2
         md = (tmp_path / "reports" / "news-signal.md").read_text(encoding="utf-8")
-        assert "残差对照" in md
-        assert "price-in" in md
+        assert "独立场次 2" in md  # headline 先报独立场次数
+        report_store.close()
+
+
+def test_matched_control_predicate_dimensions(gold_env, tmp_path):
+    """匹配谓词四维：联赛/季/周窗/概率档——逐维排除，匹配不上剔除计数。"""
+    with gold_env(_gold_env_rows(2)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s0", ftr="H")  # 事件场
+        _seed_pred(face, run_id, "s1", ftr="H")  # 唯一合格对照（全维相同）
+        report_store = CorpusStore(tmp_path)
+        _write_events(report_store, [_event("s0")])
+        # 四个反例夹具（无 gold 行也可有预测；price_in 缺行如实为 0）
+        _seed_pred(face, run_id, "wrong_band", fair={"h": 0.9, "d": 0.05, "a": 0.05})
+        _seed_pred(face, run_id, "wrong_season", season="2024-25")
+        _seed_pred(face, run_id, "wrong_week", match_date="2024-04-28")
+        _seed_pred(face, run_id, "wrong_league", competition="SP1")
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        h_face = payload["fixture_face"]["by_side"]["h"]
+        assert h_face["control"]["n"] == 1  # 只有 s1 四维全中
+        assert h_face["unmatched_event_fixtures"] == 0
+        report_store.close()
+        # 孤立事件场（无任何对照）→ 剔除计数、不产 diff
+        face.execute("DELETE FROM backtest_predictions WHERE match_key = 's1'")
+        report_store2 = CorpusStore(tmp_path / "x")
+        _write_events(report_store2, [_event("s0")])
+        payload2 = nsw.build_news_signal_report(
+            face, duck_con, report_store2, run_id=run_id
+        )
+        h2 = payload2["fixture_face"]["by_side"]["h"]
+        assert h2["control"]["n"] == 0
+        assert h2["event"]["n"] == 0
+        assert h2["unmatched_event_fixtures"] == 1
+        assert h2["diff"] is None
+        report_store2.close()
+
+
+def test_kickoff_true_utc_conversion(gold_env, tmp_path):
+    """时距=北京墙钟−8h 真 UTC（旧标签替换口径恒高估 8h）。"""
+    with gold_env(_gold_env_rows(1)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s0")
+        report_store = CorpusStore(tmp_path)
+        # 北京 20:00 = UTC 12:00；发布 10:00Z → 真时距 2.0h（旧口径=10.0h）
+        _write_events(
+            report_store,
+            [
+                _event(
+                    "s0",
+                    kickoff_iso="2024-03-10T20:00:00",
+                    published_at="2024-03-10T10:00:00Z",
+                )
+            ],
+        )
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        assert payload["event_face"]["hours_to_kickoff_median"] == 2.0
+        report_store.close()
+
+
+def test_beijing_naive_to_utc_shared_source():
+    """单一真相源：与抽取器同函数，−8h 真转换非标签替换。"""
+    ko = beijing_naive_to_utc("2024-03-10T20:00:00")
+    assert ko is not None
+    assert ko.isoformat() == "2024-03-10T12:00:00+00:00"
+    assert beijing_naive_to_utc("2024-03-10 20:00:00") == ko  # 空格分隔同义
+    assert beijing_naive_to_utc("garbage") is None
+
+
+def test_bootstrap_deterministic(gold_env, tmp_path):
+    """周分块 bootstrap 固定种子：两次构建同一区间。"""
+    with gold_env(_gold_env_rows(10)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        for i in range(10):
+            _seed_pred(face, run_id, f"s{i}", ftr="H" if i % 2 else "A")
+        report_store = CorpusStore(tmp_path)
+        _write_events(report_store, [_event("s0"), _event("s1")])
+        first = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        second = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        assert (
+            first["fixture_face"]["by_side"]["h"]["week_block_bootstrap"]
+            == second["fixture_face"]["by_side"]["h"]["week_block_bootstrap"]
+        )
         report_store.close()
 
 
 def test_news_signal_empty_events_honest(gold_env, tmp_path):
-    """事件数据集缺席：事件面 0 如实，不冒充结论。"""
+    """事件数据集缺席：各面 0 如实，不冒充结论。"""
     with gold_env(_gold_env_rows(5)) as (face, duck_con, _store):
         run_id = _seed_run(face)
         for i in range(5):
@@ -161,22 +281,10 @@ def test_news_signal_empty_events_honest(gold_env, tmp_path):
             face, duck_con, report_store, run_id=run_id
         )
         assert payload["event_face"]["n_events"] == 0
-        assert payload["event_face"]["n_fixtures_with_events"] == 0
+        assert payload["fixture_face"]["n_fixtures"] == 0
+        assert payload["fixture_face"]["n_samples"] == 0
         assert payload["price_in"]["n"] == 0
         report_store.close()
-
-
-def test_time_matched_control_week_anchored():
-    """周匹配安慰剂：只从事件周取、确定性、量有界。"""
-    pool = [f"x{i}" for i in range(100)]
-    week_of = {f"x{i}": "2024-W10" if i < 50 else "2024-W20" for i in range(100)}
-    event_weeks = ["2024-W10"]
-    first = nsw._time_matched_control(pool, event_weeks, week_of, 5)
-    second = nsw._time_matched_control(pool, event_weeks, week_of, 5)
-    assert first == second  # 确定性
-    assert first  # 非空
-    assert all(week_of[s] == "2024-W10" for s in first)  # 只取事件周
-    assert nsw._time_matched_control([], ["2024-W10"], week_of, 5) == []
 
 
 def test_devig_home_guards():
@@ -184,3 +292,10 @@ def test_devig_home_guards():
     assert nsw._devig_home(None, 3.4, 3.8) is None
     assert nsw._devig_home(0.9, 3.4, 3.8) is None
     assert nsw._devig_home(float("nan"), 3.4, 3.8) is None
+
+
+def test_band_edges():
+    assert nsw._band(0.0) == 0
+    assert nsw._band(0.19) == 0
+    assert nsw._band(0.2) == 1
+    assert nsw._band(1.0) == 4  # 收口顶档
