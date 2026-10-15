@@ -205,8 +205,9 @@ def test_build_news_events_with_fake_extractor(tmp_path):
 
     def fake_extractor(candidate):
         if "Arsenal" in candidate.title:
-            return (
-                {
+            return {
+                "filtered": False,
+                "parsed": {
                     "relevant": True,
                     "events": [
                         {
@@ -217,11 +218,17 @@ def test_build_news_events_with_fake_extractor(tmp_path):
                         }
                     ],
                 },
-                "fake-model",
-                0.0,
-                False,
-            )
-        return {"relevant": False, "events": []}, "fake-model", 0.0, False
+                "model": "fake-model",
+                "cost": 0.0,
+                "empty": False,
+            }
+        return {
+            "filtered": False,
+            "parsed": {"relevant": False, "events": []},
+            "model": "fake-model",
+            "cost": 0.0,
+            "empty": False,
+        }
 
     ctx = gs.NewsContext(
         duck_con=con,
@@ -318,7 +325,13 @@ def test_checkpoint_resume_skips_done_articles(tmp_path):
 
     def counting_extractor(candidate):
         calls.append(candidate.article_sid)
-        return None, "should-not-run", 0.0, True
+        return {
+            "filtered": False,
+            "parsed": None,
+            "model": "should-not-run",
+            "cost": 0.0,
+            "empty": True,
+        }
 
     report = gs.build_news_events(
         ctx, store, seasons=("2023-24",), extractor=counting_extractor
