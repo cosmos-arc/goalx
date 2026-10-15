@@ -171,7 +171,9 @@ def test_fixture_level_uniqueness_and_matched_contrast(gold_env, tmp_path):
         # 对照=s2..s19 同联赛+同季+同周+同档（fair h=0.4 → 档 2）
         assert h_face["control"]["n"] == 18
         assert h_face["unmatched_event_samples"] == 0
-        assert h_face["week_block_bootstrap"]["draws"] == 1000
+        # 全部行同 ISO 周 → 周分块退化，区间诚实置 None（点估计仍报）
+        assert h_face["week_block_bootstrap"] is None
+        assert h_face["diff"] is not None
         # 事件加权次面保留条数口径并标注非独立
         assert payload["event_weighted_secondary"]["event_side_anchored"]["n"] == 3
         assert "非独立样本" in payload["event_weighted_secondary"]["label"]
@@ -247,14 +249,24 @@ def test_beijing_naive_to_utc_shared_source():
     assert ko.isoformat() == "2024-03-10T12:00:00+00:00"
     assert beijing_naive_to_utc("2024-03-10 20:00:00") == ko  # 空格分隔同义
     assert beijing_naive_to_utc("garbage") is None
+    # aware 输入 fail-loud（None）：重贴时区标签=被修掉的 −8h 偏差来源
+    assert beijing_naive_to_utc("2024-08-17T11:30:00+00:00") is None
+    assert beijing_naive_to_utc("2024-08-17T11:30:00Z") is None
 
 
-def test_bootstrap_deterministic(gold_env, tmp_path):
-    """周分块 bootstrap 固定种子：两次构建同一区间。"""
+def test_bootstrap_deterministic_and_degenerate(gold_env, tmp_path):
+    """周分块 bootstrap 固定种子确定性；单周簇退化=诚实置 None。"""
     with gold_env(_gold_env_rows(10)) as (face, duck_con, _store):
         run_id = _seed_run(face)
         for i in range(10):
-            _seed_pred(face, run_id, f"s{i}", ftr="H" if i % 2 else "A")
+            # 事件场与对照分两个 ISO 周（多周簇 → 区间可估）
+            _seed_pred(
+                face,
+                run_id,
+                f"s{i}",
+                ftr="H" if i % 2 else "A",
+                match_date="2024-03-10" if i % 2 else "2024-03-03",
+            )
         report_store = CorpusStore(tmp_path)
         _write_events(report_store, [_event("s0"), _event("s1")])
         first = nsw.build_news_signal_report(
@@ -267,6 +279,62 @@ def test_bootstrap_deterministic(gold_env, tmp_path):
             first["fixture_face"]["by_side"]["h"]["week_block_bootstrap"]
             == second["fixture_face"]["by_side"]["h"]["week_block_bootstrap"]
         )
+        report_store.close()
+        # 单周簇退化：所有行同周 → 区间置 None（零宽区间=冒充不确定性）
+        face.execute("UPDATE backtest_predictions SET match_date='2024-03-10'")
+        degenerate_store = CorpusStore(tmp_path / "degenerate")
+        _write_events(degenerate_store, [_event("s0")])
+        payload_deg = nsw.build_news_signal_report(
+            face, duck_con, degenerate_store, run_id=run_id
+        )
+        h_deg = payload_deg["fixture_face"]["by_side"]["h"]
+        assert h_deg["week_block_bootstrap"] is None
+        assert h_deg["diff"] is not None  # 点估计仍报，只是区间诚实置空
+        degenerate_store.close()
+
+
+def test_prediction_rows_bad_fair_skipped_not_fatal(gold_env, tmp_path):
+    """fair 缺侧键/非 JSON 的行：跳过并计数，不杀整份报告。"""
+    with gold_env(_gold_env_rows(3)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s0")
+        _seed_pred(face, run_id, "s1", fair={"h": 0.4, "a": 0.6})  # 缺 d
+        _seed_pred(face, run_id, "s2")
+        face.execute(
+            "UPDATE backtest_predictions SET fair_probs='garbage'"
+            " WHERE match_key='s2'"  # 非 JSON（列 NOT NULL，坏串走守卫）
+        )
+        report_store = CorpusStore(tmp_path)
+        _write_events(report_store, [_event("s0")])
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        assert payload["n_prediction_rows_skipped"] == 2
+        assert payload["fixture_face"]["n_fixtures"] == 1  # 坏行不再爆炸
+        report_store.close()
+
+
+def test_p90_nearest_rank(gold_env, tmp_path):
+    """p90=nearest-rank：n=10 已知时距 [2..11]h → 第 9 小=10.0 而非最大值 11.0。"""
+    with gold_env(_gold_env_rows(1)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        report_store = CorpusStore(tmp_path)
+        rows = []
+        for i in range(10):
+            rows.append(
+                _event(
+                    "s0",
+                    article=f"a{i}",
+                    kickoff_iso="2024-03-10T20:00:00",  # 北京 20:00 = UTC 12:00
+                    published_at=f"2024-03-10T{10 - i:02d}:00:00Z",  # 时距 2..11h
+                )
+            )
+        _write_events(report_store, rows)
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        assert payload["event_face"]["n_events"] == 10
+        assert payload["event_face"]["hours_to_kickoff_p90"] == 10.0
         report_store.close()
 
 
@@ -298,4 +366,5 @@ def test_band_edges():
     assert nsw._band(0.0) == 0
     assert nsw._band(0.19) == 0
     assert nsw._band(0.2) == 1
+    assert nsw._band(0.6) == 3  # 浮点边界（0.6/0.2=2.999…）epsilon 修正
     assert nsw._band(1.0) == 4  # 收口顶档

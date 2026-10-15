@@ -48,6 +48,7 @@ MATCH_WEEK_WINDOW = 2  # 对照匹配：ISO 周差 ≤2（近比赛周）
 PROB_BAND_WIDTH = 0.2  # 市场概率档宽度=五分位（粒度裁决见票 01 Answer）
 DOSE_SPLIT = 2  # 剂量分层界：1 条 vs 2+ 条
 BOOTSTRAP_DRAWS = 1000
+MIN_BOOTSTRAP_WEEKS = 2  # 周簇少于此数=区间不可估（置 None）
 BOOTSTRAP_SEED = 20261016
 MATCH_PARAMS: dict[str, Any] = {
     "league": "equal",
@@ -84,30 +85,43 @@ class _Pred:
     week_monday: date  # match_date 所在 ISO 周的周一（周匹配/分块共用键）
 
 
-def _predictions(conn: sqlite3.Connection, run_id: int) -> dict[str, _Pred]:
-    """Run 预测 → {sid: 残差/公允/匹配键}（无赛果场次剔除）。"""
+def _predictions(conn: sqlite3.Connection, run_id: int) -> tuple[dict[str, _Pred], int]:
+    """
+    Run 预测 → ({sid: 残差/公允/匹配键}, 跳过行数)。
+
+    无赛果/非法日期/fair 缺侧键或非 JSON 的行跳过并计数（一行坏数据
+    不杀整份观察性报告，跳过数进 payload 诚实面）。
+    """
     rows = conn.execute(_PREDICTIONS_SQL, (run_id,)).fetchall()
     out: dict[str, _Pred] = {}
+    skipped = 0
     for match_key, ftr, fair_json, competition, season, match_date in rows:
         if ftr is None:
+            skipped += 1
             continue
-        fair = json.loads(str(fair_json))
+        try:
+            fair = json.loads(str(fair_json))
+            fair = {side: float(fair[side]) for side in SELECTIONS}
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            skipped += 1
+            continue
         ftr_lower = str(ftr).lower()
         try:
             iso = date.fromisoformat(str(match_date)[:10]).isocalendar()
         except ValueError:
+            skipped += 1
             continue
         out[str(match_key)] = _Pred(
             realized={
-                side: (1.0 if ftr_lower == side else 0.0) - float(fair[side])
+                side: (1.0 if ftr_lower == side else 0.0) - fair[side]
                 for side in SELECTIONS
             },
-            fair={side: float(fair[side]) for side in SELECTIONS},
+            fair=fair,
             league=str(competition),
             season=str(season),
             week_monday=date.fromisocalendar(iso[0], iso[1], 1),
         )
-    return out
+    return out, skipped
 
 
 @dataclass
@@ -173,8 +187,8 @@ def _dose_bucket(dose: int) -> str:
 
 
 def _band(prob: float) -> int:
-    """概率档（五分位；1.0 收口到顶档）。"""
-    return min(4, int(prob / PROB_BAND_WIDTH))
+    """概率档（五分位；epsilon 抗浮点边界；1.0 收口到顶档）。"""
+    return min(4, int(prob / PROB_BAND_WIDTH + 1e-9))
 
 
 def _side_face(
@@ -225,14 +239,21 @@ def _side_face(
 
 def _week_block_bootstrap(
     event: list[tuple[float, date]], control: list[tuple[float, date]]
-) -> dict[str, Any]:
-    """比赛周分块 bootstrap：周为聚类单元重抽，diff 的 2.5–97.5 分位。"""
+) -> dict[str, Any] | None:
+    """
+    比赛周分块 bootstrap：周为聚类单元重抽，diff 的 2.5–97.5 分位。
+
+    任一臂周簇 <2 时返回 None（单簇重抽恒等 → 零宽区间冒充不确定性，
+    诚实置空由渲染层标"样本不足"）。
+    """
     e_by_week: dict[date, list[float]] = {}
     for value, week in event:
         e_by_week.setdefault(week, []).append(value)
     c_by_week: dict[date, list[float]] = {}
     for value, week in control:
         c_by_week.setdefault(week, []).append(value)
+    if len(e_by_week) < MIN_BOOTSTRAP_WEEKS or len(c_by_week) < MIN_BOOTSTRAP_WEEKS:
+        return None
     e_weeks = sorted(e_by_week)
     c_weeks = sorted(c_by_week)
     rng = random.Random(BOOTSTRAP_SEED)  # noqa: S311
@@ -247,6 +268,8 @@ def _week_block_bootstrap(
         "p97_5": round(cuts[-1], 4),
         "draws": BOOTSTRAP_DRAWS,
         "unit": "iso_week",
+        "n_weeks_event": len(e_by_week),
+        "n_weeks_control": len(c_by_week),
     }
 
 
@@ -261,7 +284,7 @@ def build_news_signal_report(
     """事件信号回放（场次级口径）→ reports/ 双视图。"""
     rid, _label, _params, status = load_backtest_run(conn, run_id)
     events = _read_events(store)
-    preds = _predictions(conn, rid)
+    preds, skipped_rows = _predictions(conn, rid)
     event_sids = {str(e["sid"]) for e in events} & set(preds)
     samples = _fixture_samples(events, preds)
 
@@ -282,12 +305,13 @@ def build_news_signal_report(
             continue
         hours_to_kickoff.append(round((kickoff - pub).total_seconds() / 3600, 1))
     hours = sorted(h for h in hours_to_kickoff if h >= 0)
+    p90_idx = min(len(hours) - 1, math.ceil(0.9 * len(hours)) - 1) if hours else None
     event_face = {
         "n_events": len(events),
         "n_fixtures_with_events": len(event_sids),
         "by_type": dict(sorted(by_type.items())),
         "hours_to_kickoff_median": hours[len(hours) // 2] if hours else None,
-        "hours_to_kickoff_p90": hours[int(len(hours) * 0.9)] if hours else None,
+        "hours_to_kickoff_p90": hours[p90_idx] if p90_idx is not None else None,
         "kickoff_basis": "beijing_wall_clock−8h→UTC（beijing_naive_to_utc 单一真相源）",
     }
 
@@ -323,6 +347,7 @@ def build_news_signal_report(
         "built_at": (today or date.today()).isoformat(),
         "run_id": rid,
         "run_status": status,
+        "n_prediction_rows_skipped": skipped_rows,
         "match_params": MATCH_PARAMS,
         "event_face": event_face,
         "fixture_face": fixture_face,
