@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any
 
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest.guardian_silver import beijing_naive_to_utc
+from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.evaluation import news_signal as nsw
 
 
@@ -170,7 +170,7 @@ def test_fixture_level_uniqueness_and_matched_contrast(gold_env, tmp_path):
         assert h_face["dose"]["1"]["n"] == 1
         # 对照=s2..s19 同联赛+同季+同周+同档（fair h=0.4 → 档 2）
         assert h_face["control"]["n"] == 18
-        assert h_face["unmatched_event_fixtures"] == 0
+        assert h_face["unmatched_event_samples"] == 0
         assert h_face["week_block_bootstrap"]["draws"] == 1000
         # 事件加权次面保留条数口径并标注非独立
         assert payload["event_weighted_secondary"]["event_side_anchored"]["n"] == 3
@@ -199,7 +199,7 @@ def test_matched_control_predicate_dimensions(gold_env, tmp_path):
         )
         h_face = payload["fixture_face"]["by_side"]["h"]
         assert h_face["control"]["n"] == 1  # 只有 s1 四维全中
-        assert h_face["unmatched_event_fixtures"] == 0
+        assert h_face["unmatched_event_samples"] == 0
         report_store.close()
         # 孤立事件场（无任何对照）→ 剔除计数、不产 diff
         face.execute("DELETE FROM backtest_predictions WHERE match_key = 's1'")
@@ -211,7 +211,7 @@ def test_matched_control_predicate_dimensions(gold_env, tmp_path):
         h2 = payload2["fixture_face"]["by_side"]["h"]
         assert h2["control"]["n"] == 0
         assert h2["event"]["n"] == 0
-        assert h2["unmatched_event_fixtures"] == 1
+        assert h2["unmatched_event_samples"] == 1
         assert h2["diff"] is None
         report_store2.close()
 

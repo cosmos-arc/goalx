@@ -39,12 +39,11 @@ import pyarrow.parquet as pq
 
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.ingest.guardian_silver import beijing_naive_to_utc
+from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.evaluation.metrics import load_backtest_run
 from goalx_backend.markets import SELECTIONS
 
 REPORT_BASENAME = "news-signal"
-MIN_GROUP_N = 5  # 组内低于此 n 只报数不下结论
 MATCH_WEEK_WINDOW = 2  # 对照匹配：ISO 周差 ≤2（近比赛周）
 PROB_BAND_WIDTH = 0.2  # 市场概率档宽度=五分位（粒度裁决见票 01 Answer）
 DOSE_SPLIT = 2  # 剂量分层界：1 条 vs 2+ 条
@@ -63,6 +62,7 @@ _PREDICTIONS_SQL = (
     " FROM backtest_predictions WHERE run_id = ? ORDER BY id"
 )
 _OUTCOME_SIDES = ("h", "a")
+_SIDE_MAP = {"home": "h", "away": "a"}  # 事件队伍侧 → 结果侧
 
 
 def _read_events(store: CorpusStore) -> list[dict[str, Any]]:
@@ -81,7 +81,7 @@ class _Pred:
     fair: dict[str, float]
     league: str
     season: str
-    week: str  # ISO 年-周（match_date 推导）
+    week_monday: date  # match_date 所在 ISO 周的周一（周匹配/分块共用键）
 
 
 def _predictions(conn: sqlite3.Connection, run_id: int) -> dict[str, _Pred]:
@@ -105,7 +105,7 @@ def _predictions(conn: sqlite3.Connection, run_id: int) -> dict[str, _Pred]:
             fair={side: float(fair[side]) for side in SELECTIONS},
             league=str(competition),
             season=str(season),
-            week=f"{iso[0]}-W{iso[1]:02d}",
+            week_monday=date.fromisocalendar(iso[0], iso[1], 1),
         )
     return out
 
@@ -137,16 +137,16 @@ class _Sample:
 def _fixture_samples(
     events: list[dict[str, Any]], preds: dict[str, _Pred]
 ) -> list[_Sample]:
-    """事件 → fixture×side 唯一样本（主分母=独立场次数）。"""
+    """事件 → fixture×side 唯一样本（主分母=独立场次数；dict 键构造保证唯一）。"""
     dose: dict[tuple[str, str], int] = {}
     for event in events:
         sid = str(event["sid"])
-        outcome_side = {"home": "h", "away": "a"}.get(str(event["side"]))
+        outcome_side = _SIDE_MAP.get(str(event["side"]))
         if outcome_side is None or sid not in preds:
             continue
         key = (sid, outcome_side)
         dose[key] = dose.get(key, 0) + 1
-    samples = [
+    return [
         _Sample(
             sid=sid,
             outcome_side=side,
@@ -156,32 +156,15 @@ def _fixture_samples(
         )
         for (sid, side), n in dose.items()
     ]
-    # 口径护栏：fixture×side 唯一（构造保证；防上游回归重复计数）
-    if len({(s.sid, s.outcome_side) for s in samples}) != len(samples):
-        raise ValueError("口径违例：fixture×side 出现重复样本")
-    return samples
 
 
-def _week_monday(week: str) -> date | None:
-    """ISO 年-周 → 该周周一（跨年周差用日期差算）。"""
-    try:
-        year, wnum = week.split("-W")
-        return date.fromisocalendar(int(year), int(wnum), 1)
-    except ValueError:
-        return None
-
-
-def _match_control(sample: _Sample, pred: _Pred, side: str) -> bool:
-    """对照匹配谓词：同联赛+同季+近比赛周+同概率档（可复现，进 run params）。"""
-    if pred.league != sample.pred.league or pred.season != sample.pred.season:
+def _match_control(event: _Pred, pred: _Pred, side: str) -> bool:
+    """对照匹配谓词：同联赛+同季+近比赛周+同概率档（可复现，进报告 params）。"""
+    if pred.league != event.league or pred.season != event.season:
         return False
-    s_monday = _week_monday(sample.pred.week)
-    c_monday = _week_monday(pred.week)
-    if s_monday is None or c_monday is None:
+    if abs((pred.week_monday - event.week_monday).days) > MATCH_WEEK_WINDOW * 7:
         return False
-    if abs((c_monday - s_monday).days) > MATCH_WEEK_WINDOW * 7:
-        return False
-    return _band(sample.pred.fair[side]) == _band(pred.fair[side])
+    return _band(event.fair[side]) == _band(pred.fair[side])
 
 
 def _dose_bucket(dose: int) -> str:
@@ -208,15 +191,15 @@ def _side_face(
         hits = [
             sid
             for sid, pred in preds.items()
-            if sid not in event_sids and _match_control(sample, pred, side)
+            if sid not in event_sids and _match_control(sample.pred, pred, side)
         ]
         if hits:
             matched.append(sample)
             control_sids.update(hits)
     control_values = [
-        (preds[sid].realized[side], preds[sid].week) for sid in control_sids
+        (preds[sid].realized[side], preds[sid].week_monday) for sid in control_sids
     ]
-    event_values = [(s.value, s.pred.week) for s in matched]
+    event_values = [(s.value, s.pred.week_monday) for s in matched]
     dose_groups = {
         bucket: _Group(
             [s.value for s in side_samples if _dose_bucket(s.dose) == bucket]
@@ -226,7 +209,7 @@ def _side_face(
     face: dict[str, Any] = {
         "event": _Group([v for v, _ in event_values]).stats(),
         "control": _Group([v for v, _ in control_values]).stats(),
-        "unmatched_event_fixtures": len(side_samples) - len(matched),
+        "unmatched_event_samples": len(side_samples) - len(matched),
         "dose": dose_groups,
     }
     if face["event"]["n"] and face["control"]["n"]:
@@ -241,13 +224,13 @@ def _side_face(
 
 
 def _week_block_bootstrap(
-    event: list[tuple[float, str]], control: list[tuple[float, str]]
+    event: list[tuple[float, date]], control: list[tuple[float, date]]
 ) -> dict[str, Any]:
     """比赛周分块 bootstrap：周为聚类单元重抽，diff 的 2.5–97.5 分位。"""
-    e_by_week: dict[str, list[float]] = {}
+    e_by_week: dict[date, list[float]] = {}
     for value, week in event:
         e_by_week.setdefault(week, []).append(value)
-    c_by_week: dict[str, list[float]] = {}
+    c_by_week: dict[date, list[float]] = {}
     for value, week in control:
         c_by_week.setdefault(week, []).append(value)
     e_weeks = sorted(e_by_week)
@@ -323,7 +306,7 @@ def build_news_signal_report(
     by_side_weighted = {s: _Group() for s in _OUTCOME_SIDES}
     for event in events:
         sid = str(event["sid"])
-        outcome_side = {"home": "h", "away": "a"}.get(str(event["side"]))
+        outcome_side = _SIDE_MAP.get(str(event["side"]))
         if outcome_side and sid in preds:
             value = preds[sid].realized[outcome_side]
             weighted.values.append(value)
@@ -351,8 +334,8 @@ def build_news_signal_report(
             + "+同季+近比赛周(±2)+概率档(五分位，收盘公允 fair_probs)匹配的"
             + "无事件场，匹配不上剔除并计数；不确定性=比赛周分块 bootstrap"
             + "（fixture 聚类由样本单位自然满足）；时距=北京墙钟−8h 真 UTC"
-            + "（与抽取器共用单一真相源；旧口径标签替换恒高估 8h，重算后"
-            + "时距面整体下移 8h）；price-in 面只覆盖临场 1h→收盘（发布→1h "
+            + "（与抽取器共用单一真相源；旧口径标签替换恒高估 8h）；"
+            + "price-in 面只覆盖临场 1h→收盘（发布→1h "
             + "主反应窗未测，不作未 price-in 结论）；时间错位/事件置换对照="
             + "保留面（本票未做）；试点=2024-25 完整季+2025-26 进行中季；"
             + "观察性报告不进模型不改参数；全量回填=门后另裁"
@@ -435,7 +418,8 @@ def _render_md(payload: dict[str, Any]) -> str:
             f"- {label}：事件 n={sf['event'].get('n')} 均值 {sf['event'].get('mean')}"
             + f" vs 匹配对照 n={sf['control'].get('n')} 均值 "
             + f"{sf['control'].get('mean')} → diff {sf.get('diff')}"
-            + f"（{boot_text}；匹配不上剔除 {sf['unmatched_event_fixtures']} 场；"
+            + f"（{boot_text}；匹配不上剔除 {sf['unmatched_event_samples']}"
+            + " 样本(fixture×side)；"
             + f"剂量 1 条 n={dose['1'].get('n')}/均值 {dose['1'].get('mean')}，"
             + f"2+ 条 n={dose['2+'].get('n')}/均值 {dose['2+'].get('mean')}）"
         )

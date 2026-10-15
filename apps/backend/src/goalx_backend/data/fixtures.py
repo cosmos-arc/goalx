@@ -37,6 +37,20 @@ def beijing_naive(kickoff_utc: str) -> datetime:
     return parsed.astimezone(CST).replace(tzinfo=None)
 
 
+def beijing_naive_to_utc(value: str) -> datetime | None:
+    """
+    北京墙钟 naive 串 → UTC aware（``beijing_naive`` 的逆；非法串=None）。
+
+    kickoff 时刻口径单一真相源（caliber-loop 票 01）：抽取器 PIT 判定与
+    评测侧时距面共用，不许两处各写一份。
+    """
+    try:
+        naive = datetime.fromisoformat(value.replace(" ", "T"))
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=CST).astimezone(UTC)
+
+
 def _lookup_id(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> int:
     """Fetch an id by natural key; raises LookupError when absent."""
     row = conn.execute(sql, params).fetchone()

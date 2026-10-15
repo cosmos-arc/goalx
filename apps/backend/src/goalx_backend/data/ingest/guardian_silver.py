@@ -32,7 +32,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.data.leagues import FD_TO_LEAGUE
 from goalx_backend.data.silver import write_dataset_meta, write_partition
 from goalx_backend.llm.client import (
@@ -242,22 +243,8 @@ def _parse_instant(value: str) -> datetime | None:
         return None
 
 
-def beijing_naive_to_utc(value: str) -> datetime | None:
-    """
-    北京墙钟 naive 串 → UTC aware（−8h 真转换）。
-
-    kickoff 时刻口径的单一真相源：抽取器 PIT 判定与评测侧时距面共用，
-    不许各写一份（caliber-loop 票 01）。
-    """
-    try:
-        naive = datetime.fromisoformat(value.replace(" ", "T"))
-    except ValueError:
-        return None
-    return naive.replace(tzinfo=UTC) - timedelta(hours=8)
-
-
 def _kickoff_instant(link: _Link) -> datetime | None:
-    """真实开球时刻（PIT 判定；转换单一真相源=``beijing_naive_to_utc``）。"""
+    """真实开球时刻（PIT 判定；转换=data.fixtures.beijing_naive_to_utc 单一真相源）。"""
     return beijing_naive_to_utc(link.kickoff_iso)
 
 
