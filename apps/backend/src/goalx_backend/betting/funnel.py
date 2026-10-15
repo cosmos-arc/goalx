@@ -32,7 +32,8 @@ from goalx_backend.data.quote_evidence import (
 )
 from goalx_backend.markets import SELECTIONS
 
-FRESHNESS_WINDOW_SECONDS = DEFAULT_FRESHNESS_SECONDS  # 双端同窗（stale 判定同法）
+# 双端同窗异钟：JC=源调盘龄（adjudicate 口径）/锚=本机观测龄（books 口径）
+FRESHNESS_WINDOW_SECONDS = DEFAULT_FRESHNESS_SECONDS
 
 # 漏斗级常量（落库 level_reached 1..5）
 L_ON_SALE, L_MATCHED, L_FRESH, L_VALUATION, L_ELIGIBLE = 1, 2, 3, 4, 5
@@ -100,12 +101,17 @@ def _classify_fixture(  # noqa: PLR0911
         jc_odds=dict(verdict.jc_odds),
         jc_age_seconds=verdict.jc_age_seconds,
     )
+    if verdict.sale_state == "stopped":
+        # 停售归 L5（资格面）。adjudicate 对 stopped 短路早退（不评报价），
+        # 报价级未评估——level_reached 停在 L1，归因只进流失桶不进中级分母
+        row.loss_reason = "l5_sale_stopped"
+        return row
     if not verdict.jc_odds:
         # 竞彩三向缺（无快照/不完整/观测时刻不可证）——取首个 jc_ 原因
         detail = next(
             (r for r in verdict.reasons if r.startswith("jc_")), "jc_no_quote"
         )
-        row.loss_reason = f"l2_jc_{detail}"
+        row.loss_reason = f"l2_jc_{detail.removeprefix('jc_')}"
         return row
     attached = sharp_probs_asof(conn, fixture_id, as_of)
     if attached is None:
@@ -128,10 +134,7 @@ def _classify_fixture(  # noqa: PLR0911
     row.p_sharp = {sel: round(probs[sel], 4) for sel in SELECTIONS}
     row.anchor_ref = anchor_ref
     row.level_reached = L_VALUATION
-    # 资格：单固+未停售（未开赛由 L1 分母保证；状态未知按不过——诚实面）
-    if verdict.sale_state == "stopped":
-        row.loss_reason = "l5_sale_stopped"
-        return row
+    # 资格：单固+状态可知（未开赛由 L1 分母保证；停售已在前置闸；未知按不过）
     if verdict.sale_state is None or verdict.sale_state == "unknown":
         row.loss_reason = "l5_sale_unknown"
         return row
@@ -161,11 +164,19 @@ def record_funnel_day(
     bdate = business_date or fx_store.beijing_business_date(
         datetime.fromisoformat(moment)
     )
-    on_sale = [
+    on_sale_rows: list[sqlite3.Row] = [
         row
         for row in fx_store.fixtures_for_business_date(conn, bdate)
         if parse_ts(str(row["kickoff_utc"])) > parse_ts(moment)
     ]
+    # 同场同日双销售编号（改号/补位）去重：JOIN 会产重复行，UNIQUE 键不容
+    seen: set[int] = set()
+    on_sale: list[sqlite3.Row] = []
+    for fx in on_sale_rows:
+        fid = int(fx["id"])
+        if fid not in seen:
+            seen.add(fid)
+            on_sale.append(fx)
     report = FunnelDayReport(business_date=bdate, as_of=moment)
     proxies: dict[str, list[float]] = {sel: [] for sel in SELECTIONS}
     fixture_rows: list[FunnelFixtureRow] = []
@@ -187,6 +198,7 @@ def record_funnel_day(
                 report.loss_reasons.get(row.loss_reason, 0) + 1
             )
     report.n_on_sale = len(on_sale)
+    # 日级统计面只聚合 L5 通过场（描述可投集）；fixture 行 L4 起即有三向值
     report.value_proxy_stats = {
         sel: {
             "n": len(vals),

@@ -203,7 +203,7 @@ def test_funnel_all_rejected(db: sqlite3.Connection) -> None:
         "d": {"n": 0, "mean": None, "max": None},
         "a": {"n": 0, "mean": None, "max": None},
     }
-    assert "l2_jc_jc_no_quote" in report.loss_reasons
+    assert "l2_jc_no_quote" in report.loss_reasons
 
 
 def test_funnel_liveness_and_day_row(db: sqlite3.Connection) -> None:
@@ -233,3 +233,40 @@ def test_value_proxy_matches_spec_example(db: sqlite3.Connection) -> None:
         (fixture,),
     ).fetchone()
     assert row["value_proxy_h"] == round(row["jc_odds_h"] * row["p_sharp_h"] - 1.0, 4)
+
+
+def test_funnel_stopped_sale_attributed_to_l5(db: sqlite3.Connection) -> None:
+    """停售归因 L5（correctness F1）：adjudicate 对 stopped 短路，不编造 L2 原因。"""
+    fixture = _seed_fixture(db, n=9)
+    _add_jc(db, fixture, {"h": 2.0, "d": 3.3, "a": 3.5})
+    _add_anchor(db, fixture, {"h": 2.2, "d": 3.4, "a": 3.6})
+    _add_sale(db, fixture, state="stopped")
+    report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    assert report.loss_reasons == {"l5_sale_stopped": 1}
+    assert report.n_eligible == 0
+
+
+def test_funnel_duplicate_match_code_deduped(db: sqlite3.Connection) -> None:
+    """同场同日双销售编号（correctness F2）：去重不炸 UNIQUE、不双计。"""
+
+    fixture = _seed_full_pass(db, n=8)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture,
+            kind="jingcai",
+            business_date=BUSINESS_DATE,
+            code="周六999",  # 改号：同场第二编号
+        ),
+    )
+    db.commit()
+    report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    assert report.n_on_sale == 1
+    assert report.n_eligible == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) FROM funnel_fixture_days WHERE fixture_id = ?",
+            (fixture,),
+        ).fetchone()[0]
+        == 1
+    )
