@@ -110,10 +110,11 @@ def daily_capture_flow() -> dict[str, object]:
 
 @flow(name="daily-wrap", log_prints=True)
 def daily_wrap_flow() -> dict[str, object]:
-    """日终收尾（票 37）：结算批跑 + 漏斗日拍 + CLV 对账 + 只读账务核查。"""
+    """日终收尾：结算批跑 + 漏斗/冻结决策日拍 + 冻结对账 + CLV 对账 + 账务核查。"""
     settlement = settlement_flow()
     funnel = tasks.funnel_day()
     m3 = tasks.m3_evaluation()
+    frozen_recon = tasks.frozen_reconcile()
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
         # （corpus_anchor 库缺席降级 None，不打断对账）
@@ -133,6 +134,7 @@ def daily_wrap_flow() -> dict[str, object]:
     return {
         "settlement": settlement,
         "funnel": funnel,
+        "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
         "audit_findings": findings,
     }

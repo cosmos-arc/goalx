@@ -177,6 +177,9 @@ erDiagram
     forecasts {
         INTEGER id PK
     }
+    frozen_decisions {
+        INTEGER id PK
+    }
     funnel_days {
         INTEGER id PK
     }
@@ -1161,6 +1164,30 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`fixture_id`, `snap_type`)`
 <!-- schema-doc:END:table:track2_snapshots -->
+<!-- schema-doc:BEGIN:table:frozen_decisions -->
+#### `frozen_decisions`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `business_date` | TEXT | NOT NULL |
+| `fixture_id` | INTEGER | NOT NULL |
+| `selection_code` | TEXT | NOT NULL |
+| `decision` | TEXT | NOT NULL |
+| `reason_code` | TEXT | NOT NULL |
+| `rule_version` | TEXT | NOT NULL |
+| `as_of` | TEXT | NOT NULL |
+| `odds` | REAL | — |
+| `p_sharp` | REAL | — |
+| `value_proxy` | REAL | — |
+| `drift_after_lock` | REAL | — |
+| `p_sharp_close` | REAL | — |
+| `settled_outcome` | TEXT | — |
+| `settled_profit` | REAL | — |
+| `reconciled_at` | TEXT | — |
+
+唯一键 `UNIQUE(`business_date`, `fixture_id`, `selection_code`)`
+<!-- schema-doc:END:table:frozen_decisions -->
 ### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->

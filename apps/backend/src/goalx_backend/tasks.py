@@ -21,6 +21,7 @@ import duckdb
 import httpx
 from loguru import logger
 
+from goalx_backend.betting import frozen as frozen_mod
 from goalx_backend.betting.funnel import (
     TRACK2_OFFSETS,
     Track2Capture,
@@ -57,6 +58,7 @@ from goalx_backend.data.quote_evidence import (
     sharp_probs_asof,
 )
 from goalx_backend.db import connect, migrate, utc_now_iso
+from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
@@ -763,11 +765,39 @@ def track2_snapshots(
 
 
 def funnel_day() -> dict[str, object]:
-    """机会漏斗日拍（caliber-loop 票 04）：五级分母落库+轨一估值。"""
+    """机会漏斗日拍（票 04+06）：五级分母+轨一估值+冻结决策。"""
     with task_conn() as conn:
         report = record_funnel_day(conn).as_dict()
+        bdate = str(report["business_date"])
+        report["frozen"] = frozen_mod.record_frozen_decisions(
+            conn, business_date=bdate
+        ).as_dict()
         report["liveness"] = funnel_liveness(conn)
     return report
+
+
+def frozen_reconcile() -> dict[str, object]:
+    """冻结决策执行对账（票 06）：结算面+源T 收盘锚+锁后漂移。"""
+    with task_conn() as conn, corpus_anchor() as anchor:
+        if anchor is None:
+            return {"considered": 0, "note": "corpus anchor 不可用，本拍跳过"}
+        provider = _srct_close_provider(anchor)
+        stats = frozen_mod.reconcile_frozen_decisions(conn, provider)
+    logger.info("frozen reconcile: {}", stats)
+    return stats
+
+
+def _srct_close_provider(
+    duck_con: duckdb.DuckDBPyConnection,
+) -> frozen_mod.CloseProvider:
+    """收盘概率提供方（clv.srct_closing_prob 同口径；注入缝供测试）。"""
+
+    def provide(
+        home: str, away: str, kickoff_utc: str, selection: str
+    ) -> tuple[float, str, str] | None:
+        return clv_mod.srct_closing_prob(duck_con, home, away, kickoff_utc, selection)
+
+    return provide
 
 
 def m3_evaluation() -> dict[str, object]:
