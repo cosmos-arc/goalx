@@ -1391,6 +1391,7 @@ def run_backtest(
     matches, lag_rows, gold_version, view_status, duplicates = fetch_decade_matches(
         duck_con, params
     )
+    lag_rows.sort(key=lambda r: (r.kickoff, r.sid))  # 严格 lag 前提（升序）
     lag_face = build_lag_features(lag_rows)  # sid→滞后特征（票 02 旁路）
     # meta 后读（correctness F6）：行集与 _meta 两次独立读之间发生 gold
     # 重建时，版本不一致=溯源已漂移，警告暴露（独占窗口纪律下不应发生）
