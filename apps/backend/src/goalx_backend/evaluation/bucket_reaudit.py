@@ -77,6 +77,7 @@ class _Bet:
     predicate: str  # "late_move_h:pos→d" / "ah_phase_pre:low→h" / "control"
     side: str
     odds: float
+    won: bool  # 所选侧==ftr（hit_rate 口径——odds<1 的赢注 profit≤0 仍算中）
     profit: float  # 平注结算：win→odds−1，lose→−1
     week_monday: date
     stratum: tuple[str, str, str, int]  # 联赛×era×玩法×赔率档
@@ -91,7 +92,7 @@ class _ArmStats:
     def face(self) -> dict[str, Any]:
         n = len(self.bets)
         profit = sum(b.profit for b in self.bets)
-        hits = sum(1 for b in self.bets if b.profit > 0)
+        hits = sum(1 for b in self.bets if b.won)
         return {
             "n": n,
             "profit": round(profit, 4),
@@ -201,13 +202,15 @@ def _odds_band(odds: float) -> int:
 def _make_bet(sample: MatchSample, side: str, predicate: str, haircut: float) -> _Bet:
     """固定注额 1 注：价=引擎 had 面（era 公允 × (1−haircut) 模拟竞彩价）。"""
     odds = (1.0 / sample.fair[side]) * (1.0 - haircut)
-    profit = odds - 1.0 if sample.ftr == side else -1.0
+    won = sample.ftr == side
+    profit = odds - 1.0 if won else -1.0
     iso = date.fromisoformat(sample.match_date[:10]).isocalendar()
     return _Bet(
         sid=sample.sid,
         predicate=predicate,
         side=side,
         odds=round(odds, 4),
+        won=won,
         profit=profit,
         week_monday=date.fromisocalendar(iso[0], iso[1], 1),
         stratum=(sample.competition, sample.signal.era, "had", _odds_band(odds)),
@@ -295,6 +298,35 @@ def _dim_diffs(arm: list[_Bet], control: list[_Bet]) -> dict[str, dict[str, int]
     return diffs
 
 
+def _reconcile_membership(
+    arm: list[_Bet], overlap: int, source: dict[str, Any]
+) -> None:
+    """
+    桶成员数对源报告结构性对账（gold 重建漂移守卫）。
+
+    首谓词臂 n 必==源 face n（先到先得=全集）；谓词和守恒
+    sum(臂 n)+overlap == sum(源 n)（两谓词无三重叠）。违例=枚举面与
+    源报告样本集漂移（gold 重建后未重跑归因）——fail-loud。
+    """
+    faces = cast("dict[str, dict[str, _Face]]", source.get("faces") or {})
+    source_ns: list[int] = []
+    for feature, bucket, _side in NAMED_PREDICATES:
+        face = (faces.get(feature) or {}).get(bucket) or {}
+        source_ns.append(int(face.get("n") or 0))
+    arm_ns: list[int] = [
+        sum(1 for b in arm if b.predicate == f"{f}:{bu}→{s}")
+        for f, bu, s in NAMED_PREDICATES
+    ]
+    first = NAMED_PREDICATES[0]
+    if arm_ns and arm_ns[0] != source_ns[0]:
+        raise ValueError(
+            f"桶成员漂移：{first[0]}:{first[1]} 臂 n={arm_ns[0]}"
+            + f" ≠ 源报告 n={source_ns[0]}（gold 重建后先重跑 signal-attribution）"
+        )
+    if sum(arm_ns) + overlap != sum(source_ns):
+        raise ValueError(f"成员和守恒破缺：{sum(arm_ns)}+{overlap} != {sum(source_ns)}")
+
+
 def _paired_week_bootstrap(
     arm: list[_Bet], control: list[_Bet]
 ) -> dict[str, Any] | None:
@@ -340,7 +372,9 @@ def _load_inputs(
         if isinstance(params_raw, str)
         else dict(params_raw or {})
     )
-    haircut = float(params.get("haircut", 0.0) or 0.0)
+    if "haircut" not in params or params["haircut"] is None:
+        raise ValueError("源 run params 缺 haircut——价面与引擎脱钩，拒绝复核")
+    haircut = float(params["haircut"])
     source_path = store.root / "reports" / f"{SOURCE_BASENAME}.json"
     if not source_path.exists():
         raise ValueError("源报告缺席：先跑 signal-attribution-report（唯一真相源）")
@@ -378,6 +412,7 @@ def build_bucket_reaudit_report(
     mapping = _verify_mapping(source_report)
     labels = _bucket_labels(samples)
     arm, control, shortfall, overlap = _two_arms(samples, labels, haircut)
+    _reconcile_membership(arm, overlap, source_report)
     dim_diffs = _dim_diffs(arm, control)
     if dim_diffs and not shortfall:
         raise ValueError(f"分维计数差非零（等量分层被破坏）：{dim_diffs}")
@@ -427,6 +462,7 @@ def build_bucket_reaudit_report(
         "dim_count_diffs": dim_diffs,
         "control_shortfall": shortfall,
         "overlap_double_bucket": overlap,
+        "control_unique_matches": len({b.sid for b in control}),
         "by_predicate": {
             name: _ArmStats([b for b in arm if b.predicate == name]).face()
             for name in sorted({b.predicate for b in arm})
@@ -436,7 +472,8 @@ def build_bucket_reaudit_report(
             "一次性限定复核：同十年样本无干净留出集，结论上限=探索性一致/"
             + "不一致，不得宣称终审；复核结果不升级 B 相前瞻臂（裁决②）；"
             + "固定注额不经 EV/Kelly/串关，候选分母=桶成员全体；对照=联赛×"
-            + "era×玩法×赔率档等量分层配对（池=非映射桶）；不确定性=比赛周"
+            + "era×玩法×赔率档等量分层配对（池=非映射桶；对照注可同场成对"
+            + " d/h 两注，独立比赛数=control_unique_matches）；不确定性=比赛周"
             + "联合分块 bootstrap；方向与数字自 signal-attribution 报告读取"
             + "（唯一真相源不手抄）；观察性研究不进引擎不改参数"
         ),
@@ -471,7 +508,8 @@ def _render_md(payload: dict[str, Any]) -> str:
         f"- 桶臂：n={arm['n']} profit={arm['profit']} roi={arm['roi_flat']}"
         + f" hit={arm['hit_rate']}",
         f"- 对照臂（等量分层）：n={ctrl['n']} profit={ctrl['profit']}"
-        + f" roi={ctrl['roi_flat']} hit={ctrl['hit_rate']}",
+        + f" roi={ctrl['roi_flat']} hit={ctrl['hit_rate']}"
+        + f"（独立比赛 {payload['control_unique_matches']}——注可同场成对）",
         f"- roi 差：{payload['diff_roi']}"
         + f"（比赛周联合 bootstrap 2.5–97.5% {boot_text}）",
         "",

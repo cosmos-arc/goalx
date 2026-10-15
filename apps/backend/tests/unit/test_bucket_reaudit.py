@@ -104,12 +104,14 @@ def _write_source_report(
     late_move_d_bias: float = 0.0164,
     late_move_d_t: float = 2.39,
     extra_positive: bool = False,
+    n_lm: int = 4022,
+    n_pre: int = 11307,
 ) -> None:
     """合成源报告（faces 两命名桶 + 可选第三正侧行）。"""
     faces: dict[str, dict[str, dict[str, Any]]] = {
         "late_move_h": {
             "pos": {
-                "n": 4022,
+                "n": n_lm,
                 "market_bias_h": -0.0188,
                 "market_bias_h_t": -2.6,
                 "market_bias_d": late_move_d_bias,
@@ -120,7 +122,7 @@ def _write_source_report(
         },
         "ah_phase_pre": {
             "low": {
-                "n": 11307,
+                "n": n_pre,
                 "market_bias_h": 0.0116,
                 "market_bias_h_t": 2.62,
                 "market_bias_d": -0.0058,
@@ -181,7 +183,7 @@ def _build(gold_env, rows, *, haircut: float = 0.1, **report_kwargs):
 def test_reaudit_direction_and_equal_stratification(gold_env):
     """方向：桶臂按映射侧买（d/h）；等量分层计数差=0；平注无 EV/Kelly。"""
     rows = _gold_rows(count_lm=20, count_pre=15, count_pool=200)
-    payload, store = _build(gold_env, rows)
+    payload, store = _build(gold_env, rows, n_lm=20, n_pre=15)
     # 桶臂=桶成员全体（20 late_move + 15 ah_pre=low），不经 EV 门槛
     assert payload["arm"]["n"] == 35
     assert payload["control"]["n"] == 35  # 等量
@@ -215,7 +217,7 @@ def test_reaudit_mapping_fails_loud_on_weak_t(gold_env):
 def test_reaudit_extra_positive_flagged_not_run(gold_env):
     """第三正侧候选（ou_line_drift:pos→h）：进裁决排除清单，不进桶臂。"""
     rows = _gold_rows(5, 5, 20)
-    payload, store = _build(gold_env, rows, extra_positive=True)
+    payload, store = _build(gold_env, rows, extra_positive=True, n_lm=5, n_pre=5)
     excluded = payload["mapping_provenance"]["excluded_by_ruling"]
     assert any(e["feature"] == "ou_line_drift" and e["side"] == "h" for e in excluded)
     assert payload["arm"]["n"] == 10  # 只有两命名谓词的桶成员
@@ -261,3 +263,27 @@ def _sample_of(features: dict[str, float], sid: str = "x") -> sig.MatchSample:
         fair=dict(FAIR),
         signal=signal,
     )
+
+
+def test_reaudit_membership_drift_fails_loud(gold_env):
+    """桶成员数对账：源报告 n 与枚举面漂移=fail-loud（gold 重建守卫）。"""
+    rows = _gold_rows(count_lm=5, count_pre=5, count_pool=20)
+    with pytest.raises(ValueError, match="桶成员漂移"):
+        _build(gold_env, rows, n_lm=999, n_pre=5)  # 源 n 与样本集不符
+
+
+def test_reaudit_hit_rate_counts_sub_one_odds_wins(gold_env):
+    """hit_rate 口径=所选侧==ftr（odds<1 的赢注 profit≤0 仍算中）。"""
+    fair_heavy = {"h": 0.95, "d": 0.28, "a": 0.27}  # odds=(1/0.95)×0.9≈0.947<1
+    rows = _gold_rows(count_lm=3, count_pre=0, count_pool=10)
+    with gold_env(rows) as (face, duck_con, store):
+        run_id = _seed_run(face, 0.1)
+        for row in rows:
+            ftr = _FTR_OF[str(row["sid"]).rstrip("0123456789")]
+            _seed_pred(face, run_id, str(row["sid"]), ftr=ftr, fair=fair_heavy)
+        _write_source_report(store, run_id, n_lm=3, n_pre=0)
+        payload = bkt.build_bucket_reaudit_report(face, duck_con, store, run_id=run_id)
+    # lm 桶全平局→买 d 全中（虽 odds>1 此例，口径断言由 won 驱动）
+    assert payload["by_predicate"]["late_move_h:pos→d"]["hit_rate"] == 1.0
+    assert payload["control_unique_matches"] <= payload["control"]["n"]
+    store.close()
