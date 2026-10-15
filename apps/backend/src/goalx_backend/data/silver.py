@@ -34,6 +34,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 # 常量住本模块=data 层公共叶（evaluation 报告侧与 data.ingest 写侧共用值域）。
 PIT_STRICT = "strict_pit"
 PIT_UNPROVEN = "unproven"
+PIT_UNMARKED = "unmarked"  # legacy 行无版本标记（票 02 前 v1 数据；报告侧单列）
 
 # 不可解时间的排序垫底值（随后按 bad_time 跳行，序不影响结果）
 UNSORTABLE_MS = 1 << 62

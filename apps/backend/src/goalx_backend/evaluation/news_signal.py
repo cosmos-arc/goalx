@@ -40,7 +40,7 @@ import pyarrow.parquet as pq
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.fixtures import beijing_naive_to_utc
-from goalx_backend.data.silver import PIT_STRICT, PIT_UNPROVEN
+from goalx_backend.data.silver import PIT_STRICT, PIT_UNMARKED, PIT_UNPROVEN
 from goalx_backend.evaluation.metrics import load_backtest_run
 from goalx_backend.markets import SELECTIONS
 
@@ -167,7 +167,7 @@ def _fixture_samples(
             continue
         key = (sid, outcome_side)
         dose[key] = dose.get(key, 0) + 1
-        groups.setdefault(key, set()).add(str(event.get("pit_group") or "unmarked"))
+        groups.setdefault(key, set()).add(str(event.get("pit_group") or PIT_UNMARKED))
     return [
         _Sample(
             sid=sid,
@@ -189,8 +189,8 @@ def _sample_group(row_groups: set[str]) -> str:
     """
     if row_groups == {PIT_STRICT}:
         return PIT_STRICT
-    if row_groups == {"unmarked"}:
-        return "unmarked"
+    if row_groups == {PIT_UNMARKED}:
+        return PIT_UNMARKED
     return PIT_UNPROVEN
 
 

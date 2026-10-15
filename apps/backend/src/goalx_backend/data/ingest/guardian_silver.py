@@ -408,6 +408,11 @@ def _clean_event(event: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
 Extractor = Callable[[Candidate], dict[str, Any]]
 
 
+def _body_hash(candidate: Candidate) -> str:
+    """候选正文 sha256 前 16 位（键与条目共用一处，防口径漂移）。"""
+    return hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
+
+
 def checkpoint_key(candidate: Candidate) -> str:
     """
     复合键=article|fixture|body_hash|extractor 版本（票 02）。
@@ -416,20 +421,23 @@ def checkpoint_key(candidate: Candidate) -> str:
     A 场结果记到 B 场的交叉污染。键内含版本与 hash=条目自描述，可从
     文件直接判断可否复用。
     """
-    body_hash = hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
     return "|".join(
-        (candidate.article_sid, candidate.link.sid, body_hash, f"v{EVENT_VERSION}")
+        (
+            candidate.article_sid,
+            candidate.link.sid,
+            _body_hash(candidate),
+            f"v{EVENT_VERSION}",
+        )
     )
 
 
 def _extract_one(extract: Extractor, candidate: Candidate) -> dict[str, Any]:
     """单篇抽取（缝注入）→ 自描述 checkpoint 条目（复合键+身份字段）。"""
-    body_hash = hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
     return {
         "key": checkpoint_key(candidate),
         "article_sid": candidate.article_sid,
         "sid": candidate.link.sid,
-        "body_hash": body_hash,
+        "body_hash": _body_hash(candidate),
         "extractor_version": EVENT_VERSION,
         **extract(candidate),
     }
