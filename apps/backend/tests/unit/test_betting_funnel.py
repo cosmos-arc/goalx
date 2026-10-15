@@ -406,8 +406,23 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     now = "2026-10-17T14:00:00+00:00"
     # 拍点=开球−24h：kickoff=10-18T14 → 拍点=now（窗口内）
     hit24 = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 0)
-    # 12h 档命中：kickoff=10-18T02 已过？拍点=10-17T14=now ✓
+    # 12h 档命中：拍点=10-17T14=now ✓（开球 10-18T02）
     hit12 = _seed_joined_fixture(conn, "2026-10-18T02:00:00+00:00", 1)
+    # 锚书报价在场（F1：无锚不落库——种上拍点前可见的 pinnacle 三向）
+    _add_anchor(
+        conn,
+        hit24,
+        {"h": 2.2, "d": 3.4, "a": 3.6},
+        captured="2026-10-17T13:00:00+00:00",
+        observed="2026-10-17T13:00:00+00:00",
+    )
+    _add_anchor(
+        conn,
+        hit12,
+        {"h": 2.2, "d": 3.4, "a": 3.6},
+        captured="2026-10-17T13:00:00+00:00",
+        observed="2026-10-17T13:00:00+00:00",
+    )
     # 窗外：拍点 7h 前（超 6h 视界）
     missed = _seed_joined_fixture(conn, "2026-10-18T07:00:00+00:00", 2)
     # 窗外：拍点未到（kickoff − 24h > now）
@@ -425,12 +440,14 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     assert result["24h"]["captured"] == 1
     assert result["12h"]["captured"] == 1
     assert set(pulls) == {"track2_24h", "track2_12h"}  # 只拉命中窗
-    # 停售边界按拍点时点：未种状态 → purchasable=True
+    # 停售边界按拍点时点：未种状态 → 未知不冒充可购（F3 口径）
     row = conn.execute(
-        "SELECT purchasable, late_flag FROM track2_snapshots WHERE fixture_id=?",
+        "SELECT purchasable, purchasable_reason, late_flag"
+        " FROM track2_snapshots WHERE fixture_id=?",
         (hit24,),
     ).fetchone()
-    assert row["purchasable"] == 1
+    assert row["purchasable"] == 0
+    assert row["purchasable_reason"] == "sale_status_unknown"
     assert row["late_flag"] == 0
     assert (
         conn.execute(
@@ -483,6 +500,12 @@ def test_track2_task_zero_candidates_zero_pulls(tmp_path, monkeypatch) -> None:
     result = tasks_mod.track2_snapshots(
         now=_dt(2026, 10, 17, 14, 0, tzinfo=_UTC), pull=fake_pull
     )
-    assert result["24h"] == {"candidates": 0, "captured": 0, "anchor_pulls": 0}
-    assert result["12h"] == {"candidates": 0, "captured": 0, "anchor_pulls": 0}
+    for label in ("24h", "12h"):
+        assert result[label] == {
+            "candidates": 0,
+            "captured": 0,
+            "skipped_no_anchor": 0,
+            "errors": 0,
+            "anchor_pulls": 0,
+        }
     conn.close()

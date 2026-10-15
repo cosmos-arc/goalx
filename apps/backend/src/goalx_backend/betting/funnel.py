@@ -456,6 +456,7 @@ def _decay_chain_same_fixtures(
         and all(
             (snap := track2_snapshots_of(conn, fid).get(t)) is not None
             and snap["purchasable"]
+            and not snap["late_flag"]
             and snap.get("value_proxy_h") is not None
             for t in ("24h", "12h")
         )
@@ -480,7 +481,7 @@ def _decay_chain_same_fixtures(
     return {"n": len(common), "stages": chain}
 
 
-def _dual_track_face(  # noqa: C901, PLR0912
+def _dual_track_face(
     conn: sqlite3.Connection,
     fixture_ids: list[int],
     track1_proxies: dict[int, dict[str, float]],
@@ -488,7 +489,8 @@ def _dual_track_face(  # noqa: C901, PLR0912
     """
     双轨对照面：轨一（日冻结）×轨二（24h/12h 拍点）价值代理并列+衰减。
 
-    衰减链=同时具有 24h/12h/轨一三面的场上的分侧均值（24h→12h→冻结）；
+    段均值只计**准时且可购**拍（迟到拍的采集时读数混入会系统性压低
+    衰减——迟到面单列计数）；衰减链=三面同场交集（_decay_chain）；
     停售拍点（purchasable=0）不进代理均值（可购边界语义）。
     """
     stages: dict[str, dict[str, list[float]]] = {
@@ -502,6 +504,7 @@ def _dual_track_face(  # noqa: C901, PLR0912
             purchasable_counts[snap_type][1] += 1
             if snap["late_flag"]:
                 late_counts[snap_type] += 1
+                continue  # 迟到拍不进段均值（读数时点漂移）
             if not snap["purchasable"]:
                 continue
             purchasable_counts[snap_type][0] += 1
@@ -513,36 +516,6 @@ def _dual_track_face(  # noqa: C901, PLR0912
             value = track1_proxies.get(fid, {}).get(sel)
             if value is not None:
                 stages["freeze"][sel].append(value)
-    # 衰减链=同场三面交集（24h+12h+轨一全在的场）——跨样本均值差是
-    # 样本构成伪影，只有交集上的链才是同场可比
-    chain: dict[str, dict[str, float | None]] = {}
-    common = [
-        fid
-        for fid in fixture_ids
-        if fid in track1_proxies
-        and all(
-            (snap := track2_snapshots_of(conn, fid).get(t)) is not None
-            and snap["purchasable"]
-            and snap.get("value_proxy_h") is not None
-            for t in ("24h", "12h")
-        )
-    ]
-    if common:
-        snaps_of = {fid: track2_snapshots_of(conn, fid) for fid in common}
-        for stage in ("24h", "12h", "freeze"):
-            stage_vals: dict[str, list[float]] = {sel: [] for sel in SELECTIONS}
-            for fid in common:
-                for sel in SELECTIONS:
-                    if stage == "freeze":
-                        value = track1_proxies[fid].get(sel)
-                    else:
-                        value = snaps_of[fid][stage].get(f"value_proxy_{sel}")
-                    if value is not None:
-                        stage_vals[sel].append(float(value))
-            chain[stage] = {
-                sel: round(fmean(vals), 4) if vals else None
-                for sel, vals in stage_vals.items()
-            }
     decay = _decay_chain_same_fixtures(conn, fixture_ids, track1_proxies)
     face: dict[str, Any] = {
         "mean_value_proxy": {
@@ -558,8 +531,9 @@ def _dual_track_face(  # noqa: C901, PLR0912
         },
         "late_snapshots": late_counts,
         "note": (
-            "mean_value_proxy=各阶段各自样本面；decay_chain_same_fixtures="
-            "同场三面交集（24h→12h→冻结）分侧均值（同场可比）；停售拍点不计代理"
+            "mean_value_proxy=各阶段各自样本面（只计准时可购拍；迟到拍单列"
+            "计数不进均值——读数时点漂移会压低衰减）；decay_chain_same_"
+            "fixtures=同场三面交集分侧均值（同场可比，亦只计准时可购）"
         ),
     }
     return face

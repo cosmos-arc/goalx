@@ -636,6 +636,56 @@ def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[
 
 
 TRACK2_CATCHUP_HOURS = 6  # 拍点错过后的迟到补拍视界（迟到旗如实记）
+
+
+def _capture_track2_fixture(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    offset: timedelta,
+    snap_type: str,
+    moment: datetime,
+) -> str:
+    """
+    单场拍点采集（票 05，逐场隔离单元）：'ok' | 'no_anchor'。
+
+    锚缺失不落库（留给 6h 视界下拍补采——空快照会锁死补拍窗口）；
+    停售边界按拍点时点：stopped→不可购；无观测→不可购（不冒充可购）。
+    """
+    fid = int(row["id"])
+    target_instant = (
+        datetime.fromisoformat(str(row["kickoff_utc"])) - offset
+    ).isoformat(timespec="seconds")
+    now_iso = moment.isoformat(timespec="seconds")
+    verdict = adjudicate_had_quote(conn, fid, now_iso)
+    sharp = sharp_probs_asof(conn, fid, now_iso)
+    if sharp is None:
+        return "no_anchor"
+    sale = fx_store.latest_sale_status_asof(conn, fid, "had", target_instant)
+    if sale is not None and str(sale["sale_state"]) == "stopped":
+        purchasable, reason = False, "sale_stopped"
+    elif sale is not None:
+        purchasable, reason = True, None
+    else:
+        purchasable, reason = False, "sale_status_unknown"
+    record_track2_snapshot(
+        conn,
+        Track2Capture(
+            fixture_id=fid,
+            snap_type=snap_type,
+            target_instant=target_instant,
+            captured_at=now_iso,
+            purchasable=purchasable,
+            purchasable_reason=reason,
+            jc_odds=dict(verdict.jc_odds),
+            jc_age_seconds=verdict.jc_age_seconds,
+            p_sharp=sharp[0],
+            anchor_ref=sharp[1],
+        ),
+    )
+    return "ok"
+
+
 # 锚拉取缝协议：与 _isolated_anchor_pull 同签名（anchor/targets 关键字）
 _AnchorPull = Callable[..., "oddsapi.OddsIngestStats"]
 
@@ -682,44 +732,31 @@ def track2_snapshots(
                 anchor_pull(
                     conn, settings, client, anchor=f"track2_{label}", targets=pulls
                 )
-            captured = 0
+            captured = skipped_no_anchor = errors = 0
             for row in targets:
                 fid = int(row["id"])
-                if fid not in fresh:
+                if int(row["id"]) not in fresh:
                     continue
-                kickoff = str(row["kickoff_utc"])
-                target_dt = datetime.fromisoformat(kickoff) - offset
-                target_instant = target_dt.isoformat(timespec="seconds")
-                now_iso = moment.isoformat(timespec="seconds")
-                verdict = adjudicate_had_quote(conn, fid, now_iso)
-                sharp = sharp_probs_asof(conn, fid, now_iso)
-                # 停售边界按拍点时点（非采集时）——迟到补拍不误标
-                sale = fx_store.latest_sale_status_asof(
-                    conn, fid, "had", target_instant
-                )
-                stopped = sale is not None and str(sale["sale_state"]) == "stopped"
-                purchasable = not stopped
-                record_track2_snapshot(
-                    conn,
-                    Track2Capture(
-                        fixture_id=fid,
-                        snap_type=label,
-                        target_instant=target_instant,
-                        captured_at=now_iso,
-                        purchasable=purchasable,
-                        purchasable_reason=(
-                            "sale_stopped" if not purchasable else None
-                        ),
-                        jc_odds=dict(verdict.jc_odds),
-                        jc_age_seconds=verdict.jc_age_seconds,
-                        p_sharp=sharp[0] if sharp else {},
-                        anchor_ref=sharp[1] if sharp else None,
-                    ),
-                )
-                captured += 1
+                try:
+                    outcome = _capture_track2_fixture(
+                        conn, row, offset=offset, snap_type=label, moment=moment
+                    )
+                except (ValueError, LookupError) as exc:
+                    # 逐场隔离（锚腿先例）：单场毒数据不炸整拍，后续场照拍
+                    errors += 1
+                    logger.warning(
+                        "track2 {} 拍点 {} 采集失败: {}", label, row["id"], exc
+                    )
+                    continue
+                if outcome == "ok":
+                    captured += 1
+                elif outcome == "no_anchor":
+                    skipped_no_anchor += 1
             out[label] = {
                 "candidates": len(targets),
                 "captured": captured,
+                "skipped_no_anchor": skipped_no_anchor,
+                "errors": errors,
                 "anchor_pulls": len(pulls),
             }
     return out
