@@ -886,3 +886,48 @@ def test_bookmaker_name_latest_trajectory_wins(tmp_path: Path) -> None:
     assert sharp["name_en"] == "TestRenamed"  # 最新轨迹英文名胜出
     assert sharp["name_zh_masked"] == "测试甲*"  # 新轨迹无遮罩名：旧值独立保留
     assert sharp["match_count"] == 2  # 每 sid 只计选中轨迹（90002 未重抓）
+
+
+# ---- 票 08：旧代 7 字段行年份推断 ----
+
+
+def test_parse_detail_row_old_format_year_inference():
+    """旧 7 字段行（无年份尾缀）：开球锚年份推断，PIT 安全（≤开球）。"""
+    from datetime import datetime
+
+    from goalx_backend.data.ingest import srct_odds
+
+    ko = srct_odds.beijing_ms(datetime(2024, 1, 3, 23, 0))
+    # 常规：12-28（开球前 6 天）→ 推 2023
+    rec = srct_odds._parse_detail_row(
+        "9.2|5.4|1.36|12-28 22:00|0.98|0.96|0.97", 0, kickoff_ms=ko
+    )
+    assert rec.published_ms == srct_odds.beijing_ms(datetime(2023, 12, 28, 22, 0))
+    # 1-2（开球前 1 天）→ 推 2024
+    rec2 = srct_odds._parse_detail_row(
+        "9.0|5.2|1.37|01-02 20:00|0.96|0.92|0.98", 1, kickoff_ms=ko
+    )
+    assert rec2.published_ms == srct_odds.beijing_ms(datetime(2024, 1, 2, 20, 0))
+    # 无 kickoff（孤儿场）→ 不可解 None（不落事件，bad_time 记账）
+    rec3 = srct_odds._parse_detail_row("9.0|5.2|1.37|01-02 20:00|0.96|0.92|0.97", 2)
+    assert rec3.published_ms is None
+    # 8 字段当代行不受影响（显式年份优先）
+    rec4 = srct_odds._parse_detail_row(
+        "1.65|4|5.5|08-17 02:57|0.97|0.90|1.04|2024", 3, kickoff_ms=ko
+    )
+    assert rec4.published_ms == srct_odds.beijing_ms(datetime(2024, 8, 17, 2, 57))
+
+
+def test_parse_detail_row_old_format_future_only_unresolvable():
+    """候选年全晚于开球（数据伪行）→ None：宁可丢不落开球后时刻。"""
+    from datetime import datetime
+
+    from goalx_backend.data.ingest import srct_odds
+
+    ko = srct_odds.beijing_ms(datetime(2024, 1, 3, 23, 0))
+    # 12-31 23:59 对开球 2024-01-03：2024 年候选晚于开球 → 回落 2023
+    # 可解；构造真不可解需非法日期（ValueError → None）
+    rec = srct_odds._parse_detail_row(
+        "9|5|1.3|02-30 10:00|0.9|0.9|0.9", 0, kickoff_ms=ko
+    )
+    assert rec.published_ms is None

@@ -392,7 +392,10 @@ def build_signal_attribution_report(
         "note": (
             "探索性归因：桶结论带 n 与效应量、不做多重比较校正；"
             + "观察性报告不进引擎不改参数；realized 用赛果做标签"
-            + "（结算侧），特征全为 PIT 列（gold 构建面断言保证）"
+            + "（结算侧），特征全为 PIT 列（gold 构建面断言保证）；"
+            + "era 检查面：主锚书商 2025-07-23 起开盘前/收盘价系统性"
+            + "滞后——该锚点的临场族特征（late_move/q 切片）解读须按"
+            + "era 分层，跨 era 比较不作数（caliber-loop 票 08 判读注意）"
         ),
     }
     reports = store.root / "reports"
