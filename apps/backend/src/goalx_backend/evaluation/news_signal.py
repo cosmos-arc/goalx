@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.fixtures import beijing_naive_to_utc
+from goalx_backend.data.silver import PIT_STRICT, PIT_UNMARKED, PIT_UNPROVEN
 from goalx_backend.evaluation.metrics import load_backtest_run
 from goalx_backend.markets import SELECTIONS
 
@@ -57,6 +58,10 @@ MATCH_PARAMS: dict[str, Any] = {
     "prob_band_width": PROB_BAND_WIDTH,
     "prob_source": "fair_probs（收盘公允，psc/avgc era 链；与残差同尺度）",
     "unmatched_policy": "剔除并计数（不放宽档位）",
+    "pit_group_policy": (
+        "主结论面=strict_pit 样本（存在时）；unproven（lastModified 不可证）"
+        "不与 strict 混合下结论；legacy 无标记行=unmarked 单列（票 02）"
+    ),
 }
 _PREDICTIONS_SQL = (
     "SELECT match_key, ftr, fair_probs, competition, season, match_date"
@@ -146,6 +151,7 @@ class _Sample:
     value: float
     pred: _Pred
     dose: int  # 该场该侧事件条数（辅助剂量面）
+    pit_group: str  # strict_pit/unproven/unmarked（样本级=全严格才算严格）
 
 
 def _fixture_samples(
@@ -153,6 +159,7 @@ def _fixture_samples(
 ) -> list[_Sample]:
     """事件 → fixture×side 唯一样本（主分母=独立场次数；dict 键构造保证唯一）。"""
     dose: dict[tuple[str, str], int] = {}
+    groups: dict[tuple[str, str], set[str]] = {}
     for event in events:
         sid = str(event["sid"])
         outcome_side = _SIDE_MAP.get(str(event["side"]))
@@ -160,6 +167,7 @@ def _fixture_samples(
             continue
         key = (sid, outcome_side)
         dose[key] = dose.get(key, 0) + 1
+        groups.setdefault(key, set()).add(str(event.get("pit_group") or PIT_UNMARKED))
     return [
         _Sample(
             sid=sid,
@@ -167,9 +175,23 @@ def _fixture_samples(
             value=preds[sid].realized[side],
             pred=preds[sid],
             dose=n,
+            pit_group=_sample_group(groups[(sid, side)]),
         )
         for (sid, side), n in dose.items()
     ]
+
+
+def _sample_group(row_groups: set[str]) -> str:
+    """
+    样本级版本组：全 strict_pit 才算 strict；有标记但不全严格=unproven。
+
+    混组保守归 unproven（不可证行不支撑严格结论——票 02 口径）。
+    """
+    if row_groups == {PIT_STRICT}:
+        return PIT_STRICT
+    if row_groups == {PIT_UNMARKED}:
+        return PIT_UNMARKED
+    return PIT_UNPROVEN
 
 
 def _match_control(event: _Pred, pred: _Pred, side: str) -> bool:
@@ -191,13 +213,27 @@ def _band(prob: float) -> int:
     return min(4, int(prob / PROB_BAND_WIDTH + 1e-9))
 
 
+def _group_samples(samples: list[_Sample]) -> dict[str, list[_Sample]]:
+    """按版本组归桶（全体样本，匹配前——描述面）。"""
+    out: dict[str, list[_Sample]] = {}
+    for sample in samples:
+        out.setdefault(sample.pit_group, []).append(sample)
+    return out
+
+
 def _side_face(
     samples: list[_Sample],
     preds: dict[str, _Pred],
     event_sids: set[str],
     side: str,
 ) -> dict[str, Any]:
-    """单侧主面：匹配对照 + 剂量分层 + 周分块 bootstrap。"""
+    """
+    单侧主面：匹配对照 + 版本组分层 + 剂量分层 + 周分块 bootstrap。
+
+    主结论面（event/diff/bootstrap）=strict_pit 样本（存在时）——unproven
+    不与 strict 混合下结论（票 02）；零 strict 时回退全体并在
+    main_pit_groups 如实标注（legacy 数据 unmarked 单列）。
+    """
     side_samples = [s for s in samples if s.outcome_side == side]
     matched: list[_Sample] = []
     control_sids: set[str] = set()
@@ -213,7 +249,14 @@ def _side_face(
     control_values = [
         (preds[sid].realized[side], preds[sid].week_monday) for sid in control_sids
     ]
-    event_values = [(s.value, s.pred.week_monday) for s in matched]
+    by_group: dict[str, list[_Sample]] = {}
+    for sample in matched:
+        by_group.setdefault(sample.pit_group, []).append(sample)
+    main_groups = [PIT_STRICT] if by_group.get(PIT_STRICT) else sorted(by_group)
+    main_samples = [s for g in main_groups for s in by_group.get(g, [])]
+    # 组视图=全体侧样本（匹配前）——strict 存在但全被对照匹配剔除时
+    # 仍可见，与主结论面（matched 池）分层披露不混淆
+    event_values = [(s.value, s.pred.week_monday) for s in main_samples]
     dose_groups = {
         bucket: _Group(
             [s.value for s in side_samples if _dose_bucket(s.dose) == bucket]
@@ -221,9 +264,14 @@ def _side_face(
         for bucket in ("1", "2+")
     }
     face: dict[str, Any] = {
+        "main_pit_groups": main_groups,
         "event": _Group([v for v, _ in event_values]).stats(),
         "control": _Group([v for v, _ in control_values]).stats(),
         "unmatched_event_samples": len(side_samples) - len(matched),
+        "event_by_pit_group": {
+            g: _Group([s.value for s in group]).stats()
+            for g, group in sorted(_group_samples(side_samples).items())
+        },
         "dose": dose_groups,
     }
     if face["event"]["n"] and face["control"]["n"]:
@@ -357,7 +405,9 @@ def build_news_signal_report(
             "主分母=独立场次数（fixture×side 至多一个样本，headline 先报"
             + " n_fixtures）；事件加权旧口径降为非独立样本次面；对照=同联赛"
             + "+同季+近比赛周(±2)+概率档(五分位，收盘公允 fair_probs)匹配的"
-            + "无事件场，匹配不上剔除并计数；不确定性=比赛周分块 bootstrap"
+            + "无事件场，匹配不上剔除并计数；版本组分层（票 02）：主结论面="
+            + "strict_pit（存在时），unproven 不与 strict 混合下结论，legacy "
+            + "无标记=unmarked 单列；不确定性=比赛周分块 bootstrap"
             + "（fixture 聚类由样本单位自然满足）；时距=北京墙钟−8h 真 UTC"
             + "（与抽取器共用单一真相源；旧口径标签替换恒高估 8h）；"
             + "price-in 面只覆盖临场 1h→收盘（发布→1h "
@@ -439,12 +489,18 @@ def _render_md(payload: dict[str, Any]) -> str:
             else "bootstrap=样本不足"
         )
         dose = sf["dose"]
+        groups = "，".join(
+            f"{g}:n={st.get('n')}/均值 {st.get('mean')}"
+            for g, st in sf["event_by_pit_group"].items()
+        )
         lines.append(
             f"- {label}：事件 n={sf['event'].get('n')} 均值 {sf['event'].get('mean')}"
             + f" vs 匹配对照 n={sf['control'].get('n')} 均值 "
             + f"{sf['control'].get('mean')} → diff {sf.get('diff')}"
-            + f"（{boot_text}；匹配不上剔除 {sf['unmatched_event_samples']}"
+            + f"（主结论组={sf['main_pit_groups']}；{boot_text}；"
+            + f"匹配不上剔除 {sf['unmatched_event_samples']}"
             + " 样本(fixture×side)；"
+            + f"版本组 {groups}；"
             + f"剂量 1 条 n={dose['1'].get('n')}/均值 {dose['1'].get('mean')}，"
             + f"2+ 条 n={dose['2+'].get('n')}/均值 {dose['2+'].get('mean')}）"
         )
