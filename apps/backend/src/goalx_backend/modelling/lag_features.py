@@ -18,23 +18,12 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 LAG_WINDOW = 10  # 滚动窗场数
 MIN_XG_SAMPLES = 3  # xG 滚动最少样本（不足留空不插补）
-
-LAG_FEATURE_NAMES = (
-    "elo_diff",
-    "xg_for_diff",
-    "xg_against_diff",
-    "shots_for_diff",
-    "shots_against_diff",
-    "sot_for_diff",
-    "sot_against_diff",
-    "goal_diff_diff",
-    "points_diff",
-)
 
 
 @dataclass(frozen=True)
@@ -58,23 +47,37 @@ class LagRow:
     elo_away_pre: float | None
 
 
-def _window() -> deque[float]:
-    """定长滚动窗工厂（数值窗通用——int 亦 float 容器）。"""
-    return deque(maxlen=LAG_WINDOW)
+def _window(maxlen: int) -> deque[float]:
+    """定长滚动窗工厂。"""
+    return deque(maxlen=maxlen)
+
+
+def _team_window(window: int) -> _TeamWindow:
+    """按窗宽构造一队滚动窗。"""
+    return _TeamWindow(
+        xg_for=_window(window),
+        xg_against=_window(window),
+        shots_for=_window(window),
+        shots_against=_window(window),
+        sot_for=_window(window),
+        sot_against=_window(window),
+        goal_diff=_window(window),
+        points=_window(window),
+    )
 
 
 @dataclass
 class _TeamWindow:
     """一队的滚动累计（定长队列，严格 lag 由构建顺序保证）。"""
 
-    xg_for: deque[float] = field(default_factory=_window)
-    xg_against: deque[float] = field(default_factory=_window)
-    shots_for: deque[float] = field(default_factory=_window)
-    shots_against: deque[float] = field(default_factory=_window)
-    sot_for: deque[float] = field(default_factory=_window)
-    sot_against: deque[float] = field(default_factory=_window)
-    goal_diff: deque[float] = field(default_factory=_window)
-    points: deque[float] = field(default_factory=_window)
+    xg_for: deque[float]
+    xg_against: deque[float]
+    shots_for: deque[float]
+    shots_against: deque[float]
+    sot_for: deque[float]
+    sot_against: deque[float]
+    goal_diff: deque[float]
+    points: deque[float]
 
 
 def _mean(values: Sequence[float]) -> float | None:
@@ -82,11 +85,36 @@ def _mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+def _mean_min(values: Sequence[float]) -> float | None:
+    """XG 滚动均值（样本 <MIN_XG_SAMPLES 留空——票面"场数不足诚实留空"）。"""
+    if len(values) < MIN_XG_SAMPLES:
+        return None
+    return _mean(values)
+
+
 def _diff(home: float | None, away: float | None) -> float | None:
     """对照差（任一侧缺→None）。"""
     if home is None or away is None:
         return None
     return home - away
+
+
+def _assert_sorted(rows: list[LagRow]) -> None:
+    """定序断言（严格 lag 的前提——乱序输入 fail-loud 不静默泄漏）。"""
+    for prev, cur in pairwise(rows):
+        if cur.kickoff < prev.kickoff:
+            raise ValueError(
+                f"输入未按 kickoff 升序（{prev.sid}→{cur.sid}）——严格 lag 被破坏"
+            )
+
+
+def _points(home_goals: int, away_goals: int) -> tuple[float, float]:
+    """主客积分（胜 3 平 1 负 0）。"""
+    if home_goals > away_goals:
+        return 3.0, 0.0
+    if home_goals < away_goals:
+        return 0.0, 3.0
+    return 1.0, 1.0
 
 
 def _push_pair(
@@ -98,7 +126,7 @@ def _push_pair(
     """计数对入窗（缺值场不进窗，不冒充 0）。"""
     if value is not None:
         for_win.append(value)
-        against_win.append(against or 0)
+        against_win.append(0 if against is None else against)
 
 
 def build_lag_features(
@@ -113,14 +141,19 @@ def build_lag_features(
     """
     windows: dict[tuple[str, str], _TeamWindow] = {}
     features: dict[str, dict[str, float | None]] = {}
+    if window < 1:
+        raise ValueError(f"window 须 ≥1（得到 {window}）")
+    _assert_sorted(rows)
 
     def _snapshot(row: LagRow) -> dict[str, float | None]:
-        win_h = windows.setdefault((row.league, row.home), _TeamWindow())
-        win_a = windows.setdefault((row.league, row.away), _TeamWindow())
+        win_h = _win(row.league, row.home)
+        win_a = _win(row.league, row.away)
         return {
             "elo_diff": _diff(row.elo_home_pre, row.elo_away_pre),
-            "xg_for_diff": _diff(_mean(win_h.xg_for), _mean(win_a.xg_for)),
-            "xg_against_diff": _diff(_mean(win_h.xg_against), _mean(win_a.xg_against)),
+            "xg_for_diff": _diff(_mean_min(win_h.xg_for), _mean_min(win_a.xg_for)),
+            "xg_against_diff": _diff(
+                _mean_min(win_h.xg_against), _mean_min(win_a.xg_against)
+            ),
             "shots_for_diff": _diff(_mean(win_h.shots_for), _mean(win_a.shots_for)),
             "shots_against_diff": _diff(
                 _mean(win_h.shots_against), _mean(win_a.shots_against)
@@ -135,20 +168,15 @@ def build_lag_features(
 
     def _absorb(row: LagRow) -> None:
         """本场结果入窗（下一 kickoff 批次起可见）。"""
-        win_h = windows.setdefault((row.league, row.home), _TeamWindow())
-        win_a = windows.setdefault((row.league, row.away), _TeamWindow())
-        h_pts = (
-            3.0
-            if row.home_goals > row.away_goals
-            else (1.0 if row.home_goals == row.away_goals else 0.0)
-        )
-        a_pts = 3.0 - h_pts if h_pts in (0.0, 3.0) else 1.0
-        if row.xg_home is not None:
+        win_h = _win(row.league, row.home)
+        win_a = _win(row.league, row.away)
+        h_pts, a_pts = _points(row.home_goals, row.away_goals)
+        # xG 是配对观测：一侧缺则整场不进两侧 xG 窗（不拆对不插补）
+        if row.xg_home is not None and row.xg_away is not None:
             win_h.xg_for.append(row.xg_home)
-            win_h.xg_against.append(row.xg_away if row.xg_away is not None else 0.0)
-        if row.xg_away is not None:
+            win_h.xg_against.append(row.xg_away)
             win_a.xg_for.append(row.xg_away)
-            win_a.xg_against.append(row.xg_home if row.xg_home is not None else 0.0)
+            win_a.xg_against.append(row.xg_home)
         _push_pair(win_h.shots_for, win_h.shots_against, row.shots_home, row.shots_away)
         _push_pair(win_a.shots_for, win_a.shots_against, row.shots_away, row.shots_home)
         _push_pair(win_h.sot_for, win_h.sot_against, row.sot_home, row.sot_away)
@@ -157,6 +185,9 @@ def build_lag_features(
         win_a.goal_diff.append(row.away_goals - row.home_goals)
         win_h.points.append(h_pts)
         win_a.points.append(a_pts)
+
+    def _win(league: str, team: str) -> _TeamWindow:
+        return windows.setdefault((league, team), _team_window(window))
 
     # 同 kickoff **日** 批次：先全体快照（严格 lag——同日互不可见，
     # 票面保守 PIT 口径）再全体入窗

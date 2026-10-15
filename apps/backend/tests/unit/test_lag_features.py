@@ -94,11 +94,12 @@ def test_xg_partial_coverage_no_imputation():
         _row("m1", "2024-01-01", xg_h=2.0, xg_a=1.0),  # 有 xG
         _row("m2", "2024-01-02"),  # 无 xG——不进窗
         _row("m3", "2024-01-03", xg_h=1.0, xg_a=0.5),  # 有 xG
-        _row("m4", "2024-01-04"),  # 目标：H 窗=[2.0,1.0], A=[1.0,0.5]
+        _row("m4", "2024-01-04", xg_h=1.0, xg_a=0.5),  # 有 xG
+        _row("m5", "2024-01-05"),  # 目标：H 窗=[2.0,1.0,1.0]（≥3 过门）
     ]
     feats = build_lag_features(rows)
-    # 缺 xG 的 m2 不进窗——均值=(2.0+1.0)/2 而非 /3 冒充
-    assert feats["m4"]["xg_for_diff"] == 1.5 - 0.75
+    # 缺 xG 的 m2 不进窗——均值=(2.0+1.0+1.0)/3 而非 /4 冒充
+    assert feats["m5"]["xg_for_diff"] == (4.0 / 3) - (2.0 / 3)
 
 
 def test_league_scoped_team_keys():
@@ -158,3 +159,53 @@ def test_projection_from_duck_rows_sorted():
     assert [r.sid for r in lag_rows] == ["a", "b"]
     assert lag_rows[0].xg_home == 2.5
     assert lag_rows[1].shots_home == 10
+
+
+def test_xg_min_samples_gate():
+    """xG 滚动样本 <MIN_XG_SAMPLES 留空（票面"场数不足诚实留空"）。"""
+    rows = [
+        _row("m1", "2024-01-01", xg_h=2.0, xg_a=1.0),
+        _row("m2", "2024-01-02"),  # 目标：窗只有 1 个 xG 样本 < 3
+    ]
+    feats = build_lag_features(rows)
+    assert feats["m2"]["xg_for_diff"] is None
+
+
+def test_xg_pair_not_split():
+    """xG 配对观测：一侧缺则整场不进两侧 xG 窗。"""
+    rows = [
+        _row("m1", "2024-01-01", xg_h=2.0, xg_a=None),  # 只有 home 侧 xG
+        _row("m2", "2024-01-02"),
+    ]
+    feats = build_lag_features(rows)
+    # m1 整场没进窗——m2 的 home xg_for 窗为空
+    assert feats["m2"]["xg_for_diff"] is None
+
+
+def test_window_parameter_effective():
+    """window 参数真生效（=3 截 10 场老数据）。"""
+    rows2 = [
+        _row("m1", "2024-01-01", hg=6, ag=0),
+        _row("m2", "2024-01-02", hg=6, ag=0),
+        _row("m3", "2024-01-03", hg=6, ag=0),
+        _row("m4", "2024-01-04", hg=0, ag=0),
+        _row("m5", "2024-01-05", hg=0, ag=0),
+        _row("m6", "2024-01-06", hg=0, ag=0),
+        _row("target", "2024-02-01", hg=0, ag=0),
+    ]
+    full = build_lag_features(rows2, window=6)  # H 窗含 6-0×3 + 0-0×3 → 3.0
+    recent = build_lag_features(rows2, window=3)  # 只 0-0×3 → 0.0
+    assert full["target"]["goal_diff_diff"] == 3.0 - (-3.0)
+    assert recent["target"]["goal_diff_diff"] == 0.0
+
+
+def test_unsorted_input_fails_loud():
+    """乱序输入 fail-loud（严格 lag 前提断言常开）。"""
+    rows = [
+        _row("late", "2024-01-02"),
+        _row("early", "2024-01-01"),
+    ]
+    import pytest
+
+    with pytest.raises(ValueError, match="升序"):
+        build_lag_features(rows)
