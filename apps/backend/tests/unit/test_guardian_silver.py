@@ -94,7 +94,9 @@ def test_candidate_articles_dedup_article_sid(tmp_path):
 def test_parse_extraction_valid_with_fence():
     content = (
         '```json\n{"relevant": true, "events": [{"type": "injury",'
-        ' "side": "home", "player": "Saka", "confidence": 0.8}]}\n```'
+        ' "side": "home", "player": "Saka", "subtype": "out",'
+        ' "novelty": "first", "evidence_quote": "Saka is out.",'
+        ' "confidence": 0.8}]}\n```'
     )
     parsed = gs.parse_extraction(content)
     assert parsed is not None
@@ -220,6 +222,9 @@ def test_build_news_events_with_fake_extractor(tmp_path):
                             "type": "injury",
                             "side": "home",
                             "player": "Saka",
+                            "subtype": "out",
+                            "novelty": "first",
+                            "evidence_quote": "Saka is out injured.",
                             "confidence": 0.9,
                         }
                     ],
@@ -283,6 +288,9 @@ def test_pit_violation_fails_loud(tmp_path):
                     "event_type": "injury",
                     "side": "home",
                     "player": None,
+                    "subtype": "out",
+                    "novelty": "first",
+                    "evidence_quote": "He is out.",
                     "confidence": 0.5,
                     "model": "test",
                     "version": gs.EVENT_VERSION,
@@ -436,6 +444,9 @@ def test_checkpoint_composite_key_one_article_two_fixtures(tmp_path):
                         "type": "injury",
                         "side": "home",
                         "player": "Saka",
+                        "subtype": "out",
+                        "novelty": "first",
+                        "evidence_quote": "Saka is out injured.",
                         "confidence": 0.9,
                     }
                 ],
@@ -485,6 +496,9 @@ def test_checkpoint_composite_key_one_article_two_fixtures(tmp_path):
                         "type": "suspension",
                         "side": "away",
                         "player": "Other",
+                        "subtype": "return",
+                        "novelty": "restate",
+                        "evidence_quote": "He is back from suspension.",
                         "confidence": 0.7,
                     }
                 ],
@@ -650,3 +664,142 @@ def test_naive_timestamps_conservative_not_fatal(tmp_path):
     assert by_sid["naive-lm"].pit_group == gs.PIT_UNPROVEN
     assert by_sid["boundary"].pit_group == gs.PIT_UNPROVEN
     store.close()
+
+
+# ---- 票 07：schema v2 与有界扩样 ----
+
+
+def test_parse_extraction_v2_fail_loud() -> None:
+    """v2 新字段违例 fail-loud：缺 subtype/novelty/evidence_quote 均 None。"""
+    base = '{"relevant": true, "events": [%s]}'
+    ok = (
+        '{"type": "injury", "side": "home", "subtype": "out",'
+        ' "novelty": "first", "evidence_quote": "He is out.",'
+        ' "confidence": 0.8}'
+    )
+    assert gs.parse_extraction(base % ok) is not None
+    missing_subtype = (
+        '{"type": "injury", "side": "home", "novelty": "first",'
+        ' "evidence_quote": "q", "confidence": 0.8}'
+    )
+    assert gs.parse_extraction(base % missing_subtype) is None
+    bad_novelty = (
+        '{"type": "injury", "side": "home", "subtype": "out",'
+        ' "novelty": "maybe", "evidence_quote": "q", "confidence": 0.8}'
+    )
+    assert gs.parse_extraction(base % bad_novelty) is None
+    missing_evidence = (
+        '{"type": "injury", "side": "home", "subtype": "out",'
+        ' "novelty": "first", "confidence": 0.8}'
+    )
+    assert gs.parse_extraction(base % missing_evidence) is None
+    subtype_on_other = (
+        '{"type": "manager_change", "side": "home", "subtype": "out",'
+        ' "novelty": "first", "evidence_quote": "q", "confidence": 0.8}'
+    )
+    assert gs.parse_extraction(base % subtype_on_other) is None
+
+
+def test_kickoff_utc_write_side_and_dual_read() -> None:
+    """写侧 UTC：v2 行 aware ISO；读侧双模 v1 墙钟/v2 UTC 一致。"""
+    from goalx_backend.data.fixtures import kickoff_to_utc, kickoff_utc_iso
+
+    utc_iso = kickoff_utc_iso("2024-03-10T20:00:00")
+    assert utc_iso == "2024-03-10T12:00:00+00:00"
+    # 双模读：v2 aware 与 v1 naive 同时刻
+    assert kickoff_to_utc(utc_iso) == kickoff_to_utc("2024-03-10T20:00:00")
+    # 非法写侧 raise（fail-loud）
+    import pytest
+
+    with pytest.raises(ValueError, match="非法"):
+        kickoff_utc_iso("garbage")
+
+
+def test_fixture_budget_bounded_by_independent_fixtures(tmp_path) -> None:
+    """fixture_budget=按独立场次截断候选（预算按场次不按事件条数）。"""
+    from goalx_backend.config import Settings
+
+    con = _adjacent_duck()
+    store = CorpusStore(tmp_path)
+    store.append_bronze(
+        gs.PROVIDER,
+        gs.BRONZE_DATASET,
+        [
+            _bronze_row("a1", "Arsenal news", "2024-03-09T10:00:00Z", "b1"),
+            _bronze_row("a2", "Man City news", "2024-03-10T10:00:00Z", "b2"),
+            _bronze_row("a3", "Arsenal late", "2024-03-10T11:00:00Z", "b3"),
+        ],
+    )
+    calls: list[str] = []
+
+    def extractor(candidate):
+        calls.append(candidate.article_sid)
+        return {
+            "filtered": False,
+            "parsed": {"relevant": False, "events": []},
+            "model": "fake",
+            "cost": 0.0,
+            "empty": False,
+        }
+
+    report = gs.build_news_events(
+        gs.NewsContext(duck_con=con, conn=None, settings=Settings()),  # type: ignore[arg-type]
+        store,
+        seasons=("2023-24",),
+        fixture_budget=1,  # 只跑 s1 一场：a1+a3 两稿都在 s1
+        extractor=extractor,
+    )
+    assert sorted(calls) == ["a1", "a3"]  # s1 的两稿；s2 的 a2 截断
+    assert report.llm_calls == 2
+    store.close()
+    con.close()
+
+
+def test_convergence_table_levels(tmp_path) -> None:
+    """收敛表：候选→独立场次→有预测→可检验 逐级（表先行）。"""
+    from goalx_backend.config import Settings
+    from goalx_backend.db import connect, migrate
+    from goalx_backend.evaluation import metrics as ev_latest
+
+    con = _pilot_duck()
+    face = connect(":memory:")
+    migrate(face)
+    face.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('r', '{}', 'done', '2026-10-16T00:00:00+00:00')"
+    )
+    # s1（Arsenal 场）有预测+赛果；s2 无
+    for key, ftr in (("s1", "H"), ("s2", None)):
+        face.execute(
+            "INSERT INTO backtest_predictions"
+            " (run_id, match_key, competition, season, match_date, home_team,"
+            "  away_team, era, ftr, had_probs, fair_probs, fair_source,"
+            "  model_fingerprint, train_window_end)"
+            " VALUES (1, ?, 'E0', '2023-24', '2024-03-10', 'A', 'B', NULL, ?,"
+            "  '{}', '{}', 'psc', 'fp', '2024-03-01')",
+            (key, ftr),
+        )
+    store = CorpusStore(tmp_path)
+    store.append_bronze(
+        gs.PROVIDER,
+        gs.BRONZE_DATASET,
+        [_bronze_row("a1", "Arsenal injury news", "2024-03-09T10:00:00Z", "body")],
+    )
+    predicted, tested = ev_latest.latest_done_run_prediction_sids(face)
+    table = gs.convergence_table(
+        gs.NewsContext(duck_con=con, conn=face, settings=Settings()),  # type: ignore[arg-type]
+        store,
+        predicted,
+        tested,
+        competition="E0",
+        seasons=("2023-24",),
+    )
+    season = table["per_season"]["2023-24"]
+    assert season["n_candidates"] == 1
+    assert season["n_fixtures_with_news"] == 1
+    assert season["n_fixtures_with_predictions"] == 1
+    assert season["n_fixtures_testable"] == 1
+    assert table["total"]["fixtures_testable"] == 1
+    store.close()
+    face.close()
+    con.close()

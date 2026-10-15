@@ -49,7 +49,11 @@ from loguru import logger
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.fixtures import beijing_naive_to_utc
+from goalx_backend.data.fixtures import (
+    beijing_naive_to_utc,
+    kickoff_to_utc,
+    kickoff_utc_iso,
+)
 from goalx_backend.data.leagues import FD_TO_LEAGUE
 from goalx_backend.data.silver import (
     PIT_STRICT,
@@ -61,9 +65,14 @@ from goalx_backend.data.silver import (
 PROVIDER = "guardian"
 BRONZE_DATASET = "news_article"
 EVENT_DATASET = "news_event"
-EVENT_VERSION = "2"  # 票 02：checkpoint 复合键+pit_group 列
+# 票02 复合键+pit_group；票07 v2 抽取 schema（subtype/novelty/evidence_quote+UTC 写侧）
+EVENT_VERSION = "3"
 
 EVENT_TYPES = ("injury", "suspension", "manager_change", "rotation_hint", "other")
+# v2 机制面值域（票 07）：缺阵 vs 复出（injury/suspension 方向性）；首次 vs 重述
+SUBTYPES = ("out", "return")
+NOVELTIES = ("first", "restate")
+EVIDENCE_MAX_CHARS = 200  # 证据原句截断入行（成本护栏）
 VALID_SIDES = ("home", "away")
 LINK_WINDOW_DAYS = 3  # 发布窗：[kickoff−3d, kickoff)（时刻锚定）
 
@@ -390,12 +399,22 @@ def parse_extraction(content: str) -> dict[str, Any] | None:
     }
 
 
-def _clean_event(event: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
-    """单事件 schema 校验（False=违例，调用方 fail-loud 计数）。"""
+def _clean_event(  # noqa: PLR0911 逐字段校验天然多出口
+    event: dict[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    """
+    单事件 schema v2 校验（False=违例，调用方 fail-loud 计数）。
+
+    v2 增字段（票 07）：subtype（injury/suspension 必须 out/return，其余
+    类型 None）/novelty（first|restate）/evidence_quote（原句截断入行）。
+    """
     etype = event.get("type")
     side = event.get("side")
     confidence = event.get("confidence")
     player = event.get("player")
+    subtype = event.get("subtype")
+    novelty = event.get("novelty")
+    evidence = event.get("evidence_quote")
     if etype not in EVENT_TYPES or side not in VALID_SIDES:
         return False, {}
     if isinstance(confidence, bool) or not isinstance(confidence, int | float):
@@ -404,10 +423,22 @@ def _clean_event(event: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
         return False, {}
     if player is not None and not isinstance(player, str):
         return False, {}
+    if etype in ("injury", "suspension"):
+        if subtype not in SUBTYPES:
+            return False, {}
+    elif subtype is not None:
+        return False, {}
+    if novelty not in NOVELTIES:
+        return False, {}
+    if not isinstance(evidence, str) or not evidence.strip():
+        return False, {}
     return True, {
         "type": str(etype),
         "side": str(side),
         "player": player,
+        "subtype": subtype,
+        "novelty": str(novelty),
+        "evidence_quote": evidence.strip()[:EVIDENCE_MAX_CHARS],
         "confidence": round(float(confidence), 3),
     }
 
@@ -421,6 +452,53 @@ Extractor = Callable[[Candidate], dict[str, Any]]
 def _body_hash(candidate: Candidate) -> str:
     """候选正文 sha256 前 16 位（键与条目共用一处，防口径漂移）。"""
     return hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
+
+
+def convergence_table(
+    ctx: NewsContext,
+    store: CorpusStore,
+    predicted: set[str],
+    tested: set[str],
+    *,
+    competition: str = "E0",
+    seasons: tuple[str, ...] = ("2024-25", "2025-26"),
+) -> dict[str, Any]:
+    """
+    扩样收敛表（票 07 裁决：表先行再裁预算）。
+
+    候选文章 → 独立比赛 → 有引擎预测面（同期报价代理）→ 可用于检验
+    （预测+赛果在），逐季收敛——预算按最后分母（可检验独立场次）计。
+    """
+    fixtures = fixture_index(ctx.duck_con, competition, seasons)
+    links, _unlinked = english_links(ctx.duck_con, fixtures, competition)
+    candidates, scanned, post = candidate_articles(store, links)
+    per_season: dict[str, dict[str, int]] = {}
+    for season in seasons:
+        sids = {f.sid for f in fixtures if f.season == season}
+        cand_sids = {c.link.sid for c in candidates if c.link.sid in sids}
+        per_season[season] = {
+            "n_candidates": sum(1 for c in candidates if c.link.sid in sids),
+            "n_fixtures_linked": len(sids & set(links)),
+            "n_fixtures_with_news": len(cand_sids),
+            "n_fixtures_with_predictions": len(cand_sids & predicted),
+            "n_fixtures_testable": len(cand_sids & tested),
+        }
+    return {
+        "competition": competition,
+        "seasons": list(seasons),
+        "articles_scanned": scanned,
+        "post_kickoff_hits": post,
+        "per_season": per_season,
+        "total": {
+            "candidates": len(candidates),
+            "fixtures_with_news": len({c.link.sid for c in candidates}),
+            "fixtures_testable": len({c.link.sid for c in candidates} & tested),
+        },
+        "note": (
+            "表先行（票 07 裁决⑤⑥）：预算按可检验独立场次另裁；"
+            "同期报价代理=最新 done run 预测面在场"
+        ),
+    }
 
 
 def checkpoint_key(candidate: Candidate) -> str:
@@ -469,12 +547,15 @@ def build_news_events(
     competition: str = "E0",
     seasons: tuple[str, ...] = ("2023-24", "2024-25"),
     article_limit: int = 400,
+    fixture_budget: int | None = None,
     extractor: Extractor,
 ) -> GuardianEventReport:
     """
     试点构建：链接 → 预筛 → 抽取 → silver 落盘（幂等覆盖）。
 
     extractor 必注入（生产=llm.guardian_extract.make_extractor；测试=假件）。
+    fixture_budget=按**独立场次数**的有界预算（票 07：先跑收敛表另裁，
+    不为事件条数付费）。
     """
     fixtures = fixture_index(ctx.duck_con, competition, seasons)
     links, unlinked = english_links(ctx.duck_con, fixtures, competition)
@@ -490,7 +571,21 @@ def build_news_events(
     )
 
     selected = candidates[:article_limit]
-    report.limit_reached = len(candidates) > article_limit
+    if fixture_budget is not None:
+        kept: list[Candidate] = []
+        seen_sids: set[str] = set()
+        for cand in selected:
+            if cand.link.sid not in seen_sids:
+                if len(seen_sids) >= fixture_budget:
+                    continue  # 超预算场跳过；已入场的场全稿跑完
+                seen_sids.add(cand.link.sid)
+            kept.append(cand)
+        selected = kept
+        report.limit_reached = len(candidates) > len(selected) or (
+            len({c.link.sid for c in selected}) >= fixture_budget
+        )
+    elif len(candidates) > len(selected):
+        report.limit_reached = True
     checkpoint = _checkpoint_path(store)
     done = _load_checkpoint(checkpoint)
     checkpoint.parent.mkdir(parents=True, exist_ok=True)  # 首跑建目录
@@ -562,10 +657,14 @@ def _tally_entry(
                 "season": season_of.get(candidate.link.sid, ""),
                 "published_at": candidate.published_at,
                 "kickoff_day": candidate.link.kickoff_day,
-                "kickoff_iso": candidate.link.kickoff_iso,
+                # v2 写侧转 UTC（票 07）：读侧 kickoff_to_utc 双模兼容 v1 墙钟
+                "kickoff_iso": kickoff_utc_iso(candidate.link.kickoff_iso),
                 "event_type": event["type"],
                 "side": event["side"],
                 "player": event["player"],
+                "subtype": event["subtype"],
+                "novelty": event["novelty"],
+                "evidence_quote": event["evidence_quote"],
                 "confidence": event["confidence"],
                 "pit_group": candidate.pit_group,
                 "model": str(entry.get("model", "")),
@@ -597,14 +696,7 @@ def _write_silver(
         digest = hasher.hexdigest()[:16]
     # PIT 终检：逐行断言发布时刻早于真实开球时刻（与候选过滤同口径）
     for row in event_rows:
-        link = _Link(
-            sid=row["sid"],
-            kickoff_day=row["kickoff_day"],
-            kickoff_iso=row["kickoff_iso"],
-            en_home="",
-            en_away="",
-        )
-        kickoff = _kickoff_instant(link)
+        kickoff = kickoff_to_utc(str(row["kickoff_iso"]))
         pub = _parse_instant(row["published_at"])
         if kickoff is None or pub is None or pub >= kickoff:
             raise ValueError(f"PIT 违例：{row['article_sid']} 发布不早于开球")
@@ -646,6 +738,9 @@ def _event_schema() -> pa.Schema:
             pa.field("event_type", pa.string()),
             pa.field("side", pa.string()),
             pa.field("player", pa.string()),
+            pa.field("subtype", pa.string()),
+            pa.field("novelty", pa.string()),
+            pa.field("evidence_quote", pa.string()),
             pa.field("confidence", pa.float64()),
             pa.field("pit_group", pa.string()),
             pa.field("model", pa.string()),

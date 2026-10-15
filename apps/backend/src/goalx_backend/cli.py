@@ -451,6 +451,28 @@ def _cmd_news_signal(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_guardian_news_funnel(args: argparse.Namespace) -> None:
+    """扩样收敛表（票 07：表先行——候选→独立场次→可检验，预算另裁）。"""
+    settings = get_settings()
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        predicted, tested = ev.latest_done_run_prediction_sids(conn)
+        table = gs.convergence_table(
+            gs.NewsContext(duck_con=duck_con, conn=conn, settings=settings),
+            store,
+            predicted,
+            tested,
+            competition=args.competition,
+            seasons=tuple(args.seasons),
+        )
+    sys.stdout.write(json.dumps(table, ensure_ascii=False, indent=2) + "\n")
+    logger.info(
+        "guardian-news-funnel: {} 候选 → {} 独立场次 → {} 可检验（表先行,预算另裁）",
+        table["total"]["candidates"],
+        table["total"]["fixtures_with_news"],
+        table["total"]["fixtures_testable"],
+    )
+
+
 def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
     """NewsShock P0 抽取器试点（票 04：卫报→事件 silver，有界范围）。"""
     settings = get_settings()
@@ -461,6 +483,7 @@ def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
             competition=args.competition,
             seasons=tuple(args.seasons),
             article_limit=args.limit,
+            fixture_budget=args.fixture_budget,
             extractor=gx.make_extractor(conn, settings),
         )
     sys.stdout.write(json.dumps(report.as_dict(), ensure_ascii=False, indent=2) + "\n")
@@ -1351,6 +1374,29 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=400,
         help="LLM 抽取文章上限(成本护栏)",
     )
+    news_parser.add_argument(
+        "--fixture-budget",
+        type=int,
+        default=None,
+        help="按独立场次的有界预算(票07;预算在 --limit 文章池内生效)",
+    )
+    funnel_parser = sub.add_parser(
+        "guardian-news-funnel",
+        help="扩样收敛表(票07:候选→独立场次→可检验;表先行预算另裁)",
+    )
+    funnel_parser.add_argument(
+        "--competition",
+        type=str,
+        default="E0",
+        help="联赛码(缺省 E0)",
+    )
+    funnel_parser.add_argument(
+        "--seasons",
+        type=str,
+        nargs="+",
+        default=["2024-25", "2025-26"],
+        help="赛季(缺省 2024-25+2025-26 两季,票07 裁决)",
+    )
     bucket_reaudit_parser = sub.add_parser(
         "bucket-reaudit",
         help="错价桶方向映射限定复核(票03:严格正侧+等量分层对照,一次性)",
@@ -1554,6 +1600,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
         "funnel-report": lambda: _cmd_funnel_report(args),
+        "guardian-news-funnel": lambda: _cmd_guardian_news_funnel(args),
         "sync-draw-results": _cmd_sync_draw_results,
         "official-reconcile": _cmd_official_reconcile,
         "audit-ledger": _cmd_audit_ledger,

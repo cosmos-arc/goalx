@@ -37,13 +37,22 @@ _SYSTEM_PROMPT = (
     "You extract structured football team-news events from a news article "
     "for a quant pipeline. Given the fixture (home team vs away team) and "
     "the article text, output STRICT JSON only:\n"
-    '{"relevant": bool, "events": [{"type": "injury|suspension|'
-    'manager_change|rotation_hint|other", "side": "home|away", '
-    '"player": string-or-null, "confidence": 0.0-1.0}]}\n'
+    '{"relevant": bool, "events": [{"type": '
+    '"injury|suspension|manager_change|rotation_hint|other", '
+    '"side": "home|away", "player": string-or-null, '
+    '"subtype": "out|return-or-null", '
+    '"novelty": "first|restate", '
+    '"evidence_quote": string, '
+    '"confidence": 0.0-1.0}]}\n'
     "Rules: only events affecting the two teams' lineup/management for THIS "
     "fixture; relevant=false if the article is not about team news for this "
     "fixture (post-match reports, transfers unrelated to availability, "
-    "league-wide news). No prose outside JSON."
+    "league-wide news). subtype='out' (player unavailable) or 'return' "
+    "(player back) REQUIRED for injury/suspension, null otherwise. "
+    "novelty: 'first' = first confirmation of this specific news, "
+    "'restate' = restating previously reported news. evidence_quote: one "
+    "verbatim sentence from the article supporting the event. "
+    "No prose outside JSON."
 )
 
 

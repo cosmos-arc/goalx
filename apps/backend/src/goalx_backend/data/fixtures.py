@@ -37,6 +37,34 @@ def beijing_naive(kickoff_utc: str) -> datetime:
     return parsed.astimezone(CST).replace(tzinfo=None)
 
 
+def kickoff_utc_iso(beijing_naive: str) -> str:
+    """
+    北京墙钟 naive 串 → UTC aware ISO 串（写侧；票 07 silver v2）。
+
+    非法串 raise（写侧错误=数据错误，fail-loud 不静默）。
+    """
+    parsed = beijing_naive_to_utc(beijing_naive)
+    if parsed is None:
+        raise ValueError(f"非法北京墙钟 kickoff: {beijing_naive!r}")
+    return parsed.isoformat(timespec="seconds")
+
+
+def kickoff_to_utc(value: str) -> datetime | None:
+    """
+    Kickoff 串 → UTC aware（双模读侧；票 07）。
+
+    v2 行=UTC aware（写侧已转，原样用）；v1 legacy=北京墙钟 naive
+    （经 ``beijing_naive_to_utc`` 真转换）。两代共存期单一读口。
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(UTC)
+    return beijing_naive_to_utc(value)
+
+
 def beijing_naive_to_utc(value: str) -> datetime | None:
     """
     北京墙钟 naive 串 → UTC aware（``beijing_naive`` 的逆；非法串=None）。

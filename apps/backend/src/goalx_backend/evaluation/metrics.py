@@ -330,3 +330,25 @@ def _bet_stats(bets: list[sqlite3.Row]) -> dict[str, float]:
         "profit": sum(float(b["profit"]) for b in bets),
     }
     return stats
+
+
+def latest_done_run_prediction_sids(
+    conn: sqlite3.Connection,
+) -> tuple[set[str], set[str]]:
+    """
+    最新 done run 的预测面 sid 集（票 07 收敛表用，SQL 归 evaluation）。
+
+    返回 (predicted, tested)——tested=ftr 非空（可检验）。
+    """
+    rows = conn.execute(
+        " ".join(
+            (
+                "SELECT DISTINCT match_key, ftr FROM backtest_predictions",
+                "WHERE run_id = (SELECT MAX(id) FROM backtest_runs",
+                "WHERE status = 'done')",
+            )
+        )
+    ).fetchall()
+    predicted = {str(r["match_key"]) for r in rows}
+    tested = {str(r["match_key"]) for r in rows if r["ftr"] is not None}
+    return predicted, tested
