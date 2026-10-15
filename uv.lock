@@ -646,6 +646,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "goalx-backend" },
+    { name = "lightgbm" },
 ]
 
 [package.dev-dependencies]
@@ -666,7 +667,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "goalx-backend", editable = "apps/backend" }]
+requires-dist = [
+    { name = "goalx-backend", editable = "apps/backend" },
+    { name = "lightgbm", specifier = ">=4.7.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1181,6 +1185,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/43/86aacc027959108b4c66eeae8b73cedb057dfa6eb3a335d05ad65197081c/kiwisolver-1.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:74ad5c3dad54a4641b4c28cd15ded70899d04459c6c7aeacafea716be97cce6d", size = 1477992, upload-time = "2026-08-28T10:25:58.479Z" },
     { url = "https://files.pythonhosted.org/packages/39/9c/426deb49e62c5f69464b64bbeca064d3b758a7506b8913d986ef34f4619c/kiwisolver-1.5.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:d09037ca068d784ebc4aec290ef952ca27ac15dd9c0b5801a88c6e1096b83e6b", size = 2295520, upload-time = "2026-08-28T10:26:15.042Z" },
     { url = "https://files.pythonhosted.org/packages/f5/22/deabbb3ad6d918d74b7831b2d8ae7151b09d21c87974e5ee8a456f58c94c/kiwisolver-1.5.1-cp313-cp313-win_amd64.whl", hash = "sha256:dc23390afe9f4ef9ac3bcc72a03a56eebbde03f4c571a32cb38f859cff9a6524", size = 70758, upload-time = "2026-08-28T10:26:16.504Z" },
+]
+
+[[package]]
+name = "lightgbm"
+version = "4.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/8e/4db5e29290d7e619c307fdb8dab0a0514090af2ce3ec483050e024ec6126/lightgbm-4.7.0.tar.gz", hash = "sha256:f8e20f682c9aabd000bcf4a7ed8aa6f473c1adfecccae34ec24e823d156f4af0", size = 1792896, upload-time = "2026-07-18T21:00:56.139Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/86/f4fe714f2e0bf3941705a20d7f6849dc476276d71236e82ea6b0d6539b86/lightgbm-4.7.0-py3-none-macosx_12_0_arm64.whl", hash = "sha256:129535462686f274df179133643118c5c5c5667167fe6c3a28d955f0b3c8e868", size = 1498914, upload-time = "2026-07-18T21:00:36.549Z" },
+    { url = "https://files.pythonhosted.org/packages/15/eb/837ea3b40cc36e22eeebb9785c01e42b2c255d033eea1d2d9ee8e2540e55/lightgbm-4.7.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d23e922acd891e77212e4d0fbcee9ba973c96dee479491341d05ba595357ebb7", size = 3476028, upload-time = "2026-07-18T21:00:39.331Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/0b/c5c17d862b12ce292f24cd85d40f2f8f8981668fbdbd43fdc2625eccbc79/lightgbm-4.7.0-py3-none-win_amd64.whl", hash = "sha256:f42d1e5b32b6f170e606d7c689c6165671da98d7bf37f1addec2623efc8740c9", size = 1360833, upload-time = "2026-07-18T21:00:40.865Z" },
 ]
 
 [[package]]

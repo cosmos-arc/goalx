@@ -8,6 +8,7 @@ description = "GoalX monorepo (FastAPI backend + React web)"
 
 dependencies = [
     "goalx-backend",
+    "lightgbm>=4.7.0",
 ]
 
 [dependency-groups]
