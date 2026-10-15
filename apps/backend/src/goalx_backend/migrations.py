@@ -1502,6 +1502,41 @@ def _apply_v26(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v27(conn: sqlite3.Connection) -> None:
+    """
+    v27（caliber-loop 票 05）：轨二拍点快照表（开球前 24h/12h 固定提前量）。
+
+    每场每拍点一行（UNIQUE fixture+snap_type，重拍=覆盖，幂等有界）；
+    purchasable=拍点时竞彩停售边界（停售=0）；迟到拍点 late_flag=1
+    （captured_at 与 target_instant 如实分开记）。日终漏斗合并进
+    funnel_fixture_days.track2_json（双轨对照/衰减面）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS track2_snapshots (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL,
+            snap_type TEXT NOT NULL CHECK (snap_type IN ('24h', '12h')),
+            target_instant TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            late_flag INTEGER NOT NULL DEFAULT 0,
+            purchasable INTEGER NOT NULL,
+            purchasable_reason TEXT,
+            jc_odds_h REAL, jc_odds_d REAL, jc_odds_a REAL,
+            jc_age_seconds REAL,
+            anchor_ref TEXT,
+            p_sharp_h REAL, p_sharp_d REAL, p_sharp_a REAL,
+            value_proxy_h REAL, value_proxy_d REAL, value_proxy_a REAL,
+            UNIQUE (fixture_id, snap_type)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_track2_snapshots_fixture"
+        + " ON track2_snapshots (fixture_id)"
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1529,4 +1564,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (24, _apply_v24),
     (25, _apply_v25),
     (26, _apply_v26),
+    (27, _apply_v27),
 )

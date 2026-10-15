@@ -29,6 +29,7 @@ _RECORD_NAMES = (
     "understat-sync",
     "clubelo-sync",
     "odds-anchor-dense",
+    "track2-snapshots",
     "srcb-collect",
     "eu-odds-closing",
     "intel-collect",
@@ -38,7 +39,7 @@ _RECORD_NAMES = (
 
 
 def test_registry_pinned_to_full_batch() -> None:
-    """全量 12 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
+    """全量 13 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
     by_name = {spec.name: spec for spec in datasets.DATASETS}
     assert tuple(by_name) == _RECORD_NAMES
     # dispatch 与定拍命中同一 tasks 函数（一份实现，两个 adapter）
@@ -78,6 +79,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert {name for name in _RECORD_NAMES if not by_name[name].cli} == {
         "official-reconcile",
         "odds-anchor-dense",
+        "track2-snapshots",
         "srcb-collect",
         "intel-collect",
         "scout-line",
@@ -87,8 +89,8 @@ def test_registry_pinned_to_full_batch() -> None:
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：17 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 5 个在前、注册面 12 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：18 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 5 个在前、注册面 13 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
@@ -115,6 +117,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "clubelo-sync": "10 9 * * *",
         "guardian-sync": "40 9 * * *",
         "odds-anchor-dense": "*/5 * * * *",
+        "track2-snapshots": "*/10 * * * *",
         "srcb-collect": "40 10,22 * * *",
         "srct-night": "0 1 * * *",
         "srct-shift": "*/30 8-23,0 * * *",

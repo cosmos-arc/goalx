@@ -198,11 +198,14 @@ def test_funnel_all_rejected(db: sqlite3.Connection) -> None:
     report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
     assert report.n_on_sale == 1
     assert report.n_eligible == 0
-    assert report.value_proxy_stats == {
+    base = {
         "h": {"n": 0, "mean": None, "max": None},
         "d": {"n": 0, "mean": None, "max": None},
         "a": {"n": 0, "mean": None, "max": None},
     }
+    for sel, face in report.value_proxy_stats.items():
+        if sel != "track2_compare":
+            assert face == base[sel]
     assert "l2_jc_no_quote" in report.loss_reasons
 
 
@@ -270,3 +273,103 @@ def test_funnel_duplicate_match_code_deduped(db: sqlite3.Connection) -> None:
         ).fetchone()[0]
         == 1
     )
+
+
+# ---- 票 05：轨二拍点与双轨对照 ----
+
+
+def test_track2_snapshot_idempotent_and_merge(db: sqlite3.Connection) -> None:
+    """拍点落库幂等覆盖；漏斗行在则合并 track2_json；迟到旗如实。"""
+    fixture = _seed_full_pass(db)
+    fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    cap = fn.Track2Capture(
+        fixture_id=fixture,
+        snap_type="24h",
+        target_instant="2026-10-16T02:00:00+00:00",
+        captured_at="2026-10-16T02:00:10+00:00",
+        purchasable=True,
+        jc_odds={"h": 2.1, "d": 3.4, "a": 3.2},
+        p_sharp={"h": 0.43, "d": 0.30, "a": 0.27},
+        anchor_ref="pinnacle",
+    )
+    proxy = fn.record_track2_snapshot(db, cap)
+    assert proxy["h"] == round(2.1 * 0.43 - 1.0, 4)
+    row = db.execute(
+        "SELECT * FROM track2_snapshots WHERE fixture_id = ?", (fixture,)
+    ).fetchone()
+    assert row["purchasable"] == 1
+    assert row["late_flag"] == 0
+    # 漏斗行 track2_json 已合并
+    frow = db.execute(
+        "SELECT track2_json FROM funnel_fixture_days WHERE fixture_id = ?",
+        (fixture,),
+    ).fetchone()
+    assert "24h" in json.loads(frow["track2_json"])
+    # 迟到补拍：覆盖同键，late_flag=1
+    cap_late = fn.Track2Capture(
+        fixture_id=fixture,
+        snap_type="24h",
+        target_instant="2026-10-16T02:00:00+00:00",
+        captured_at="2026-10-16T05:00:00+00:00",  # 迟到 3h
+        purchasable=False,
+        purchasable_reason="sale_stopped",
+        jc_odds={},
+        p_sharp={},
+    )
+    fn.record_track2_snapshot(db, cap_late)
+    row2 = db.execute(
+        "SELECT late_flag, purchasable FROM track2_snapshots WHERE fixture_id = ?",
+        (fixture,),
+    ).fetchone()
+    assert row2["late_flag"] == 1
+    assert row2["purchasable"] == 0
+    assert db.execute("SELECT COUNT(*) FROM track2_snapshots").fetchone()[0] == 1
+
+
+def test_dual_track_face_in_day_report(db: sqlite3.Connection) -> None:
+    """双轨对照面：分阶段均值+停售计数+衰减链进日终报告。"""
+    fixture = _seed_full_pass(db)
+    fn.record_track2_snapshot(
+        db,
+        fn.Track2Capture(
+            fixture_id=fixture,
+            snap_type="24h",
+            target_instant="2026-10-16T02:00:00+00:00",
+            captured_at="2026-10-16T02:00:05+00:00",
+            purchasable=True,
+            jc_odds={"h": 2.5, "d": 3.4, "a": 3.2},
+            p_sharp={"h": 0.50, "d": 0.30, "a": 0.20},
+            anchor_ref="pinnacle",
+        ),
+    )
+    report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    compare = report.value_proxy_stats["track2_compare"]
+    assert compare["purchasable"]["24h"] == {"eligible": 1, "total": 1}
+    assert compare["mean_value_proxy"]["24h"]["h"] == round(2.5 * 0.50 - 1.0, 4)
+    assert compare["mean_value_proxy"]["freeze"]["h"] is not None  # 轨一并列
+    assert compare["late_snapshots"] == {"24h": 0, "12h": 0}
+    # 日行 JSON 持久化 track2_compare
+    day = fn.funnel_day_row(db, BUSINESS_DATE)
+    assert "track2_compare" in json.loads(day["value_proxy_stats"])
+
+
+def test_track2_stopped_snapshot_not_in_proxy_means(db: sqlite3.Connection) -> None:
+    """停售拍点（不可购）：仍落库但不进代理均值（可购边界语义）。"""
+    fixture = _seed_full_pass(db)
+    fn.record_track2_snapshot(
+        db,
+        fn.Track2Capture(
+            fixture_id=fixture,
+            snap_type="12h",
+            target_instant="2026-10-16T08:00:00+00:00",
+            captured_at="2026-10-16T08:00:05+00:00",
+            purchasable=False,
+            purchasable_reason="sale_stopped",
+            jc_odds={"h": 2.5},
+            p_sharp={"h": 0.5},
+        ),
+    )
+    report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    compare = report.value_proxy_stats["track2_compare"]
+    assert compare["purchasable"]["12h"] == {"eligible": 0, "total": 1}
+    assert compare["mean_value_proxy"]["12h"]["h"] is None

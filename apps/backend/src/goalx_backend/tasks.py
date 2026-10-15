@@ -15,13 +15,20 @@ import sqlite3
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import duckdb
 import httpx
 from loguru import logger
 
-from goalx_backend.betting.funnel import funnel_liveness, record_funnel_day
+from goalx_backend.betting.funnel import (
+    TRACK2_OFFSETS,
+    Track2Capture,
+    funnel_liveness,
+    has_track2_snapshot,
+    record_funnel_day,
+    record_track2_snapshot,
+)
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import corpus_duckdb, mapping, reconcile
@@ -45,6 +52,10 @@ from goalx_backend.data.ingest import (
     zucai_official,
 )
 from goalx_backend.data.ingest.shell import browser_ssl_context, polite_client
+from goalx_backend.data.quote_evidence import (
+    adjudicate_had_quote,
+    sharp_probs_asof,
+)
 from goalx_backend.db import connect, migrate, utc_now_iso
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
@@ -622,6 +633,85 @@ def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[
             )
             events.append(note)
     return events
+
+
+TRACK2_CATCHUP_HOURS = 6  # 拍点错过后的迟到补拍视界（迟到旗如实记）
+
+
+def track2_snapshots() -> dict[str, object]:
+    """
+    轨二拍点采样（caliber-loop 票 05）：开球前 24h/12h 整点两源快照。
+
+    锚书=拍点定向拉取（复用 odds_anchor_dense 通道，零候选零请求）；
+    竞彩=拍点时点最新 as-of 读（调盘面，龄如实记）；停售边界
+    purchasable=拍点时停售状态；错过拍点 6h 视界内迟到补拍（late_flag）。
+    """
+    settings = get_settings()
+    out: dict[str, object] = {}
+    with task_conn() as conn, polite_client() as client:
+        now = datetime.now(UTC)
+        for offset_h, label in TRACK2_OFFSETS:
+            offset = timedelta(hours=offset_h)
+            horizon = timedelta(hours=TRACK2_CATCHUP_HOURS)
+            start = (now - offset + horizon).isoformat(timespec="seconds")
+            end = (now - offset + timedelta(minutes=10)).isoformat(timespec="seconds")
+            targets = fx_store.joined_fixtures_in_window(conn, start, end)
+            fresh: list[int] = []
+            for row in targets:
+                fid = int(row["id"])
+                if not has_track2_snapshot(conn, fid, label):
+                    fresh.append(fid)
+            pulls: list[tuple[str, str]] = [
+                (
+                    str(row["odds_api_event_id"]),
+                    str(row["odds_api_sport_key"]),
+                )
+                for row in targets
+                if int(row["id"]) in fresh
+            ]
+            if pulls:
+                _isolated_anchor_pull(
+                    conn, settings, client, anchor=f"track2_{label}", targets=pulls
+                )
+            captured = 0
+            for row in targets:
+                fid = int(row["id"])
+                if fid not in fresh:
+                    continue
+                kickoff = str(row["kickoff_utc"])
+                target_instant = (datetime.fromisoformat(kickoff) - offset).isoformat(
+                    timespec="seconds"
+                )
+                now_iso = now.isoformat(timespec="seconds")
+                verdict = adjudicate_had_quote(conn, fid, now_iso)
+                sharp = sharp_probs_asof(conn, fid, now_iso)
+                sale = fx_store.latest_sale_status_asof(conn, fid, "had", now_iso)
+                stopped = sale is not None and str(sale["sale_state"]) == "stopped"
+                purchasable = not stopped
+                record_track2_snapshot(
+                    conn,
+                    Track2Capture(
+                        fixture_id=fid,
+                        snap_type=label,
+                        target_instant=target_instant,
+                        captured_at=now.isoformat(timespec="seconds"),
+                        purchasable=purchasable,
+                        purchasable_reason=(
+                            "sale_stopped" if not purchasable else None
+                        ),
+                        jc_odds=dict(verdict.jc_odds),
+                        jc_age_seconds=verdict.jc_age_seconds,
+                        p_sharp=sharp[0] if sharp else {},
+                        anchor_ref=sharp[1] if sharp else None,
+                    ),
+                )
+                captured += 1
+            out[label] = {
+                "candidates": len(targets),
+                "captured": captured,
+                "anchor_pulls": len(pulls),
+            }
+    return out
 
 
 def funnel_day() -> dict[str, object]:
