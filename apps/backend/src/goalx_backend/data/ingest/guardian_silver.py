@@ -5,6 +5,11 @@ NewsShock P0 抽取器（model-iterate 票 04，spec S4；research/26 P0 落地�
 结构化事件表：场次关联（sid）、事件类型（伤停/停赛/主帅更迭/轮换线索/
 其他）、队伍侧、置信度、抽取模型与版本。
 
+分层（ADR-0008）：本模块=语料管线+SQL（住所 data.ingest）；LLM 调用
+胶水住 ``llm/guardian_extract``（llm 层在本层之上），经 ``Extractor``
+缝注入——data.ingest 不许上翻 import llm（caliber-loop 票 01 归位，
+修复 model-iterate 票 04 遗留的 main 红 CI）。
+
 管线（有界试点：单联赛 × 双赛季）：
 
 1. **试点场次索引**：fixture_universe 过滤（联赛+赛季）；
@@ -14,8 +19,9 @@ NewsShock P0 抽取器（model-iterate 票 04，spec S4；research/26 P0 落地�
 3. **候选文章预筛**（纯代码零成本）：标题词边界命中英文队名 × 发布日
    在 [kickoff−3d, kickoff) 窗（时刻锚定）（PIT：发布必须早于开球，赛后稿
    计数剔除）；
-4. **LLM 抽取**（scout 档零牌价，走 llm/client 熔断+记账）：约束
-   JSON schema，违例 fail-loud 计数不静默丢；
+4. **LLM 抽取**（Extractor 缝注入，生产胶水=llm/guardian_extract，
+   scout 档零牌价，走 llm/client 熔断+记账）：约束 JSON schema，
+   违例 fail-loud 计数不静默丢；
 5. **落盘**：parquet + _meta（版本戳+bronze digest+试点范围钉死），
    article_sid 幂等去重。
 
@@ -32,28 +38,20 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import duckdb
 import pyarrow as pa
 from loguru import logger
-from openai import BadRequestError
-from openai.types.chat import ChatCompletionMessageParam
 
 from goalx_backend.config import Settings
 from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.data.leagues import FD_TO_LEAGUE
 from goalx_backend.data.silver import write_dataset_meta, write_partition
-from goalx_backend.llm.client import (
-    LlmBudgetExceeded,
-    LlmKeyMissing,
-    ModelTier,
-    Purpose,
-    glm_chat,
-)
 
 PROVIDER = "guardian"
 BRONZE_DATASET = "news_article"
@@ -63,20 +61,6 @@ EVENT_VERSION = "1"
 EVENT_TYPES = ("injury", "suspension", "manager_change", "rotation_hint", "other")
 VALID_SIDES = ("home", "away")
 LINK_WINDOW_DAYS = 3  # 发布窗：[kickoff−3d, kickoff)（时刻锚定）
-MAX_BODY_CHARS = 6000  # 抽取输入截断（成本护栏）
-
-_SYSTEM_PROMPT = (
-    "You extract structured football team-news events from a news article "
-    "for a quant pipeline. Given the fixture (home team vs away team) and "
-    "the article text, output STRICT JSON only:\n"
-    '{"relevant": bool, "events": [{"type": "injury|suspension|'
-    'manager_change|rotation_hint|other", "side": "home|away", '
-    '"player": string-or-null, "confidence": 0.0-1.0}]}\n'
-    "Rules: only events affecting the two teams' lineup/management for THIS "
-    "fixture; relevant=false if the article is not about team news for this "
-    "fixture (post-match reports, transfers unrelated to availability, "
-    "league-wide news). No prose outside JSON."
-)
 
 
 @dataclass(frozen=True)
@@ -102,7 +86,9 @@ class _Link:
 
 
 @dataclass(frozen=True)
-class _Candidate:
+class Candidate:
+    """抽取候选（公共名：Extractor 注入缝入参，llm 胶水引用）。"""
+
     article_sid: str
     published_at: str
     title: str
@@ -243,12 +229,8 @@ def _parse_instant(value: str) -> datetime | None:
 
 
 def _kickoff_instant(link: _Link) -> datetime | None:
-    """真实开球时刻（北京墙钟 naive → UTC aware：−8h；PIT 判定）。"""
-    try:
-        naive = datetime.fromisoformat(link.kickoff_iso.replace(" ", "T"))
-    except ValueError:
-        return None
-    return naive.replace(tzinfo=UTC) - timedelta(hours=8)
+    """真实开球时刻（PIT 判定；转换=data.fixtures.beijing_naive_to_utc 单一真相源）。"""
+    return beijing_naive_to_utc(link.kickoff_iso)
 
 
 def _word_boundary(name: str, text: str) -> bool:
@@ -261,7 +243,7 @@ def candidate_articles(
     links: dict[str, _Link],
     *,
     window_days: int = LINK_WINDOW_DAYS,
-) -> tuple[list[_Candidate], int, int]:
+) -> tuple[list[Candidate], int, int]:
     """
     文章预筛（纯代码）：标题词边界命中队名 × 发布窗 [match−3d, kickoff)。
 
@@ -273,7 +255,7 @@ def candidate_articles(
         by_name.setdefault(link.en_home, []).append((link, "home"))
         by_name.setdefault(link.en_away, []).append((link, "away"))
 
-    candidates: list[_Candidate] = []
+    candidates: list[Candidate] = []
     scanned = 0
     post_kickoff = 0
     seen_articles: set[str] = set()
@@ -311,9 +293,9 @@ def _link_article(
     body: str,
     by_name: dict[str, list[tuple[_Link, str]]],
     window_days: int,
-) -> tuple[list[_Candidate], int]:
+) -> tuple[list[Candidate], int]:
     """一篇文章 × 队名索引 → （窗内候选, 赛后稿命中数）。"""
-    found: list[_Candidate] = []
+    found: list[Candidate] = []
     seen_pairs: set[tuple[str, str]] = set()
     post_kickoff = 0
     pub = _parse_instant(published)
@@ -334,7 +316,7 @@ def _link_article(
                 continue  # 同文同场只抽一次（提示词含两队，side 不重复计）
             seen_pairs.add(key)
             found.append(
-                _Candidate(
+                Candidate(
                     article_sid=article_sid,
                     published_at=published,
                     title=title,
@@ -398,72 +380,15 @@ def _clean_event(event: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     }
 
 
-class ContentFiltered(RuntimeError):
-    """供应商内容过滤拦截（[1301]；真树实测个别博彩相关稿件触发）。"""
+# 抽取缝（ADR-0008 依赖倒置）：LLM 调用住 llm/guardian_extract（llm 层
+# 在本层之上，不可上翻 import）；返回 checkpoint 条目体（filtered/parsed/
+# model/cost/empty[/error]），ContentFiltered 等供应商分账在胶水内消化。
+Extractor = Callable[[Candidate], dict[str, Any]]
 
 
-def _extract_with_llm(
-    conn: sqlite3.Connection, settings: Settings, candidate: _Candidate
-) -> tuple[dict[str, Any] | None, str, float, bool]:
-    """单篇 LLM 抽取（scout 档）；返回 (parsed|None, model, 成本, 原文空)。"""
-    link = candidate.link
-    user_prompt = (
-        f"Fixture: {link.en_home} (home) vs {link.en_away} (away), "
-        f"date {link.kickoff_day}.\n"
-        f"Article title: {candidate.title}\n"
-        f"Article body:\n{candidate.body[:MAX_BODY_CHARS]}"
-    )
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-    try:
-        parsed, model, cost, empty = _glm_once(conn, settings, messages)
-    except (ContentFiltered, LlmBudgetExceeded, LlmKeyMissing):
-        raise
-    except Exception:  # 网络瞬断等——重试一次
-        parsed, model, cost, empty = _glm_once(
-            conn, settings, messages, temperature=0.2
-        )
-    if parsed is not None:
-        return parsed, model, cost, empty
-    # 空响应/违例重试一次（真树实测温度 0 偶发空串）
-    parsed, model, cost2, empty = _glm_once(conn, settings, messages, temperature=0.2)
-    return parsed, model, cost + cost2, empty
-
-
-def _glm_once(
-    conn: sqlite3.Connection,
-    settings: Settings,
-    messages: list[ChatCompletionMessageParam],
-    *,
-    temperature: float = 0.0,
-) -> tuple[dict[str, Any] | None, str, float, bool]:
-    try:
-        result = glm_chat(
-            conn,
-            settings,
-            ModelTier.SCOUT,
-            messages,
-            purpose=Purpose.SCOUT,
-            max_tokens=512,
-            temperature=temperature,
-        )
-    except BadRequestError as exc:  # [1301] contentFilter——个别稿触发，跳过不崩
-        if "1301" in str(exc) or "contentFilter" in str(exc):
-            raise ContentFiltered(str(exc)) from exc
-        raise
-    content = result.content.strip()
-    return (
-        parse_extraction(content),
-        result.model,
-        result.estimated_cny,
-        content == "",
-    )
-
-
-# 抽取结果四元组：(parsed|None, model, cost, raw_content_was_empty)
-Extractor = Callable[[_Candidate], tuple[dict[str, Any] | None, str, float, bool]]
+def _extract_one(extract: Extractor, candidate: Candidate) -> dict[str, Any]:
+    """单篇抽取（缝注入）→ checkpoint 条目（+article_sid）。"""
+    return {"article_sid": candidate.article_sid, **extract(candidate)}
 
 
 @dataclass(frozen=True)
@@ -482,12 +407,12 @@ def build_news_events(
     competition: str = "E0",
     seasons: tuple[str, ...] = ("2023-24", "2024-25"),
     article_limit: int = 400,
-    extractor: Extractor | None = None,
+    extractor: Extractor,
 ) -> GuardianEventReport:
     """
     试点构建：链接 → 预筛 → 抽取 → silver 落盘（幂等覆盖）。
 
-    extractor 注入点供测试（缺省真 LLM scout 档）。
+    extractor 必注入（生产=llm.guardian_extract.make_extractor；测试=假件）。
     """
     fixtures = fixture_index(ctx.duck_con, competition, seasons)
     links, unlinked = english_links(ctx.duck_con, fixtures, competition)
@@ -502,12 +427,6 @@ def build_news_events(
         unlinked_hist_rows=unlinked,
     )
 
-    def default_extract(
-        candidate: _Candidate,
-    ) -> tuple[dict[str, Any] | None, str, float, bool]:
-        return _extract_with_llm(ctx.conn, ctx.settings, candidate)
-
-    extract = extractor or default_extract
     selected = candidates[:article_limit]
     report.limit_reached = len(candidates) > article_limit
     checkpoint = _checkpoint_path(store)
@@ -517,33 +436,13 @@ def build_news_events(
     for candidate in selected:
         entry = done.get(candidate.article_sid)
         if entry is None:
-            entry = _extract_one(extract, candidate)
+            entry = _extract_one(extractor, candidate)
             with checkpoint.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         _tally_entry(entry, candidate, report, season_of, event_rows, competition)
     _write_silver(store, event_rows, competition, seasons, report)
     checkpoint.unlink(missing_ok=True)  # 全量落盘成功——checkpoint 使命完成
     return report
-
-
-def _extract_one(extract: Extractor, candidate: _Candidate) -> dict[str, Any]:
-    """单篇抽取（含内容过滤分账）→ checkpoint 条目。"""
-    try:
-        parsed, model, cost, empty = extract(candidate)
-    except ContentFiltered as exc:
-        return {
-            "article_sid": candidate.article_sid,
-            "filtered": True,
-            "error": str(exc)[:120],
-        }
-    return {
-        "article_sid": candidate.article_sid,
-        "filtered": False,
-        "parsed": parsed,
-        "model": model,
-        "cost": cost,
-        "empty": empty,
-    }
 
 
 def _load_checkpoint(checkpoint: Path) -> dict[str, dict[str, Any]]:
@@ -559,7 +458,7 @@ def _load_checkpoint(checkpoint: Path) -> dict[str, dict[str, Any]]:
 
 def _tally_entry(
     entry: dict[str, Any],
-    candidate: _Candidate,
+    candidate: Candidate,
     report: GuardianEventReport,
     season_of: dict[str, str],
     event_rows: list[dict[str, Any]],

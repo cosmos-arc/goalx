@@ -92,6 +92,7 @@ from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
 from goalx_backend.evaluation.xg_compare import run_xg_comparison
+from goalx_backend.llm import guardian_extract as gx
 from goalx_backend.modelling import team_align
 from goalx_backend.modelling.calibration import CALIBRATION_KINDS
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
@@ -438,6 +439,7 @@ def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
             competition=args.competition,
             seasons=tuple(args.seasons),
             article_limit=args.limit,
+            extractor=gx.make_extractor(conn, settings),
         )
     sys.stdout.write(json.dumps(report.as_dict(), ensure_ascii=False, indent=2) + "\n")
     logger.info(
