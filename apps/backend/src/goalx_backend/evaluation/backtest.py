@@ -84,6 +84,12 @@ from goalx_backend.modelling.fusion import (
     alpha_survival,
     fuse,
 )
+from goalx_backend.modelling.gbm_model import (
+    GBMArtifact,
+    feature_row,
+    fit_gbm_model,
+)
+from goalx_backend.modelling.lag_features import LagRow, build_lag_features
 from goalx_backend.modelling.residual_layer import (
     RESIDUAL_MODES,
     FeatureTuple,
@@ -159,6 +165,9 @@ class BacktestParams:
     residual: str = "off"
     residual_min_samples: int = 300
     residual_window: int = 1000
+    # 模型线（model-v2 票 02）：dc=缺省（Dixon-Coles）；gbm=lightgbm
+    # 多分类 had-only（hhad/ttg 候选跳过计数）
+    model: str = "dc"
 
 
 @dataclass
@@ -459,9 +468,9 @@ class _Candidate:
 
 def fetch_decade_matches(
     duck_con: duckdb.DuckDBPyConnection, params: BacktestParams
-) -> tuple[list[GoldMatch], str | None, str, int]:
+) -> tuple[list[GoldMatch], list[LagRow], str | None, str, int]:
     """
-    Gold 引擎行集 → GoldMatch 投影（取数/卫生单一入口=``data.gold_reader``）。
+    Gold 引擎行集 → GoldMatch 投影 + LagRow 集（票 02 滞后面）。
 
     视图缺席（未建桥/空语料）= 合法初生态，返回 (空集, None, "missing", 0)
     由 run params 如实标注，不冒充零过滤数据；重复 sid 已在取数侧去重
@@ -471,6 +480,7 @@ def fetch_decade_matches(
         duck_con, params.competitions, end=params.end
     )
     matches: list[GoldMatch] = []
+    lag_rows: list[LagRow] = []
     for ref, row in enumerate(rows):
         (
             sid,
@@ -497,9 +507,37 @@ def fetch_decade_matches(
             q24h_h,
             q24h_d,
             q24h_a,
+            kickoff_iso,
+            xg_home,
+            xg_away,
+            shots_home,
+            shots_away,
+            sot_home,
+            sot_away,
+            elo_home_pre,
+            elo_away_pre,
             _row_version,
         ) = row
         close = (odds_cols[6], odds_cols[7], odds_cols[8])  # cid177 锚收盘
+        lag_rows.append(
+            LagRow(
+                sid=str(sid),
+                league=str(_league),
+                kickoff=str(kickoff_iso),
+                home=str(home),
+                away=str(away),
+                home_goals=int(fthg),
+                away_goals=int(ftag),
+                xg_home=_f(xg_home),
+                xg_away=_f(xg_away),
+                shots_home=int(shots_home) if shots_home is not None else None,
+                shots_away=int(shots_away) if shots_away is not None else None,
+                sot_home=int(sot_home) if sot_home is not None else None,
+                sot_away=int(sot_away) if sot_away is not None else None,
+                elo_home_pre=_f(elo_home_pre),
+                elo_away_pre=_f(elo_away_pre),
+            )
+        )
         matches.append(
             GoldMatch(
                 sid=str(sid),
@@ -535,7 +573,7 @@ def fetch_decade_matches(
                 ),
             )
         )
-    return matches, version, view_status, duplicates
+    return matches, lag_rows, version, view_status, duplicates
 
 
 def _f(value: float | None) -> float | None:
@@ -921,11 +959,46 @@ class _LayerState:
             self.residual.record(features, had_applied, ftr)
 
 
+def _model_probs(
+    match: GoldMatch,
+    model: _ModelSide,
+    fair_probs: dict[str, float],
+) -> tuple[ScoreMatrix | None, dict[str, float]] | None:
+    """模型侧预测（GBM 无矩阵；DC ρ 越界 → None 计跳过）。"""
+    if model.gbm is not None:
+        feats = feature_row(
+            model.gbm.lag_face.get(match.sid, {}),
+            fair_probs,
+            match.features._asdict(),
+        )
+        return None, model.gbm.artifact.predict(feats)
+    if model.artifact is None:
+        raise ValueError("dc/gbm 工件双双缺席（walk 层接线错误）")
+    artifact = model.artifact
+    try:
+        matrix = artifact.predict(match.home, match.away)
+    except ValueError:
+        # 小训练池 ρ 数值越界 → 该场不产生预测/候选
+        return None
+    return matrix, matrix.had()
+
+
+def _provenance(model: _ModelSide) -> tuple[str, str]:
+    """预测行溯源（指纹+训练窗尾；GBM 优先）。"""
+    if model.gbm is not None:
+        gbm = model.gbm
+        return gbm.artifact.data_fingerprint, gbm.artifact.train_window_end
+    if model.artifact is None:
+        raise ValueError("dc/gbm 工件双双缺席（walk 层接线错误）")
+    artifact = model.artifact
+    return artifact.data_fingerprint, artifact.train_window_end
+
+
 def _record_week_predictions(
     conn: sqlite3.Connection,
     run_id: int,
     week_rows: list[GoldMatch],
-    artifact: DCArtifact,
+    model: _ModelSide,
     params: BacktestParams,
     result: BacktestResult,
     layer_state: _LayerState,
@@ -936,8 +1009,11 @@ def _record_week_predictions(
         result.skipped[key] = result.skipped.get(key, 0) + 1
 
     candidates_by_match: dict[int, list[_Candidate]] = {}
+    trained_teams = model.artifact.teams if model.artifact is not None else None
     for match in week_rows:
-        if match.home not in artifact.teams or match.away not in artifact.teams:
+        if trained_teams is not None and (
+            match.home not in trained_teams or match.away not in trained_teams
+        ):
             skip("untrained_teams")
             continue
         fair = fair_probs_from_gold(match, fair_source=params.fair_source)
@@ -945,13 +1021,12 @@ def _record_week_predictions(
             skip("no_fair_baseline")
             continue
         fair_probs, fair_source = fair
-        try:
-            matrix = artifact.predict(match.home, match.away)
-        except ValueError:
-            # 小训练池 ρ 数值越界 → 该场不产生预测/候选
+        fingerprint, window_end = _provenance(model)
+        predicted = _model_probs(match, model, fair_probs)
+        if predicted is None:
             skip("predict_failed")
             continue
-        had = matrix.had()
+        matrix, had = predicted
         features = feature_vector(match.features)
         had_fused = layer_state.current.fused(had, fair_probs)
         had_out = layer_state.current.finalize(had_fused, features)
@@ -977,8 +1052,8 @@ def _record_week_predictions(
                 json.dumps(had_out),
                 json.dumps(fair_probs),
                 fair_source,
-                artifact.data_fingerprint,
-                artifact.train_window_end,
+                fingerprint,
+                window_end,
             ),
         )
         result.predictions += 1
@@ -986,12 +1061,15 @@ def _record_week_predictions(
         layer_state.record(had, had_fused, fair_probs, ftr, match.era, features)
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
-        if "hhad" in params.markets or "ttg" in params.markets:
+        if matrix is None:
+            if "hhad" in params.markets or "ttg" in params.markets:
+                skip("gbm_no_matrix_skips")  # GBM had-only 诚实范围
+        elif "hhad" in params.markets or "ttg" in params.markets:
             market_matrix = market_side_matrix(match, fair_probs)
             if market_matrix is None:
                 skip("no_market_side")  # 无干净 OU 线/联合反推失败
         candidates_by_match[match.ref] = _candidates_for_match(
-            matrix,
+            matrix,  # type: ignore[arg-type]
             jc_had,
             params,
             match,
@@ -1045,6 +1123,7 @@ def _place_week_bets(
 
 
 VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
+VALID_MODELS = ("dc", "gbm")
 
 
 def _validate_layer_params(params: BacktestParams) -> None:
@@ -1059,6 +1138,8 @@ def _validate_layer_params(params: BacktestParams) -> None:
         raise ValueError(
             f"未知判别层 {params.residual!r}（合法: {list(RESIDUAL_MODES)}）"
         )
+    if params.model not in VALID_MODELS:
+        raise ValueError(f"未知模型线 {params.model!r}（合法: {list(VALID_MODELS)}）")
     for enabled, min_samples, window, name in (
         (
             params.calibration != "off",
@@ -1104,6 +1185,70 @@ def _validate_window(params: BacktestParams) -> None:
             raise ValueError(f"{name}={value!r} 非法：须零填充 YYYY-MM-DD") from exc
 
 
+@dataclass(frozen=True)
+class _ModelSide:
+    """模型侧二选一捆（dc 工件或 gbm 周上下文）。"""
+
+    artifact: DCArtifact | None = None
+    gbm: _GbmWeek | None = None
+
+
+@dataclass(frozen=True)
+class _GbmWeek:
+    """一周 GBM 侧上下文（工件 + lag 面 + 训练史引用）。"""
+
+    artifact: GBMArtifact
+    lag_face: dict[str, dict[str, float | None]]
+    pool: list[tuple[dict[str, float | None], str]]
+
+
+class _WeekFitFailed(Exception):
+    """周拟合失败（样本不足/数值不可辨识）——walk 层计数跳过。"""
+
+
+def _fit_week_model(
+    params: BacktestParams,
+    competition: str,
+    pool: list[TrainingRow],
+    gbm_pool: list[tuple[dict[str, float | None], str]],
+    cutoff: str,
+) -> tuple[DCArtifact | None, GBMArtifact | None]:
+    """按模型线拟合本周工件（dc=DC；gbm=lightgbm）。"""
+    try:
+        if params.model == "gbm":
+            return None, fit_gbm_model(gbm_pool, train_window_end=cutoff)
+        return (
+            fit_dc_model(
+                pool,
+                competition=competition,
+                half_life_days=params.half_life_days,
+            ),
+            None,
+        )
+    except ValueError as exc:
+        raise _WeekFitFailed(str(exc)) from exc
+
+
+def _gbm_pool_advance(
+    params: BacktestParams,
+    lag_face: dict[str, dict[str, float | None]] | None,
+    row: GoldMatch,
+    gbm_pool: list[tuple[dict[str, float | None], str]],
+) -> None:
+    """GBM 训练史与 DC 池同步推进（票 02：cutoff 前场次入 gbm_pool）。"""
+    if params.model != "gbm" or lag_face is None:
+        return
+    fair = fair_probs_from_gold(row, fair_source=params.fair_source)
+    if fair is None:
+        return
+    gbm_pool.append(
+        (
+            feature_row(lag_face.get(row.sid, {}), fair[0], row.features._asdict()),
+            _ftr(row.fthg, row.ftag),
+        )
+    )
+
+
 def _walk_competition(
     conn: sqlite3.Connection,
     run_id: int,
@@ -1111,9 +1256,11 @@ def _walk_competition(
     comp_rows: list[GoldMatch],
     params: BacktestParams,
     result: BacktestResult,
+    lag_face: dict[str, dict[str, float | None]] | None = None,
 ) -> None:
     """单联赛 walk-forward：训练池推进 + 周重估 + 预测/下注。"""
     pool: list[TrainingRow] = []
+    gbm_pool: list[tuple[dict[str, float | None], str]] = []  # GBM 特征-赛果史
     ptr = 0
     # 校准/融合状态按联赛作用域（票 01/02：联赛逐个走全十年，跨联赛
     # 共享状态会用 A 联赛晚年校准 B 联赛早年=时序泄漏）；历史=本联赛
@@ -1160,6 +1307,7 @@ def _walk_competition(
                     ftag=row.ftag,
                 )
             )
+            _gbm_pool_advance(params, lag_face, row, gbm_pool)
             ptr += 1
         # 窗口门逐场施加（correctness F4）：整周跳过会丢跨 start 周内的
         # 窗口内场次；cutoff 仍按整周最早日算（窗口前行也不在训练池——
@@ -1179,13 +1327,10 @@ def _walk_competition(
             continue
         assert_no_lookahead(pool, week_dates)
         try:
-            artifact = fit_dc_model(
-                pool,
-                competition=competition,
-                half_life_days=params.half_life_days,
+            artifact, gbm_artifact = _fit_week_model(
+                params, competition, pool, gbm_pool, cutoff
             )
-        except ValueError:
-            # 极小训练池可能数值不可辨识(ρ 越界等) → 跳过该周
+        except _WeekFitFailed:
             result.skipped["fit_failed_weeks"] = (
                 result.skipped.get("fit_failed_weeks", 0) + 1
             )
@@ -1199,11 +1344,16 @@ def _walk_competition(
         layer_state.prepare_week(
             params, week_era, result, competition=competition, week_key=week_key
         )
+        gbm_week = (
+            _GbmWeek(artifact=gbm_artifact, lag_face=lag_face or {}, pool=gbm_pool)
+            if gbm_artifact is not None
+            else None
+        )
         candidates_by_match = _record_week_predictions(
             conn,
             run_id,
             in_window,
-            artifact,
+            _ModelSide(artifact=artifact, gbm=gbm_week),
             params,
             result,
             layer_state,
@@ -1238,9 +1388,10 @@ def run_backtest(
     口径，非 run 日）——重放差异由该组字段解释。
     """
     _validate_window(params)
-    matches, gold_version, view_status, duplicates = fetch_decade_matches(
+    matches, lag_rows, gold_version, view_status, duplicates = fetch_decade_matches(
         duck_con, params
     )
+    lag_face = build_lag_features(lag_rows)  # sid→滞后特征（票 02 旁路）
     # meta 后读（correctness F6）：行集与 _meta 两次独立读之间发生 gold
     # 重建时，版本不一致=溯源已漂移，警告暴露（独占窗口纪律下不应发生）
     meta = gold_reader.read_gold_meta(store)
@@ -1281,7 +1432,15 @@ def run_backtest(
         for match in matches:
             by_comp.setdefault(match.competition, []).append(match)
         for competition, comp_rows in by_comp.items():
-            _walk_competition(conn, run_id, competition, comp_rows, params, result)
+            _walk_competition(
+                conn,
+                run_id,
+                competition,
+                comp_rows,
+                params,
+                result,
+                lag_face=lag_face,
+            )
         conn.execute(
             """
             UPDATE backtest_runs

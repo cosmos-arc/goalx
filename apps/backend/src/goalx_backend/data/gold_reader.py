@@ -46,6 +46,9 @@ _DECADE_SQL = """
            ah_close_home_water_med,
            q1h1x2_h, q1h1x2_d, q1h1x2_a,
            q24h1x2_h, q24h1x2_d, q24h1x2_a,
+           CAST(kickoff AS VARCHAR), xg_home, xg_away,
+           fd_shots_home, fd_shots_away, fd_sot_home, fd_sot_away,
+           elo_home_pre, elo_away_pre,
            version
     FROM match_features
     WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL
