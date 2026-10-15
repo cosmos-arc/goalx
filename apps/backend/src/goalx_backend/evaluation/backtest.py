@@ -43,11 +43,12 @@ baseline 对照随本引擎走 gold 配对行）：
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -168,6 +169,9 @@ class BacktestParams:
     # 模型线（model-v2 票 02）：dc=缺省（Dixon-Coles）；gbm=lightgbm
     # 多分类 had-only（hhad/ttg 候选跳过计数）
     model: str = "dc"
+    # 下注过滤（model-v2 票 04）：off=缺省不变；buckets=错价桶特征门控
+    # 候选资格（谓词全文入 run params）；random=同接受率随机门（安慰剂）
+    bet_filter: str = "off"
 
 
 @dataclass
@@ -459,6 +463,7 @@ class _Candidate:
     selection_code: str
     odds: float
     model_prob: float
+    bucket: FeatureTuple = field(default_factory=FeatureTuple)  # 票 04 门控
     goal_line: float | None = None
 
     @property
@@ -686,6 +691,7 @@ def _market_side_candidates(
                         jc_odds,
                         model_view[sel],
                         goal_line=float(line),
+                        bucket=match.features,
                     )
                 )
     if "ttg" in params.markets:
@@ -702,6 +708,7 @@ def _market_side_candidates(
                         bucket,
                         jc_odds,
                         model_view[bucket],
+                        bucket=match.features,
                     )
                 )
     return candidates
@@ -729,7 +736,15 @@ def _candidates_for_match(
             market_prob = 1.0 / jc_had[sel]
             if market_prob >= MIN_MARKET_PROB and jc_had[sel] <= params.max_sim_odds:
                 candidates.append(
-                    _Candidate(match.ref, match.sid, "had", sel, jc_had[sel], had[sel])
+                    _Candidate(
+                        match.ref,
+                        match.sid,
+                        "had",
+                        sel,
+                        jc_had[sel],
+                        had[sel],
+                        bucket=match.features,
+                    )
                 )
     if market_matrix is not None and (
         "hhad" in params.markets or "ttg" in params.markets
@@ -1080,6 +1095,43 @@ def _record_week_predictions(
     return candidates_by_match
 
 
+LATE_MOVE_EPS = 0.005  # 临场位移死区（小于此视为市场未动）
+BUCKET_FILTER_PREDICATE = (
+    "had: late_move_h 与 selection 同号（H→pos/A→neg）或 |late_move_h|<0.005；"
+    "hhad/ttg: ah_line_drift 与 late_move_h 同号（线移与价移一致）"
+)
+
+
+def _bucket_gate(cand: _Candidate) -> bool:
+    """错价桶门控谓词（票 04；全文入 run params 可复现）。"""
+    b = cand.bucket
+    if cand.market_code == "had":
+        move = b.late_move_h
+        if move is None:
+            return False
+        if cand.selection_code == "h":
+            return move > LATE_MOVE_EPS
+        if cand.selection_code == "a":
+            return move < -LATE_MOVE_EPS
+        return abs(move) < LATE_MOVE_EPS  # d：市场未动
+    drift = b.ah_line_drift
+    move = b.late_move_h
+    if drift is None or move is None:
+        return False
+    return drift * move > 0  # 线移与主队价移同号
+
+
+def _random_gate(cand: _Candidate) -> bool:
+    """同接受率随机门（sid+selection 哈希 < 阈值；确定性）。"""
+    digest = hashlib.sha256(
+        f"{cand.match_key}:{cand.market_code}:{cand.selection_code}".encode()
+    ).digest()
+    return digest[0] < RANDOM_GATE_THRESHOLD  # 阈值标定后 ~50% 接受
+
+
+RANDOM_GATE_THRESHOLD = 128  # 256 分位 → ~50% 接受率
+
+
 def _place_week_bets(
     conn: sqlite3.Connection,
     ctx: _WeekContext,
@@ -1088,9 +1140,19 @@ def _place_week_bets(
     result: BacktestResult,
 ) -> None:
     """单关下注（EV ≥ τ + 1/4 Kelly 封顶）+ 每周每联赛至多一笔 2串1。"""
+    gate: Callable[[_Candidate], bool] | None = None
+    if params.bet_filter == "buckets":
+        gate = _bucket_gate
+    elif params.bet_filter == "random":
+        gate = _random_gate
     qualified: list[_Candidate] = []
     for match_candidates in candidates_by_match.values():
         for cand in match_candidates:
+            if gate is not None and not gate(cand):
+                result.skipped["bet_filter_rejected"] = (
+                    result.skipped.get("bet_filter_rejected", 0) + 1
+                )
+                continue
             stake, kelly = kelly_stake(cand.model_prob, cand.odds, params)
             if cand.ev < params.ev_threshold or stake <= 0:
                 continue
@@ -1124,6 +1186,7 @@ def _place_week_bets(
 
 VALID_MARKETS = frozenset({"had", "hhad", "ttg"})
 VALID_MODELS = ("dc", "gbm")
+VALID_BET_FILTERS = ("off", "buckets", "random")
 
 
 def _validate_layer_params(params: BacktestParams) -> None:
@@ -1140,6 +1203,10 @@ def _validate_layer_params(params: BacktestParams) -> None:
         )
     if params.model not in VALID_MODELS:
         raise ValueError(f"未知模型线 {params.model!r}（合法: {list(VALID_MODELS)}）")
+    if params.bet_filter not in VALID_BET_FILTERS:
+        raise ValueError(
+            f"未知下注过滤 {params.bet_filter!r}（合法: {list(VALID_BET_FILTERS)}）"
+        )
     for enabled, min_samples, window, name in (
         (
             params.calibration != "off",

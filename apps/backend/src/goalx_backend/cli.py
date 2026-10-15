@@ -272,6 +272,7 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             fair_source=args.fair_source,
             markets=tuple(args.markets),
             model=args.model,
+            bet_filter=args.bet_filter,
             calibration=args.calibration,
             calibration_min_samples=args.calibration_min_samples,
             calibration_window=args.calibration_window,
@@ -1165,6 +1166,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         choices=("auto", "psc", "avgc"),
         default="auto",
         help="公允基准来源: auto=时代感知正典链; psc/avgc=只用该源(票 34)",
+    )
+    backtest.add_argument(
+        "--bet-filter",
+        choices=list(bt.VALID_BET_FILTERS),
+        default="off",
+        help="下注过滤(票 04):off=缺省;buckets=错价桶门控;random=同接受率安慰剂",
     )
     backtest.add_argument(
         "--model",
