@@ -76,6 +76,7 @@ def _write_events(store: CorpusStore, rows: list[dict[str, Any]]) -> None:
                     pa.field("side", pa.string()),
                     pa.field("player", pa.string()),
                     pa.field("confidence", pa.float64()),
+                    pa.field("pit_group", pa.string()),
                     pa.field("model", pa.string()),
                     pa.field("version", pa.string()),
                 ]
@@ -106,8 +107,9 @@ def _event(
         "side": side,
         "player": None,
         "confidence": 0.8,
+        "pit_group": "strict_pit",
         "model": "test",
-        "version": "1",
+        "version": "2",
     }
 
 
@@ -368,3 +370,44 @@ def test_band_edges():
     assert nsw._band(0.2) == 1
     assert nsw._band(0.6) == 3  # 浮点边界（0.6/0.2=2.999…）epsilon 修正
     assert nsw._band(1.0) == 4  # 收口顶档
+
+
+def test_pit_group_stratification(gold_env, tmp_path):
+    """版本组分层：主结论面=strict_pit；混组保守归 unproven；legacy=unmarked。"""
+    with gold_env(_gold_env_rows(6)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        for i in range(6):
+            _seed_pred(face, run_id, f"s{i}", ftr="H" if i % 2 else "A")
+        report_store = CorpusStore(tmp_path)
+        rows = [
+            _event("s0"),  # strict（默认）
+            _event("s1"),  # strict
+            # s2 混组：strict+unproven 同场同侧 → 样本归 unproven
+            _event("s2", article="m1"),
+            dict(_event("s2", article="m2"), pit_group="unproven"),
+        ]
+        _write_events(report_store, rows)
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        h = payload["fixture_face"]["by_side"]["h"]
+        assert h["main_pit_groups"] == ["strict_pit"]
+        assert h["event"]["n"] == 2  # 主结论面只算 strict 样本
+        groups = h["event_by_pit_group"]
+        assert groups["strict_pit"]["n"] == 2
+        assert groups["unproven"]["n"] == 1  # 混组保守归 unproven
+        report_store.close()
+        # legacy 无标记 → unmarked 单列，主面回退全体
+        report_store2 = CorpusStore(tmp_path / "legacy")
+        legacy_rows = [_event("s0"), _event("s1")]
+        for r in legacy_rows:
+            r.pop("pit_group")
+        _write_events(report_store2, legacy_rows)
+        payload2 = nsw.build_news_signal_report(
+            face, duck_con, report_store2, run_id=run_id
+        )
+        h2 = payload2["fixture_face"]["by_side"]["h"]
+        assert h2["main_pit_groups"] == ["unmarked"]
+        assert h2["event"]["n"] == 2
+        assert h2["event_by_pit_group"]["unmarked"]["n"] == 2
+        report_store2.close()

@@ -29,6 +29,12 @@ import pyarrow.parquet as pq
 
 from goalx_backend.data.corpus_store import CorpusStore
 
+# guardian/news_event 事件行 pit_group 值域（caliber-loop 票 02）：
+# strict_pit=lastModified 早于开球（版本可证）；unproven=晚于/缺失。
+# 常量住本模块=data 层公共叶（evaluation 报告侧与 data.ingest 写侧共用值域）。
+PIT_STRICT = "strict_pit"
+PIT_UNPROVEN = "unproven"
+
 # 不可解时间的排序垫底值（随后按 bad_time 跳行，序不影响结果）
 UNSORTABLE_MS = 1 << 62
 

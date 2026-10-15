@@ -51,12 +51,17 @@ from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.data.leagues import FD_TO_LEAGUE
-from goalx_backend.data.silver import write_dataset_meta, write_partition
+from goalx_backend.data.silver import (
+    PIT_STRICT,
+    PIT_UNPROVEN,
+    write_dataset_meta,
+    write_partition,
+)
 
 PROVIDER = "guardian"
 BRONZE_DATASET = "news_article"
 EVENT_DATASET = "news_event"
-EVENT_VERSION = "1"
+EVENT_VERSION = "2"  # 票 02：checkpoint 复合键+pit_group 列
 
 EVENT_TYPES = ("injury", "suspension", "manager_change", "rotation_hint", "other")
 VALID_SIDES = ("home", "away")
@@ -95,6 +100,7 @@ class Candidate:
     body: str
     link: _Link
     side: str  # home/away（标题命中的队名侧）
+    pit_group: str  # strict_pit/unproven（lastModified 版本组，票 02）
 
 
 @dataclass
@@ -278,6 +284,7 @@ def candidate_articles(
             title,
             published,
             str(payload.get("bodyText") or ""),
+            str(payload.get("lastModified") or ""),
             by_name,
             window_days,
         )
@@ -286,11 +293,25 @@ def candidate_articles(
     return candidates, scanned, post_kickoff
 
 
+def _pit_group(last_modified: str, kickoff: datetime) -> str:
+    """
+    LastModified 版本组：终版早于开球=strict_pit，否则/缺失=unproven。
+
+    webPublicationDate PIT 门槛不变（候选过滤另行判）；lastModified 只
+    加严不放宽——分组标记供报告侧不混合下结论（票 02）。
+    """
+    lm = _parse_instant(last_modified)
+    if lm is not None and lm < kickoff:
+        return PIT_STRICT
+    return PIT_UNPROVEN
+
+
 def _link_article(
     article_sid: str,
     title: str,
     published: str,
     body: str,
+    last_modified: str,
     by_name: dict[str, list[tuple[_Link, str]]],
     window_days: int,
 ) -> tuple[list[Candidate], int]:
@@ -323,6 +344,7 @@ def _link_article(
                     body=body,
                     link=link,
                     side=side,
+                    pit_group=_pit_group(last_modified, kickoff),
                 )
             )
     return found, post_kickoff
@@ -386,9 +408,31 @@ def _clean_event(event: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
 Extractor = Callable[[Candidate], dict[str, Any]]
 
 
+def checkpoint_key(candidate: Candidate) -> str:
+    """
+    复合键=article|fixture|body_hash|extractor 版本（票 02）。
+
+    一稿命中多场是链接层设计（各对独立抽取）；复合键消除断点重跑时
+    A 场结果记到 B 场的交叉污染。键内含版本与 hash=条目自描述，可从
+    文件直接判断可否复用。
+    """
+    body_hash = hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
+    return "|".join(
+        (candidate.article_sid, candidate.link.sid, body_hash, f"v{EVENT_VERSION}")
+    )
+
+
 def _extract_one(extract: Extractor, candidate: Candidate) -> dict[str, Any]:
-    """单篇抽取（缝注入）→ checkpoint 条目（+article_sid）。"""
-    return {"article_sid": candidate.article_sid, **extract(candidate)}
+    """单篇抽取（缝注入）→ 自描述 checkpoint 条目（复合键+身份字段）。"""
+    body_hash = hashlib.sha256(candidate.body.encode()).hexdigest()[:16]
+    return {
+        "key": checkpoint_key(candidate),
+        "article_sid": candidate.article_sid,
+        "sid": candidate.link.sid,
+        "body_hash": body_hash,
+        "extractor_version": EVENT_VERSION,
+        **extract(candidate),
+    }
 
 
 @dataclass(frozen=True)
@@ -434,7 +478,7 @@ def build_news_events(
     checkpoint.parent.mkdir(parents=True, exist_ok=True)  # 首跑建目录
     event_rows: list[dict[str, Any]] = []
     for candidate in selected:
-        entry = done.get(candidate.article_sid)
+        entry = done.get(checkpoint_key(candidate))
         if entry is None:
             entry = _extract_one(extractor, candidate)
             with checkpoint.open("a", encoding="utf-8") as handle:
@@ -446,13 +490,21 @@ def build_news_events(
 
 
 def _load_checkpoint(checkpoint: Path) -> dict[str, dict[str, Any]]:
-    """断点续跑：已抽取文章（熔断/中断后重跑跳过）。"""
+    """
+    断点续跑：按复合键复用（熔断/中断后重跑跳过）。
+
+    旧格式行（article_sid 键，无 ``key``）不迁移、直接跳过——按新键
+    自然重抽（票 02 裁决，存量 90 篇随版本变更触发）。
+    """
     done: dict[str, dict[str, Any]] = {}
     if checkpoint.exists():
         for line in checkpoint.read_text(encoding="utf-8").splitlines():
-            if line:
-                entry = json.loads(line)
-                done[str(entry["article_sid"])] = entry
+            if not line:
+                continue
+            entry = json.loads(line)
+            key = entry.get("key")
+            if key:
+                done[str(key)] = entry
     return done
 
 
@@ -497,6 +549,7 @@ def _tally_entry(
                 "side": event["side"],
                 "player": event["player"],
                 "confidence": event["confidence"],
+                "pit_group": candidate.pit_group,
                 "model": str(entry.get("model", "")),
                 "version": EVENT_VERSION,
             }
@@ -576,6 +629,7 @@ def _event_schema() -> pa.Schema:
             pa.field("side", pa.string()),
             pa.field("player", pa.string()),
             pa.field("confidence", pa.float64()),
+            pa.field("pit_group", pa.string()),
             pa.field("model", pa.string()),
             pa.field("version", pa.string()),
         ]
