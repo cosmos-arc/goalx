@@ -39,7 +39,7 @@ import pyarrow.parquet as pq
 
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.fixtures import beijing_naive_to_utc
+from goalx_backend.data.fixtures import kickoff_to_utc
 from goalx_backend.data.silver import PIT_STRICT, PIT_UNMARKED, PIT_UNPROVEN
 from goalx_backend.evaluation.metrics import load_backtest_run
 from goalx_backend.markets import SELECTIONS
@@ -348,7 +348,7 @@ def build_news_signal_report(
             )
         except ValueError:
             continue
-        kickoff = beijing_naive_to_utc(str(event["kickoff_iso"]))
+        kickoff = kickoff_to_utc(str(event["kickoff_iso"]))
         if kickoff is None:
             continue
         hours_to_kickoff.append(round((kickoff - pub).total_seconds() / 3600, 1))
@@ -373,6 +373,18 @@ def build_news_signal_report(
         },
     }
 
+    # 机制分层（票 07 解释面：subtype/novelty 描述分布——非再筛选面，
+    # 不许用子集再挖"显著"子桶；legacy v1 行无字段单列 unmarked）
+    by_subtype: dict[str, int] = {}
+    by_novelty: dict[str, int] = {}
+    for event in events:
+        by_subtype[str(event.get("subtype") or "unmarked")] = (
+            by_subtype.get(str(event.get("subtype") or "unmarked"), 0) + 1
+        )
+        by_novelty[str(event.get("novelty") or "unmarked")] = (
+            by_novelty.get(str(event.get("novelty") or "unmarked"), 0) + 1
+        )
+
     # 次面：事件加权（旧口径降级，非独立样本）
     weighted = _Group()
     by_side_weighted = {s: _Group() for s in _OUTCOME_SIDES}
@@ -390,6 +402,7 @@ def build_news_signal_report(
     }
 
     price_in = _price_in_face(duck_con, sorted(event_sids))
+    signal_gate = _signal_gate(fixture_face)
 
     payload = {
         "built_at": (today or date.today()).isoformat(),
@@ -399,6 +412,12 @@ def build_news_signal_report(
         "match_params": MATCH_PARAMS,
         "event_face": event_face,
         "fixture_face": fixture_face,
+        "signal_gate": signal_gate,
+        "mechanism_face": {
+            "by_subtype": dict(sorted(by_subtype.items())),
+            "by_novelty": dict(sorted(by_novelty.items())),
+            "note": "解释面非再筛选面（子集再挖禁止）；unmarked=legacy v1 行",
+        },
         "event_weighted_secondary": event_weighted_secondary,
         "price_in": price_in,
         "note": (
@@ -425,6 +444,39 @@ def build_news_signal_report(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return payload
+
+
+def _signal_gate(fixture_face: dict[str, Any]) -> dict[str, Any]:
+    """
+    信号门结论（票 07）：三选一词汇——支持 / 否定效应 / 证据不足。
+
+    检验假设=客队侧事件场残差高于匹配对照（away 假设面）；判据=主结论
+    面周分块 bootstrap 区间整体正/负/跨零。证据不足≠无信号，也不构成
+    追加预算的理由（报告明写）。正区间=方向支持，是否具经济意义仍需
+    B 相前瞻样本（锁价可执行性+损耗覆盖）——经济门不在此裁。
+    """
+    away = fixture_face["by_side"].get("a", {})
+    boot = away.get("week_block_bootstrap")
+    diff = away.get("diff")
+    if diff is None or boot is None:
+        conclusion = "证据不足"
+    elif boot["p2_5"] > 0:
+        conclusion = "支持（方向面；经济意义另由 B 相前瞻样本裁）"
+    elif boot["p97_5"] < 0:
+        conclusion = "否定具有经济意义的效应"
+    else:
+        conclusion = "证据不足"
+    return {
+        "hypothesis": "客队侧事件场 realized 残差高于匹配对照",
+        "diff": diff,
+        "ci": [boot["p2_5"], boot["p97_5"]] if boot else None,
+        "conclusion": conclusion,
+        "main_pit_groups": away.get("main_pit_groups"),
+        "note": (
+            "三选一词汇限定；'证据不足'≠无信号，不构成追加预算理由；"
+            "方向支持≠经济意义（经济门=B 相前瞻样本，不在此裁）"
+        ),
+    }
 
 
 def _price_in_face(
@@ -509,6 +561,13 @@ def _render_md(payload: dict[str, Any]) -> str:
         f"{s}:{weighted['by_side'][s].get('mean')}" for s in _OUTCOME_SIDES
     )
     lines += [
+        "",
+        "## 信号门（票 07 三词汇）",
+        "",
+        f"- 假设：{payload['signal_gate']['hypothesis']}",
+        f"- diff={payload['signal_gate']['diff']}"
+        + f" CI={payload['signal_gate']['ci']}"
+        + f" → **{payload['signal_gate']['conclusion']}**",
         "",
         "## 次面：事件加权（非独立样本，旧口径降级）",
         "",
