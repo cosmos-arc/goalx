@@ -110,7 +110,7 @@ def daily_capture_flow() -> dict[str, object]:
 
 @flow(name="daily-wrap", log_prints=True)
 def daily_wrap_flow() -> dict[str, object]:
-    """日终收尾（票 37）：结算批跑 + 漏斗日拍 + CLV 对账 + 只读账务核查。"""
+    """日终收尾：结算批跑 + 漏斗/冻结决策日拍 + 冻结对账 + CLV 对账 + 账务核查。"""
     settlement = settlement_flow()
     funnel = tasks.funnel_day()
     m3 = tasks.m3_evaluation()

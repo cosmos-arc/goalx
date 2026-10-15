@@ -264,3 +264,36 @@ def test_settings_free() -> None:
     """依赖面守卫（Settings 可构）。"""
     assert Settings() is not None
     assert json.dumps({"ok": 1})
+
+
+def test_frozen_dual_would_bet_selections_close_backfill(
+    db: sqlite3.Connection,
+) -> None:
+    """同场双 would_bet 选向：两选向漏斗收盘列各自回填（correctness 修）。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    # 双正代理：h 与 d 都 O_JC×p_sharp−1>0（锚宽 JC 更宽）
+    _add_quotes(
+        db,
+        fixture,
+        {"h": 3.0, "d": 3.6, "a": 3.5},
+        {"h": 2.0, "d": 3.0, "a": 4.0},
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    report = fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    assert report.by_reason.get("would_bet") == 2  # h 与 d
+
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    _seed_draw(db, fixture, 1, 1)  # 平局：d 中 h 失
+    fz.reconcile_frozen_decisions(db, close_provider, now="2026-10-18T00:00:00+00:00")
+    frow = db.execute(
+        "SELECT p_sharp_close_h, p_sharp_close_d FROM funnel_fixture_days"
+        " WHERE fixture_id = ?",
+        (fixture,),
+    ).fetchone()
+    assert frow["p_sharp_close_h"] == 0.52  # 两选向各自回填（守卫按目标列）
+    assert frow["p_sharp_close_d"] == 0.52

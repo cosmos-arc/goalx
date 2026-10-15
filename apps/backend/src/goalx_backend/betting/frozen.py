@@ -225,7 +225,9 @@ def reconcile_frozen_decisions(
         if result is None or int(result["void"] or 0):
             stats["still_pending"] += 1
             if update:
-                _apply_reconcile(conn, int(row["id"]), update, None, moment)
+                _apply_reconcile(conn, int(row["id"]), update, moment)
+                if "p_sharp_close" in update:
+                    _backfill_funnel_close(conn, int(row["fixture_id"]), sel, update)
             continue
         home_goals, away_goals = int(result["home_goals"]), int(result["away_goals"])
         ftr = (
@@ -241,7 +243,7 @@ def reconcile_frozen_decisions(
         stats["paper_profit_flat"] = round(
             float(stats["paper_profit_flat"]) + profit, 4
         )
-        _apply_reconcile(conn, int(row["id"]), update, profit, moment)
+        _apply_reconcile(conn, int(row["id"]), update, moment)
         # 漏斗明细行收盘列回填（同口径同刻）
         _backfill_funnel_close(conn, int(row["fixture_id"]), sel, update)
     return stats
@@ -251,7 +253,6 @@ def _apply_reconcile(
     conn: sqlite3.Connection,
     decision_id: int,
     update: dict[str, Any],
-    _profit: float | None,
     moment: str,
 ) -> None:
     """回填一条冻结记录（列白名单构造，幂等）。"""
@@ -272,21 +273,16 @@ def _apply_reconcile(
 def _backfill_funnel_close(
     conn: sqlite3.Connection, fixture_id: int, sel: str, update: dict[str, Any]
 ) -> None:
-    """漏斗明细行对应 selection 收盘列回填。"""
+    """漏斗明细行对应 selection 收盘列回填（守卫按目标列——多选向各自填）。"""
     if "p_sharp_close" not in update:
         return
     column = f"p_sharp_close_{sel}"
+    sql = (
+        f"UPDATE funnel_fixture_days SET {column} = ? "  # noqa: S608 列白名单
+        + f"WHERE fixture_id = ? AND {column} IS NULL"
+    )
     with conn:
-        conn.execute(
-            f"UPDATE funnel_fixture_days SET {column} = ? "  # noqa: S608
-            + " ".join(
-                (
-                    "WHERE fixture_id = ? AND p_sharp_close_h IS NULL",
-                    "AND p_sharp_close_d IS NULL AND p_sharp_close_a IS NULL",
-                )
-            ),
-            (update["p_sharp_close"], fixture_id),
-        )
+        conn.execute(sql, (update["p_sharp_close"], fixture_id))
 
 
 def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, Any]:
