@@ -636,25 +636,34 @@ def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[
 
 
 TRACK2_CATCHUP_HOURS = 6  # 拍点错过后的迟到补拍视界（迟到旗如实记）
+# 锚拉取缝协议：与 _isolated_anchor_pull 同签名（anchor/targets 关键字）
+_AnchorPull = Callable[..., "oddsapi.OddsIngestStats"]
 
 
-def track2_snapshots() -> dict[str, object]:
+def track2_snapshots(
+    *,
+    now: datetime | None = None,
+    pull: _AnchorPull | None = None,
+) -> dict[str, object]:
     """
     轨二拍点采样（caliber-loop 票 05）：开球前 24h/12h 整点两源快照。
 
+    窗口=拍点已过且在 6h 迟到视界内（kickoff ∈ [now+offset−6h, now+offset]）；
     锚书=拍点定向拉取（复用 odds_anchor_dense 通道，零候选零请求）；
     竞彩=拍点时点最新 as-of 读（调盘面，龄如实记）；停售边界
-    purchasable=拍点时停售状态；错过拍点 6h 视界内迟到补拍（late_flag）。
+    purchasable=拍点时点（target_instant）停售状态；迟到补拍 late_flag。
+    now/pull 注入点供测试（缺省=当前时刻/真锚拉取）。
     """
     settings = get_settings()
+    anchor_pull = pull or _isolated_anchor_pull
     out: dict[str, object] = {}
     with task_conn() as conn, polite_client() as client:
-        now = datetime.now(UTC)
+        moment = now or datetime.now(UTC)
         for offset_h, label in TRACK2_OFFSETS:
             offset = timedelta(hours=offset_h)
             horizon = timedelta(hours=TRACK2_CATCHUP_HOURS)
-            start = (now - offset + horizon).isoformat(timespec="seconds")
-            end = (now - offset + timedelta(minutes=10)).isoformat(timespec="seconds")
+            start = (moment + offset - horizon).isoformat(timespec="seconds")
+            end = (moment + offset).isoformat(timespec="seconds")
             targets = fx_store.joined_fixtures_in_window(conn, start, end)
             fresh: list[int] = []
             for row in targets:
@@ -670,7 +679,7 @@ def track2_snapshots() -> dict[str, object]:
                 if int(row["id"]) in fresh
             ]
             if pulls:
-                _isolated_anchor_pull(
+                anchor_pull(
                     conn, settings, client, anchor=f"track2_{label}", targets=pulls
                 )
             captured = 0
@@ -679,13 +688,15 @@ def track2_snapshots() -> dict[str, object]:
                 if fid not in fresh:
                     continue
                 kickoff = str(row["kickoff_utc"])
-                target_instant = (datetime.fromisoformat(kickoff) - offset).isoformat(
-                    timespec="seconds"
-                )
-                now_iso = now.isoformat(timespec="seconds")
+                target_dt = datetime.fromisoformat(kickoff) - offset
+                target_instant = target_dt.isoformat(timespec="seconds")
+                now_iso = moment.isoformat(timespec="seconds")
                 verdict = adjudicate_had_quote(conn, fid, now_iso)
                 sharp = sharp_probs_asof(conn, fid, now_iso)
-                sale = fx_store.latest_sale_status_asof(conn, fid, "had", now_iso)
+                # 停售边界按拍点时点（非采集时）——迟到补拍不误标
+                sale = fx_store.latest_sale_status_asof(
+                    conn, fid, "had", target_instant
+                )
                 stopped = sale is not None and str(sale["sale_state"]) == "stopped"
                 purchasable = not stopped
                 record_track2_snapshot(
@@ -694,7 +705,7 @@ def track2_snapshots() -> dict[str, object]:
                         fixture_id=fid,
                         snap_type=label,
                         target_instant=target_instant,
-                        captured_at=now.isoformat(timespec="seconds"),
+                        captured_at=now_iso,
                         purchasable=purchasable,
                         purchasable_reason=(
                             "sale_stopped" if not purchasable else None

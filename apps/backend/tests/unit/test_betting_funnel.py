@@ -373,3 +373,116 @@ def test_track2_stopped_snapshot_not_in_proxy_means(db: sqlite3.Connection) -> N
     compare = report.value_proxy_stats["track2_compare"]
     assert compare["purchasable"]["12h"] == {"eligible": 0, "total": 1}
     assert compare["mean_value_proxy"]["12h"]["h"] is None
+
+
+def _seed_joined_fixture(db: sqlite3.Connection, kickoff: str, n: int) -> int:
+
+    competition = fx_store.upsert_competition(db, "英超", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, f"主{n}")
+    away = fx_store.upsert_team(db, f"客{n}")
+    fixture = fx_store.upsert_fixture(db, competition, kickoff, home, away)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture,
+            kind="jingcai",
+            business_date=BUSINESS_DATE,
+            code=f"周六{n:03d}",
+        ),
+    )
+    fx_store.set_odds_api_join(db, fixture, f"evt{n}", "soccer_epl", "manual")
+    db.commit()
+    return fixture
+
+
+def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
+    """task 级：窗口命中（拍点已过≤6h）才拍；幂等跳过；迟到旗；零候选零拉取。"""
+    import goalx_backend.tasks as tasks_mod
+    from goalx_backend import db as goalx_db
+
+    db_path = tmp_path / "t.db"
+    conn = goalx_db.connect(db_path)
+    goalx_db.migrate(conn)
+    now = "2026-10-17T14:00:00+00:00"
+    # 拍点=开球−24h：kickoff=10-18T14 → 拍点=now（窗口内）
+    hit24 = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 0)
+    # 12h 档命中：kickoff=10-18T02 已过？拍点=10-17T14=now ✓
+    hit12 = _seed_joined_fixture(conn, "2026-10-18T02:00:00+00:00", 1)
+    # 窗外：拍点 7h 前（超 6h 视界）
+    missed = _seed_joined_fixture(conn, "2026-10-18T07:00:00+00:00", 2)
+    # 窗外：拍点未到（kickoff − 24h > now）
+    future = _seed_joined_fixture(conn, "2026-10-19T20:00:00+00:00", 3)
+    pulls: list[str] = []
+
+    def fake_pull(conn, settings, client, *, anchor, targets):
+        pulls.append(anchor)
+        return tasks_mod.oddsapi.OddsIngestStats()
+
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    from datetime import datetime as _dt
+
+    result = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    assert result["24h"]["captured"] == 1
+    assert result["12h"]["captured"] == 1
+    assert set(pulls) == {"track2_24h", "track2_12h"}  # 只拉命中窗
+    # 停售边界按拍点时点：未种状态 → purchasable=True
+    row = conn.execute(
+        "SELECT purchasable, late_flag FROM track2_snapshots WHERE fixture_id=?",
+        (hit24,),
+    ).fetchone()
+    assert row["purchasable"] == 1
+    assert row["late_flag"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM track2_snapshots WHERE fixture_id=?",
+            (missed,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM track2_snapshots WHERE fixture_id=?",
+            (future,),
+        ).fetchone()[0]
+        == 0
+    )
+    # 幂等：重拍零新请求零新行
+    pulls.clear()
+    result2 = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    assert pulls == []
+    assert result2["24h"]["captured"] == 0
+    # 迟到：把 now 推 2h——hit24 拍点已过 2h 仍可补拍（late_flag=1）
+    late_now = _dt.fromisoformat("2026-10-17T16:00:00+00:00")
+    conn.execute("DELETE FROM track2_snapshots WHERE fixture_id = ?", (hit24,))
+    conn.commit()
+    tasks_mod.track2_snapshots(now=late_now, pull=fake_pull)
+    row2 = conn.execute(
+        "SELECT late_flag FROM track2_snapshots WHERE fixture_id=?", (hit24,)
+    ).fetchone()
+    assert row2["late_flag"] == 1
+    assert hit12
+    conn.close()
+
+
+def test_track2_task_zero_candidates_zero_pulls(tmp_path, monkeypatch) -> None:
+    """零候选日：零请求零落库（既有判活模式）。"""
+    import goalx_backend.tasks as tasks_mod
+    from goalx_backend import db as goalx_db
+
+    db_path = tmp_path / "t2.db"
+    conn = goalx_db.connect(db_path)
+    goalx_db.migrate(conn)
+
+    def fake_pull(*args, **kwargs):
+        raise AssertionError("零候选不得发起锚拉取")
+
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    result = tasks_mod.track2_snapshots(
+        now=_dt(2026, 10, 17, 14, 0, tzinfo=_UTC), pull=fake_pull
+    )
+    assert result["24h"] == {"candidates": 0, "captured": 0, "anchor_pulls": 0}
+    assert result["12h"] == {"candidates": 0, "captured": 0, "anchor_pulls": 0}
+    conn.close()
