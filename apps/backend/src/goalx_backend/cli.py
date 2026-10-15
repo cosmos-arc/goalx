@@ -50,6 +50,7 @@ import httpx
 from loguru import logger
 
 from goalx_backend import datasets, tasks
+from goalx_backend.betting import funnel as fn
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import corpus_duckdb, corpus_gate, gold, mapping, reconcile
@@ -180,6 +181,26 @@ def _cmd_audit_ledger() -> None:
 def _cmd_settle() -> None:
     """手动结算批跑。"""
     logger.info("settlement: {}", tasks.settlement_sweep())
+
+
+def _cmd_funnel_report(args: argparse.Namespace) -> None:
+    """机会漏斗日拍（票 04）：记录/重放一日 + 判活（漏斗表最新业务日）。"""
+    with tasks.task_conn() as conn:
+        report = fn.record_funnel_day(conn, as_of=args.as_of)
+        payload: dict[str, Any] = report.as_dict()
+        payload["liveness"] = fn.funnel_liveness(conn)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info(
+        "funnel-report: {} 在售 {}→匹配 {}→时点 {}→估值 {}→资格 {} 流失 {} 判活={}",
+        payload["business_date"],
+        payload["n_on_sale"],
+        payload["n_quote_matched"],
+        payload["n_fresh"],
+        payload["n_valuation"],
+        payload["n_eligible"],
+        payload["loss_reasons"],
+        payload["liveness"],
+    )
 
 
 def _cmd_sync_draw_results() -> None:
@@ -1407,6 +1428,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "elo-build",
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
     )
+    funnel_parser = sub.add_parser(
+        "funnel-report",
+        help="机会漏斗日拍(票04:五级分母+轨一估值;判活=漏斗表最新业务日)",
+    )
+    funnel_parser.add_argument(
+        "--as-of",
+        type=str,
+        default=None,
+        help="冻结时点 ISO(缺省=当前时刻;重放历史日拍用)",
+    )
     sub.add_parser(
         "gold-build",
         help="gold特征面全量重算(B相;era分层+PIT断言+卫生接线,幂等,先备齐silver)",
@@ -1492,6 +1523,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-odds": _cmd_ingest_odds,
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
+        "funnel-report": lambda: _cmd_funnel_report(args),
         "sync-draw-results": _cmd_sync_draw_results,
         "official-reconcile": _cmd_official_reconcile,
         "audit-ledger": _cmd_audit_ledger,

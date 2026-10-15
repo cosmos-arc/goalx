@@ -449,7 +449,7 @@ def _probs_from_books(books: dict[str, dict[str, float]]) -> dict[str, float] | 
     return dict(zip(SELECTIONS, om.shin_implied(consensus), strict=True))
 
 
-def _sharp_probs_asof(
+def sharp_probs_asof(
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -509,13 +509,13 @@ def stale_line_signal(
         jc_last_move=jc_last_move,
         minutes_since_move=max(0, int(seconds_between(as_of, jc_last_move) // 60)),
     )
-    frozen = _sharp_probs_asof(
+    frozen = sharp_probs_asof(
         conn,
         fixture_id,
         jc_last_move,
         max_age_seconds=SHARP_FREEZE_MAX_AGE_SECONDS,
     )
-    current = _sharp_probs_asof(conn, fixture_id, as_of)
+    current = sharp_probs_asof(conn, fixture_id, as_of)
     if frozen is None or current is None or frozen[1] != current[1]:
         # 双端取法不一致（主锚中途出现/消失）→ 漂移不可比，只报时长
         return signal

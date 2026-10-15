@@ -88,6 +88,8 @@ OWNERS: dict[str, set[str]] = {
         "settlements",
         "settlement_revisions",
         "bankroll_events",
+        "funnel_days",
+        "funnel_fixture_days",
     },
     # 票 09/11：LLM 线域（M3）——divergences 脚手架表移交 llm
     "llm": {"intel_observations", "divergences", "review_items", "blind_reviews"},

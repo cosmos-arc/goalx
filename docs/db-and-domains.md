@@ -177,6 +177,12 @@ erDiagram
     forecasts {
         INTEGER id PK
     }
+    funnel_days {
+        INTEGER id PK
+    }
+    funnel_fixture_days {
+        INTEGER id PK
+    }
     haircut_calibrations {
         INTEGER id PK
     }
@@ -1074,6 +1080,57 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `slip_id` | INTEGER | FK→bet_slips.id |
 | `note` | TEXT | — |
 <!-- schema-doc:END:table:bankroll_events -->
+<!-- schema-doc:BEGIN:table:funnel_days -->
+#### `funnel_days`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `business_date` | TEXT | NOT NULL |
+| `as_of` | TEXT | NOT NULL |
+| `n_on_sale` | INTEGER | NOT NULL |
+| `n_quote_matched` | INTEGER | NOT NULL |
+| `n_fresh` | INTEGER | NOT NULL |
+| `n_valuation` | INTEGER | NOT NULL |
+| `n_eligible` | INTEGER | NOT NULL |
+| `loss_reasons` | TEXT | NOT NULL，DEFAULT '{}' |
+| `value_proxy_stats` | TEXT | NOT NULL，DEFAULT '{}' |
+| `track2_json` | TEXT | — |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`business_date`)`
+<!-- schema-doc:END:table:funnel_days -->
+<!-- schema-doc:BEGIN:table:funnel_fixture_days -->
+#### `funnel_fixture_days`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `business_date` | TEXT | NOT NULL |
+| `fixture_id` | INTEGER | NOT NULL |
+| `as_of` | TEXT | NOT NULL |
+| `level_reached` | INTEGER | NOT NULL |
+| `loss_reason` | TEXT | — |
+| `kickoff_utc` | TEXT | — |
+| `jc_odds_h` | REAL | — |
+| `jc_odds_d` | REAL | — |
+| `jc_odds_a` | REAL | — |
+| `jc_age_seconds` | REAL | — |
+| `anchor_ref` | TEXT | — |
+| `p_sharp_h` | REAL | — |
+| `p_sharp_d` | REAL | — |
+| `p_sharp_a` | REAL | — |
+| `value_proxy_h` | REAL | — |
+| `value_proxy_d` | REAL | — |
+| `value_proxy_a` | REAL | — |
+| `p_sharp_close_h` | REAL | — |
+| `p_sharp_close_d` | REAL | — |
+| `p_sharp_close_a` | REAL | — |
+| `close_backfilled_at` | TEXT | — |
+| `track2_json` | TEXT | — |
+
+唯一键 `UNIQUE(`business_date`, `fixture_id`)`
+<!-- schema-doc:END:table:funnel_fixture_days -->
 ### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->
