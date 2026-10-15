@@ -21,6 +21,7 @@ import json
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from statistics import fmean
 from typing import Any
 
 from goalx_backend.data import fixtures as fx_store
@@ -179,6 +180,7 @@ def record_funnel_day(
             on_sale.append(fx)
     report = FunnelDayReport(business_date=bdate, as_of=moment)
     proxies: dict[str, list[float]] = {sel: [] for sel in SELECTIONS}
+    per_fixture_proxies: dict[int, dict[str, float]] = {}
     fixture_rows: list[FunnelFixtureRow] = []
     for fx in on_sale:
         row = _classify_fixture(conn, int(fx["id"]), moment)
@@ -191,6 +193,7 @@ def record_funnel_day(
             report.n_valuation += 1
         if row.level_reached >= L_ELIGIBLE:
             report.n_eligible += 1
+            per_fixture_proxies[row.fixture_id] = dict(row.value_proxy)
             for sel, value in row.value_proxy.items():
                 proxies[sel].append(value)
         if row.loss_reason:
@@ -207,6 +210,11 @@ def record_funnel_day(
         }
         for sel, vals in proxies.items()
     }
+    # 票 05：双轨对照面（轨一冻结 × 轨二 24h/12h 拍点，含衰减/停售/迟到）
+    eligible_ids = [r.fixture_id for r in fixture_rows if r.level_reached >= L_ELIGIBLE]
+    report.value_proxy_stats["track2_compare"] = _dual_track_face(
+        conn, eligible_ids, per_fixture_proxies
+    )
     _persist(conn, report, fixture_rows)
     return report
 
@@ -247,14 +255,16 @@ def _persist(
             ),
         )
         conn.executemany(
-            """
-            INSERT INTO funnel_fixture_days
-            (business_date, fixture_id, as_of, level_reached, loss_reason,
-             kickoff_utc, jc_odds_h, jc_odds_d, jc_odds_a, jc_age_seconds,
-             anchor_ref, p_sharp_h, p_sharp_d, p_sharp_a,
-             value_proxy_h, value_proxy_d, value_proxy_a)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            " ".join(
+                (
+                    "INSERT INTO funnel_fixture_days",
+                    "(business_date, fixture_id, as_of, level_reached, loss_reason,",
+                    " kickoff_utc, jc_odds_h, jc_odds_d, jc_odds_a, jc_age_seconds,",
+                    " anchor_ref, p_sharp_h, p_sharp_d, p_sharp_a,",
+                    " value_proxy_h, value_proxy_d, value_proxy_a, track2_json)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+            ),
             [
                 (
                     report.business_date,
@@ -274,6 +284,7 @@ def _persist(
                     row.value_proxy.get("h"),
                     row.value_proxy.get("d"),
                     row.value_proxy.get("a"),
+                    _track2_json_of(conn, row.fixture_id),
                 )
                 for row in fixture_rows
             ],
@@ -291,3 +302,238 @@ def funnel_day_row(conn: sqlite3.Connection, business_date: str) -> sqlite3.Row 
     return conn.execute(
         "SELECT * FROM funnel_days WHERE business_date = ?", (business_date,)
     ).fetchone()
+
+
+# ---- 票 05：轨二拍点（24h/12h 固定提前量）与双轨对照 ----
+
+TRACK2_OFFSETS: tuple[tuple[int, str], ...] = ((24, "24h"), (12, "12h"))
+TRACK2_LATE_TOLERANCE_SECONDS = 15 * 60  # 迟到拍点旗：captured−target 超 15 分钟
+
+
+@dataclass(frozen=True)
+class Track2Capture:
+    """一笔轨二拍点采集（task 侧组装，store 侧落库）。"""
+
+    fixture_id: int
+    snap_type: str
+    target_instant: str
+    captured_at: str
+    purchasable: bool
+    purchasable_reason: str | None = None
+    jc_odds: dict[str, float] = field(default_factory=dict)
+    jc_age_seconds: float | None = None
+    p_sharp: dict[str, float] = field(default_factory=dict)
+    anchor_ref: str | None = None
+
+
+def record_track2_snapshot(
+    conn: sqlite3.Connection, capture: Track2Capture
+) -> dict[str, float]:
+    """
+    落一笔轨二拍点快照（幂等覆盖）+ 合并进漏斗明细行 track2_json。
+
+    价值代理=拍点 O_JC × p_sharp − 1 三向（缺端如实 None）；停售边界
+    purchasable=0 的拍点仍记录（观察面）但双轨对照只对可购拍点算代理。
+    """
+    odds = capture.jc_odds
+    sharp = capture.p_sharp
+    proxy = {
+        sel: round(odds[sel] * sharp[sel] - 1.0, 4)
+        for sel in SELECTIONS
+        if sel in odds and sel in sharp
+    }
+    late = (
+        parse_ts(capture.captured_at) - parse_ts(capture.target_instant)
+    ).total_seconds() > TRACK2_LATE_TOLERANCE_SECONDS
+    with conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO track2_snapshots
+            (fixture_id, snap_type, target_instant, captured_at, late_flag,
+             purchasable, purchasable_reason,
+             jc_odds_h, jc_odds_d, jc_odds_a, jc_age_seconds,
+             anchor_ref, p_sharp_h, p_sharp_d, p_sharp_a,
+             value_proxy_h, value_proxy_d, value_proxy_a)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                capture.fixture_id,
+                capture.snap_type,
+                capture.target_instant,
+                capture.captured_at,
+                int(late),
+                int(capture.purchasable),
+                capture.purchasable_reason,
+                odds.get("h"),
+                odds.get("d"),
+                odds.get("a"),
+                capture.jc_age_seconds,
+                capture.anchor_ref,
+                sharp.get("h"),
+                sharp.get("d"),
+                sharp.get("a"),
+                proxy.get("h"),
+                proxy.get("d"),
+                proxy.get("a"),
+            ),
+        )
+    _merge_track2_into_funnel(conn, capture.fixture_id)
+    return proxy
+
+
+def has_track2_snapshot(
+    conn: sqlite3.Connection, fixture_id: int, snap_type: str
+) -> bool:
+    """该场该拍点是否已有快照（幂等跳过判据；SQL 归本包）。"""
+    row = conn.execute(
+        "SELECT 1 FROM track2_snapshots WHERE fixture_id = ? AND snap_type = ?",
+        (fixture_id, snap_type),
+    ).fetchone()
+    return row is not None
+
+
+def track2_snapshots_of(conn: sqlite3.Connection, fixture_id: int) -> dict[str, Any]:
+    """一场的轨二快照 {snap_type: row dict}。"""
+    rows = conn.execute(
+        "SELECT * FROM track2_snapshots WHERE fixture_id = ?", (fixture_id,)
+    ).fetchall()
+    return {str(r["snap_type"]): dict(r) for r in rows}
+
+
+def _merge_track2_into_funnel(conn: sqlite3.Connection, fixture_id: int) -> None:
+    """把该场最新轨二快照合并进 funnel_fixture_days.track2_json（行在则并）。"""
+    row = conn.execute(
+        " ".join(
+            (
+                "SELECT business_date, track2_json FROM funnel_fixture_days",
+                "WHERE fixture_id = ? ORDER BY business_date DESC LIMIT 1",
+            )
+        ),
+        (fixture_id,),
+    ).fetchone()
+    if row is None:
+        return
+    existing: dict[str, Any] = (
+        json.loads(row["track2_json"]) if row["track2_json"] else {}
+    )
+    existing.update(track2_snapshots_of(conn, fixture_id))
+    with conn:
+        conn.execute(
+            " ".join(
+                (
+                    "UPDATE funnel_fixture_days SET track2_json = ?",
+                    "WHERE business_date = ? AND fixture_id = ?",
+                )
+            ),
+            (
+                json.dumps(existing, ensure_ascii=False),
+                row["business_date"],
+                fixture_id,
+            ),
+        )
+
+
+def _track2_json_of(conn: sqlite3.Connection, fixture_id: int) -> str | None:
+    """一场已落轨二快照的 JSON（无快照=None 列保持可空）。"""
+    snaps = track2_snapshots_of(conn, fixture_id)
+    return json.dumps(snaps, ensure_ascii=False) if snaps else None
+
+
+def _decay_chain_same_fixtures(
+    conn: sqlite3.Connection,
+    fixture_ids: list[int],
+    track1_proxies: dict[int, dict[str, float]],
+) -> dict[str, Any]:
+    """
+    衰减链=同场三面交集（24h+12h+轨一全在且可购的场）分侧均值。
+
+    跨样本阶段均值差是样本构成伪影——只有交集上的链才同场可比。
+    """
+    common = [
+        fid
+        for fid in fixture_ids
+        if fid in track1_proxies
+        and all(
+            (snap := track2_snapshots_of(conn, fid).get(t)) is not None
+            and snap["purchasable"]
+            and not snap["late_flag"]
+            and snap.get("value_proxy_h") is not None
+            for t in ("24h", "12h")
+        )
+    ]
+    chain: dict[str, dict[str, float | None]] = {}
+    if common:
+        snaps_of = {fid: track2_snapshots_of(conn, fid) for fid in common}
+        for stage in ("24h", "12h", "freeze"):
+            stage_vals: dict[str, list[float]] = {sel: [] for sel in SELECTIONS}
+            for fid in common:
+                for sel in SELECTIONS:
+                    if stage == "freeze":
+                        value = track1_proxies[fid].get(sel)
+                    else:
+                        value = snaps_of[fid][stage].get(f"value_proxy_{sel}")
+                    if value is not None:
+                        stage_vals[sel].append(float(value))
+            chain[stage] = {
+                sel: round(fmean(vals), 4) if vals else None
+                for sel, vals in stage_vals.items()
+            }
+    return {"n": len(common), "stages": chain}
+
+
+def _dual_track_face(
+    conn: sqlite3.Connection,
+    fixture_ids: list[int],
+    track1_proxies: dict[int, dict[str, float]],
+) -> dict[str, Any]:
+    """
+    双轨对照面：轨一（日冻结）×轨二（24h/12h 拍点）价值代理并列+衰减。
+
+    段均值只计**准时且可购**拍（迟到拍的采集时读数混入会系统性压低
+    衰减——迟到面单列计数）；衰减链=三面同场交集（_decay_chain）；
+    停售拍点（purchasable=0）不进代理均值（可购边界语义）。
+    """
+    stages: dict[str, dict[str, list[float]]] = {
+        stage: {sel: [] for sel in SELECTIONS} for stage in ("24h", "12h", "freeze")
+    }
+    purchasable_counts = {"24h": [0, 0], "12h": [0, 0]}  # [可购, 总]
+    late_counts = {"24h": 0, "12h": 0}
+    for fid in fixture_ids:
+        snaps = track2_snapshots_of(conn, fid)
+        for snap_type, snap in snaps.items():
+            purchasable_counts[snap_type][1] += 1
+            if snap["late_flag"]:
+                late_counts[snap_type] += 1
+                continue  # 迟到拍不进段均值（读数时点漂移）
+            if not snap["purchasable"]:
+                continue
+            purchasable_counts[snap_type][0] += 1
+            for sel in SELECTIONS:
+                value = snap.get(f"value_proxy_{sel}")
+                if value is not None:
+                    stages[snap_type][sel].append(float(value))
+        for sel in SELECTIONS:
+            value = track1_proxies.get(fid, {}).get(sel)
+            if value is not None:
+                stages["freeze"][sel].append(value)
+    decay = _decay_chain_same_fixtures(conn, fixture_ids, track1_proxies)
+    face: dict[str, Any] = {
+        "mean_value_proxy": {
+            stage: {
+                sel: round(fmean(vals), 4) if vals else None
+                for sel, vals in sels.items()
+            }
+            for stage, sels in stages.items()
+        },
+        "decay_chain_same_fixtures": decay,
+        "purchasable": {
+            k: {"eligible": v[0], "total": v[1]} for k, v in purchasable_counts.items()
+        },
+        "late_snapshots": late_counts,
+        "note": (
+            "mean_value_proxy=各阶段各自样本面（只计准时可购拍；迟到拍单列"
+            "计数不进均值——读数时点漂移会压低衰减）；decay_chain_same_"
+            "fixtures=同场三面交集分侧均值（同场可比，亦只计准时可购）"
+        ),
+    }
+    return face

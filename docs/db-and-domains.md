@@ -255,6 +255,9 @@ erDiagram
     teams {
         INTEGER id PK
     }
+    track2_snapshots {
+        INTEGER id PK
+    }
     understat_matches {
         INTEGER id PK
     }
@@ -1131,6 +1134,33 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`business_date`, `fixture_id`)`
 <!-- schema-doc:END:table:funnel_fixture_days -->
+<!-- schema-doc:BEGIN:table:track2_snapshots -->
+#### `track2_snapshots`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `fixture_id` | INTEGER | NOT NULL |
+| `snap_type` | TEXT | NOT NULL |
+| `target_instant` | TEXT | NOT NULL |
+| `captured_at` | TEXT | NOT NULL |
+| `late_flag` | INTEGER | NOT NULL，DEFAULT 0 |
+| `purchasable` | INTEGER | NOT NULL |
+| `purchasable_reason` | TEXT | — |
+| `jc_odds_h` | REAL | — |
+| `jc_odds_d` | REAL | — |
+| `jc_odds_a` | REAL | — |
+| `jc_age_seconds` | REAL | — |
+| `anchor_ref` | TEXT | — |
+| `p_sharp_h` | REAL | — |
+| `p_sharp_d` | REAL | — |
+| `p_sharp_a` | REAL | — |
+| `value_proxy_h` | REAL | — |
+| `value_proxy_d` | REAL | — |
+| `value_proxy_a` | REAL | — |
+
+唯一键 `UNIQUE(`fixture_id`, `snap_type`)`
+<!-- schema-doc:END:table:track2_snapshots -->
 ### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->

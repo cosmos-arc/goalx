@@ -219,6 +219,15 @@ _ODDS_ANCHOR = DatasetSpec(
     cli=False,  # 纯 schedule 面，无 cli 命令
 )
 
+_TRACK2 = DatasetSpec(
+    name="track2-snapshots",
+    cron="*/10 * * * *",
+    task=tasks.track2_snapshots,
+    cli_help="轨二拍点采样(票05)",
+    flow_help="轨二拍点采样（票 05）：开球前 24h/12h 两源快照，零候选零请求。",
+    cli=False,
+)
+
 _SRCB = DatasetSpec(
     name="srcb-collect",
     cron="40 10,22 * * *",
@@ -291,6 +300,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _UNDERSTAT,
     _CLUBELO,
     _ODDS_ANCHOR,
+    _TRACK2,
     _SRCB,
     _EU_CLOSING,
     _INTEL,
