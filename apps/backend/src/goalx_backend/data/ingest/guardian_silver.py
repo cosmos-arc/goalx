@@ -227,11 +227,21 @@ def english_links(
 
 
 def _parse_instant(value: str) -> datetime | None:
-    """ISO 时间戳（Z/偏移）→ aware datetime。"""
+    """
+    ISO 时间戳（Z/偏移）→ aware datetime；naive/非法 → None。
+
+    tz-strict（票 02 correctness）：naive 返回 None 而非带 naive 对象——
+    与 aware kickoff 比较会 TypeError 崩预筛（bronze append-only 毒丸行
+    致重放永久卡死）。调用点全部保守降级：_pit_group→unproven、
+    候选窗→不产候选、PIT 终检→清晰违例。
+    """
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
 
 
 def _kickoff_instant(link: _Link) -> datetime | None:

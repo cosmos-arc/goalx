@@ -604,3 +604,49 @@ def test_pit_group_from_last_modified(tmp_path):
         "absent": gs.PIT_UNPROVEN,
     }
     store.close()
+
+
+def test_naive_timestamps_conservative_not_fatal(tmp_path):
+    """tz-strict：naive lastModified/webPublicationDate 保守降级不崩预筛。"""
+    store = CorpusStore(tmp_path)
+    links = {
+        "s1": gs._Link(
+            sid="s1",
+            kickoff_day="2024-03-10",
+            kickoff_iso="2024-03-10T20:00:00",
+            en_home="Arsenal",
+            en_away="Chelsea",
+        )
+    }
+    rows = [
+        # naive lastModified → 不崩，组=unproven（毒丸行不再卡死重放）
+        _bronze_row(
+            "naive-lm",
+            "Arsenal news",
+            "2024-03-08T10:00:00Z",
+            "b",
+            last_modified="2024-03-09 11:00:00",
+        ),
+        # naive webPublicationDate → 不产候选（不崩）
+        _bronze_row(
+            "naive-pub",
+            "Arsenal news pub",
+            "2024-03-08 10:00:00",
+            "b",
+        ),
+        # lastModified 恰等开球（UTC 12:00）→ 严格 < 不满足 → unproven
+        _bronze_row(
+            "boundary",
+            "Arsenal news boundary",
+            "2024-03-08T10:00:00Z",
+            "b",
+            last_modified="2024-03-10T12:00:00Z",
+        ),
+    ]
+    store.append_bronze(gs.PROVIDER, gs.BRONZE_DATASET, rows)
+    candidates, _, _ = gs.candidate_articles(store, links)  # 不 raise 即过关
+    by_sid = {c.article_sid: c for c in candidates}
+    assert set(by_sid) == {"naive-lm", "boundary"}  # naive-pub 不产候选
+    assert by_sid["naive-lm"].pit_group == gs.PIT_UNPROVEN
+    assert by_sid["boundary"].pit_group == gs.PIT_UNPROVEN
+    store.close()

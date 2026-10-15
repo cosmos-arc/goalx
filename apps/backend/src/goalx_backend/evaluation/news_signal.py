@@ -213,6 +213,14 @@ def _band(prob: float) -> int:
     return min(4, int(prob / PROB_BAND_WIDTH + 1e-9))
 
 
+def _group_samples(samples: list[_Sample]) -> dict[str, list[_Sample]]:
+    """按版本组归桶（全体样本，匹配前——描述面）。"""
+    out: dict[str, list[_Sample]] = {}
+    for sample in samples:
+        out.setdefault(sample.pit_group, []).append(sample)
+    return out
+
+
 def _side_face(
     samples: list[_Sample],
     preds: dict[str, _Pred],
@@ -246,6 +254,8 @@ def _side_face(
         by_group.setdefault(sample.pit_group, []).append(sample)
     main_groups = [PIT_STRICT] if by_group.get(PIT_STRICT) else sorted(by_group)
     main_samples = [s for g in main_groups for s in by_group.get(g, [])]
+    # 组视图=全体侧样本（匹配前）——strict 存在但全被对照匹配剔除时
+    # 仍可见，与主结论面（matched 池）分层披露不混淆
     event_values = [(s.value, s.pred.week_monday) for s in main_samples]
     dose_groups = {
         bucket: _Group(
@@ -260,7 +270,7 @@ def _side_face(
         "unmatched_event_samples": len(side_samples) - len(matched),
         "event_by_pit_group": {
             g: _Group([s.value for s in group]).stats()
-            for g, group in sorted(by_group.items())
+            for g, group in sorted(_group_samples(side_samples).items())
         },
         "dose": dose_groups,
     }

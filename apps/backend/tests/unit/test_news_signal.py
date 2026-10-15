@@ -411,3 +411,23 @@ def test_pit_group_stratification(gold_env, tmp_path):
         assert h2["event"]["n"] == 2
         assert h2["event_by_pit_group"]["unmarked"]["n"] == 2
         report_store2.close()
+
+
+def test_pit_group_all_unmatched_still_visible(gold_env, tmp_path):
+    """strict 全被对照匹配剔除：组视图仍披露 strict，主面如实回退。"""
+    with gold_env(_gold_env_rows(3)) as (face, duck_con, _store):
+        run_id = _seed_run(face)
+        _seed_pred(face, run_id, "s0")  # 事件场：概率档 2（fair h 0.4）
+        # 唯一对照 s1 放不同档 → strict 样本全 unmatched
+        _seed_pred(face, run_id, "s1", fair={"h": 0.9, "d": 0.05, "a": 0.05})
+        report_store = CorpusStore(tmp_path)
+        _write_events(report_store, [_event("s0")])
+        payload = nsw.build_news_signal_report(
+            face, duck_con, report_store, run_id=run_id
+        )
+        h = payload["fixture_face"]["by_side"]["h"]
+        assert h["unmatched_event_samples"] == 1
+        assert h["main_pit_groups"] == []  # matched 池空 → 主面无组
+        # 组视图（匹配前全体）仍披露 strict 存在——不静默消失
+        assert h["event_by_pit_group"]["strict_pit"]["n"] == 1
+        report_store.close()
