@@ -21,6 +21,7 @@ import duckdb
 import httpx
 from loguru import logger
 
+from goalx_backend.betting.funnel import funnel_liveness, record_funnel_day
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import corpus_duckdb, mapping, reconcile
@@ -621,6 +622,14 @@ def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[
             )
             events.append(note)
     return events
+
+
+def funnel_day() -> dict[str, object]:
+    """机会漏斗日拍（caliber-loop 票 04）：五级分母落库+轨一估值。"""
+    with task_conn() as conn:
+        report = record_funnel_day(conn).as_dict()
+        report["liveness"] = funnel_liveness(conn)
+    return report
 
 
 def m3_evaluation() -> dict[str, object]:

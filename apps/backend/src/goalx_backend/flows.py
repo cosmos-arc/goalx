@@ -110,8 +110,9 @@ def daily_capture_flow() -> dict[str, object]:
 
 @flow(name="daily-wrap", log_prints=True)
 def daily_wrap_flow() -> dict[str, object]:
-    """日终收尾（票 37）：结算批跑 + CLV 对账 + 只读账务核查。"""
+    """日终收尾（票 37）：结算批跑 + 漏斗日拍 + CLV 对账 + 只读账务核查。"""
     settlement = settlement_flow()
+    funnel = tasks.funnel_day()
     m3 = tasks.m3_evaluation()
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
@@ -122,10 +123,16 @@ def daily_wrap_flow() -> dict[str, object]:
             )
         findings = len(audit_ledger(conn)["manual_review"])
     logger.info(
-        "daily wrap: settlement={}, clv={}, audit_findings={}, m3={}",
+        "daily wrap: settlement={}, funnel={}, clv={}, audit_findings={}, m3={}",
         settlement,
+        funnel,
         clv_stats,
         findings,
         m3,
     )
-    return {"settlement": settlement, "clv": clv_stats, "audit_findings": findings}
+    return {
+        "settlement": settlement,
+        "funnel": funnel,
+        "clv": clv_stats,
+        "audit_findings": findings,
+    }

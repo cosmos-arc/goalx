@@ -13,9 +13,10 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     assert db.current_version(conn) == 0
-    # v7..v25 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表 + 票 13 换键
-    assert db.migrate(conn) == 25
-    assert db.migrate(conn) == 25  # 重跑幂等
+    # v7..v26 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表 + 票 13 换键
+    # + caliber-loop 票 04 机会漏斗表
+    assert db.migrate(conn) == 26
+    assert db.migrate(conn) == 26  # 重跑幂等
     # v16（票 48）：ev_assessments 脚手架 DROP
     dropped = {
         row["name"]
@@ -188,7 +189,7 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 25
+    assert db.migrate(conn) == 26
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before
@@ -222,7 +223,7 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
                     '{"h":0.4}', '{"h":0.5}', 'psc', 'fp', '2023-12-31')
             """
         )
-        assert db.migrate(conn) == 25
+        assert db.migrate(conn) == 26
         row = conn.execute(
             "SELECT * FROM backtest_predictions WHERE run_id = 1"
         ).fetchone()

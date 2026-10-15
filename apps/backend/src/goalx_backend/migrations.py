@@ -1446,6 +1446,62 @@ HIST_EXTENDED_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _apply_v26(conn: sqlite3.Connection) -> None:
+    """
+    v26（caliber-loop 票 04）：机会漏斗观测表（只读观测，不写 bets）。
+
+    funnel_days：每业务日一行逐级计数+流失原因 JSON+轨一估值聚合+轨二
+    预留列；判活口径=max(business_date)（栈停摆教训：对运行面时间戳）。
+    funnel_fixture_days：每场每日明细（逐级 level_reached+loss_reason+
+    三向 jc/锚报价与价值代理；收盘对账列与轨二列可空，票 05/06 回填）。
+    同业务日重跑=事务内先删后插（幂等日行，重放确定性）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS funnel_days (
+            id INTEGER PRIMARY KEY,
+            business_date TEXT NOT NULL UNIQUE,
+            as_of TEXT NOT NULL,
+            n_on_sale INTEGER NOT NULL,
+            n_quote_matched INTEGER NOT NULL,
+            n_fresh INTEGER NOT NULL,
+            n_valuation INTEGER NOT NULL,
+            n_eligible INTEGER NOT NULL,
+            loss_reasons TEXT NOT NULL DEFAULT '{}',
+            value_proxy_stats TEXT NOT NULL DEFAULT '{}',
+            track2_json TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS funnel_fixture_days (
+            id INTEGER PRIMARY KEY,
+            business_date TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL,
+            as_of TEXT NOT NULL,
+            level_reached INTEGER NOT NULL CHECK (level_reached BETWEEN 1 AND 5),
+            loss_reason TEXT,
+            kickoff_utc TEXT,
+            jc_odds_h REAL, jc_odds_d REAL, jc_odds_a REAL,
+            jc_age_seconds REAL,
+            anchor_ref TEXT,
+            p_sharp_h REAL, p_sharp_d REAL, p_sharp_a REAL,
+            value_proxy_h REAL, value_proxy_d REAL, value_proxy_a REAL,
+            p_sharp_close_h REAL, p_sharp_close_d REAL, p_sharp_close_a REAL,
+            close_backfilled_at TEXT,
+            track2_json TEXT,
+            UNIQUE (business_date, fixture_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_funnel_fixture_days_date"
+        + " ON funnel_fixture_days (business_date)"
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1472,4 +1528,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (23, _apply_v23),
     (24, _apply_v24),
     (25, _apply_v25),
+    (26, _apply_v26),
 )
