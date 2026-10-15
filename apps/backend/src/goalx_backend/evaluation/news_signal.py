@@ -360,7 +360,7 @@ def build_news_signal_report(
         "by_type": dict(sorted(by_type.items())),
         "hours_to_kickoff_median": hours[len(hours) // 2] if hours else None,
         "hours_to_kickoff_p90": hours[p90_idx] if p90_idx is not None else None,
-        "kickoff_basis": "beijing_wall_clock−8h→UTC（beijing_naive_to_utc 单一真相源）",
+        "kickoff_basis": "v2 aware 原样 / v1 墙钟−8h（kickoff_to_utc 双模）",
     }
 
     # 主面：场次级匹配对照（headline 先报独立场次数）
@@ -378,12 +378,15 @@ def build_news_signal_report(
     by_subtype: dict[str, int] = {}
     by_novelty: dict[str, int] = {}
     for event in events:
-        by_subtype[str(event.get("subtype") or "unmarked")] = (
-            by_subtype.get(str(event.get("subtype") or "unmarked"), 0) + 1
-        )
-        by_novelty[str(event.get("novelty") or "unmarked")] = (
-            by_novelty.get(str(event.get("novelty") or "unmarked"), 0) + 1
-        )
+        if "subtype" not in event:
+            subtype_label = "unmarked"  # legacy v1 行无列
+        elif event.get("subtype") is None:
+            subtype_label = "not_applicable"  # 非 injury/suspension 合法空
+        else:
+            subtype_label = str(event["subtype"])
+        by_subtype[subtype_label] = by_subtype.get(subtype_label, 0) + 1
+        novelty_label = str(event["novelty"]) if event.get("novelty") else "unmarked"
+        by_novelty[novelty_label] = by_novelty.get(novelty_label, 0) + 1
 
     # 次面：事件加权（旧口径降级，非独立样本）
     weighted = _Group()
@@ -416,7 +419,10 @@ def build_news_signal_report(
         "mechanism_face": {
             "by_subtype": dict(sorted(by_subtype.items())),
             "by_novelty": dict(sorted(by_novelty.items())),
-            "note": "解释面非再筛选面（子集再挖禁止）；unmarked=legacy v1 行",
+            "note": (
+                "解释面非再筛选面（子集再挖禁止）；unmarked=legacy v1 行；"
+                "not_applicable=非伤停类合法空 subtype"
+            ),
         },
         "event_weighted_secondary": event_weighted_secondary,
         "price_in": price_in,
@@ -568,6 +574,9 @@ def _render_md(payload: dict[str, Any]) -> str:
         f"- diff={payload['signal_gate']['diff']}"
         + f" CI={payload['signal_gate']['ci']}"
         + f" → **{payload['signal_gate']['conclusion']}**",
+        "- 证据不足≠无信号，不构成追加预算理由；方向支持≠经济意义（经济门=B 相）",
+        f"- 机制分层：subtype {payload['mechanism_face']['by_subtype']}"
+        + f" novelty {payload['mechanism_face']['by_novelty']}",
         "",
         "## 次面：事件加权（非独立样本，旧口径降级）",
         "",

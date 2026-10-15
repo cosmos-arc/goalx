@@ -581,7 +581,11 @@ def build_news_events(
                 seen_sids.add(cand.link.sid)
             kept.append(cand)
         selected = kept
-    report.limit_reached = len(candidates) > len(selected)
+        report.limit_reached = len(candidates) > len(selected) or (
+            len({c.link.sid for c in selected}) >= fixture_budget
+        )
+    elif len(candidates) > len(selected):
+        report.limit_reached = True
     checkpoint = _checkpoint_path(store)
     done = _load_checkpoint(checkpoint)
     checkpoint.parent.mkdir(parents=True, exist_ok=True)  # 首跑建目录

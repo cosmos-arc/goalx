@@ -1378,7 +1378,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--fixture-budget",
         type=int,
         default=None,
-        help="按独立场次数的有界预算(票07;先跑 news-funnel 收敛表另裁)",
+        help="按独立场次的有界预算(票07;预算在 --limit 文章池内生效)",
     )
     funnel_parser = sub.add_parser(
         "guardian-news-funnel",
