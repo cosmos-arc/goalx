@@ -80,6 +80,7 @@ from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
+from goalx_backend.evaluation import bucket_reaudit as bkt
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import clv_decade as clvd
 from goalx_backend.evaluation import decade_skill as dsk
@@ -469,6 +470,25 @@ def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
         report.candidates,
         report.events,
         report.llm_calls,
+    )
+
+
+def _cmd_bucket_reaudit(args: argparse.Namespace) -> None:
+    """错价桶方向映射限定复核（票 03：一次性，结论上限=探索性）。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        payload = bkt.build_bucket_reaudit_report(
+            conn, duck_con, store, run_id=args.run_id
+        )
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+    )
+    logger.info(
+        "bucket-reaudit: run={} 桶臂 {} 注 roi {} vs 对照 roi {} → {}",
+        payload["run_id"],
+        payload["arm"]["n"],
+        payload["arm"]["roi_flat"],
+        payload["control"]["roi_flat"],
+        payload["conclusion"],
     )
 
 
@@ -1331,6 +1351,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=400,
         help="LLM 抽取文章上限(成本护栏)",
     )
+    bucket_reaudit_parser = sub.add_parser(
+        "bucket-reaudit",
+        help="错价桶方向映射限定复核(票03:严格正侧+等量分层对照,一次性)",
+    )
+    bucket_reaudit_parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="源 run(须与 signal-attribution 报告同 run;缺省=最新 done)",
+    )
     news_signal_parser = sub.add_parser(
         "news-signal-report",
         help="事件信号PIT回放(票 05:事件×残差×price-in,观察性)",
@@ -1543,6 +1573,7 @@ def main(argv: list[str] | None = None) -> int:
         "model-layers-report": lambda: _cmd_model_layers(args),
         "guardian-news-pilot": lambda: _cmd_guardian_news_pilot(args),
         "news-signal-report": lambda: _cmd_news_signal(args),
+        "bucket-reaudit": lambda: _cmd_bucket_reaudit(args),
         "calibrate-haircut": _cmd_calibrate_haircut,
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),

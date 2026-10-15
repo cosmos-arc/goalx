@@ -55,7 +55,7 @@ _PREDICTIONS_SQL = (
 
 # 特征清单：(特征键, gold 列, 桶型)；桶型 drift=符号三分，dist=分位三分。
 # 特征键贯穿存储与分桶（Spec 审查：键/列错位曾致六轴静默消失）。
-_FEATURES: tuple[tuple[str, str, str], ...] = (
+FEATURES: tuple[tuple[str, str, str], ...] = (
     ("ah_line_drift", "ah_line_drift", "drift"),
     ("ah_anchor_drift", "ah_anchor_drift", "drift"),
     ("ou_line_drift", "ou_line_drift", "drift"),
@@ -72,9 +72,9 @@ _FEATURES: tuple[tuple[str, str, str], ...] = (
     ("ah_home_water", "ah_close_home_water_med", "dist"),
     ("ou_over_water", "ou_close_over_water_med", "dist"),
 )
-# 派生特征（_signal_of 内计算，键=列名注册）：1x2 临场位移（1h/24h 两档）
+# 派生特征（signal_of 内计算，键=列名注册）：1x2 临场位移（1h/24h 两档）
 # + AH 锚同线水位位移（两向 malay 归一，同法两端）
-_DERIVED_FEATURES: tuple[tuple[str, str], ...] = (
+DERIVED_FEATURES: tuple[tuple[str, str], ...] = (
     ("late_move_h", "drift"),
     ("late_move24_h", "drift"),
     ("late_move_ah_home", "drift"),
@@ -120,7 +120,7 @@ def _mean_t(values: list[float]) -> tuple[float | None, float | None]:
     return mean, mean / (std / math.sqrt(len(values)))
 
 
-def _bucket_of(value: float, kind: str, cuts: tuple[float, float]) -> str:
+def bucket_of(value: float, kind: str, cuts: tuple[float, float]) -> str:
     """桶名：漂移按符号；分布类按分位切点。"""
     if kind == "drift":
         if value < -EPS:
@@ -131,7 +131,7 @@ def _bucket_of(value: float, kind: str, cuts: tuple[float, float]) -> str:
     return "low" if value <= cuts[0] else ("mid" if value <= cuts[1] else "high")
 
 
-def _tertile_cuts(values: list[float]) -> tuple[float, float]:
+def tertile_cuts(values: list[float]) -> tuple[float, float]:
     """分位三分切点（q33/q67，排序索引法）。"""
     ordered = sorted(values)
     n = len(ordered)
@@ -252,7 +252,7 @@ def _signal_of(
     """单场归因样本（特征全为 PIT 列；realized 用赛果做标签）。"""
     ftr = str(row["ftr"]).lower()
     features: dict[str, float] = {}
-    for key, column, _kind in _FEATURES:
+    for key, column, _kind in FEATURES:
         value = gold_row.get(column)
         if value is not None:
             features[key] = float(value)
@@ -308,22 +308,71 @@ def _feature_faces(
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """特征×桶分层面（漂移按符号三分；分布类按分位三分；键贯穿存取）。"""
     faces: dict[str, dict[str, dict[str, Any]]] = {}
-    feature_defs = [(key, kind) for key, _column, kind in _FEATURES] + list(
-        _DERIVED_FEATURES
+    feature_defs = [(key, kind) for key, _column, kind in FEATURES] + list(
+        DERIVED_FEATURES
     )
     for key, kind in feature_defs:
         present = [s for s in samples if key in s.features]
         if not present:
             continue
         values = [s.features[key] for s in present]
-        cuts = _tertile_cuts(values) if kind == "dist" else (0.0, 0.0)
+        cuts = tertile_cuts(values) if kind == "dist" else (0.0, 0.0)
         groups: dict[str, list[_MatchSignal]] = defaultdict(list)
         for sample in present:
-            groups[_bucket_of(sample.features[key], kind, cuts)].append(sample)
+            groups[bucket_of(sample.features[key], kind, cuts)].append(sample)
         faces[key] = {
             bucket: _bucket_stats(group) for bucket, group in sorted(groups.items())
         }
     return faces
+
+
+@dataclass(frozen=True)
+class MatchSample:
+    """带身份的逐场归因样本（票 03 桶复核复用；信号面=``_MatchSignal``）。"""
+
+    sid: str
+    competition: str
+    match_date: str
+    ftr: str
+    fair: dict[str, float]
+    signal: _MatchSignal
+
+
+def enumerate_match_samples(
+    pred_rows: list[sqlite3.Row], gold: dict[str, dict[str, Any]]
+) -> tuple[list[MatchSample], dict[str, int]]:
+    """
+    Run 预测 × gold 特征 → 带身份逐场样本（缺口按类计数）。
+
+    归因报告与票 03 桶复核的单一枚举口：样本集合、特征计算、缺口计数
+    一处维护，两消费面零漂移。
+    """
+    samples: list[MatchSample] = []
+    skipped = {"no_ftr": 0, "no_gold": 0, "no_fair": 0}
+    for row in pred_rows:
+        if row["ftr"] is None:
+            skipped["no_ftr"] += 1
+            continue
+        gold_row = gold.get(str(row["match_key"]))
+        if gold_row is None:
+            skipped["no_gold"] += 1
+            continue
+        fair = _probs_dict(json.loads(str(row["fair_probs"])))
+        model = _probs_dict(json.loads(str(row["had_probs"])))
+        if fair is None or model is None:
+            skipped["no_fair"] += 1
+            continue
+        samples.append(
+            MatchSample(
+                sid=str(row["match_key"]),
+                competition=str(row["competition"]),
+                match_date=str(row["match_date"]),
+                ftr=str(row["ftr"]).lower(),
+                fair=fair,
+                signal=_signal_of(row, gold_row, fair, model),
+            )
+        )
+    return samples, skipped
 
 
 def build_signal_attribution_report(
