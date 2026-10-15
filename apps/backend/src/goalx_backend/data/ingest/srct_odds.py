@@ -63,7 +63,8 @@ from goalx_backend.db import utc_now_iso
 BOOKMAKER_DATASET = "bookmaker"
 ODDS_DATASET = "odds_change_event"
 BOOKMAKER_SILVER_VERSION = "silver_bookmaker_v1"
-ODDS_SILVER_VERSION = "silver_odds_v2"  # v2=+亚盘/大小球矩阵变价事件（多庄页 v2）
+ODDS_SILVER_VERSION = "silver_odds_v3"  # v3=1x2 旧代 7 字段行年份推断（票 08）
+# v2=+亚盘/大小球矩阵变价事件（多庄页 v2）
 SPACE_1X2 = "1x2"
 SPACE_AH = "ah"
 SPACE_OU = "ou"
@@ -85,7 +86,8 @@ STREAM_CHUNK_ROWS = 200_000
 STREAM_CHUNK_SIDS = 500
 
 _BEIJING = timezone(timedelta(hours=8))  # 中国无夏令时，固定偏移归一
-_DETAIL_FIELDS = 8  # H|D|A|MM-DD HH:MM|凯利×3|YYYY（实测 516,027 行零异形）
+_DETAIL_FIELDS = 8  # H|D|A|MM-DD HH:MM|凯利×3|YYYY（当代行，实测 516,027 行零异形）
+_DETAIL_FIELDS_OLD = 7  # 旧代行无年份尾缀（票 08 探针：全库 75.8% 行）
 _GAME_NAME_EN_IDX = 2
 _GAME_NAME_ZH_IDX = 21  # 27 字段布局的中文遮罩短名（可缺席）
 _GAME_INITIAL_END = 6  # game 行初盘 HDA 占列 3-5
@@ -301,7 +303,32 @@ def _nearest_year_ms(
     return best_ms
 
 
-def _parse_detail_row(raw: str, source_order: int) -> _DetailRec:
+def _pre_kickoff_year_ms(
+    month: int, day: int, hour: int, minute: int, kickoff_ms: int
+) -> int | None:
+    """
+    旧代行（无年份）时刻 → 开球年 ±1 中 ≤ 开球的最近候选（票 08）。
+
+    1x2 行入轨迹收盘面（PIT 硬口径）：只取不晚于开球的候选，宁可 None
+    （bad_time 记账）不落开球后时刻。探针实证：99.8% 可解。
+    """
+    ko_wall = datetime.fromtimestamp(kickoff_ms / 1000, tz=_BEIJING).replace(
+        tzinfo=None
+    )
+    best: int | None = None
+    for year in (ko_wall.year + 1, ko_wall.year, ko_wall.year - 1):
+        try:
+            candidate = beijing_ms(datetime(year, month, day, hour, minute))
+        except ValueError:
+            continue
+        if candidate <= kickoff_ms and (best is None or candidate > best):
+            best = candidate
+    return best
+
+
+def _parse_detail_row(
+    raw: str, source_order: int, kickoff_ms: int | None = None
+) -> _DetailRec:
     fields = raw.split("|")
     published: int | None = None
     if len(fields) == _DETAIL_FIELDS:
@@ -313,6 +340,11 @@ def _parse_detail_row(raw: str, source_order: int) -> _DetailRec:
                 published = beijing_ms(datetime(int(year), month, day, hour, minute))
             except ValueError:
                 published = None
+    elif len(fields) == _DETAIL_FIELDS_OLD and kickoff_ms is not None:
+        found = _TIME_RE.fullmatch(fields[3].strip())
+        if found is not None:
+            month, day, hour, minute = (int(g) for g in found.groups())
+            published = _pre_kickoff_year_ms(month, day, hour, minute, kickoff_ms)
     prices = [silver.to_float(v) for v in fields[0:3]]
     return _DetailRec(
         published_ms=published,
@@ -710,7 +742,10 @@ def _emit_1x2_events(
             continue
         shelf = books.setdefault(cid, [])
         base = len(shelf)  # 先取基准：extend 内 len 是惰性求值会随消费增长
-        shelf.extend(_parse_detail_row(raw, base + i) for i, raw in enumerate(raw_rows))
+        shelf.extend(
+            _parse_detail_row(raw, base + i, kickoff_ms)
+            for i, raw in enumerate(raw_rows)
+        )
     kept_meta: list[tuple[str, int]] = []
     for cid in sorted(books):
         rows = books[cid]
