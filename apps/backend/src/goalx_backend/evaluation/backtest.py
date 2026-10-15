@@ -1126,10 +1126,12 @@ def _random_gate(cand: _Candidate) -> bool:
     digest = hashlib.sha256(
         f"{cand.match_key}:{cand.market_code}:{cand.selection_code}".encode()
     ).digest()
-    return digest[0] < RANDOM_GATE_THRESHOLD  # 阈值标定后 ~50% 接受
+    return digest[0] < RANDOM_GATE_THRESHOLD
 
 
-RANDOM_GATE_THRESHOLD = 128  # 256 分位 → ~50% 接受率
+# 标定于 buckets 门真树实测接受率 2.17%（4188/193333，run=14）——
+# 两臂同接受率是票面不变量（不对齐=门槛削减收益冒充特征收益）
+RANDOM_GATE_THRESHOLD = 21  # 标定两轮：对齐 buckets 臂注量（run=14 4188 注）
 
 
 def _place_week_bets(
