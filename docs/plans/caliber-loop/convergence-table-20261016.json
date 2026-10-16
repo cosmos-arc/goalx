@@ -1,0 +1,31 @@
+{
+  "competition": "E0",
+  "seasons": [
+    "2024-25",
+    "2025-26"
+  ],
+  "articles_scanned": 202338,
+  "post_kickoff_hits": 268943,
+  "per_season": {
+    "2024-25": {
+      "n_candidates": 693,
+      "n_fixtures_linked": 379,
+      "n_fixtures_with_news": 246,
+      "n_fixtures_with_predictions": 245,
+      "n_fixtures_testable": 245
+    },
+    "2025-26": {
+      "n_candidates": 691,
+      "n_fixtures_linked": 380,
+      "n_fixtures_with_news": 235,
+      "n_fixtures_with_predictions": 235,
+      "n_fixtures_testable": 235
+    }
+  },
+  "total": {
+    "candidates": 1384,
+    "fixtures_with_news": 481,
+    "fixtures_testable": 480
+  },
+  "note": "表先行（票 07 裁决⑤⑥）：预算按可检验独立场次另裁；同期报价代理=最新 done run 预测面在场"
+}
