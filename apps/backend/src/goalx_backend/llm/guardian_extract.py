@@ -32,6 +32,11 @@ from goalx_backend.llm.client import (
 )
 
 MAX_BODY_CHARS = 6000  # 抽取输入截断（成本护栏）
+# 输出预算含 thinking（glm-5.3 混合推理档）：小预算会让推理吃光 token、
+# 可见输出为空——真树探针 2026-10-16：512 臂空返回且富集有事件文章
+# （finish=length ctok=512），同批 2048 臂全部完整解析（最长 1736）；
+# 3072=最长观测之上留头部空间（同型号先例 llm/scout._MAX_TOKENS=3500）。
+MAX_OUTPUT_TOKENS = 3072
 
 _SYSTEM_PROMPT = (
     "You extract structured football team-news events from a news article "
@@ -123,7 +128,7 @@ def _glm_once(
             ModelTier.SCOUT,
             messages,
             purpose=Purpose.SCOUT,
-            max_tokens=512,
+            max_tokens=MAX_OUTPUT_TOKENS,
             temperature=temperature,
         )
     except BadRequestError as exc:  # [1301] contentFilter——个别稿触发，跳过不崩

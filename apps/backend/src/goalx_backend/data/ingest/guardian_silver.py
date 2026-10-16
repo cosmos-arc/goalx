@@ -614,7 +614,13 @@ def _load_checkpoint(checkpoint: Path) -> dict[str, dict[str, Any]]:
         for line in checkpoint.read_text(encoding="utf-8").splitlines():
             if not line:
                 continue
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                # 尾行脆断（崩溃/满盘半写）不阻断续跑：跳过=该篇重抽
+                # （分币级成本），比整个断点面作废便宜（F6，2026-10-16）。
+                logger.warning("checkpoint 行解析失败，跳过：{}", line[:80])
+                continue
             key = entry.get("key")
             if key:
                 done[str(key)] = entry
