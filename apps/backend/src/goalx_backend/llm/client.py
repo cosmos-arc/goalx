@@ -20,6 +20,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 from goalx_backend.config import Settings
 from goalx_backend.data.results import category_spend_cny, record_cost
+from goalx_backend.db import atomic
 
 COST_CATEGORY = "llm_call"
 
@@ -210,20 +211,25 @@ def glm_chat(
     completion_tokens = usage.completion_tokens if usage else 0
     estimated = estimate_cost_cny(model, prompt_tokens, completion_tokens)
     content = completion.choices[0].message.content or ""
-    record_cost(
-        conn,
-        COST_CATEGORY,
-        units=float(prompt_tokens + completion_tokens),
-        amount_cny=estimated,
-        note=f"{model}/{surface}/{purpose.value}",
-        meta={
-            "model": model,
-            "surface": surface,
-            "purpose": purpose.value,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-        },
-    )
+    # 记账包 atomic：独立批处理路径（task_conn 无外层事务）落 COMMIT——
+    # 不提交则熔断输入跨进程不可见（correctness F1 2026-10-16 实锤：当日
+    # 1383 次调用 ¥3.92 全程未入 cost_ledger）；嵌套调用方（scout 的
+    # SAVEPOINT）走 RELEASE 不越界提交。
+    with atomic(conn):
+        record_cost(
+            conn,
+            COST_CATEGORY,
+            units=float(prompt_tokens + completion_tokens),
+            amount_cny=estimated,
+            note=f"{model}/{surface}/{purpose.value}",
+            meta={
+                "model": model,
+                "surface": surface,
+                "purpose": purpose.value,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
+        )
     return ChatResult(
         content=content,
         model=model,

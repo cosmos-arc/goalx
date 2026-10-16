@@ -803,3 +803,17 @@ def test_convergence_table_levels(tmp_path) -> None:
     store.close()
     face.close()
     con.close()
+
+
+def test_checkpoint_partial_tail_line_skipped(tmp_path):
+    """断点续跑：尾行脆断（崩溃/满盘半写）跳过不炸，完好前缀照常复用（F6）。"""
+    store = CorpusStore(tmp_path)
+    checkpoint = gs._checkpoint_path(store)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    good = json.dumps(
+        {"key": "a1|s1|deadbeefdeadbeef|v3", "article_sid": "a1", "filtered": False}
+    )
+    checkpoint.write_text(good + "\n" + '{"key": "trunc', encoding="utf-8")
+    done = gs._load_checkpoint(checkpoint)
+    assert list(done) == ["a1|s1|deadbeefdeadbeef|v3"]
+    store.close()

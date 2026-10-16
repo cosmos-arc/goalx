@@ -193,6 +193,43 @@ def test_glm_chat_records_cost(
     assert meta["completion_tokens"] == 73
 
 
+def test_glm_chat_cost_committed_across_connections(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """记账跨连接持久（correctness F1 2026-10-16）：批处理路径 task_conn
+    关闭不回写提交，glm_chat 必须自带 commit，否则熔断输入跨进程不可见。"""
+    from pathlib import Path
+
+    from goalx_backend.db import connect, migrate
+
+    settings = _settings()
+    monkeypatch.setattr(
+        "goalx_backend.llm.client._build_client",
+        lambda s, base: _StubClient([(17, 73)]),
+    )
+    db_path = Path(tmp_path) / "cost.db"
+    conn = connect(str(db_path))
+    migrate(conn)
+    glm_chat(
+        conn,
+        settings,
+        ModelTier.SCOUT,
+        [{"role": "user", "content": "hi"}],
+        purpose=Purpose.SCOUT,
+    )
+    conn.close()
+    reopened = connect(str(db_path))
+    row = reopened.execute(
+        "SELECT amount_cny FROM cost_ledger WHERE category = ?",
+        (COST_CATEGORY,),
+    ).fetchone()
+    reopened.close()
+    assert row is not None
+    assert row["amount_cny"] == pytest.approx(
+        estimate_cost_cny("glm-5.3-flash", 17, 73)
+    )
+
+
 def test_glm_chat_payg_fallback_on_permission_denied(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
