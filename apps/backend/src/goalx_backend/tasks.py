@@ -29,6 +29,7 @@ from goalx_backend.betting.funnel import (
     has_track2_snapshot,
     record_funnel_day,
     record_track2_snapshot,
+    rederive_purchasable,
 )
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
@@ -652,7 +653,9 @@ def _capture_track2_fixture(
     单场拍点采集（票 05，逐场隔离单元）：'ok' | 'no_anchor'。
 
     锚缺失不落库（留给 6h 视界下拍补采——空快照会锁死补拍窗口）；
-    停售边界按拍点时点：stopped→不可购；无观测→不可购（不冒充可购）。
+    停售边界按拍点时点：stopped→不可购；无观测→不可购；存储 unknown
+    值（SELL_STATUS_MAP 兜底产物）→ 同样不可购——非 on_sale 一律不
+    冒充可购（measure-03）。
     """
     fid = int(row["id"])
     target_instant = (
@@ -664,12 +667,14 @@ def _capture_track2_fixture(
     if sharp is None:
         return "no_anchor"
     sale = fx_store.latest_sale_status_asof(conn, fid, "had", target_instant)
-    if sale is not None and str(sale["sale_state"]) == "stopped":
-        purchasable, reason = False, "sale_stopped"
-    elif sale is not None:
-        purchasable, reason = True, None
-    else:
+    if sale is None:
         purchasable, reason = False, "sale_status_unknown"
+    elif str(sale["sale_state"]) == "on_sale":
+        purchasable, reason = True, None
+    elif str(sale["sale_state"]) == "stopped":
+        purchasable, reason = False, "sale_stopped"
+    else:
+        purchasable, reason = False, "sale_status_unknown_value"
     record_track2_snapshot(
         conn,
         Track2Capture(
@@ -761,6 +766,7 @@ def track2_snapshots(
                 "errors": errors,
                 "anchor_pulls": len(pulls),
             }
+        out["purchasable_corrected"] = rederive_purchasable(conn)
     return out
 
 
