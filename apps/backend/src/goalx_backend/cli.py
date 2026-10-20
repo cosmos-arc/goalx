@@ -287,7 +287,7 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
     """跑一次十年回测（gold 消费，walk-forward）+ 指标分层汇总。"""
     with _corpus_handles() as (duck_con, store), task_conn() as conn:
         haircut, source, n = hc.calibrated_haircut(conn)
-        if args.haircut != "auto":
+        if args.haircut is not None:
             haircut, source = args.haircut, "cli"
         logger.info("haircut={} (source={}, n={})", haircut, source, n)
         params = bt.BacktestParams(
@@ -1200,8 +1200,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     backtest.add_argument("--label", default="manual", help="run 标签")
     backtest.add_argument(
         "--haircut",
-        default="auto",
-        help="auto=校准值(不足回落默认) 或直接给数值(如 0.10)",
+        type=float,
+        default=None,
+        help="auto=校准值(不足回落默认) 或直接给数值(如 0.10)；缺省=auto",
     )
     backtest.add_argument(
         "--competitions",
