@@ -39,12 +39,16 @@ _EPS = 1e-15
 
 
 class FeatureTuple(NamedTuple):
-    """错价桶八特征（signal-attribution 八桶连续化；None=缺失）。"""
+    """
+    错价桶特征（signal-attribution 桶连续化；None=缺失）。
+
+    ah_phase_inplay 已剔除（measure-05 PIT 契约：赛中相位计数开球后
+    才可得，不进赛前判别层）。
+    """
 
     ah_line_drift: float | None = None
     ou_line_drift: float | None = None
     ah_phase_pre: float | None = None
-    ah_phase_inplay: float | None = None
     late_move_h: float | None = None
     late_move24_h: float | None = None
     ah_home_water: float | None = None

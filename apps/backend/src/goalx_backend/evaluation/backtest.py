@@ -216,7 +216,7 @@ class GoldMatch:
     ou_line: float | None = None  # OU 收盘中位线（market-λ 联合约束）
     ou_over_water: float | None = None
     ou_under_water: float | None = None
-    # 错价桶特征（票 03：signal-attribution 八桶连续化；缺失=None）
+    # 错价桶特征（票 03 同源连续化；缺失=None；measure-05 起 7 维）
     features: FeatureTuple = field(default_factory=FeatureTuple)
 
 
@@ -504,7 +504,6 @@ def fetch_decade_matches(
             ah_line_drift,
             ou_line_drift,
             ah_n_pre,
-            ah_n_inplay,
             ah_home_water,
             q1h_h,
             q1h_d,
@@ -570,7 +569,6 @@ def fetch_decade_matches(
                     ah_line_drift=_f(ah_line_drift),
                     ou_line_drift=_f(ou_line_drift),
                     ah_phase_pre=_f(ah_n_pre),
-                    ah_phase_inplay=_f(ah_n_inplay),
                     late_move_h=_late_move((q1h_h, q1h_d, q1h_a), close),
                     late_move24_h=_late_move((q24h_h, q24h_d, q24h_a), close),
                     ah_home_water=_f(ah_home_water),

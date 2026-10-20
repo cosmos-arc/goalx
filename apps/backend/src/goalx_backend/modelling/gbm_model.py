@@ -6,7 +6,8 @@ spec-v1.0 v2 计划的兑现（xG+GBM stacking）：lightgbm 多分类（h/d/a�
 模型侧源头。
 
 - **特征**：G1 滞后特征（elo/xG/技统/积分差量）+ era 正典公平概率
-  （市场是最强单一特征——GBM 学"残差修正"形态）+ 错价桶 8 特征；
+  （市场是最强单一特征——GBM 学"残差修正"形态）
+  + 错价桶特征 7 维（measure-05 剔除 inplay）；
   缺值留 NaN（lightgbm 原生处理，不插补）；
 - **确定性**：deterministic=true + 固定 seed + 特征名定序（重放确定性
   与 DC 同纪律）；
@@ -44,11 +45,11 @@ GBM_FEATURES = (
     "fair_h",
     "fair_d",
     "fair_a",
-    # 错价桶 8 特征（K3 同源）
+    # 错价桶特征（K3 同源；ah_phase_inplay 已剔除——measure-05 PIT 契约：
+    # 赛中相位计数定义上开球后才可得，不进赛前特征集）
     "ah_line_drift",
     "ou_line_drift",
     "ah_phase_pre",
-    "ah_phase_inplay",
     "late_move_h",
     "late_move24_h",
     "ah_home_water",
