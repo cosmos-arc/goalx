@@ -260,6 +260,123 @@ def test_frozen_summary_and_idempotent_day(db: sqlite3.Connection) -> None:
     assert "不自动写 bets" in summary["note"]
 
 
+def test_frozen_close_backfill_after_settlement(db: sqlite3.Connection) -> None:
+    """赛果先到、收盘晚到：盲结算不丢收盘（measure-01 晚场主路径）。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    _add_quotes(
+        db, fixture, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    _seed_draw(db, fixture, 2, 1)  # 主胜：would_bet 的 h 侧 won
+
+    def no_close(home, away, kickoff, selection):
+        return None
+
+    # 第一拍（23:30 wrap）：收盘语料未到 → 盲结算，缺收盘如实计数
+    stats = fz.reconcile_frozen_decisions(db, no_close, now="2026-10-17T23:30:00+00:00")
+    assert stats["settled"] == 1
+    assert stats["missing_close_total"] == 1
+    row = db.execute(
+        "SELECT settled_outcome, p_sharp_close FROM frozen_decisions"
+        " WHERE decision='would_bet'"
+    ).fetchone()
+    assert row["settled_outcome"] == "won"
+    assert row["p_sharp_close"] is None
+
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    # 第二拍（次晨收盘语料到达）：已结算行独立补收盘，不重复结算
+    stats2 = fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-18T06:00:00+00:00"
+    )
+    assert stats2["settled"] == 0
+    assert stats2["paper_profit_flat"] == 0.0
+    assert stats2["close_backfilled"] == 1
+    assert stats2["missing_close_total"] == 0
+    row2 = db.execute(
+        "SELECT p_sharp_close, drift_after_lock, settled_outcome, settled_profit"
+        " FROM frozen_decisions WHERE decision='would_bet'"
+    ).fetchone()
+    assert row2["p_sharp_close"] == 0.52
+    assert row2["drift_after_lock"] is not None
+    assert row2["settled_outcome"] == "won"  # 结算面未被重算
+    assert row2["settled_profit"] == round(3.0 - 1.0, 4)
+    frow = db.execute(
+        "SELECT p_sharp_close_h FROM funnel_fixture_days WHERE fixture_id=?",
+        (fixture,),
+    ).fetchone()
+    assert frow["p_sharp_close_h"] == 0.52  # 漏斗收盘列同步补齐
+    summary = fz.frozen_summary(db, BUSINESS_DATE)
+    assert summary["reconciliation"]["missing_close"] == 0
+
+    # 第三拍：结算与收盘全齐 → 扫描集空（幂等）
+    stats3 = fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-19T00:00:00+00:00"
+    )
+    assert stats3["considered"] == 0
+
+    # 收盘写一次：已落 close 不被后续拍改写（即使 provider 值变化）
+    def moved_close(home, away, kickoff, selection):
+        return (0.60, "srct:1x2:177", "s1")
+
+    db.execute(
+        "UPDATE frozen_decisions SET settled_outcome = NULL, p_sharp_close = NULL,"
+        " reconciled_at = NULL WHERE decision = 'would_bet' AND settled_outcome = 'won'"
+    )
+    db.commit()
+    fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-19T01:00:00+00:00"
+    )  # 重新结算+落收盘 0.52
+    fz.reconcile_frozen_decisions(
+        db, moved_close, now="2026-10-19T02:00:00+00:00"
+    )  # settled 已回 → 不进扫描集
+    row3 = db.execute(
+        "SELECT p_sharp_close FROM frozen_decisions WHERE decision='would_bet'"
+    ).fetchone()
+    assert row3["p_sharp_close"] == 0.52
+
+
+def test_frozen_funnel_close_heal_after_lost_write(db: sqlite3.Connection) -> None:
+    """崩溃窗口丢写治愈：frozen 已有收盘而漏斗列丢失 → 收尾 pass 补齐。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    _add_quotes(
+        db, fixture, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    # 收盘先落（frozen 行有 close），模拟漏斗列写入丢失（崩溃窗口）
+    fz.reconcile_frozen_decisions(db, close_provider, now="2026-10-17T00:00:00+00:00")
+    db.execute(
+        "UPDATE funnel_fixture_days SET p_sharp_close_h = NULL WHERE fixture_id = ?",
+        (fixture,),
+    )
+    db.commit()
+    # 赛果落地重跑：frozen close 已在（写一次守卫跳过），漏斗列由治愈 pass 补齐
+    _seed_draw(db, fixture, 2, 1)
+    stats = fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-18T00:00:00+00:00"
+    )
+    assert stats["settled"] == 1
+    assert stats["funnel_close_healed"] == 1
+    frow = db.execute(
+        "SELECT p_sharp_close_h FROM funnel_fixture_days WHERE fixture_id=?",
+        (fixture,),
+    ).fetchone()
+    assert frow["p_sharp_close_h"] == 0.52
+
+
 def test_settings_free() -> None:
     """依赖面守卫（Settings 可构）。"""
     assert Settings() is not None

@@ -173,6 +173,16 @@ def record_frozen_decisions(
     return report
 
 
+def _close_update(row: sqlite3.Row, close: tuple[float, str, str]) -> dict[str, Any]:
+    """收盘字段构造（两路共用：未结算同步面 / 已结算晚到补齐）。"""
+    update: dict[str, Any] = {"p_sharp_close": round(float(close[0]), 4)}
+    if row["p_sharp"] is not None:
+        update["drift_after_lock"] = round(
+            update["p_sharp_close"] - float(row["p_sharp"]), 4
+        )
+    return update
+
+
 def reconcile_frozen_decisions(
     conn: sqlite3.Connection,
     close_provider: CloseProvider,
@@ -181,6 +191,10 @@ def reconcile_frozen_decisions(
 ) -> dict[str, Any]:
     """
     would_bet 记录执行对账（幂等）：结算面 + 收盘 p_sharp + 锁后漂移。
+
+    结算与收盘解耦（measure-integrity 票 01）：扫描集含"已结算但缺收盘"
+    的行——晚场主路径（23:30 盲结算先落，源T 收盘语料次晨才到）的收盘
+    独立补齐；已结算行只补收盘面，不重复结算、不重复计数。
 
     close_provider(home, away, kickoff_utc, selection) → (p_close, 基准,
     sid)|None——生产=clv.srct_closing_prob 同口径（注入缝供测试）。
@@ -191,15 +205,20 @@ def reconcile_frozen_decisions(
         "considered": 0,
         "settled": 0,
         "closed": 0,
+        "close_backfilled": 0,
         "still_pending": 0,
+        "funnel_close_healed": 0,
+        "missing_close_total": 0,
         "paper_profit_flat": 0.0,
     }
     pending = conn.execute(
         " ".join(
             (
-                "SELECT f.id, f.fixture_id, f.selection_code, f.odds, f.p_sharp",
+                "SELECT f.id, f.fixture_id, f.selection_code, f.odds, f.p_sharp,",
+                "f.settled_outcome, f.p_sharp_close",
                 "FROM frozen_decisions f",
-                "WHERE f.decision = 'would_bet' AND f.settled_outcome IS NULL",
+                "WHERE f.decision = 'would_bet'",
+                "AND (f.settled_outcome IS NULL OR f.p_sharp_close IS NULL)",
                 "ORDER BY f.id",
             )
         )
@@ -209,25 +228,28 @@ def reconcile_frozen_decisions(
         fixture = fx_store.fixture_detail(conn, int(row["fixture_id"]))
         if fixture is None:
             continue
-        result = rs_store.get_draw_result(conn, int(row["fixture_id"]))
         kickoff = str(fixture["kickoff_utc"])
         home = str(fixture["home_team"])
         away = str(fixture["away_team"])
         sel = str(row["selection_code"])
         close = close_provider(home, away, kickoff, sel)
+        if row["settled_outcome"] is not None:
+            # 已结算晚到收盘：只补收盘面（不重复结算/重复计数）
+            if close is not None:
+                update = _close_update(row, close)
+                stats["close_backfilled"] += 1
+                _apply_reconcile(conn, int(row["id"]), update, moment)
+            continue
+        result = rs_store.get_draw_result(conn, int(row["fixture_id"]))
         update: dict[str, Any] = {}
-        if close is not None:
-            p_close = round(float(close[0]), 4)
-            update["p_sharp_close"] = p_close
-            if row["p_sharp"] is not None:
-                update["drift_after_lock"] = round(p_close - float(row["p_sharp"]), 4)
+        # 收盘写一次：已有 close 不被后续拍重写
+        if close is not None and row["p_sharp_close"] is None:
+            update = _close_update(row, close)
             stats["closed"] += 1
         if result is None or int(result["void"] or 0):
             stats["still_pending"] += 1
             if update:
                 _apply_reconcile(conn, int(row["id"]), update, moment)
-                if "p_sharp_close" in update:
-                    _backfill_funnel_close(conn, int(row["fixture_id"]), sel, update)
             continue
         home_goals, away_goals = int(result["home_goals"]), int(result["away_goals"])
         ftr = (
@@ -244,8 +266,10 @@ def reconcile_frozen_decisions(
             float(stats["paper_profit_flat"]) + profit, 4
         )
         _apply_reconcile(conn, int(row["id"]), update, moment)
-        # 漏斗明细行收盘列回填（同口径同刻）
-        _backfill_funnel_close(conn, int(row["fixture_id"]), sel, update)
+    # 漏斗收盘列存量治愈：frozen 已有收盘而漏斗列仍空的行一次补齐（单一
+    # 传播点——覆盖同拍写入与崩溃窗口丢写的所有分叉类；列级 IS NULL 幂等）
+    stats["funnel_close_healed"] = _heal_funnel_close(conn)
+    stats["missing_close_total"] = missing_close_total(conn)
     return stats
 
 
@@ -255,7 +279,7 @@ def _apply_reconcile(
     update: dict[str, Any],
     moment: str,
 ) -> None:
-    """回填一条冻结记录（列白名单构造，幂等）。"""
+    """回填一条冻结记录（列白名单构造，幂等；reconciled_at=最近一次对账触碰）。"""
     allowed = ("p_sharp_close", "drift_after_lock", "settled_outcome", "settled_profit")
     sets = [k for k in update if k in allowed]
     if not sets:
@@ -270,19 +294,47 @@ def _apply_reconcile(
         conn.execute(sql, (*values, moment, decision_id))
 
 
-def _backfill_funnel_close(
-    conn: sqlite3.Connection, fixture_id: int, sel: str, update: dict[str, Any]
-) -> None:
-    """漏斗明细行对应 selection 收盘列回填（守卫按目标列——多选向各自填）。"""
-    if "p_sharp_close" not in update:
-        return
-    column = f"p_sharp_close_{sel}"
-    sql = (
-        f"UPDATE funnel_fixture_days SET {column} = ? "  # noqa: S608 列白名单
-        + f"WHERE fixture_id = ? AND {column} IS NULL"
+def _heal_funnel_close(conn: sqlite3.Connection) -> int:
+    """
+    漏斗收盘列治愈：frozen 已有收盘而漏斗列仍空的行按选向同键补齐。
+
+    列级 IS NULL 幂等；崩溃窗口（frozen 收盘已落、漏斗列写丢）兜底。
+    """
+    healed = 0
+    for sel in SELECTIONS:
+        column = f"p_sharp_close_{sel}"
+        match = " ".join(
+            (
+                "SELECT f.p_sharp_close FROM frozen_decisions f",
+                "WHERE f.business_date = funnel_fixture_days.business_date",
+                "AND f.fixture_id = funnel_fixture_days.fixture_id",
+                f"AND f.selection_code = '{sel}'",
+                "AND f.decision = 'would_bet' AND f.p_sharp_close IS NOT NULL",
+            )
+        )
+        sql = " ".join(
+            (
+                f"UPDATE funnel_fixture_days SET {column} = ({match})",  # noqa: S608 白名单
+                f"WHERE {column} IS NULL AND ({match}) IS NOT NULL",
+            )
+        )
+        with conn:
+            healed += conn.execute(sql).rowcount
+    return healed
+
+
+def missing_close_total(conn: sqlite3.Connection) -> int:
+    """would_bet 缺收盘存量（全库口径诚实账；corpus 跳过拍也可查）。"""
+    return int(
+        conn.execute(
+            " ".join(
+                (
+                    "SELECT COUNT(*) FROM frozen_decisions",
+                    "WHERE decision = 'would_bet' AND p_sharp_close IS NULL",
+                )
+            )
+        ).fetchone()[0]
     )
-    with conn:
-        conn.execute(sql, (update["p_sharp_close"], fixture_id))
 
 
 def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, Any]:
@@ -310,6 +362,15 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
         ),
         (business_date,),
     ).fetchone()
+    missing_close = conn.execute(
+        " ".join(
+            (
+                "SELECT COUNT(*) FROM frozen_decisions WHERE business_date = ?",
+                "AND decision = 'would_bet' AND p_sharp_close IS NULL",
+            )
+        ),
+        (business_date,),
+    ).fetchone()[0]
     day = funnel_day_row(conn, business_date)
     return {
         "business_date": business_date,
@@ -320,6 +381,7 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
             "mean_drift_after_lock": round(float(recon[2]), 4)
             if recon[2] is not None
             else None,
+            "missing_close": int(missing_close),
         },
         "funnel_on_sale": int(day["n_on_sale"]) if day else None,
         "note": (

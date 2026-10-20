@@ -780,7 +780,17 @@ def frozen_reconcile() -> dict[str, object]:
     """冻结决策执行对账（票 06）：结算面+源T 收盘锚+锁后漂移。"""
     with task_conn() as conn, corpus_anchor() as anchor:
         if anchor is None:
-            return {"considered": 0, "note": "corpus anchor 不可用，本拍跳过"}
+            return {
+                "considered": 0,
+                "settled": 0,
+                "closed": 0,
+                "close_backfilled": 0,
+                "still_pending": 0,
+                "funnel_close_healed": 0,
+                "paper_profit_flat": 0.0,
+                "missing_close_total": frozen_mod.missing_close_total(conn),
+                "note": "corpus anchor 不可用，本拍跳过",
+            }
         provider = _srct_close_provider(anchor)
         stats = frozen_mod.reconcile_frozen_decisions(conn, provider)
     logger.info("frozen reconcile: {}", stats)
