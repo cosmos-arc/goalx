@@ -647,11 +647,15 @@ def _capture_track2_fixture(
     *,
     offset: timedelta,
     snap_type: str,
-    moment: datetime,
+    decision: datetime,
 ) -> str:
     """
     单场拍点采集（票 05，逐场隔离单元）：'ok' | 'no_anchor'。
 
+    四时钟（measure-04）：任务时刻（窗口计算，不落行）/ 目标拍点
+    target_instant / 实际决策时刻 decision（拉取完成后，判定 as-of 与
+    captured_at 同源）/ 响应观测时刻（证据表 observed_at，PIT 上界=
+    决策时刻）——本拍新抓的报价不再被任务时刻滤掉。
     锚缺失不落库（留给 6h 视界下拍补采——空快照会锁死补拍窗口）；
     停售边界按拍点时点：stopped→不可购；无观测→不可购；存储 unknown
     值（SELL_STATUS_MAP 兜底产物）→ 同样不可购——非 on_sale 一律不
@@ -661,9 +665,9 @@ def _capture_track2_fixture(
     target_instant = (
         datetime.fromisoformat(str(row["kickoff_utc"])) - offset
     ).isoformat(timespec="seconds")
-    now_iso = moment.isoformat(timespec="seconds")
-    verdict = adjudicate_had_quote(conn, fid, now_iso)
-    sharp = sharp_probs_asof(conn, fid, now_iso)
+    decision_iso = decision.isoformat(timespec="seconds")
+    verdict = adjudicate_had_quote(conn, fid, decision_iso)
+    sharp = sharp_probs_asof(conn, fid, decision_iso)
     if sharp is None:
         return "no_anchor"
     sale = fx_store.latest_sale_status_asof(conn, fid, "had", target_instant)
@@ -681,7 +685,7 @@ def _capture_track2_fixture(
             fixture_id=fid,
             snap_type=snap_type,
             target_instant=target_instant,
-            captured_at=now_iso,
+            captured_at=decision_iso,
             purchasable=purchasable,
             purchasable_reason=reason,
             jc_odds=dict(verdict.jc_odds),
@@ -701,6 +705,7 @@ def track2_snapshots(
     *,
     now: datetime | None = None,
     pull: _AnchorPull | None = None,
+    decision_at: datetime | None = None,
 ) -> dict[str, object]:
     """
     轨二拍点采样（caliber-loop 票 05）：开球前 24h/12h 整点两源快照。
@@ -709,7 +714,9 @@ def track2_snapshots(
     锚书=拍点定向拉取（复用 odds_anchor_dense 通道，零候选零请求）；
     竞彩=拍点时点最新 as-of 读（调盘面，龄如实记）；停售边界
     purchasable=拍点时点（target_instant）停售状态；迟到补拍 late_flag。
-    now/pull 注入点供测试（缺省=当前时刻/真锚拉取）。
+    now/pull/decision_at 注入点供测试（缺省=当前时刻/真锚拉取/拉取后取
+    当前时刻）——判定 as-of 用 decision_at（拉取后），任务时刻只管窗口
+    （measure-04：本拍新抓报价不再被任务时刻滤掉）。
     """
     settings = get_settings()
     anchor_pull = pull or _isolated_anchor_pull
@@ -739,6 +746,7 @@ def track2_snapshots(
                 anchor_pull(
                     conn, settings, client, anchor=f"track2_{label}", targets=pulls
                 )
+            decision = decision_at or datetime.now(UTC)
             captured = skipped_no_anchor = errors = 0
             for row in targets:
                 fid = int(row["id"])
@@ -746,7 +754,7 @@ def track2_snapshots(
                     continue
                 try:
                     outcome = _capture_track2_fixture(
-                        conn, row, offset=offset, snap_type=label, moment=moment
+                        conn, row, offset=offset, snap_type=label, decision=decision
                     )
                 except (ValueError, LookupError) as exc:
                     # 逐场隔离（锚腿先例）：单场毒数据不炸整拍，后续场照拍
