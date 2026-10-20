@@ -222,6 +222,9 @@ erDiagram
     pool_sync_runs {
         INTEGER id PK
     }
+    price_deviation_ledger {
+        INTEGER id PK
+    }
     public_shares {
         INTEGER id PK
     }
@@ -429,6 +432,37 @@ erDiagram
 
 append-only 触发器：`odds_snapshots_no_delete`、`odds_snapshots_no_update`
 <!-- schema-doc:END:table:odds_snapshots -->
+<!-- schema-doc:BEGIN:table:price_deviation_ledger -->
+#### `price_deviation_ledger`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `fixture_id` | INTEGER | NOT NULL |
+| `market_code` | TEXT | NOT NULL |
+| `selection_code` | TEXT | NOT NULL |
+| `jc_odds` | REAL | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `source_updated_at` | TEXT | — |
+| `snapshot_id` | INTEGER | NOT NULL |
+| `p_sharp_h` | REAL | — |
+| `p_sharp_d` | REAL | — |
+| `p_sharp_a` | REAL | — |
+| `anchor_ref` | TEXT | — |
+| `sale_state` | TEXT | — |
+| `single_eligible` | INTEGER | — |
+| `reference_backfilled_at` | TEXT | — |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`snapshot_id`)`
+
+append-only 触发器：`trg_price_ledger_no_delete`、`trg_price_ledger_no_ref_overwrite`、`trg_price_ledger_no_struct_update`
+<!-- schema-doc:END:table:price_deviation_ledger -->
+
+measure-07（v30）：同步报价账本（A 线仪器）——JC 新观测同刻配对源T
+Pinnacle 锚（as-of observed_at）与销售态；append-only（删/结构列改触发器
+拦截，参考回填列放行 sweep）。
+
 <!-- schema-doc:BEGIN:table:quote_observations -->
 #### `quote_observations`
 

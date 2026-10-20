@@ -15,6 +15,7 @@ Prefect server 调度（见 README「运行采集」）。单 cron 同构壳（�
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import asdict
 from typing import Any
 
@@ -23,6 +24,7 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting.ledger_audit import audit_ledger
+from goalx_backend.data import price_ledger
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
@@ -123,6 +125,14 @@ def daily_wrap_flow() -> dict[str, object]:
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )
         findings = len(audit_ledger(conn)["manual_review"])
+        # 同步报价账本（measure-07）：NULL 参考行日终回填 + 账面汇总
+        # （降级不打断——corpus/账本异常不殃及 wrap 主体，同上方惯例）
+        try:
+            ledger_filled = price_ledger.backfill_missing_reference(conn)
+            ledger_face: dict[str, Any] = price_ledger.ledger_summary(conn)
+        except sqlite3.Error as exc:
+            logger.warning("price ledger sweep degraded: {}", exc)
+            ledger_filled, ledger_face = -1, {}
     logger.info(
         "daily wrap: settlement={}, funnel={}, clv={}, audit_findings={}, m3={}",
         settlement,
@@ -137,4 +147,5 @@ def daily_wrap_flow() -> dict[str, object]:
         "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
         "audit_findings": findings,
+        "price_ledger": {"backfilled": ledger_filled, **ledger_face},
     }

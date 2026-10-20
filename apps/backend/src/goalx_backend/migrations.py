@@ -1616,6 +1616,74 @@ def _apply_v29(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_v30(conn: sqlite3.Connection) -> None:
+    """
+    v30（measure-integrity 票 07）：同步报价账本（主线 A 仪器）。
+
+    JC 新观测（odds_snapshots 新行）同刻配对参考锚（源T Pinnacle
+    as-of observed_at）与销售态/单关资格——只记录不判定；参考缺=
+    诚实 NULL 由日终 sweep 回填（as-of 语义保证事后计算无前视）。
+    append-only（触发器防线，同证据表惯例）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS price_deviation_ledger (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL,
+            market_code TEXT NOT NULL,
+            selection_code TEXT NOT NULL,
+            jc_odds REAL NOT NULL,
+            observed_at TEXT NOT NULL,
+            source_updated_at TEXT,
+            snapshot_id INTEGER NOT NULL UNIQUE,
+            p_sharp_h REAL,
+            p_sharp_d REAL,
+            p_sharp_a REAL,
+            anchor_ref TEXT,
+            sale_state TEXT,
+            single_eligible INTEGER,
+            reference_backfilled_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_price_ledger_fixture"
+        + " ON price_deviation_ledger (fixture_id, market_code)"
+    )
+    # append-only 防线：行不可删；结构列不可改（UPDATE OF 白名单外的
+    # 参考回填列 p_sharp_*/anchor_ref/reference_backfilled_at 放行 sweep）
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS trg_price_ledger_no_delete"
+        + " BEFORE DELETE ON price_deviation_ledger"
+        + " BEGIN SELECT RAISE(ABORT, '账本追加不可删'); END"
+    )
+    conn.execute(
+        " ".join(
+            (
+                "CREATE TRIGGER IF NOT EXISTS trg_price_ledger_no_struct_update",
+                "BEFORE UPDATE OF fixture_id, market_code, selection_code,",
+                "jc_odds, observed_at, source_updated_at, snapshot_id,",
+                "sale_state, single_eligible, created_at",
+                "ON price_deviation_ledger",
+                "BEGIN SELECT RAISE(ABORT, '账本结构列不可改'); END",
+            )
+        )
+    )
+    # 已填参考写一次：回填放行（OLD.p_sharp_h IS NULL），覆写已填拦截
+    conn.execute(
+        " ".join(
+            (
+                "CREATE TRIGGER IF NOT EXISTS trg_price_ledger_no_ref_overwrite",
+                "BEFORE UPDATE OF p_sharp_h, p_sharp_d, p_sharp_a, anchor_ref",
+                "ON price_deviation_ledger",
+                "WHEN OLD.p_sharp_h IS NOT NULL",
+                "BEGIN SELECT RAISE(ABORT, '账本参考列写一次'); END",
+            )
+        )
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1646,4 +1714,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (27, _apply_v27),
     (28, _apply_v28),
     (29, _apply_v29),
+    (30, _apply_v30),
 )

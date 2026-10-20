@@ -12,6 +12,8 @@ OWNERS: dict[str, set[str]] = {
         "source_match_links",
         "odds_snapshots",
         "sale_statuses",
+        # measure-07：同步报价账本（data/price_ledger.py，A 线仪器）
+        "price_deviation_ledger",
         "quote_observations",
         "draw_results",
         "draw_result_revisions",
