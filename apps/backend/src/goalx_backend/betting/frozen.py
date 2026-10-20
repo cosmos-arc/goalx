@@ -51,6 +51,8 @@ class FrozenDayReport:
     by_reason: dict[str, int] = field(default_factory=dict)
     n_would_bet: int = 0
     would_bet_proxy_stats: dict[str, float | None] = field(default_factory=dict)
+    n_divergences: int = 0
+    divergences: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         """平铺（日志/flow 返回）。"""
@@ -61,6 +63,8 @@ class FrozenDayReport:
             "by_reason": self.by_reason,
             "n_would_bet": self.n_would_bet,
             "would_bet_proxy_stats": self.would_bet_proxy_stats,
+            "n_divergences": self.n_divergences,
+            "divergences": self.divergences,
         }
 
 
@@ -88,11 +92,15 @@ def record_frozen_decisions(
     rule_version: str = RULE_VERSION,
 ) -> FrozenDayReport:
     """
-    冻结一日决策（幂等：同业务日先删后插）。
+    冻结一日决策（write-once：同业务日重跑不覆盖，measure-02）。
 
     分母=当日漏斗明细全体（funnel_fixture_days）：逐场按漏斗级先判
     ineligible/stale_quote/no_edge（三选向同因），合格场逐 selection 按
-    would_bet 门槛判 would_bet/below_threshold。
+    would_bet 门槛判 would_bet/below_threshold。已落卡永不改写（含对账
+    回填列与价值代理）；重算与存储的 **决策级** 分歧（would_bet↔not）
+    落分歧账（frozen_decision_divergences，幂等）供日终人工裁决——
+    重跑不改历史，分歧可审计；纯原因码漂移不落账（决策是承载面）。
+    汇总面从存储表重建：报告 ≡ 账（write-once 权威口径）。
     """
     moment = as_of or datetime.now(UTC).isoformat(timespec="seconds")
     rows = conn.execute(
@@ -106,11 +114,41 @@ def record_frozen_decisions(
         ),
         (business_date,),
     ).fetchall()
+    stored = {
+        (int(r["fixture_id"]), str(r["selection_code"])): (
+            str(r["decision"]),
+            str(r["reason_code"]),
+            str(r["rule_version"]),
+        )
+        for r in conn.execute(
+            " ".join(
+                (
+                    "SELECT fixture_id, selection_code, decision, reason_code,",
+                    "rule_version FROM frozen_decisions WHERE business_date = ?",
+                )
+            ),
+            (business_date,),
+        )
+    }
+    # 跨业务日重复卡防护：同场同选向只冻结最早业务日的 would_bet
+    # （match_codes 允许一场两日改号在售；对账按场次记一次纸面盈亏）
+    claimed = {
+        (int(r["fixture_id"]), str(r["selection_code"])): str(r["business_date"])
+        for r in conn.execute(
+            " ".join(
+                (
+                    "SELECT fixture_id, selection_code, business_date",
+                    "FROM frozen_decisions WHERE decision = 'would_bet'",
+                )
+            )
+        )
+    }
     report = FrozenDayReport(
         business_date=str(business_date), rule_version=rule_version
     )
-    proxies: list[float] = []
     records: list[tuple[Any, ...]] = []
+    divergence_rows: list[tuple[Any, ...]] = []
+    current: dict[tuple[int, str], str] = {}
     for row in rows:
         fixture_reason = _fixture_reason(row["loss_reason"], int(row["level_reached"]))
         for sel in SELECTIONS:
@@ -127,10 +165,32 @@ def record_frozen_decisions(
             elif float(proxy) > 0.0:
                 reason = "would_bet"
                 decision = "would_bet"
-                proxies.append(float(proxy))
             else:
                 reason = "below_threshold"
                 decision = "not"
+            key = (int(row["fixture_id"]), sel)
+            current[key] = decision
+            if key in stored and stored[key][0] != decision:
+                divergence_rows.append(
+                    (
+                        business_date,
+                        key[0],
+                        sel,
+                        stored[key][0],
+                        stored[key][1],
+                        stored[key][2],
+                        decision,
+                        reason,
+                        rule_version,
+                        moment,
+                    )
+                )
+            if (
+                decision == "would_bet"
+                and key in claimed
+                and claimed[key] <= str(business_date)
+            ):
+                continue
             records.append(
                 (
                     business_date,
@@ -145,23 +205,11 @@ def record_frozen_decisions(
                     proxy,
                 )
             )
-            report.by_reason[reason] = report.by_reason.get(reason, 0) + 1
-    report.n_cards = len(records)
-    report.n_would_bet = report.by_reason.get("would_bet", 0)
-    report.would_bet_proxy_stats = {
-        "n": len(proxies),
-        "mean": round(sum(proxies) / len(proxies), 4) if proxies else None,
-        "max": round(max(proxies), 4) if proxies else None,
-    }
     with conn:
-        conn.execute(
-            "DELETE FROM frozen_decisions WHERE business_date = ?",
-            (business_date,),
-        )
         conn.executemany(
             " ".join(
                 (
-                    "INSERT INTO frozen_decisions",
+                    "INSERT OR IGNORE INTO frozen_decisions",
                     "(business_date, fixture_id, selection_code, decision,",
                     "reason_code, rule_version, as_of,",
                     "odds, p_sharp, value_proxy)",
@@ -169,6 +217,80 @@ def record_frozen_decisions(
                 )
             ),
             records,
+        )
+        conn.executemany(
+            " ".join(
+                (
+                    "INSERT OR IGNORE INTO frozen_decision_divergences",
+                    "(business_date, fixture_id, selection_code,",
+                    "stored_decision, stored_reason, stored_rule_version,",
+                    "recomputed_decision, recomputed_reason,",
+                    "rule_version, detected_at)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+            ),
+            divergence_rows,
+        )
+    # 汇总面从存储表重建（write-once 权威口径：报告 ≡ 账，不随重算摆动）
+    agg_rows = conn.execute(
+        " ".join(
+            (
+                "SELECT reason_code, COUNT(*) n FROM frozen_decisions",
+                "WHERE business_date = ? GROUP BY reason_code",
+            )
+        ),
+        (business_date,),
+    ).fetchall()
+    report.by_reason = {str(r["reason_code"]): int(r["n"]) for r in agg_rows}
+    report.n_cards = sum(report.by_reason.values())
+    report.n_would_bet = report.by_reason.get("would_bet", 0)
+    ps = conn.execute(
+        " ".join(
+            (
+                "SELECT COUNT(*) n, AVG(value_proxy) mean, MAX(value_proxy) mx",
+                "FROM frozen_decisions WHERE business_date = ?",
+                "AND decision = 'would_bet'",
+            )
+        ),
+        (business_date,),
+    ).fetchone()
+    report.would_bet_proxy_stats = {
+        "n": int(ps[0] or 0),
+        "mean": round(float(ps[1]), 4) if ps[1] is not None else None,
+        "max": round(float(ps[2]), 4) if ps[2] is not None else None,
+    }
+    div_rows = conn.execute(
+        " ".join(
+            (
+                "SELECT fixture_id, selection_code, stored_decision,",
+                "stored_reason, recomputed_decision, recomputed_reason,",
+                "rule_version, detected_at",
+                "FROM frozen_decision_divergences WHERE business_date = ?",
+                "ORDER BY id",
+            )
+        ),
+        (business_date,),
+    ).fetchall()
+    report.n_divergences = len(div_rows)
+    report.divergences = []
+    for r in div_rows:
+        fid, sel = int(r["fixture_id"]), str(r["selection_code"])
+        recomputed = str(r["recomputed_decision"])
+        report.divergences.append(
+            {
+                "fixture_id": fid,
+                "selection": sel,
+                "stored": str(r["stored_decision"]),
+                "stored_reason": str(r["stored_reason"]),
+                "recomputed": recomputed,
+                "recomputed_reason": str(r["recomputed_reason"]),
+                # 棘轮豁免：本次重算仍=账面重算值 → 分歧未收敛（open）
+                "status": "open"
+                if current.get((fid, sel)) == recomputed
+                else "resolved",
+                "rule_version": str(r["rule_version"]),
+                "detected_at": str(r["detected_at"]),
+            }
         )
     return report
 
@@ -219,6 +341,12 @@ def reconcile_frozen_decisions(
                 "FROM frozen_decisions f",
                 "WHERE f.decision = 'would_bet'",
                 "AND (f.settled_outcome IS NULL OR f.p_sharp_close IS NULL)",
+                # 跨业务日去重：同场同选向只结算最早业务日的卡
+                "AND f.business_date = (",
+                "SELECT MIN(f2.business_date) FROM frozen_decisions f2",
+                "WHERE f2.fixture_id = f.fixture_id",
+                "AND f2.selection_code = f.selection_code",
+                "AND f2.decision = 'would_bet')",
                 "ORDER BY f.id",
             )
         )
@@ -371,10 +499,20 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
         ),
         (business_date,),
     ).fetchone()[0]
+    n_divergences = conn.execute(
+        " ".join(
+            (
+                "SELECT COUNT(*) FROM frozen_decision_divergences",
+                "WHERE business_date = ?",
+            )
+        ),
+        (business_date,),
+    ).fetchone()[0]
     day = funnel_day_row(conn, business_date)
     return {
         "business_date": business_date,
         "frozen_by_reason": by_reason,
+        "frozen_divergences": int(n_divergences),
         "reconciliation": {
             "reconciled": int(recon[0] or 0),
             "paper_profit_flat": round(float(recon[1] or 0.0), 4),

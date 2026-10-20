@@ -1576,6 +1576,46 @@ def _apply_v28(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v29(conn: sqlite3.Connection) -> None:
+    """
+    v29（measure-integrity 票 02）：冻结决策 write-once 分歧账。
+
+    冻结记录改写一次语义（同业务日重跑不覆盖，含对账回填列）后，
+    would_bet↔not 的重算分歧单独落账：追加表 + 复合唯一键幂等，
+    供日终报告人工裁决——重跑不改历史，分歧可审计。带双侧规则版本
+    与 append-only 触发器（与 draw_sync_runs 等证据表同款防线）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS frozen_decision_divergences (
+            id INTEGER PRIMARY KEY,
+            business_date TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL,
+            selection_code TEXT NOT NULL,
+            stored_decision TEXT NOT NULL,
+            stored_reason TEXT NOT NULL,
+            stored_rule_version TEXT NOT NULL,
+            recomputed_decision TEXT NOT NULL,
+            recomputed_reason TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            UNIQUE (business_date, fixture_id, selection_code,
+                    stored_decision, recomputed_decision)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_frozen_divergences_date"
+        + " ON frozen_decision_divergences (business_date)"
+    )
+    for trigger in ("delete", "update"):
+        conn.execute(
+            f"CREATE TRIGGER IF NOT EXISTS trg_frozen_div_no_{trigger}"
+            + f" BEFORE {trigger} ON frozen_decision_divergences"
+            + " BEGIN SELECT RAISE(ABORT, '分歧账追加不可改写'); END"
+        )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1605,4 +1645,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (26, _apply_v26),
     (27, _apply_v27),
     (28, _apply_v28),
+    (29, _apply_v29),
 )

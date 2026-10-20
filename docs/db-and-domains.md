@@ -177,6 +177,9 @@ erDiagram
     forecasts {
         INTEGER id PK
     }
+    frozen_decision_divergences {
+        INTEGER id PK
+    }
     frozen_decisions {
         INTEGER id PK
     }
@@ -1188,6 +1191,31 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 
 唯一键 `UNIQUE(`business_date`, `fixture_id`, `selection_code`)`
 <!-- schema-doc:END:table:frozen_decisions -->
+<!-- schema-doc:BEGIN:table:frozen_decision_divergences -->
+#### `frozen_decision_divergences`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `business_date` | TEXT | NOT NULL |
+| `fixture_id` | INTEGER | NOT NULL |
+| `selection_code` | TEXT | NOT NULL |
+| `stored_decision` | TEXT | NOT NULL |
+| `stored_reason` | TEXT | NOT NULL |
+| `stored_rule_version` | TEXT | NOT NULL |
+| `recomputed_decision` | TEXT | NOT NULL |
+| `recomputed_reason` | TEXT | NOT NULL |
+| `rule_version` | TEXT | NOT NULL |
+| `detected_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`business_date`, `fixture_id`, `selection_code`, `stored_decision`, `recomputed_decision`)`
+
+append-only 触发器：`trg_frozen_div_no_delete`、`trg_frozen_div_no_update`
+<!-- schema-doc:END:table:frozen_decision_divergences -->
+
+measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重算与已落卡的
+**决策级** 分歧（would_bet↔not）追加落账，供日终人工裁决；纯原因码漂移
+不落账。重跑不改历史（票 02 裁决：write-once + 分歧暴露，非静默版本化）。
 ### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->
