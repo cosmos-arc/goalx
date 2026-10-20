@@ -205,7 +205,7 @@ export const GLOSSARY: GlossaryEntry[] = [
 		term: "建议仓位",
 		aliases: ["建议注额", "stake-advice", "仓位建议", "flat", "单注 1–5%"],
 		definition:
-			"系统给出的只读注额建议（不自动改单）：纸面期一律 flat（红线）——bankroll×2% 截断到 1–5% 区间、下限竞彩最低 ¥2；真金期 = ¼ fractional Kelly 再过单注 1–5% 硬上限；EV≤0 一律 ¥0。",
+			"系统给出的只读注额建议（不自动改单）：纸面期一律 flat（红线）——bankroll×2% 截断到 1–5% 区间、下限竞彩最低 ¥2；真金期 = ¼ fractional Kelly 再过单注 5% 硬上限，比例建议不足 1% 时按竞彩最低注 ¥2 参与或跳过（人裁决）；EV≤0 一律 ¥0。",
 		direction:
 			"采纳与否由操作者确认：建议注额只回答“这一注投多少”，档位与截断理由随建议展示（flat/¼Kelly/已按上限截断/EV≤0）。",
 		example:

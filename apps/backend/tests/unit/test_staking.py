@@ -8,7 +8,6 @@ from goalx_backend.betting.staking import (
     FLAT_FRACTION,
     KELLY_FRACTION,
     MAX_BET_FRACTION,
-    MIN_BET_FRACTION,
     MIN_STAKE_CNY,
     StakeTier,
     suggest_stake,
@@ -96,13 +95,21 @@ def test_live_cap_fraction_param_for_tiers() -> None:
     assert loose.stake == pytest.approx(250.0)
 
 
-def test_live_small_edge_floors_at_1pct() -> None:
-    """小 edge：¼Kelly 低于 1% 下限时按 1% 建议并说明（单注硬区间 1-5%）。"""
-    # EV 2%，odds 3.0 → f* = 1%，¼ = 0.25% < 1% → 按下限 1%
+def test_live_small_edge_min_stake_human_call() -> None:
+    """小 edge（measure-09）：¼Kelly 低于 1% 下限→最低注 ¥2+人裁决，不抬比例。
+
+    抬底即放大：odds 6/EV 1% 时 ¼Kelly 0.05% 抬到 1% = 5 倍满 Kelly。
+    """
+    # EV 2%，odds 3.0 → f* = 1%，¼ = 0.25% < 1% → 最低注 ¥2（比例 0.02%）
     hit = suggest_stake(BetMode.LIVE, bankroll=10_000, ev=0.02, odds=3.0)
-    assert hit.fraction == pytest.approx(MIN_BET_FRACTION)
-    assert hit.stake == pytest.approx(100.0)
-    assert "1%" in hit.reason
+    assert hit.tier is StakeTier.QUARTER_KELLY
+    assert hit.fraction == pytest.approx(0.0002)
+    assert hit.stake == MIN_STAKE_CNY
+    assert "由人裁决" in hit.reason
+    # 数例（外部报告口径）：odds 6 / EV 1% → ¼Kelly 0.05% → ¥2 而非 1%
+    tiny_edge = suggest_stake(BetMode.LIVE, bankroll=10_000, ev=0.01, odds=6.0)
+    assert tiny_edge.stake == MIN_STAKE_CNY
+    assert tiny_edge.fraction == pytest.approx(0.0002)  # 不再是 1%（5 倍满 Kelly）
 
 
 def test_live_unfunded_bankroll_is_honest_zero() -> None:
@@ -119,7 +126,7 @@ def test_live_small_bankroll_min_stake_note() -> None:
     assert hit.fraction == pytest.approx(0.025)
     assert hit.stake == pytest.approx(3.75)  # 2.5% × 150 在区间且 ≥ ¥2
     tiny = suggest_stake(BetMode.LIVE, bankroll=30, ev=0.02, odds=3.0)
-    # 1% × 30 = ¥0.3 < ¥2 → 最低注 ¥2 已越 5% 上限（¥1.5）→ 兜底并说明
+    # ¼Kelly 0.25% < 1% → 最低注 ¥2 已越 5% 上限（¥1.5）→ 兜底并说明
     assert tiny.stake == MIN_STAKE_CNY
     assert "超出上限" in tiny.reason
 
@@ -129,10 +136,10 @@ def test_parlay_input_is_whole_bet_caliber() -> None:
     # 两腿独立 EV +10%/+5% → 联合 EV = 1.10×1.05 − 1 = 15.5%，联合赔率 2.0×3.0 = 6.0
     joint_ev = 1.10 * 1.05 - 1
     hit = suggest_stake(BetMode.LIVE, bankroll=10_000, ev=joint_ev, odds=6.0)
-    # f* = 0.155/5 = 3.1%，¼ ≈ 0.775% < 1% → 下限 1%
+    # f* = 0.155/5 = 3.1%，¼ ≈ 0.775% < 1% → 最低注 ¥2（measure-09）
     assert hit.tier is StakeTier.QUARTER_KELLY
-    assert hit.fraction == pytest.approx(MIN_BET_FRACTION)
-    assert hit.stake == pytest.approx(100.0)
+    assert hit.stake == MIN_STAKE_CNY
+    assert hit.fraction == pytest.approx(MIN_STAKE_CNY / 10_000)
 
 
 def test_invalid_inputs_raise() -> None:
