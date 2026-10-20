@@ -400,6 +400,51 @@ def track2_snapshots_of(conn: sqlite3.Connection, fixture_id: int) -> dict[str, 
     return {str(r["snap_type"]): dict(r) for r in rows}
 
 
+def rederive_purchasable(conn: sqlite3.Connection) -> int:
+    """
+    存量纠正（measure-03）：purchasable=1 但拍点时点非 on_sale 的快照改判。
+
+    purchasable 是 append-only sale_statuses 在 target_instant 的纯函数；
+    修复前落下的冒充行逐拍再推导，**只降不升**（诚实方向）。SQL 归本包。
+    """
+    fixed = 0
+    rows = conn.execute(
+        " ".join(
+            (
+                "SELECT id, fixture_id, target_instant FROM track2_snapshots",
+                "WHERE purchasable = 1",
+            )
+        )
+    ).fetchall()
+    for snap in rows:
+        sale = fx_store.latest_sale_status_asof(
+            conn, int(snap["fixture_id"]), "had", str(snap["target_instant"])
+        )
+        if sale is not None and str(sale["sale_state"]) == "on_sale":
+            continue
+        reason = (
+            "sale_status_unknown"
+            if sale is None
+            else (
+                "sale_stopped"
+                if str(sale["sale_state"]) == "stopped"
+                else "sale_status_unknown_value"
+            )
+        )
+        with conn:
+            conn.execute(
+                " ".join(
+                    (
+                        "UPDATE track2_snapshots SET purchasable = 0,",
+                        "purchasable_reason = ? WHERE id = ?",
+                    )
+                ),
+                (reason, int(snap["id"])),
+            )
+        fixed += 1
+    return fixed
+
+
 def _merge_track2_into_funnel(conn: sqlite3.Connection, fixture_id: int) -> None:
     """把该场最新轨二快照合并进 funnel_fixture_days.track2_json（行在则并）。"""
     row = conn.execute(

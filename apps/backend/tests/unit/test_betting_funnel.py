@@ -481,6 +481,100 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     conn.close()
 
 
+def test_track2_sale_states_four_way_and_stale_correction(
+    tmp_path, monkeypatch
+) -> None:
+    """四态判定 + 存量冒充行纠正（measure-03：非 on_sale 一律不冒充可购）。"""
+    import goalx_backend.tasks as tasks_mod
+    from goalx_backend import db as goalx_db
+
+    db_path = tmp_path / "t.db"
+    conn = goalx_db.connect(db_path)
+    goalx_db.migrate(conn)
+    now = "2026-10-17T14:00:00+00:00"
+    fid_sale = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 10)
+    fid_stop = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 11)
+    fid_unknown = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 12)
+    for fid in (fid_sale, fid_stop, fid_unknown):
+        _add_anchor(
+            conn,
+            fid,
+            {"h": 2.2, "d": 3.4, "a": 3.6},
+            captured="2026-10-17T13:00:00+00:00",
+            observed="2026-10-17T13:00:00+00:00",
+        )
+    states = {fid_sale: "on_sale", fid_stop: "stopped", fid_unknown: "unknown"}
+    for fid, state in states.items():
+        fx_store.append_sale_status(
+            conn,
+            SaleStatusInput(
+                fixture_id=fid,
+                market_code="had",
+                sale_state=state,
+                single_eligible=True,
+                observed_at="2026-10-17T13:30:00+00:00",
+            ),
+        )
+    # 存量冒充行：老分支落下的 purchasable=1 + 实际停售（拍点已出窗，不重拍）
+    fid_stale = _seed_joined_fixture(conn, "2026-10-16T14:00:00+00:00", 13)
+    fn.record_track2_snapshot(
+        conn,
+        fn.Track2Capture(
+            fixture_id=fid_stale,
+            snap_type="24h",
+            target_instant="2026-10-15T14:00:00+00:00",
+            captured_at="2026-10-15T14:00:05+00:00",
+            purchasable=True,
+            purchasable_reason=None,
+            jc_odds={"h": 2.5},
+            p_sharp={"h": 0.5},
+        ),
+    )
+    fx_store.append_sale_status(
+        conn,
+        SaleStatusInput(
+            fixture_id=fid_stale,
+            market_code="had",
+            sale_state="stopped",
+            single_eligible=True,
+            observed_at="2026-10-15T13:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    from datetime import datetime as _dt
+
+    def fake_pull(conn, settings, client, *, anchor, targets):
+        return tasks_mod.oddsapi.OddsIngestStats()
+
+    result = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    assert result["24h"]["captured"] == 3
+    # 四态之三（无行态见 test_track2_task_window_idempotent_late）
+    expected = {
+        fid_sale: (1, None),
+        fid_stop: (0, "sale_stopped"),
+        fid_unknown: (0, "sale_status_unknown_value"),
+    }
+    for fid, (flag, reason) in expected.items():
+        row = conn.execute(
+            "SELECT purchasable, purchasable_reason FROM track2_snapshots"
+            " WHERE fixture_id=?",
+            (fid,),
+        ).fetchone()
+        assert row["purchasable"] == flag
+        assert row["purchasable_reason"] == reason
+    # 存量纠正：只降不升，冒充行改判 sale_stopped
+    assert result["purchasable_corrected"] == 1
+    row_stale = conn.execute(
+        "SELECT purchasable, purchasable_reason FROM track2_snapshots"
+        " WHERE fixture_id=?",
+        (fid_stale,),
+    ).fetchone()
+    assert row_stale["purchasable"] == 0
+    assert row_stale["purchasable_reason"] == "sale_stopped"
+    conn.close()
+
+
 def test_track2_task_zero_candidates_zero_pulls(tmp_path, monkeypatch) -> None:
     """零候选日：零请求零落库（既有判活模式）。"""
     import goalx_backend.tasks as tasks_mod
