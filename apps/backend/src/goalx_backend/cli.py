@@ -184,6 +184,11 @@ def _cmd_settle() -> None:
     logger.info("settlement: {}", tasks.settlement_sweep())
 
 
+def _cmd_frozen_reconcile() -> None:
+    """手动跑一次冻结对账批跑（measure-01：含已结算行晚到收盘回填）。"""
+    logger.info("frozen reconcile: {}", tasks.frozen_reconcile())
+
+
 def _cmd_funnel_report(args: argparse.Namespace) -> None:
     """机会漏斗日拍（票 04）：记录/重放一日 + 判活（漏斗表最新业务日）。"""
     with tasks.task_conn() as conn:
@@ -1504,11 +1509,14 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "elo-build",
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
     )
-    funnel_parser = sub.add_parser(
+    sub.add_parser(
+        "frozen-reconcile",
+        help="冻结决策对账批跑(measure-01:结算+收盘回填,已结算缺收盘行独立补齐,幂等)",
+    )
+    sub.add_parser(
         "funnel-report",
         help="机会漏斗日拍(票04:五级分母+轨一估值;判活=漏斗表最新业务日)",
-    )
-    funnel_parser.add_argument(
+    ).add_argument(
         "--as-of",
         type=str,
         default=None,
@@ -1600,6 +1608,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
         "funnel-report": lambda: _cmd_funnel_report(args),
+        "frozen-reconcile": _cmd_frozen_reconcile,
         "guardian-news-funnel": lambda: _cmd_guardian_news_funnel(args),
         "sync-draw-results": _cmd_sync_draw_results,
         "official-reconcile": _cmd_official_reconcile,
