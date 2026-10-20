@@ -455,12 +455,14 @@ def sharp_probs_asof(
     as_of: str,
     *,
     max_age_seconds: float | None = None,
+    anchor_only: bool = False,
 ) -> tuple[dict[str, float], str] | None:
     """
     As_of 时点的 sharp 参考概率与取法身份（pinnacle 主锚优先）。
 
     身份串含共识书集（排序拼接）——双端按书集精确判等同法，避免同数
-    不同书误判（评审修正）。
+    不同书误判（评审修正）。anchor_only=True 只认 pinnacle 主锚（缺=
+    None，不走共识兜底——同步报价账本的单锚口径，measure-07）。
     """
     books = books_complete_asof(
         conn, fixture_id, as_of, max_age_seconds=max_age_seconds
@@ -475,6 +477,8 @@ def sharp_probs_asof(
             )
         )
         return probs, "pinnacle"
+    if anchor_only:
+        return None
     consensus = _probs_from_books(books)
     if consensus is not None:
         return consensus, f"eu_consensus[{','.join(sorted(books))}]"

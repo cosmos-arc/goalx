@@ -42,7 +42,7 @@ import httpx
 
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import observations
+from goalx_backend.data import observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import GOALS_MARKETS
@@ -470,25 +470,29 @@ def store_matches(
         for quote in match.markets:
             for selection, odds in quote.prices.items():
                 meta = {"goal_line": quote.goal_line} if quote.goal_line else None
-                snapshot_id = fx_store.insert_odds_snapshot(
-                    conn,
-                    SnapshotInput(
-                        fixture_id=fixture,
-                        market_code=quote.market_code,
-                        selection_code=selection,
-                        source="sporttery",
-                        odds=odds,
-                        captured_at=quote.captured_at,
-                        observed_at=observed,
-                        source_updated_at=quote.captured_at,
-                        observation_id=observation_id,
-                        meta=meta,
-                    ),
+                snap = SnapshotInput(
+                    fixture_id=fixture,
+                    market_code=quote.market_code,
+                    selection_code=selection,
+                    source="sporttery",
+                    odds=odds,
+                    captured_at=quote.captured_at,
+                    observed_at=observed,
+                    source_updated_at=quote.captured_at,
+                    observation_id=observation_id,
+                    meta=meta,
                 )
+                snapshot_id = fx_store.insert_odds_snapshot(conn, snap)
                 if snapshot_id is None:
                     stats.duplicate_snapshots += 1
                 else:
                     stats.snapshots += 1
+                    # 同步报价账本（measure-07，A 线仪器）：had 新观测同刻
+                    # 配对参考锚；参考缺 NULL 留日终 sweep 回填
+                    if quote.market_code == "had":
+                        price_ledger.record_jc_observation(
+                            conn, snap, snapshot_id=snapshot_id
+                        )
     conn.commit()
     return stats
 
