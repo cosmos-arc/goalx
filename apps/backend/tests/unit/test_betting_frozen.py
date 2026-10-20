@@ -43,6 +43,8 @@ def _add_quotes(
     anchor: dict[str, float],
     *,
     stale_anchor: bool = False,
+    source_time: str = SOURCE_TIME,
+    observed: str = OBSERVED,
 ) -> None:
     for sel, odds in jc.items():
         fx_store.insert_odds_snapshot(
@@ -53,12 +55,12 @@ def _add_quotes(
                 selection_code=sel,
                 source="sporttery",
                 odds=odds,
-                captured_at=SOURCE_TIME,
-                observed_at=OBSERVED,
-                source_updated_at=SOURCE_TIME,
+                captured_at=source_time,
+                observed_at=observed,
+                source_updated_at=source_time,
             ),
         )
-    anchor_time = STALE_TIME if stale_anchor else SOURCE_TIME
+    anchor_time = STALE_TIME if stale_anchor else source_time
     for sel, odds in anchor.items():
         fx_store.insert_odds_snapshot(
             db,
@@ -375,6 +377,137 @@ def test_frozen_funnel_close_heal_after_lost_write(db: sqlite3.Connection) -> No
         (fixture,),
     ).fetchone()
     assert frow["p_sharp_close_h"] == 0.52
+
+
+def test_frozen_write_once_and_divergence_ledger(db: sqlite3.Connection) -> None:
+    """write-once：重跑不覆盖已落卡；would_bet→not 落分歧账；对账列存活。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    _add_quotes(
+        db, fixture, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    report = fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    assert report.n_divergences == 0
+
+    # 对账先落（close+settle）——旧实现同日重跑会 DELETE 毁掉这些列
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    _seed_draw(db, fixture, 2, 1)
+    fz.reconcile_frozen_decisions(db, close_provider, now="2026-10-18T00:00:00+00:00")
+
+    # 输入翻转（价值代理转负）→ 重算 not；存储卡不动，分歧落账
+    db.execute(
+        "UPDATE funnel_fixture_days SET value_proxy_h = -0.05 WHERE fixture_id = ?",
+        (fixture,),
+    )
+    db.commit()
+    report2 = fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    assert report2.n_divergences == 1
+    div = report2.divergences[0]
+    assert div["fixture_id"] == fixture
+    assert div["selection"] == "h"
+    assert div["stored"] == "would_bet"
+    assert div["recomputed"] == "not"
+    assert div["stored_reason"] == "would_bet"
+    assert div["recomputed_reason"] == "below_threshold"
+    assert div["status"] == "open"
+    assert div["rule_version"] == fz.RULE_VERSION
+
+    # 已落卡未被覆盖：决策与对账回填列原样存活
+    row = db.execute(
+        "SELECT decision, reason_code, settled_outcome, p_sharp_close, settled_profit"
+        " FROM frozen_decisions WHERE fixture_id=? AND selection_code='h'",
+        (fixture,),
+    ).fetchone()
+    assert row["decision"] == "would_bet"
+    assert row["reason_code"] == "would_bet"
+    assert row["settled_outcome"] == "won"
+    assert row["p_sharp_close"] == 0.52
+    assert row["settled_profit"] == round(3.0 - 1.0, 4)
+
+    # 分歧账幂等：同分歧再跑不重复；日终汇总带分歧计数
+    report3 = fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    assert report3.n_divergences == 1
+    n = db.execute(
+        "SELECT COUNT(*) FROM frozen_decision_divergences WHERE business_date = ?",
+        (BUSINESS_DATE,),
+    ).fetchone()[0]
+    assert n == 1
+    summary = fz.frozen_summary(db, BUSINESS_DATE)
+    assert summary["frozen_divergences"] == 1
+    # 汇总面 ≡ 存储（write-once 权威口径）：重算翻转不带动汇总计数
+    assert report3.n_would_bet == 1
+    assert report3.by_reason.get("would_bet") == 1
+    assert report3.by_reason.get("below_threshold") == 2
+    # 输入恢复（代理回正）再跑：分歧收敛——账面仍 1 行但状态转 resolved
+    db.execute(
+        "UPDATE funnel_fixture_days SET value_proxy_h = 0.4 WHERE fixture_id = ?",
+        (fixture,),
+    )
+    db.commit()
+    report4 = fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+    assert report4.n_divergences == 1
+    assert report4.divergences[0]["status"] == "resolved"
+
+
+def test_frozen_dual_business_date_single_card(db: sqlite3.Connection) -> None:
+    """跨业务日重复卡：一场两日在售只冻结最早日 would_bet，对账只结算一次。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    _add_quotes(
+        db, fixture, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+
+    # 次日改号在售：新报价面 + 第二业务日漏斗/冻结
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture,
+            kind="jingcai",
+            business_date="2026-10-17",
+            code="周六900",
+        ),
+    )
+    _add_quotes(
+        db,
+        fixture,
+        {"h": 3.0, "d": 3.3, "a": 3.5},
+        {"h": 2.0, "d": 3.4, "a": 4.0},
+        source_time="2026-10-17T14:00:00+00:00",
+        observed="2026-10-17T14:03:00+00:00",
+    )
+    record_funnel_day(db, as_of="2026-10-17T14:04:00+00:00", business_date="2026-10-17")
+    fz.record_frozen_decisions(db, business_date="2026-10-17")
+
+    # 同场同选向只有最早业务日一张 would_bet 卡
+    assert (
+        db.execute(
+            "SELECT COUNT(*) FROM frozen_decisions WHERE decision = 'would_bet'"
+        ).fetchone()[0]
+        == 1
+    )
+    row = db.execute(
+        "SELECT business_date FROM frozen_decisions WHERE decision = 'would_bet'"
+    ).fetchone()
+    assert row["business_date"] == BUSINESS_DATE
+
+    # 对账只结算一次（跨业务日去重）
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    _seed_draw(db, fixture, 2, 1)
+    stats = fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-18T00:00:00+00:00"
+    )
+    assert stats["settled"] == 1
 
 
 def test_settings_free() -> None:
