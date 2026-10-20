@@ -207,11 +207,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注 1-5% 截断
+         * 建议仓位(只读): 纸面 flat / 真金 ¼Kelly + 单注上限截断
          * @description 只读注额建议（票 wb-06，不自动改单）。
          *
          *     EV≤0 → ¥0；paper 一律 flat（红线，与组合引擎 flat 档同口径）；
-         *     live = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 1%-cap%。
+         *     live = ¼ fractional Kelly（f* = EV/(odds-1) 取 1/4）截断单注 cap%；
+         *     不足 1% 下限→竞彩最低注 ¥2 参与或跳过（人裁决，measure-09）。
          *     串关注额=单关口径（传联合赔率/联合 EV，整注一个 Kelly，不分腿）。
          */
         post: operations["stake_advice_api_v1_stake_advice_post"];

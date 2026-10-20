@@ -11,8 +11,10 @@
 - paper 一律 flat（红线）：验证期不引入任何变注额机制，flat 档 = bankroll×2%
   截断到 1–5% 区间、下限竞彩最低注 ¥2——与组合引擎 ``StakeProfile``
   （票 wb-03/05 两玩法页共用）同口径；
-- live = ¼ fractional Kelly：f* = EV/(odds−1) 取 1/4，再截断到单注
-  1%–cap%（默认 5%；票 wb-07 三档额度复用 cap 参数分档）；
+- live = ¼ fractional Kelly：f* = EV/(odds−1) 取 1/4，截断到单注
+  cap% 上限（默认 5%；票 wb-07 三档额度复用 cap 参数分档）；比例建议
+  不足 1% 下限 → 竞彩最低注 ¥2 参与或跳过（人裁决，measure-09——
+  不再抬到 1% 比例，抬底会放大微小优势至数倍满 Kelly）；
 - 串关由调用方传**联合赔率/联合 EV**（腿间独立性假设在前），本函数按
   "整注"口径计算——注额=单关口径（单注一个 Kelly，不分腿）。
 """
@@ -136,21 +138,44 @@ def _flat_stake(bankroll: float) -> StakeSuggestion:
 def _quarter_kelly_stake(
     bankroll: float, ev: float, odds: float, cap_fraction: float
 ) -> StakeSuggestion:
-    """真金 ¼ fractional Kelly：f* = EV/(odds−1) 取 1/4，截断单注 1%–cap%。"""
+    """
+    真金 ¼ fractional Kelly：f* = EV/(odds−1) 取 1/4，截断单注 cap% 上限。
+
+    比例建议不足 1% 下限（measure-09 语义）→ 按竞彩最低注参与并明示
+    人裁决，**不再抬到 1% 比例**——抬底会把微小优势放大数倍满 Kelly
+    （odds 6/EV 1%：¼Kelly 0.05% 抬到 1% = 5 倍满 Kelly）。
+    """
     if bankroll <= 0:
         return StakeSuggestion(
             stake=0.0,
             tier=StakeTier.UNFUNDED,
             reason=(
                 "真金建议 = ¼ fractional Kelly（f* = EV/(odds−1) 取 1/4，"
-                "单注 1–5% 截断），但资金池未入金——暂无注额建议（入金后按比例校准）"
+                "单注上限截断），但资金池未入金——暂无注额建议（入金后按比例校准）"
             ),
         )
     full = ev / (odds - 1)
     quarter = full * KELLY_FRACTION
-    fraction = min(max(quarter, MIN_BET_FRACTION), cap_fraction)
     capped = quarter > cap_fraction
-    floored = quarter < MIN_BET_FRACTION
+    if quarter < MIN_BET_FRACTION:
+        stake = _round_cny(MIN_STAKE_CNY)
+        capped = False  # 下限路径无截断面（比例语义已让位最低注）
+        reason = (
+            f"真金 ¼ fractional Kelly：f* = EV/(odds−1) = {_pct(full)}"
+            f"，取 1/4 = {_pct(quarter)}——低于单注比例下限 1%"
+            f"，按竞彩最低注 ¥{stake:.0f} 参与（或跳过，由人裁决）"
+        )
+        if stake > bankroll * cap_fraction:
+            reason += "；bankroll 较小：最低注已超出上限——建议先入金再按比例投注"
+        return StakeSuggestion(
+            stake=stake,
+            tier=StakeTier.QUARTER_KELLY,
+            fraction=stake / bankroll,
+            full_kelly_fraction=full,
+            capped=capped,
+            reason=reason,
+        )
+    fraction = min(quarter, cap_fraction)
     stake = _round_cny(max(bankroll * fraction, MIN_STAKE_CNY))
     reason = (
         f"真金 ¼ fractional Kelly：f* = EV/(odds−1) = {_pct(full)}"
@@ -158,13 +183,11 @@ def _quarter_kelly_stake(
     )
     if capped:
         reason += f"，已按单注上限 {cap_fraction * 100:.0f}% 截断 → {_pct(fraction)}"
-    elif floored:
-        reason += f"，低于单注下限 1%——按 1% 建议（{_pct(quarter)} → {_pct(fraction)}）"
     else:
         reason += f" → 占比 {_pct(fraction)}"
     reason += (
-        f" → ¥{stake:.2f}；单注硬区间 1%–{cap_fraction * 100:.0f}%"
-        f"（竞彩最低 ¥{MIN_STAKE_CNY:.0f}）"
+        f" → ¥{stake:.2f}；单注比例上限 {cap_fraction * 100:.0f}%"
+        f"（不足下限场景按竞彩最低 ¥{MIN_STAKE_CNY:.0f} 人裁决）"
     )
     if stake > bankroll * cap_fraction:
         reason += "；bankroll 较小：最低注已超出上限——建议先入金再按比例投注"
