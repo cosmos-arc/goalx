@@ -11,6 +11,13 @@ from goalx_backend.modelling.gbm_model import (
     feature_row,
     fit_gbm_model,
 )
+from goalx_backend.modelling.residual_layer import FEATURE_NAMES
+
+
+def test_prematch_features_pit_contract():
+    """PIT 契约（measure-05）：赛前特征集不得含开球后才可得的字段。"""
+    for name in (*GBM_FEATURES, *FEATURE_NAMES):
+        assert "inplay" not in name, f"赛前特征集混入赛中字段: {name}"
 
 
 def _sample(elo: float, outcome: str) -> tuple[dict[str, float | None], str]:

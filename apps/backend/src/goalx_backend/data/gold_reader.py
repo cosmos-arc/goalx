@@ -42,7 +42,7 @@ _DECADE_SQL = """
            close1x2_cons_h, close1x2_cons_d, close1x2_cons_a,
            ou_close_line_med, ou_close_over_water_med, ou_close_under_water_med,
            ah_line_drift, ou_line_drift,
-           ah_n_pre, ah_n_inplay,
+           ah_n_pre,
            ah_close_home_water_med,
            q1h1x2_h, q1h1x2_d, q1h1x2_a,
            q24h1x2_h, q24h1x2_d, q24h1x2_a,
