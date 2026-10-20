@@ -89,6 +89,7 @@ from goalx_backend.evaluation import haircut as hc
 from goalx_backend.evaluation import haircut_decade as hcd
 from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation import model_layers as mlp
+from goalx_backend.evaluation import multiline_bounds as mlb
 from goalx_backend.evaluation import news_signal as nsw
 from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
@@ -182,6 +183,19 @@ def _cmd_audit_ledger() -> None:
 def _cmd_settle() -> None:
     """手动结算批跑。"""
     logger.info("settlement: {}", tasks.settlement_sweep())
+
+
+def _cmd_multiline_bounds() -> None:
+    """OU 约束求界 + AH 联合一致性报告（measure-10，B 线可行性）。"""
+    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+        haircut, source, _n = hc.calibrated_haircut(conn)
+        payload = mlb.run_bounds_study(duck_con, store, haircut=haircut)
+    logger.info(
+        "multiline bounds: {} (haircut={}, source={})",
+        payload["conclusion"],
+        haircut,
+        source,
+    )
 
 
 def _cmd_frozen_reconcile() -> None:
@@ -1511,6 +1525,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="自算Elo全量重算+silver物化(票78;fd热身+配对桥+语料折叠,幂等)",
     )
     sub.add_parser(
+        "multiline-bounds-report",
+        help="OU 约束求界+AH 联合一致性(measure-10:B线可行性,抽样口径)",
+    )
+    sub.add_parser(
         "frozen-reconcile",
         help="冻结决策对账批跑(measure-01:结算+收盘回填,已结算缺收盘行独立补齐,幂等)",
     )
@@ -1609,6 +1627,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
         "funnel-report": lambda: _cmd_funnel_report(args),
+        "multiline-bounds-report": _cmd_multiline_bounds,
         "frozen-reconcile": _cmd_frozen_reconcile,
         "guardian-news-funnel": lambda: _cmd_guardian_news_funnel(args),
         "sync-draw-results": _cmd_sync_draw_results,
