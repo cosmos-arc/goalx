@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from goalx_backend.betting import tax
 from goalx_backend.betting.funnel import L_ELIGIBLE, funnel_day_row
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
@@ -521,6 +522,7 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
             else None,
             "missing_close": int(missing_close),
         },
+        "tax_face": tax.frozen_tax_face(conn, business_date),
         "funnel_on_sale": int(day["n_on_sale"]) if day else None,
         "note": (
             "冻结决策不自动写 bets 表（人裁决：先行观测 2-4 周）；正的价值代理"

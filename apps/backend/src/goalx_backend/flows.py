@@ -23,6 +23,7 @@ from loguru import logger
 from prefect import flow
 
 from goalx_backend import tasks
+from goalx_backend.betting import frozen as frozen_mod
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.data import price_ledger
 from goalx_backend.evaluation import clv as clv_mod
@@ -133,6 +134,8 @@ def daily_wrap_flow() -> dict[str, object]:
         except sqlite3.Error as exc:
             logger.warning("price ledger sweep degraded: {}", exc)
             ledger_filled, ledger_face = -1, {}
+        # 日终冻结汇总面（measure-08：含税前/税后 tax_face）
+        frozen_face = frozen_mod.frozen_summary(conn, str(funnel["business_date"]))
     logger.info(
         "daily wrap: settlement={}, funnel={}, clv={}, audit_findings={}, m3={}",
         settlement,
@@ -148,4 +151,5 @@ def daily_wrap_flow() -> dict[str, object]:
         "clv": clv_stats,
         "audit_findings": findings,
         "price_ledger": {"backfilled": ledger_filled, **ledger_face},
+        "frozen_summary": frozen_face,
     }
