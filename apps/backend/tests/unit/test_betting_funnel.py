@@ -436,7 +436,11 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
     from datetime import datetime as _dt
 
-    result = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    result = tasks_mod.track2_snapshots(
+        now=_dt.fromisoformat(now),
+        pull=fake_pull,
+        decision_at=_dt.fromisoformat(now),
+    )
     assert result["24h"]["captured"] == 1
     assert result["12h"]["captured"] == 1
     assert set(pulls) == {"track2_24h", "track2_12h"}  # 只拉命中窗
@@ -465,14 +469,18 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     )
     # 幂等：重拍零新请求零新行
     pulls.clear()
-    result2 = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    result2 = tasks_mod.track2_snapshots(
+        now=_dt.fromisoformat(now),
+        pull=fake_pull,
+        decision_at=_dt.fromisoformat(now),
+    )
     assert pulls == []
     assert result2["24h"]["captured"] == 0
     # 迟到：把 now 推 2h——hit24 拍点已过 2h 仍可补拍（late_flag=1）
     late_now = _dt.fromisoformat("2026-10-17T16:00:00+00:00")
     conn.execute("DELETE FROM track2_snapshots WHERE fixture_id = ?", (hit24,))
     conn.commit()
-    tasks_mod.track2_snapshots(now=late_now, pull=fake_pull)
+    tasks_mod.track2_snapshots(now=late_now, pull=fake_pull, decision_at=late_now)
     row2 = conn.execute(
         "SELECT late_flag FROM track2_snapshots WHERE fixture_id=?", (hit24,)
     ).fetchone()
@@ -547,7 +555,11 @@ def test_track2_sale_states_four_way_and_stale_correction(
     def fake_pull(conn, settings, client, *, anchor, targets):
         return tasks_mod.oddsapi.OddsIngestStats()
 
-    result = tasks_mod.track2_snapshots(now=_dt.fromisoformat(now), pull=fake_pull)
+    result = tasks_mod.track2_snapshots(
+        now=_dt.fromisoformat(now),
+        pull=fake_pull,
+        decision_at=_dt.fromisoformat(now),
+    )
     assert result["24h"]["captured"] == 3
     # 四态之三（无行态见 test_track2_task_window_idempotent_late）
     expected = {
@@ -572,6 +584,49 @@ def test_track2_sale_states_four_way_and_stale_correction(
     ).fetchone()
     assert row_stale["purchasable"] == 0
     assert row_stale["purchasable_reason"] == "sale_stopped"
+    conn.close()
+
+
+def test_track2_same_run_quote_not_filtered_by_task_clock(
+    tmp_path, monkeypatch
+) -> None:
+    """四时钟（measure-04）：本拍新抓的报价不被任务时刻滤掉。"""
+    import goalx_backend.tasks as tasks_mod
+    from goalx_backend import db as goalx_db
+
+    db_path = tmp_path / "t.db"
+    conn = goalx_db.connect(db_path)
+    goalx_db.migrate(conn)
+    now = "2026-10-17T14:00:00+00:00"  # 任务时刻（窗口计算）
+    fid = _seed_joined_fixture(conn, "2026-10-18T14:00:00+00:00", 14)
+
+    # 锚报价在任务时刻之后才落库且 observed_at=任务时刻+1s——拉取腿产物
+    def seeding_pull(conn, settings, client, *, anchor, targets):
+        _add_anchor(
+            conn,
+            fid,
+            {"h": 2.2, "d": 3.4, "a": 3.6},
+            captured="2026-10-17T14:00:01+00:00",
+            observed="2026-10-17T14:00:01+00:00",
+        )
+        return tasks_mod.oddsapi.OddsIngestStats()
+
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    from datetime import datetime as _dt
+
+    result = tasks_mod.track2_snapshots(
+        now=_dt.fromisoformat(now),
+        pull=seeding_pull,
+        decision_at=_dt.fromisoformat("2026-10-17T14:00:30+00:00"),
+    )
+    # 旧行为：observed > 任务时刻 → no_anchor；新行为：决策时刻可见 → 采集
+    assert result["24h"]["captured"] == 1
+    assert result["24h"]["skipped_no_anchor"] == 0
+    row = conn.execute(
+        "SELECT captured_at FROM track2_snapshots WHERE fixture_id=?",
+        (fid,),
+    ).fetchone()
+    assert row["captured_at"] == "2026-10-17T14:00:30+00:00"
     conn.close()
 
 
