@@ -125,15 +125,15 @@ def daily_wrap_flow() -> dict[str, object]:
             clv_stats: dict[str, Any] = asdict(
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )
+            # 同步报价账本 sweep（measure-07）：源T as-of 主锚回填 NULL 参考行
+            # （降级不打断——语料桥/账本异常不殃及 wrap 主体，同上惯例）
+            try:
+                ledger_filled = price_ledger.backfill_missing_reference(conn, anchor)
+                ledger_face: dict[str, Any] = price_ledger.ledger_summary(conn)
+            except sqlite3.Error as exc:
+                logger.warning("price ledger sweep degraded: {}", exc)
+                ledger_filled, ledger_face = -1, {}
         findings = len(audit_ledger(conn)["manual_review"])
-        # 同步报价账本（measure-07）：NULL 参考行日终回填 + 账面汇总
-        # （降级不打断——corpus/账本异常不殃及 wrap 主体，同上方惯例）
-        try:
-            ledger_filled = price_ledger.backfill_missing_reference(conn)
-            ledger_face: dict[str, Any] = price_ledger.ledger_summary(conn)
-        except sqlite3.Error as exc:
-            logger.warning("price ledger sweep degraded: {}", exc)
-            ledger_filled, ledger_face = -1, {}
         # 日终冻结汇总面（measure-08：含税前/税后 tax_face）
         frozen_face = frozen_mod.frozen_summary(conn, str(funnel["business_date"]))
     logger.info(

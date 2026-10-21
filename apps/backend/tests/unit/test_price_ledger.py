@@ -254,3 +254,62 @@ def test_ledger_anchor_only_no_consensus_fallback(db: sqlite3.Connection) -> Non
     assert row["p_sharp_h"] is None  # 欧共识在场也不兜底
     assert row["anchor_ref"] is None
     assert pl.backfill_missing_reference(db) == 0  # sweep 同样只认主锚
+
+
+def test_backfill_via_srct_corpus_asof(db) -> None:
+    """源T as-of 回填：语料桥在场走主链（sid 链→as-of 三元组→Shin）。"""
+    import duckdb as ddb
+
+    fixture = _seed(db, 5)
+    sid = _jc_snapshot(db, fixture, 2.5)
+    assert pl.record_jc_observation(
+        db,
+        SnapshotInput(
+            fixture_id=fixture,
+            market_code="had",
+            selection_code="h",
+            source="sporttery",
+            odds=2.5,
+            captured_at=OBSERVED,
+            observed_at=OBSERVED,
+            source_updated_at=OBSERVED,
+        ),
+        snapshot_id=sid,
+    )
+    # 物化链 sid（票 77）
+    db.execute(
+        "INSERT INTO source_match_links (fixture_id, source, source_match_id,"
+        " method, status, mapped_at) VALUES (?, 'srct', 's-srct-1',"
+        " 'manual', 'linked', '2026-10-16T00:00:00+00:00')",
+        (fixture,),
+    )
+    db.commit()
+    # 语料桥：odds_change_event 两条（JC 观测前后各一）→ as-of 取 ≤ 观测的最新
+    duck = ddb.connect()
+    duck.execute(
+        "CREATE TABLE odds_change_event (sid VARCHAR, bookmaker_id VARCHAR,"
+        " published_at TIMESTAMP, odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE)"
+    )
+    duck.execute(
+        "INSERT INTO odds_change_event VALUES ('s-srct-1', 'srct:1x2:177',"
+        " '2026-10-16 13:00:00', 2.20, 3.40, 3.60)"
+    )
+    duck.execute(
+        "INSERT INTO odds_change_event VALUES ('s-srct-1', 'srct:1x2:177',"
+        " '2026-10-16 14:02:00', 2.05, 3.45, 3.80)"
+    )
+    duck.execute(
+        "INSERT INTO odds_change_event VALUES ('s-srct-1', 'srct:1x2:177',"
+        " '2026-10-16 15:00:00', 1.90, 3.50, 4.00)"
+    )
+    assert pl.backfill_missing_reference(db, duck) == 1
+    row = db.execute(
+        "SELECT p_sharp_h, p_sharp_d, p_sharp_a, anchor_ref"
+        " FROM price_deviation_ledger WHERE snapshot_id=?",
+        (sid,),
+    ).fetchone()
+    assert row["anchor_ref"] == "srct_1x2_asof"
+    # 14:02 那笔（≤14:03 最新），非 15:00 的盘后笔——as-of 无前视
+    assert row["p_sharp_h"] > row["p_sharp_a"]  # 2.05 低赔侧概率高
+    assert 0.4 < row["p_sharp_h"] < 0.6
+    duck.close()

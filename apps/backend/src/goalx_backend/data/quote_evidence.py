@@ -562,23 +562,44 @@ def srct_pinnacle_closing_triplet(
     ponytail: odds_change_event 为 3,000 万行级 parquet 视图、sid 无索引，
     单查秒级内——日频对账×个位数腿可接受；腿数上量后按 sid 分区物化。
     """
-    try:
-        return _srct_pinnacle_closing(con, home, away, kickoff_utc, sid)
-    except duckdb.Error as exc:  # CatalogException=视图缺席等，降级不打挂
-        logger.warning("srct 收盘锚查询降级: {}", exc)
-        return None
+    return srct_pinnacle_asof_triplet(
+        con, home, away, kickoff_utc, as_of=kickoff_utc, sid=sid
+    )
 
 
-def _srct_pinnacle_closing(
+def srct_pinnacle_asof_triplet(
     con: duckdb.DuckDBPyConnection,
     home: str,
     away: str,
     kickoff_utc: str,
+    *,
+    as_of: str,
     sid: str | None = None,
 ) -> tuple[float, float, float] | None:
-    """srct_pinnacle_closing_triplet 的查询体（异常不兜，由外层统一降级）。"""
-    kickoff = parse_ts(kickoff_utc)
+    """
+    源T 主锚三向 as-of 报价（measure-07 账本参考面）：截止 as_of 的最新一笔。
+
+    收盘=as_of 取 kickoff（srct_pinnacle_closing_triplet 同语义）；
+    as-of 语义保证事后计算无前视。异常降级 None（同收盘版惯例）。
+    """
+    try:
+        return _srct_pinnacle_asof(con, home, away, kickoff_utc, as_of, sid)
+    except duckdb.Error as exc:
+        logger.warning("srct as-of 锚查询降级: {}", exc)
+        return None
+
+
+def _srct_pinnacle_asof(
+    con: duckdb.DuckDBPyConnection,
+    home: str,
+    away: str,
+    kickoff_utc: str,
+    as_of: str,
+    sid: str | None,
+) -> tuple[float, float, float] | None:
+    """查询体：sid 解析（链直传/两步兜底）+ published_at ≤ as_of 最新一笔。"""
     beijing = fx_store.beijing_naive(kickoff_utc)
+    cutoff = parse_ts(as_of)
     if sid is None:
         sid = _resolve_sid_fallback(con, home, away, beijing)
     if sid is None:
@@ -589,7 +610,7 @@ def _srct_pinnacle_closing(
         WHERE sid = ? AND bookmaker_id = ? AND published_at <= ?
         ORDER BY published_at DESC LIMIT 1
         """,
-        [sid, SRCT_PINNACLE_BOOK, kickoff],
+        [sid, SRCT_PINNACLE_BOOK, cutoff],
     ).fetchone()
     if event is None or any(price is None for price in event):
         return None
