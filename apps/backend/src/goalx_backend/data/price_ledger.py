@@ -21,8 +21,14 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+import duckdb
+
+from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.quote_evidence import sharp_probs_asof
+from goalx_backend.data.quote_evidence import (
+    sharp_probs_asof,
+    srct_pinnacle_asof_triplet,
+)
 from goalx_backend.models import SnapshotInput
 
 
@@ -83,12 +89,17 @@ def record_jc_observation(
     return cur.rowcount > 0
 
 
-def backfill_missing_reference(conn: sqlite3.Connection) -> int:
+def backfill_missing_reference(
+    conn: sqlite3.Connection, duck_con: duckdb.DuckDBPyConnection | None = None
+) -> int:
     """
-    日终 sweep：参考锚 NULL 的行按 observed_at 现算回填。
+    日终 sweep：参考锚 NULL 的行现算回填。
 
-    as-of 语义保证事后计算无前视；只处理 p_sharp_h IS NULL 的行，
-    已填行不动。触发器放行仅参考列的回填 UPDATE（见迁移 v30）。
+    duck_con（源T 语料桥）在场时走**源T as-of 主锚**——odds_change_event
+    按 published_at ≤ observed_at 取最新一笔 + Shin 去水（票 75 后源T
+    即收盘/参考主通路）；缺席降级主库 sharp_probs_asof
+    （odds_api:pinnacle，轨二拍点覆盖时才命中）。as-of 语义保证事后
+    计算无前视；只处理 p_sharp_h IS NULL 的行，已填行不动。
     """
     moment = datetime.now(UTC).isoformat(timespec="seconds")
     pending = conn.execute(
@@ -101,12 +112,11 @@ def backfill_missing_reference(conn: sqlite3.Connection) -> int:
     ).fetchall()
     filled = 0
     for row in pending:
-        sharp = sharp_probs_asof(
-            conn, int(row["fixture_id"]), str(row["observed_at"]), anchor_only=True
+        probs, anchor_ref = _reference_asof(
+            conn, duck_con, int(row["fixture_id"]), str(row["observed_at"])
         )
-        if sharp is None:
+        if probs is None:
             continue
-        probs, anchor_ref = sharp
         conn.execute(
             " ".join(
                 (
@@ -127,6 +137,42 @@ def backfill_missing_reference(conn: sqlite3.Connection) -> int:
         filled += 1
     conn.commit()
     return filled
+
+
+def _reference_asof(
+    conn: sqlite3.Connection,
+    duck_con: duckdb.DuckDBPyConnection | None,
+    fixture_id: int,
+    observed_at: str,
+) -> tuple[dict[str, float] | None, str | None]:
+    """参考锚 as-of：源T 主链（链 sid→语料 as-of→Shin）优先，主库降级。"""
+    if duck_con is not None:
+        fixture = fx_store.fixture_detail(conn, fixture_id)
+        link = conn.execute(
+            " ".join(
+                (
+                    "SELECT source_match_id FROM source_match_links",
+                    "WHERE fixture_id = ? AND source = 'srct' AND status = 'linked'",
+                )
+            ),
+            (fixture_id,),
+        ).fetchone()
+        if fixture is not None:
+            triplet = srct_pinnacle_asof_triplet(
+                duck_con,
+                str(fixture["home_team"]),
+                str(fixture["away_team"]),
+                str(fixture["kickoff_utc"]),
+                as_of=observed_at,
+                sid=str(link["source_match_id"]) if link is not None else None,
+            )
+            if triplet is not None:
+                values = om.shin_implied(triplet)
+                return dict(zip(("h", "d", "a"), values, strict=True)), "srct_1x2_asof"
+    sharp = sharp_probs_asof(conn, fixture_id, observed_at, anchor_only=True)
+    if sharp is None:
+        return None, None
+    return sharp[0], sharp[1]
 
 
 def ledger_summary(conn: sqlite3.Connection) -> dict[str, Any]:
