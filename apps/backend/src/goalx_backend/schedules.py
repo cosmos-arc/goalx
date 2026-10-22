@@ -27,6 +27,9 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   内 ~8K 请求预算自动推进，连败 5 场熔断当晚收手，每夜摘要落语料树
   checkpoint 库（`goalx srct-night --list` 晨检）；Phase1 批次（三完整季+
   当季 ≈47K 请求）跑完后每夜零成本心跳
+- srct-remat 08:10（票 11）：夜班收口后 silver 增量物化——odds 水位增量
+  （触及分区重写，A 线参考链保鲜）、fixture/xg 门控全量；护栏命中自动
+  全量兜底；零新工件秒级返回
 - understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - clubelo-sync 09:10：Elo 评级日拍（票 74）——单请求全量快照，赶在

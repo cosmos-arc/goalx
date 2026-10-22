@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
@@ -203,6 +204,51 @@ def latest_bronze_ledger(
     for lineno, line in enumerate(store.iter_bronze_lines(provider, dataset)):
         row = json.loads(line)
         if row.get("parser_version") == version and row.get("sid") is not None:
+            ledger[str(row["sid"])] = lineno
+    return ledger
+
+
+# 信封前缀形状（append_bronze 的 json.dumps 定键序输出）：sid 与
+# parser_version 都在 payload 之前——前缀命中即可零 json.loads 判行归属，
+# GB 级 bronze 增量扫描只解析命中行（票 11；实测 odds_1x2d 全 json.loads
+# 遍 ~5 分钟 vs 前缀扫描 ~1 分钟）。格式漂移（键序变动）自动落 json.loads
+# 慢路径，正确性不依赖序列化形状。
+_ENVELOPE_PREFIX_RE = re.compile(
+    r'^\{"provider": "(?P<provider>[^"]*)", "dataset": "(?P<dataset>[^"]*)", '
+    + r'"sid": "(?P<sid>[^"]*)", "fetched_at": "[^"]*", '
+    + r'"parser_version": "(?P<version>[^"]*)"'
+)
+
+
+def latest_bronze_ledger_filtered(
+    store: CorpusStore,
+    provider: str,
+    dataset: str,
+    version: str,
+    wanted: set[str],
+) -> dict[str, int]:
+    """
+    过滤版选轨账本：仅 wanted 中 sid 进账本（后行胜出语义不变）。
+
+    与 latest_bronze_ledger 的唯一差异=非目标行零 json.loads——前缀正则判
+    (provider, dataset, sid, version)，四处任一不符（或 wanted 不含）即跳过；
+    前缀不匹配的行落 json.loads 慢路径兜底（未来键序漂移只慢不错）。
+    """
+    ledger: dict[str, int] = {}
+    for lineno, line in enumerate(store.iter_bronze_lines(provider, dataset)):
+        found = _ENVELOPE_PREFIX_RE.match(line)
+        if found is not None:
+            if (
+                found.group("provider") != provider
+                or found.group("dataset") != dataset
+                or found.group("version") != version
+                or found.group("sid") not in wanted
+            ):
+                continue
+            ledger[found.group("sid")] = lineno
+            continue
+        row = json.loads(line)  # 慢路径：键序/格式漂移行
+        if row.get("parser_version") == version and str(row.get("sid")) in wanted:
             ledger[str(row["sid"])] = lineno
     return ledger
 

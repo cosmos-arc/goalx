@@ -173,6 +173,23 @@ CREATE TABLE IF NOT EXISTS guardian_request_days (
     requests INTEGER NOT NULL DEFAULT 0
 )
 """
+# 票 11 增量物化状态（单行状态机）：高水位=上次成功 remat 快照时的
+# raw_artifacts 最大 rowid（行级提交序，判据 rowid > 水位即"上次未见"——
+# fetched_at 秒级定宽会有同秒竞态：快照末秒内后提交的行会被时间戳判据
+# 永久漏掉；INSERT OR IGNORE 不改行、后写行 rowid 单调，提交序判据无此
+# 窗口）。watermark 列只作人读审计面（对应快照时点 max fetched_at）。
+# bronze_sid_counts=各数据集 (版本, sid 行数) 快照——计数与水位加账不平
+# 即"无 raw 佐证的 bronze 变动"（中断回补/外部重建脚本），增量不可解，
+# 落全量兜底
+_SRCT_REMAT_STATE_SQL = """
+CREATE TABLE IF NOT EXISTS srct_remat_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    watermark TEXT NOT NULL,
+    last_rowid INTEGER NOT NULL,
+    bronze_sid_counts TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
 # Bronze sid 索引：解析层防重（_bronze_sids 原全量解压 bronze GB 级 ~10 分钟/
 # 每日一次）的 O(1) 载体——append_bronze 同步 upsert；anchor=文件 size:mtime，
 # 外部改动（文件被删/旧代码进程直写）触发整体重扫，保住"文件即真相"自愈
@@ -210,6 +227,7 @@ _CHECKPOINT_TABLE_SQL = (
     _GUARDIAN_REQUEST_DAYS_SQL,
     _BRONZE_SIDS_SQL,
     _BRONZE_SID_BACKFILL_SQL,
+    _SRCT_REMAT_STATE_SQL,
 )
 _TABLE_NAME_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)")
 
@@ -738,6 +756,95 @@ class CorpusStore:
             (limit,),
         )
         return [dict(row) for row in rows]
+
+    def raw_artifacts_since(
+        self, provider: str, datasets: tuple[str, ...], last_rowid: int
+    ) -> dict[str, list[tuple[str, str, str]]]:
+        """
+        提交序高水位之后的 raw 工件（票 11 增量判据）。
+
+        dataset → [(key, sha256, fetched_at)]（fetched_at 升序）。
+        last_rowid=上次快照的 max(rowid)；rowid 表插入序单调、INSERT OR
+        IGNORE 不占新 rowid，`rowid > 水位` 精确等价"上次快照后提交"。
+        last_rowid=0 = 全部历史。sha 变化不经此判据（silver 消费 bronze，
+        raw sha 漂移若无 bronze 变动对 silver 零影响；bronze 变动由计数
+        护栏兜住）。
+        """
+        if not datasets:
+            return {}
+        marks = ",".join("?" for _ in datasets)
+        rows = self._checkpoint().execute(
+            # dataset 值经参数绑定，非拼接（S608 豁免注释同库内先例）
+            "SELECT dataset, key, sha256, fetched_at FROM raw_artifacts "  # noqa: S608
+            + f"WHERE provider=? AND dataset IN ({marks}) AND rowid > ? "
+            + "ORDER BY fetched_at, rowid",
+            (provider, *datasets, last_rowid),
+        )
+        out: dict[str, list[tuple[str, str, str]]] = {}
+        for row in rows:
+            out.setdefault(str(row["dataset"]), []).append(
+                (str(row["key"]), str(row["sha256"]), str(row["fetched_at"]))
+            )
+        return out
+
+    def raw_artifacts_high_water(self, provider: str) -> tuple[int, str]:
+        """当前 (max rowid, max fetched_at) 快照（remat 起点锚；空表 0/空串）。"""
+        row = (
+            self._checkpoint()
+            .execute(
+                # 字面量拼接（pyright 禁隐式串接），参数绑定；S608 豁免同库内先例
+                "SELECT MAX(rowid) AS rid, MAX(fetched_at) AS ts FROM raw_artifacts "  # noqa: S608
+                + "WHERE provider=?",
+                (provider,),
+            )
+            .fetchone()
+        )
+        if row is None or row["rid"] is None:
+            return 0, ""
+        return int(row["rid"]), str(row["ts"] or "")
+
+    def bronze_sid_count(self, provider: str, dataset: str, parser_version: str) -> int:
+        """该数据集指定版本已落 bronze 的 sid 行数（计数护栏用；不建集）。"""
+        row = (
+            self._checkpoint()
+            .execute(
+                """
+            SELECT COUNT(*) AS n FROM bronze_sids
+            WHERE provider=? AND dataset=? AND parser_version=?
+            """,
+                (provider, dataset, parser_version),
+            )
+            .fetchone()
+        )
+        return int(row["n"]) if row else 0
+
+    def remat_state(self) -> dict[str, object] | None:
+        """增量物化状态行（无行=从未跑过，调用方走全量兜底）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT * FROM srct_remat_state WHERE id = 1")
+            .fetchone()
+        )
+        return None if row is None else dict(row)
+
+    def upsert_remat_state(
+        self, watermark: str, last_rowid: int, bronze_sid_counts: str
+    ) -> None:
+        """覆写增量物化状态（单行；仅在整轮成功后调用——失败不推进水位）。"""
+        self._checkpoint().execute(
+            """
+            INSERT INTO srct_remat_state
+                (id, watermark, last_rowid, bronze_sid_counts, updated_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                watermark=excluded.watermark,
+                last_rowid=excluded.last_rowid,
+                bronze_sid_counts=excluded.bronze_sid_counts,
+                updated_at=excluded.updated_at
+            """,
+            (watermark, last_rowid, bronze_sid_counts, utc_now_iso()),
+        )
+        self._checkpoint().commit()
 
     def guardian_state(self) -> dict[str, object]:
         """卫报语料游标状态（无行=初生默认：backfill 自 1999-01-01 起）。"""
