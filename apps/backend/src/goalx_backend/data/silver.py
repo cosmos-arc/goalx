@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -110,13 +111,18 @@ def to_float(value: object) -> float | None:
         return None
 
 
+def tmp_name() -> str:
+    """Parquet tmp 名（掺 pid：08:10 定拍与人工全量并发时不共用 tmp 交错撕裂）。"""
+    return f"data.parquet.{os.getpid()}.tmp"
+
+
 def write_partition(
     part: Path, rows: list[dict[str, object]], schema: pa.Schema
 ) -> None:
     """一分区一 parquet 文件（tmp 原子替换；排序已在上游统一完成）。"""
     part.mkdir(parents=True, exist_ok=True)
     table = pa.Table.from_pylist(rows, schema=schema)
-    tmp = part / "data.parquet.tmp"
+    tmp = part / tmp_name()
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(part / "data.parquet")
 
@@ -126,7 +132,7 @@ def write_dataset_file(
 ) -> None:
     """整数据集一 parquet（tmp 原子替换；单文件数据集共用舞步）。"""
     root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
+    tmp = root / tmp_name()
     pq.write_table(pa.Table.from_pylist(rows, schema=schema), tmp, compression="zstd")
     tmp.replace(root / "data.parquet")
 

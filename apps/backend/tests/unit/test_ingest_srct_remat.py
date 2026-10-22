@@ -403,6 +403,109 @@ def test_filtered_ledger_matches_full_restriction(tmp_path: Path) -> None:
         store.close()
 
 
+def test_relisted_sid_migration_covers_old_partition(tmp_path: Path) -> None:
+    """同 sid 被更晚日页改挂另一真实分区（重挂改联赛）：迁移出分区并入触及集
+    （correctness-review F1）——旧分区不得残留该 sid，树与全量逐字节一致。"""
+    store, settings = _seed_two_partitions(tmp_path)
+    try:
+        # 更晚日页重挂 90002（原西甲）到英超（无新 odds raw，纯日页事件）
+        routes = _routes_for("2025-10-03", "90002", "英超")
+        _collect(store, settings, routes, "2025-10-03")
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=2025-26/competition=西甲" in report.affected_partitions
+        assert "season=2025-26/competition=英超" in report.affected_partitions
+        # 迁出：西甲分区被清空收走（drained，全量语义同）；英超收编两场
+        assert not (_odds_root(store) / "season=2025-26" / "competition=西甲").exists()
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "英超")} == {
+            "90001",
+            "90002",
+        }
+        # 全量等价（逐字节）——契约核心
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()
+
+
+def test_prune_failure_degrades_not_raises(tmp_path: Path) -> None:
+    """定向清零遇目录内杂物（子目录）记 degraded 不上抛（correctness-review F3）。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        routes = _routes_for("2025-10-01", "90001", "西甲")
+        _collect(store, settings, routes, "2025-10-01")
+        store.ingest_raw(
+            srct.SRCT_PROVIDER, srct.ODDS_DATASET, "90004@open", _ODDS_JS, ext=".js"
+        )
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90004",
+                    "fetched_at": "2025-10-02T01:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "d" * 64,
+                    "payload": srct.parse_odds_page(_ODDS_JS),
+                }
+            ],
+        )
+        srct_remat.run_remat(store)  # 首跑全量：90004 落 _unknown
+        # _unknown 内预置子目录（外部杂物形状）→ 90004 日页到位迁出时清理会炸
+        stale_dir = (
+            _odds_root(store) / "season=_unknown" / "competition=_unknown" / "junk"
+        )
+        stale_dir.mkdir()
+        routes = _routes_for("2025-10-02", "90004", "西甲")
+        _collect(store, settings, routes, "2025-10-02")
+        report = srct_remat.run_remat(store)
+        assert report.mode == "degraded"
+        assert any(d.startswith("odds_incremental") for d in report.degraded)
+        assert store.remat_state() is not None  # 旧状态仍在（水位未推进）
+    finally:
+        store.close()
+
+
+def test_night_repaired_window_uses_ended_at(tmp_path: Path) -> None:
+    """跨过上次 remat 的夜班（started<updated<ended）回补也入窗（F4）。"""
+    store, _ = _seed_two_partitions(tmp_path)
+    try:
+        state = store.remat_state()
+        assert state is not None
+        # 夜班 started 在状态刷新前、ended 在后（overrun 过 08:10 形状）
+        store.record_night_summary(
+            {
+                "night_date": "2025-10-02",
+                "started_at": "2025-10-02T00:30:00+00:00",
+                "ended_at": "2099-01-01T00:30:00+00:00",
+                "stop_reason": "done",
+                "dates_attempted": 1,
+                "dates_done": 1,
+                "dates_not_found": 0,
+                "pending_before": 0,
+                "pending_after": 0,
+                "requests": 1,
+                "raw_new": 0,
+                "parsed_ok": 1,
+                "bronze_repaired": 2,
+                "xg_matches": 0,
+                "parse_failed_count": 0,
+                "failed_count": 0,
+                "failed_json": "{}",
+                "budget_cap": 8000,
+            }
+        )
+        report = srct_remat.run_remat(store)
+        assert report.mode == "full"
+        assert report.guard_reason == "夜班摘要报 bronze_repaired"
+    finally:
+        store.close()
+
+
 def test_fixture_and_xg_gated_by_watermark(tmp_path: Path) -> None:
     """fixture/xg 门控：day_page/match_stats 有新工件才重建（全量路径）。"""
     store, settings = _seed_two_partitions(tmp_path)

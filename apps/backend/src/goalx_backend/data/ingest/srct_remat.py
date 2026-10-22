@@ -129,11 +129,14 @@ def _night_repaired_since(store: CorpusStore, since: str) -> bool:
     """
     快照窗内有夜班 bronze 回补（回补不吃新 raw 键，水位判据结构性不可见）。
 
-    limit=30 夜对日拍节奏余量充足；超长缺勤窗内更早的回补可能漏看
-    （罕见；残留由全量维护口径兜底，同计数护栏残留窗）。
+    窗判据=摘要 ended_at > 上次状态行 updated_at：跨过上次 remat 的夜班
+    （started_at 在前、ended_at 在后）也入窗——started_at 判据会漏掉
+    overrun 过 08:10 的夜班回补（correctness-review F4），误触发方向
+    只是多跑一次全量，无害。limit=30 夜对日拍节奏余量充足；超长缺勤窗
+    内更早的回补可能漏看（罕见；残留由全量维护口径兜底）。
     """
     for summary in store.night_summaries(limit=30):
-        if since and str(summary["started_at"]) < since:
+        if since and not str(summary["ended_at"]) > since:
             continue
         if cast("int", summary["bronze_repaired"]) > 0:
             return True
@@ -166,7 +169,7 @@ def _run_incremental_odds(
     new_raw: dict[str, list[RawArtifact]],
     meta: dict[str, dict[str, object]],
 ) -> None:
-    """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级上抛面）。"""
+    """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级）。"""
     new_day_dates = {art.key for art in new_raw.get(srct.DAY_DATASET, [])}
     new_odds_sids = {
         art.key.split("@", 1)[0]
@@ -176,7 +179,23 @@ def _run_incremental_odds(
     day_sids = {sid for sid, row in meta.items() if str(row["day"]) in new_day_dates}
     partitions = {_partition_of(sid, meta) for sid in new_odds_sids | day_sids}
     if day_sids:
-        # 新日页解锁孤儿：_unknown 必须重写（迁出行驻留），与迁入分区成对
+        # 新日页解锁孤儿：_unknown 必须重写（迁出行驻留），与迁入分区成对；
+        # 重挂场次的"迁移出分区"（旧页联赛/开球界）同并入——排除新日页
+        # 复算旧元数据可得其原分区（correctness-review F1：真实↔真实
+        # 迁移无 _unknown 式特判，漏触及=旧分区残留该 sid 行，树与全量分叉）
+        day_rows = silver.latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct.DAY_DATASET,
+            srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+        )
+        old_meta = {
+            str(row["sid"]): row
+            for row in srct_silver.fixture_rows_from(
+                {k: v for k, v in day_rows.items() if k not in new_day_dates}
+            )[0]
+        }
+        partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
         partitions.add(_UNKNOWN_PARTITION)
     report.affected_partitions = sorted(
         f"season={season}/competition={competition}"
@@ -193,14 +212,14 @@ def _run_incremental_odds(
         )
     try:
         odds_report = srct_odds.build_odds_change_events(
-            store, ledgers=ledgers, clean_stale=False, write_meta=False
+            store, ledgers=ledgers, clean_stale=False, write_meta=False, meta=meta
         )
+        _prune_drained_partitions(store, partitions, odds_report.partition_keys)
     except Exception as exc:
         logger.warning("srct-remat odds 增量降级：{}", exc)
         report.degraded.append(f"odds_incremental: {type(exc).__name__}")
         report.mode = "degraded"
         return
-    _prune_drained_partitions(store, partitions, odds_report.partition_keys)
     report.odds = asdict(odds_report)
     _write_incremental_meta(store, report, odds_report)
 

@@ -439,7 +439,7 @@ class StreamingPartitions:
         if not buffer:
             return
         part.mkdir(parents=True, exist_ok=True)
-        tmp = part / "data.parquet.tmp"
+        tmp = part / silver.tmp_name()
         writer = self._writers.get(part)
         if writer is None:
             writer = pq.ParquetWriter(tmp, self._schema, compression="zstd")
@@ -459,7 +459,7 @@ class StreamingPartitions:
         for writer in self._writers.values():
             writer.close()
         for part in self._writers:
-            (part / "data.parquet.tmp").replace(part / "data.parquet")
+            (part / silver.tmp_name()).replace(part / "data.parquet")
         target = set(self._writers)
         stale = silver.remove_stale(self._root, target) if prune else 0
         return len(target), stale
@@ -1137,6 +1137,24 @@ def _load_chunk_bronzes(
     return maps
 
 
+def _resolve_ledgers(
+    store: CorpusStore, ledgers: dict[str, dict[str, int]] | None
+) -> dict[str, dict[str, int]]:
+    """全量缺省账本（四数据集选轨遍）或注入账本校验（缺数据集即炸）。"""
+    if ledgers is not None:
+        missing = sorted(set(srct.ODDS_FAMILY) - set(ledgers))
+        if missing:
+            msg = f"注入账本缺数据集：{missing}"
+            raise ValueError(msg)
+        return ledgers
+    return {
+        dataset: silver.latest_bronze_ledger(
+            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
+        )
+        for dataset in srct.ODDS_FAMILY
+    }
+
+
 def build_odds_change_events(
     store: CorpusStore,
     *,
@@ -1145,6 +1163,7 @@ def build_odds_change_events(
     ledgers: dict[str, dict[str, int]] | None = None,
     clean_stale: bool = True,
     write_meta: bool = True,
+    meta: dict[str, dict[str, object]] | None = None,
 ) -> SilverOddsReport:
     """
     重物化 silver odds_change_event（幂等；四数据集 bronze 当前版本）。
@@ -1169,22 +1188,15 @@ def build_odds_change_events(
     前缀扫描零全量 json.loads）——选取/排序/转换/写入路径与全量逐字节
     同构，输出分区=全量重建的同分区切片；clean_stale=False 保未触及
     分区；write_meta=False 不覆写全量 `_meta.json`（增量面落
-    `_incremental.json`，由调用方记）。
+    `_incremental.json`，由调用方记）。meta 注入调用方已读的同一份
+    fixture 元数据——增量侧的触及集推导与发射分区必须同一快照（夜班
+    overrun 过 08:10 时二次读取会选出"未触及"却按新元数据发射的错位，
+    correctness-review 2026-10-22 F2）。
     """
     report = SilverOddsReport(built_at=utc_now_iso())
-    meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
-    if ledgers is None:
-        ledgers = {
-            dataset: silver.latest_bronze_ledger(
-                store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
-            )
-            for dataset in srct.ODDS_FAMILY
-        }
-    else:
-        missing = set(srct.ODDS_FAMILY) - set(ledgers)
-        if missing:
-            msg = f"注入账本缺数据集：{sorted(missing)}"
-            raise ValueError(msg)
+    if meta is None:
+        meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
+    ledgers = _resolve_ledgers(store, ledgers)
     root = store.silver_path(srct.SRCT_PROVIDER, ODDS_DATASET)
     out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
@@ -1194,9 +1206,8 @@ def build_odds_change_events(
         kickoff = cast("datetime", fixture["kickoff"]) if fixture else datetime.min
         return (fixture is None, kickoff, sid)
 
-    all_ledgers = ledgers
     sids = sorted(
-        set().union(*(set(led) for led in all_ledgers.values())), key=_sid_sort_key
+        set().union(*(set(led) for led in ledgers.values())), key=_sid_sort_key
     )
     size = max(1, chunk_sids)
     chunks = [list(part) for part in batched(sids, size, strict=False)]
@@ -1207,7 +1218,7 @@ def build_odds_change_events(
         shutil.rmtree(spill_root)
     spill_root.mkdir(parents=True)
     try:
-        for dataset, ledger in all_ledgers.items():
+        for dataset, ledger in ledgers.items():
             _spill_selected(store, dataset, ledger, chunk_of, spill_root)
         for idx, part in enumerate(chunks):
             bronzes = _load_chunk_bronzes(spill_root / _spill_name(idx))
