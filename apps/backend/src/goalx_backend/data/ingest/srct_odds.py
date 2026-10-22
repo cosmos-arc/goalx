@@ -268,6 +268,7 @@ class SilverOddsReport:
     )  # 赛事级存在率/赛前末可见率摘要（书商级矩阵归切片 17 门报告查询）
     partitions: int = 0
     stale_partitions_removed: int = 0
+    partition_keys: list[str] = field(default_factory=list)  # "season/competition"
     seasons: dict[str, int] = field(default_factory=dict)
     built_at: str = ""
 
@@ -419,6 +420,9 @@ class StreamingPartitions:
         self._buffers: dict[Path, list[dict[str, object]]] = {}
         self._writers: dict[Path, pq.ParquetWriter] = {}
         self.season_rows: Counter[str] = Counter()
+        # 实写分区键（"season/competition"）：增量收尾定向清理的判据面
+        # （触及集内零行分区应消失=全量语义；票 11）
+        self.written_keys: set[str] = set()
 
     def append(self, season: str, competition: str, row: dict[str, object]) -> None:
         """一行入缓冲（达 chunk_rows 落一行组；分区参数见类注释）。"""
@@ -426,6 +430,7 @@ class StreamingPartitions:
         buffer = self._buffers.setdefault(part, [])
         buffer.append(row)
         self.season_rows[season] += 1
+        self.written_keys.add(f"{season}/{competition}")
         if len(buffer) >= self._chunk:
             self._flush(part)
 
@@ -434,7 +439,7 @@ class StreamingPartitions:
         if not buffer:
             return
         part.mkdir(parents=True, exist_ok=True)
-        tmp = part / "data.parquet.tmp"
+        tmp = part / silver.tmp_name()
         writer = self._writers.get(part)
         if writer is None:
             writer = pq.ParquetWriter(tmp, self._schema, compression="zstd")
@@ -442,16 +447,22 @@ class StreamingPartitions:
         writer.write_table(pa.Table.from_pylist(buffer, schema=self._schema))
         self._buffers[part] = []
 
-    def close(self) -> tuple[int, int]:
-        """收尾：冲全部 buffer、关 writer、tmp 替换、清陈旧分区。"""
+    def close(self, *, prune: bool = True) -> tuple[int, int]:
+        """
+        收尾：冲全部 buffer、关 writer、tmp 替换；prune=True 清陈旧分区。
+
+        增量路径（票 11）传 prune=False——未触及分区不在 writer 集内，若照
+        全量清理语义会误删；陈旧分区的清理由全量维护口径负责。
+        """
         for part in list(self._buffers):
             self._flush(part)
         for writer in self._writers.values():
             writer.close()
         for part in self._writers:
-            (part / "data.parquet.tmp").replace(part / "data.parquet")
+            (part / silver.tmp_name()).replace(part / "data.parquet")
         target = set(self._writers)
-        return len(target), silver.remove_stale(self._root, target)
+        stale = silver.remove_stale(self._root, target) if prune else 0
+        return len(target), stale
 
 
 @dataclass
@@ -1126,11 +1137,33 @@ def _load_chunk_bronzes(
     return maps
 
 
+def _resolve_ledgers(
+    store: CorpusStore, ledgers: dict[str, dict[str, int]] | None
+) -> dict[str, dict[str, int]]:
+    """全量缺省账本（四数据集选轨遍）或注入账本校验（缺数据集即炸）。"""
+    if ledgers is not None:
+        missing = sorted(set(srct.ODDS_FAMILY) - set(ledgers))
+        if missing:
+            msg = f"注入账本缺数据集：{missing}"
+            raise ValueError(msg)
+        return ledgers
+    return {
+        dataset: silver.latest_bronze_ledger(
+            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
+        )
+        for dataset in srct.ODDS_FAMILY
+    }
+
+
 def build_odds_change_events(
     store: CorpusStore,
     *,
     chunk_rows: int = STREAM_CHUNK_ROWS,
     chunk_sids: int = STREAM_CHUNK_SIDS,
+    ledgers: dict[str, dict[str, int]] | None = None,
+    clean_stale: bool = True,
+    write_meta: bool = True,
+    meta: dict[str, dict[str, object]] | None = None,
 ) -> SilverOddsReport:
     """
     重物化 silver odds_change_event（幂等；四数据集 bronze 当前版本）。
@@ -1150,27 +1183,20 @@ def build_odds_change_events(
     升序）后 ah（撤采留档）再 ah 矩阵、ou 矩阵（各 cid 升序），书内
     (published_at, source_order) 升序。分区取 fixture
     元数据（orphan → `_unknown`）。门④记账见 SilverOddsReport。
+
+    增量接缝（票 11）：ledgers 注入外算的过滤账本（仅目标分区 sid 集，
+    前缀扫描零全量 json.loads）——选取/排序/转换/写入路径与全量逐字节
+    同构，输出分区=全量重建的同分区切片；clean_stale=False 保未触及
+    分区；write_meta=False 不覆写全量 `_meta.json`（增量面落
+    `_incremental.json`，由调用方记）。meta 注入调用方已读的同一份
+    fixture 元数据——增量侧的触及集推导与发射分区必须同一快照（夜班
+    overrun 过 08:10 时二次读取会选出"未触及"却按新元数据发射的错位，
+    correctness-review 2026-10-22 F2）。
     """
     report = SilverOddsReport(built_at=utc_now_iso())
-    meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
-    odds_ledger = silver.latest_bronze_ledger(
-        store,
-        srct.SRCT_PROVIDER,
-        srct.ODDS_DATASET,
-        srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
-    )
-    hdp_ledger = silver.latest_bronze_ledger(
-        store,
-        srct.SRCT_PROVIDER,
-        srct.HANDICAP_DATASET,
-        srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
-    )
-    matrix_ledgers = {
-        dataset: silver.latest_bronze_ledger(
-            store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
-        )
-        for dataset in (srct.ASIANODDS_DATASET, srct.OVERDOWN_DATASET)
-    }
+    if meta is None:
+        meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
+    ledgers = _resolve_ledgers(store, ledgers)
     root = store.silver_path(srct.SRCT_PROVIDER, ODDS_DATASET)
     out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)
     tracker = _EmitTracker()
@@ -1180,13 +1206,8 @@ def build_odds_change_events(
         kickoff = cast("datetime", fixture["kickoff"]) if fixture else datetime.min
         return (fixture is None, kickoff, sid)
 
-    all_ledgers = {
-        srct.ODDS_DATASET: odds_ledger,
-        srct.HANDICAP_DATASET: hdp_ledger,
-        **matrix_ledgers,
-    }
     sids = sorted(
-        set().union(*(set(led) for led in all_ledgers.values())), key=_sid_sort_key
+        set().union(*(set(led) for led in ledgers.values())), key=_sid_sort_key
     )
     size = max(1, chunk_sids)
     chunks = [list(part) for part in batched(sids, size, strict=False)]
@@ -1197,7 +1218,7 @@ def build_odds_change_events(
         shutil.rmtree(spill_root)
     spill_root.mkdir(parents=True)
     try:
-        for dataset, ledger in all_ledgers.items():
+        for dataset, ledger in ledgers.items():
             _spill_selected(store, dataset, ledger, chunk_of, spill_root)
         for idx, part in enumerate(chunks):
             bronzes = _load_chunk_bronzes(spill_root / _spill_name(idx))
@@ -1212,9 +1233,10 @@ def build_odds_change_events(
                 )
     finally:
         shutil.rmtree(spill_root, ignore_errors=True)
-        partitions, stale = out.close()
+        partitions, stale = out.close(prune=clean_stale)
     report.partitions = partitions
     report.stale_partitions_removed = stale
+    report.partition_keys = sorted(out.written_keys)
     report.seasons = dict(out.season_rows)
     report.trajectories = len(tracker.trajectory_pre)
     report.no_pre_kickoff_quote = sum(
@@ -1249,27 +1271,28 @@ def build_odds_change_events(
     )
     total = report.source_rows_1x2 + report.source_rows_ah + report.source_rows_ou
     report.unexplained_gap = total - accounted  # 负值=过记账，同样不许静默
-    silver.write_dataset_meta(
-        root,
-        {
-            "silver_version": ODDS_SILVER_VERSION,
-            "bronze_versions": {
-                "odds": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
-                "handicap": srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
-                "asian_odds": srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET],
-                "over_down": srct.BRONZE_VERSIONS[srct.OVERDOWN_DATASET],
+    if write_meta:
+        silver.write_dataset_meta(
+            root,
+            {
+                "silver_version": ODDS_SILVER_VERSION,
+                "bronze_versions": {
+                    "odds": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "handicap": srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+                    "asian_odds": srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET],
+                    "over_down": srct.BRONZE_VERSIONS[srct.OVERDOWN_DATASET],
+                },
+                "built_at": report.built_at,
+                "events_1x2": report.events_1x2,
+                "events_ah": report.events_ah,
+                "events_ou": report.events_ou,
+                "heartbeat_dropped": report.heartbeat_dropped,
+                "source_rows": total,
+                "unexplained_gap": report.unexplained_gap,
+                "orphan_sids": report.orphan_sids,
+                "partitions": report.partitions,
+                "seasons": report.seasons,
+                "coverage_by_competition": report.coverage_by_competition,
             },
-            "built_at": report.built_at,
-            "events_1x2": report.events_1x2,
-            "events_ah": report.events_ah,
-            "events_ou": report.events_ou,
-            "heartbeat_dropped": report.heartbeat_dropped,
-            "source_rows": total,
-            "unexplained_gap": report.unexplained_gap,
-            "orphan_sids": report.orphan_sids,
-            "partitions": report.partitions,
-            "seasons": report.seasons,
-            "coverage_by_competition": report.coverage_by_competition,
-        },
-    )
+        )
     return report

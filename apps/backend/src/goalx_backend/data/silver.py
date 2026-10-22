@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
@@ -109,13 +111,18 @@ def to_float(value: object) -> float | None:
         return None
 
 
+def tmp_name() -> str:
+    """Parquet tmp 名（掺 pid：08:10 定拍与人工全量并发时不共用 tmp 交错撕裂）。"""
+    return f"data.parquet.{os.getpid()}.tmp"
+
+
 def write_partition(
     part: Path, rows: list[dict[str, object]], schema: pa.Schema
 ) -> None:
     """一分区一 parquet 文件（tmp 原子替换；排序已在上游统一完成）。"""
     part.mkdir(parents=True, exist_ok=True)
     table = pa.Table.from_pylist(rows, schema=schema)
-    tmp = part / "data.parquet.tmp"
+    tmp = part / tmp_name()
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(part / "data.parquet")
 
@@ -125,9 +132,27 @@ def write_dataset_file(
 ) -> None:
     """整数据集一 parquet（tmp 原子替换；单文件数据集共用舞步）。"""
     root.mkdir(parents=True, exist_ok=True)
-    tmp = root / "data.parquet.tmp"
+    tmp = root / tmp_name()
     pq.write_table(pa.Table.from_pylist(rows, schema=schema), tmp, compression="zstd")
     tmp.replace(root / "data.parquet")
+
+
+def delete_partition_dir(part: Path) -> bool:
+    """
+    删一个分区目录（文件清空→rmdir；父季目录随空收走）。
+
+    remove_stale 与增量触及集定向清理（票 11 srct_remat）共用的删除核。
+    返回是否实际删除（目录不存在=幂等 False）。
+    """
+    if not part.exists():
+        return False
+    for file in part.iterdir():
+        file.unlink()
+    part.rmdir()
+    season_dir = part.parent
+    if season_dir.is_dir() and not any(season_dir.iterdir()):
+        season_dir.rmdir()
+    return True
 
 
 def remove_stale(root: Path, target: set[Path]) -> int:
@@ -139,10 +164,7 @@ def remove_stale(root: Path, target: set[Path]) -> int:
         if not season_dir.is_dir():
             continue  # _meta.json 等文件不动
         for part in sorted(season_dir.iterdir()):
-            if part.is_dir() and part not in target:
-                for file in part.iterdir():
-                    file.unlink()
-                part.rmdir()
+            if part.is_dir() and part not in target and delete_partition_dir(part):
                 removed += 1
         if season_dir.is_dir() and not any(season_dir.iterdir()):
             season_dir.rmdir()
@@ -203,6 +225,51 @@ def latest_bronze_ledger(
     for lineno, line in enumerate(store.iter_bronze_lines(provider, dataset)):
         row = json.loads(line)
         if row.get("parser_version") == version and row.get("sid") is not None:
+            ledger[str(row["sid"])] = lineno
+    return ledger
+
+
+# 信封前缀形状（append_bronze 的 json.dumps 定键序输出）：sid 与
+# parser_version 都在 payload 之前——前缀命中即可零 json.loads 判行归属，
+# GB 级 bronze 增量扫描只解析命中行（票 11；实测 odds_1x2d 全 json.loads
+# 遍 ~5 分钟 vs 前缀扫描 ~1 分钟）。格式漂移（键序变动）自动落 json.loads
+# 慢路径，正确性不依赖序列化形状。
+_ENVELOPE_PREFIX_RE = re.compile(
+    r'^\{"provider": "(?P<provider>[^"]*)", "dataset": "(?P<dataset>[^"]*)", '
+    + r'"sid": "(?P<sid>[^"]*)", "fetched_at": "[^"]*", '
+    + r'"parser_version": "(?P<version>[^"]*)"'
+)
+
+
+def latest_bronze_ledger_filtered(
+    store: CorpusStore,
+    provider: str,
+    dataset: str,
+    version: str,
+    wanted: set[str],
+) -> dict[str, int]:
+    """
+    过滤版选轨账本：仅 wanted 中 sid 进账本（后行胜出语义不变）。
+
+    与 latest_bronze_ledger 的唯一差异=非目标行零 json.loads——前缀正则判
+    (provider, dataset, sid, version)，四处任一不符（或 wanted 不含）即跳过；
+    前缀不匹配的行落 json.loads 慢路径兜底（未来键序漂移只慢不错）。
+    """
+    ledger: dict[str, int] = {}
+    for lineno, line in enumerate(store.iter_bronze_lines(provider, dataset)):
+        found = _ENVELOPE_PREFIX_RE.match(line)
+        if found is not None:
+            if (
+                found.group("provider") != provider
+                or found.group("dataset") != dataset
+                or found.group("version") != version
+                or found.group("sid") not in wanted
+            ):
+                continue
+            ledger[found.group("sid")] = lineno
+            continue
+        row = json.loads(line)  # 慢路径：键序/格式漂移行
+        if row.get("parser_version") == version and str(row.get("sid")) in wanted:
             ledger[str(row["sid"])] = lineno
     return ledger
 

@@ -120,12 +120,25 @@ def fixture_rows(store: CorpusStore) -> tuple[list[dict[str, object]], int, int]
     重挂场次，防御性去重）。开球两形态/比分解析失败均跳行计数留痕。
     返回 (行集, 日页数, 异常跳行数)。
     """
-    latest_day = silver.latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct.DAY_DATASET,
-        srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+    return fixture_rows_from(
+        silver.latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct.DAY_DATASET,
+            srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+        )
     )
+
+
+def fixture_rows_from(
+    latest_day: dict[str, dict[str, object]],
+) -> tuple[list[dict[str, object]], int, int]:
+    """
+    日页 bronze 行集（sid=日期 → 最新行）→ 规范 fixture 行（纯函数）。
+
+    去重/跳行语义同 fixture_rows；拆出供增量侧做"排除新日页后的旧元数据"
+    复算（票 11：重挂场次的迁移出分区并入触及集）。
+    """
     latest_match: dict[str, dict[str, object]] = {}
     fixtures: list[dict[str, object]] = []
     skipped = 0

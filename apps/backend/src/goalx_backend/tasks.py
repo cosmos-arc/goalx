@@ -47,6 +47,7 @@ from goalx_backend.data.ingest import (
     srcb,
     srct,
     srct_night,
+    srct_remat,
     srct_results,
     srct_shift,
     understat,
@@ -385,6 +386,25 @@ def srct_shift_run(
     finally:
         store.close()
     return srct_shift.stats_dict(stats)
+
+
+def srct_remat_run(
+    *, full: bool = False, settings: Settings | None = None
+) -> dict[str, object]:
+    """
+    源T silver 增量物化（票 11）：夜班后定拍，A 线参考链保鲜。
+
+    fixture/xg 按水位门控全量；odds 水位增量（触及分区重写）；护栏命中
+    自动全量兜底。full=True 强制全量（维护口径）。增量语义与护栏面见
+    data/ingest/srct_remat 模块注释；settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        report = srct_remat.run_remat(store, full=full)
+    finally:
+        store.close()
+    return asdict(report)
 
 
 def settlement_sweep() -> dict[str, int]:

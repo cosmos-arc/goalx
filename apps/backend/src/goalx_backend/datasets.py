@@ -291,6 +291,28 @@ _SRCT_SHIFT = DatasetSpec(
     checkpoint_tables=("srct_shift_matches",),
 )
 
+_SRCT_REMAT = DatasetSpec(
+    name="srct-remat",
+    cron="10 8 * * *",
+    task=tasks.srct_remat_run,
+    cli_help="源T silver增量物化(票11;水位+触及分区重写,零新工件秒级返回)",
+    flow_help=(
+        "源T silver 增量物化（票 11）：夜班收口后 08:10 定拍，A 线参考链"
+        "（fixture_universe + odds_change_event）保鲜。\n\n"
+        "odds 水位增量（触及分区重写，字节级=全量切片）；fixture/xg 门控"
+        "全量；护栏命中（首跑/计数不平/版本漂移/夜班回补）自动全量兜底。"
+        "降级不打断，水位仅整轮成功推进。"
+    ),
+    cli_args=(
+        CliArg(
+            "--full",
+            help="强制全量(维护口径:bookmaker+odds 全量+fixture+xg)",
+            action="store_true",
+        ),
+    ),
+    checkpoint_tables=("srct_remat_state",),
+)
+
 #: 注册面（票 03 全量）：全部单 cron 定拍数据集；组合面/双 cron 面另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
@@ -306,6 +328,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _INTEL,
     _SCOUT,
     _SRCT_SHIFT,
+    _SRCT_REMAT,
 )
 
 
