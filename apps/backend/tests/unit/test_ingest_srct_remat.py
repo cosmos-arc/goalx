@@ -169,6 +169,10 @@ def _tree_face(store: CorpusStore) -> dict[str, tuple[str, float]]:
     return face
 
 
+def _tree_face_digests(store: CorpusStore) -> dict[str, str]:
+    return {k: v[0] for k, v in _tree_face(store).items()}
+
+
 def _rows_of(store: CorpusStore, season: str, league: str) -> list[dict[str, Any]]:
     part = (
         _odds_root(store)
@@ -231,10 +235,6 @@ def test_incremental_byte_equivalence_and_idempotent_rerun(
         assert _tree_face_digests(store) == {k: v[0] for k, v in face_after.items()}
     finally:
         store.close()
-
-
-def _tree_face_digests(store: CorpusStore) -> dict[str, str]:
-    return {k: v[0] for k, v in _tree_face(store).items()}
 
 
 def test_beat_key_rewrites_latest_trajectory(tmp_path: Path) -> None:

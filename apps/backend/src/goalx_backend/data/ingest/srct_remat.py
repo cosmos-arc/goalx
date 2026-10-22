@@ -27,7 +27,9 @@ fixture_universe + odds_change_event 两条 A 线依赖面接增量 + 定拍
 - **幂等**：零新工件时秒级返回、silver 树零改写（fixture/xg/odds 全
   门控跳过）；水位仅整轮成功后推进。
 - **降级不打断**：单面失败记 degraded 继续其余面；任一面失败不推进
-  水位（下轮重做，全路径幂等）。增量面落 `_incremental.json`
+  水位（下轮重做，全路径幂等）。odds 增量中途异常时触及分区可能留
+  "部分推进"中间态（单分区文件仍原子完整、树永不损坏，仅本轮未收口，
+  ≤一天窗口由下轮重写自愈）。增量面落 `_incremental.json`
   （树侧审计），全量 `_meta.json` 只由全量路径写。
 
 不在本票范围（如实记）：market_quote/match_detail/match_analysis 三面
@@ -45,7 +47,7 @@ from typing import cast
 from loguru import logger
 
 from goalx_backend.data import silver
-from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.corpus_store import CorpusStore, RawArtifact
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 from goalx_backend.db import utc_now_iso
 
@@ -53,16 +55,7 @@ from goalx_backend.db import utc_now_iso
 REMAT_DATASETS: tuple[str, ...] = (
     srct.DAY_DATASET,
     srct.STATS_DATASET,
-    srct.ODDS_DATASET,
-    srct.HANDICAP_DATASET,
-    srct.ASIANODDS_DATASET,
-    srct.OVERDOWN_DATASET,
-)
-ODDS_FAMILY: tuple[str, ...] = (
-    srct.ODDS_DATASET,
-    srct.HANDICAP_DATASET,
-    srct.ASIANODDS_DATASET,
-    srct.OVERDOWN_DATASET,
+    *srct.ODDS_FAMILY,
 )
 _UNKNOWN_PARTITION = ("_unknown", "_unknown")
 
@@ -71,7 +64,9 @@ _UNKNOWN_PARTITION = ("_unknown", "_unknown")
 class RematReport:
     """一轮增量物化摘要（deployment 日志/晨检口径；odds 面另有树侧 _incremental.json）。"""  # noqa: E501
 
-    mode: str = "skip"  # odds 面：skip=零新工件 | incremental | full（护栏/首跑/强制）
+    # odds 面四态：skip=零新工件 | incremental | full（护栏/首跑/强制）|
+    # degraded（增量中途异常——触及分区或部分推进，水位不推进下轮重做）
+    mode: str = "skip"
     guard_reason: str = ""  # mode=full 时的护栏命中原因（人读）
     watermark: str = ""  # 本轮起点快照（max fetched_at 审计面）
     last_rowid: int = 0  # 本轮起点提交序高水位
@@ -97,7 +92,7 @@ def _partition_of(sid: str, meta: dict[str, dict[str, object]]) -> tuple[str, st
 
 def _count_guard_reason(
     store: CorpusStore,
-    new_raw: dict[str, list[tuple[str, str, str]]],
+    new_raw: dict[str, list[RawArtifact]],
     recorded: dict[str, dict[str, object]],
 ) -> str:
     """
@@ -109,7 +104,7 @@ def _count_guard_reason(
     原因，调用方落全量兜底。残留窗口（手动回补与既有 sid 拍键同窗混合）
     记票 Answer，全量维护口径兜底。
     """
-    for dataset in ODDS_FAMILY:
+    for dataset in srct.ODDS_FAMILY:
         rec = recorded.get(dataset)
         if rec is None:
             continue  # 该数据集无前账（首跑整体已走全量，此处不重复拦）
@@ -131,7 +126,12 @@ def _count_guard_reason(
 
 
 def _night_repaired_since(store: CorpusStore, since: str) -> bool:
-    """快照窗内有夜班 bronze 回补（回补不吃新 raw 键，水位判据结构性不可见）。"""
+    """
+    快照窗内有夜班 bronze 回补（回补不吃新 raw 键，水位判据结构性不可见）。
+
+    limit=30 夜对日拍节奏余量充足；超长缺勤窗内更早的回补可能漏看
+    （罕见；残留由全量维护口径兜底，同计数护栏残留窗）。
+    """
     for summary in store.night_summaries(limit=30):
         if since and str(summary["started_at"]) < since:
             continue
@@ -163,15 +163,15 @@ def _write_incremental_meta(
 def _run_incremental_odds(
     store: CorpusStore,
     report: RematReport,
-    new_raw: dict[str, list[tuple[str, str, str]]],
+    new_raw: dict[str, list[RawArtifact]],
     meta: dict[str, dict[str, object]],
 ) -> None:
     """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级上抛面）。"""
-    new_day_dates = {key for key, _, _ in new_raw.get(srct.DAY_DATASET, [])}
+    new_day_dates = {art.key for art in new_raw.get(srct.DAY_DATASET, [])}
     new_odds_sids = {
-        key.split("@", 1)[0]
-        for dataset in ODDS_FAMILY
-        for key, _, _ in new_raw.get(dataset, [])
+        art.key.split("@", 1)[0]
+        for dataset in srct.ODDS_FAMILY
+        for art in new_raw.get(dataset, [])
     }
     day_sids = {sid for sid, row in meta.items() if str(row["day"]) in new_day_dates}
     partitions = {_partition_of(sid, meta) for sid in new_odds_sids | day_sids}
@@ -183,7 +183,7 @@ def _run_incremental_odds(
         for season, competition in partitions
     )
     ledgers: dict[str, dict[str, int]] = {}
-    for dataset in ODDS_FAMILY:
+    for dataset in srct.ODDS_FAMILY:
         version = srct.BRONZE_VERSIONS[dataset]
         bronze_set = store.bronze_sids(srct.SRCT_PROVIDER, dataset, version)
         targets = {sid for sid in bronze_set if _partition_of(sid, meta) in partitions}
@@ -215,26 +215,17 @@ def _prune_drained_partitions(
 
     触及=本轮判定需要重导的分区；产出零行（孤儿全部迁出/联赛面清空）时
     全量重建不会留下该分区目录，增量同样必须删——未触及分区绝不动。
+    删除核=silver.delete_partition_dir（与 remove_stale 一份语义）。
     """
-    written = set(written_keys)
     drained: set[tuple[str, str]] = set()
-    for key in written:
+    for key in written_keys:
         season_w, _, competition_w = key.partition("/")
         drained.add((season_w, competition_w))
+    root = store.silver_path(srct.SRCT_PROVIDER, srct_odds.ODDS_DATASET)
     for season, competition in affected - drained:
-        part = (
-            store.silver_path(srct.SRCT_PROVIDER, srct_odds.ODDS_DATASET)
-            / (f"season={season}")
-            / f"competition={competition}"
+        silver.delete_partition_dir(
+            root / f"season={season}" / f"competition={competition}"
         )
-        if not part.exists():
-            continue
-        for file in part.iterdir():
-            file.unlink()
-        part.rmdir()
-        season_dir = part.parent
-        if season_dir.exists() and not any(season_dir.iterdir()):
-            season_dir.rmdir()
 
 
 def _guard_reason(
@@ -242,7 +233,7 @@ def _guard_reason(
     *,
     full: bool,
     state: dict[str, object] | None,
-    new_raw: dict[str, list[tuple[str, str, str]]],
+    new_raw: dict[str, list[RawArtifact]],
     recorded: dict[str, dict[str, object]],
 ) -> str:
     """全量兜底触发原因（空串=增量可解）。"""
@@ -283,7 +274,7 @@ def run_remat(store: CorpusStore, *, full: bool = False) -> RematReport:
     )
     day_new = bool(new_raw.get(srct.DAY_DATASET))
     stats_new = bool(new_raw.get(srct.STATS_DATASET))
-    odds_new = any(new_raw.get(dataset) for dataset in ODDS_FAMILY)
+    odds_new = any(new_raw.get(dataset) for dataset in srct.ODDS_FAMILY)
 
     # ---- fixture（全量维持，门控：day_page 有新工件） ----
     if day_new or full:
@@ -320,14 +311,14 @@ def run_remat(store: CorpusStore, *, full: bool = False) -> RematReport:
             "srct-remat 有降级面 {}：水位不推进（下轮重做）", report.degraded
         )
         return report
-    counts = {
+    counts: dict[str, dict[str, object]] = {
         dataset: {
             "version": srct.BRONZE_VERSIONS[dataset],
             "count": store.bronze_sid_count(
                 srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
             ),
         }
-        for dataset in ODDS_FAMILY
+        for dataset in srct.ODDS_FAMILY
     }
     store.upsert_remat_state(
         report.watermark, report.last_rowid, json.dumps(counts, ensure_ascii=False)

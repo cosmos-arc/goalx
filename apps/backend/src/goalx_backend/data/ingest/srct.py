@@ -69,6 +69,14 @@ STATS_DATASET = "match_stats"  # 47 键技术统计（含 xG，键集逐年演�
 # 撤采留档（票 59，规格 v2 裁决）：changeDetail 单书亚盘轨迹不再采集；数据集
 # 常量与版本保留——silver odds_change_event 的 ah 面与历史对账仍引用该口径
 HANDICAP_DATASET = "asian_handicap"
+# odds_change_event 的输入数据集族（票 11 起单一落点：odds 全量/增量构建与
+# remat 计数护栏共用，防四处字面量漂移）
+ODDS_FAMILY: tuple[str, ...] = (
+    ODDS_DATASET,
+    HANDICAP_DATASET,
+    ASIANODDS_DATASET,
+    OVERDOWN_DATASET,
+)
 # 每解析器独立版本（spec story 8：记录可追溯到确切解析器版本；修一个只
 # 重物化其数据集）。day_page=PARSE_VERSION（srct_day_v1）：一行=一日
 # CorpusScope 完场清单，silver fixture_universe 的唯一输入（切片 14）

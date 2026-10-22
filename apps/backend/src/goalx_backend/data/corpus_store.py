@@ -35,6 +35,7 @@ import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from goalx_backend.db import utc_now_iso
 
@@ -288,6 +289,14 @@ class RawRef:
     sha256: str
     path: Path
     byte_size: int
+
+
+class RawArtifact(NamedTuple):
+    """水位后 raw 工件行（票 11 增量判据的消费面形状；键可带拍键后缀）。"""
+
+    key: str
+    sha256: str
+    fetched_at: str
 
 
 class CorpusStore:
@@ -759,11 +768,11 @@ class CorpusStore:
 
     def raw_artifacts_since(
         self, provider: str, datasets: tuple[str, ...], last_rowid: int
-    ) -> dict[str, list[tuple[str, str, str]]]:
+    ) -> dict[str, list[RawArtifact]]:
         """
         提交序高水位之后的 raw 工件（票 11 增量判据）。
 
-        dataset → [(key, sha256, fetched_at)]（fetched_at 升序）。
+        dataset → [RawArtifact]（fetched_at 升序）。
         last_rowid=上次快照的 max(rowid)；rowid 表插入序单调、INSERT OR
         IGNORE 不占新 rowid，`rowid > 水位` 精确等价"上次快照后提交"。
         last_rowid=0 = 全部历史。sha 变化不经此判据（silver 消费 bronze，
@@ -780,10 +789,14 @@ class CorpusStore:
             + "ORDER BY fetched_at, rowid",
             (provider, *datasets, last_rowid),
         )
-        out: dict[str, list[tuple[str, str, str]]] = {}
+        out: dict[str, list[RawArtifact]] = {}
         for row in rows:
             out.setdefault(str(row["dataset"]), []).append(
-                (str(row["key"]), str(row["sha256"]), str(row["fetched_at"]))
+                RawArtifact(
+                    key=str(row["key"]),
+                    sha256=str(row["sha256"]),
+                    fetched_at=str(row["fetched_at"]),
+                )
             )
         return out
 

@@ -1178,20 +1178,10 @@ def build_odds_change_events(
             dataset: silver.latest_bronze_ledger(
                 store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
             )
-            for dataset in (
-                srct.ODDS_DATASET,
-                srct.HANDICAP_DATASET,
-                srct.ASIANODDS_DATASET,
-                srct.OVERDOWN_DATASET,
-            )
+            for dataset in srct.ODDS_FAMILY
         }
     else:
-        missing = {
-            srct.ODDS_DATASET,
-            srct.HANDICAP_DATASET,
-            srct.ASIANODDS_DATASET,
-            srct.OVERDOWN_DATASET,
-        } - set(ledgers)
+        missing = set(srct.ODDS_FAMILY) - set(ledgers)
         if missing:
             msg = f"注入账本缺数据集：{sorted(missing)}"
             raise ValueError(msg)

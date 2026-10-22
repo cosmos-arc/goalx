@@ -131,6 +131,24 @@ def write_dataset_file(
     tmp.replace(root / "data.parquet")
 
 
+def delete_partition_dir(part: Path) -> bool:
+    """
+    删一个分区目录（文件清空→rmdir；父季目录随空收走）。
+
+    remove_stale 与增量触及集定向清理（票 11 srct_remat）共用的删除核。
+    返回是否实际删除（目录不存在=幂等 False）。
+    """
+    if not part.exists():
+        return False
+    for file in part.iterdir():
+        file.unlink()
+    part.rmdir()
+    season_dir = part.parent
+    if season_dir.is_dir() and not any(season_dir.iterdir()):
+        season_dir.rmdir()
+    return True
+
+
 def remove_stale(root: Path, target: set[Path]) -> int:
     """删除不在目标集里的旧分区（重建幂等的清理半边；silver 各数据集共用）。"""
     removed = 0
@@ -140,10 +158,7 @@ def remove_stale(root: Path, target: set[Path]) -> int:
         if not season_dir.is_dir():
             continue  # _meta.json 等文件不动
         for part in sorted(season_dir.iterdir()):
-            if part.is_dir() and part not in target:
-                for file in part.iterdir():
-                    file.unlink()
-                part.rmdir()
+            if part.is_dir() and part not in target and delete_partition_dir(part):
                 removed += 1
         if season_dir.is_dir() and not any(season_dir.iterdir()):
             season_dir.rmdir()
