@@ -8,3 +8,14 @@ ecosystem = "npm"
 name = "braces"
 version = "3.0.3"
 ignore = true
+
+[[PackageOverrides]]
+# virtualenv 21.14.5 残余 4 条（GHSA-vxj4 修 21.14.7；GHSA-43mp/c978/cw65
+# 修 21.14.9）：≥21.14.6 全线要求 packaging>=26.3，被 prefect（≤3.6.28.dev5
+# 全线）packaging<26.1 上界压死——21.14.5 是当前可解析天花板。纯 dev 链
+# （pre-commit 建 venv 用），不进应用运行时。复核触发器：prefect 放开
+# packaging 上界、或 virtualenv 出兼容 packaging<26 的修复版时删除本条。
+ecosystem = "PyPI"
+name = "virtualenv"
+version = "21.14.5"
+ignore = true
