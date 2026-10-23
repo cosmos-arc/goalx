@@ -757,10 +757,15 @@ class CorpusStore:
         self._checkpoint().commit()
 
     def night_summaries(self, limit: int = 20) -> list[dict[str, object]]:
-        """最近的夜班摘要（新→旧；CLI --list / 晨检用）。"""
+        """
+        最近的夜班摘要（新→旧；CLI --list / 晨检用）。
+
+        按日期排序而非插入序：跨午夜长班晚落行会让 id 序与夜序背离
+        （票 12 晨检误导源）；同夜多班按 id 新→旧。
+        """
         rows = self._checkpoint().execute(
             """
-            SELECT * FROM srct_night_summaries ORDER BY id DESC LIMIT ?
+            SELECT * FROM srct_night_summaries ORDER BY night_date DESC, id DESC LIMIT ?
             """,
             (limit,),
         )
