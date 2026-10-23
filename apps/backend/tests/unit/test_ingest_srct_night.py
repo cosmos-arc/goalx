@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 from datetime import date, datetime
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -410,6 +411,63 @@ def test_window_closed_no_work_no_row(tmp_path: Path) -> None:
     assert summary.stop_reason == "window_closed"
     assert seen == []  # 窗口外零请求
     assert _store(tmp_path).night_summaries() == []  # 没干活不留行
+
+
+def test_window_open_grace_covers_early_prefect_start(tmp_path: Path) -> None:
+    """票 12：Prefect 提前亚秒触发（实测 00:59:59.x 两晚整班判死）在容差内照常开班。"""
+    seen, routes = _transport_spy()
+    summary = _run(
+        tmp_path, seen, routes, now_fn=lambda: datetime(2026, 9, 24, 0, 59, 59, 750000)
+    )
+    assert summary.stop_reason == "completed"
+    assert len(_store(tmp_path).night_summaries()) == 1  # 干活照留行
+
+
+@pytest.mark.parametrize(
+    ("when", "expected"),
+    [
+        (datetime(2026, 9, 24, 0, 54, 59), False),  # 容差外一分钟
+        (datetime(2026, 9, 24, 0, 55, 0), True),  # 容差下界
+        (
+            datetime(2026, 9, 24, 0, 59, 59, 999000),
+            True,
+        ),  # 事故形态（Prefect 提前亚秒）
+        (datetime(2026, 9, 24, 1, 0, 0), True),  # 窗口整点
+        (datetime(2026, 9, 24, 7, 59, 59), True),  # 收班前一秒
+        (datetime(2026, 9, 24, 8, 0, 0), False),  # 收班边界严格不动
+    ],
+)
+def test_in_window_boundaries(when: datetime, expected: bool) -> None:
+    assert srct_night._in_window(when, srct_night.NIGHT_WINDOW) is expected
+
+
+def test_in_window_grace_clamps_at_midnight() -> None:
+    """correctness 修：窗口起点 < 容差时 grace 落 0 点截断——回绕到 23:57
+    会让比较式恒假=整班静默死亡（票 12 同族失败形态）。"""
+    early_window = (dt_time(0, 2), dt_time(8, 0))
+    midnight_window = (dt_time(0, 0), dt_time(8, 0))
+    assert srct_night._in_window(datetime(2026, 1, 1, 0, 30), early_window) is True
+    assert srct_night._in_window(datetime(2026, 1, 1, 0, 0), midnight_window) is True
+
+
+def test_night_summaries_ordered_by_night_date(tmp_path: Path) -> None:
+    """票 12：--list 按夜序不按插入序——跨午夜班让 id 序与夜序背离时晨检不误导。"""
+    store = _store(tmp_path)
+    try:
+        # 先插 10-01（id 小）再插 09-30（id 大，跨午夜班夜序更旧）：
+        # id DESC 会先回 09-30——正是要防的错插
+        for night_date in ("2026-10-01", "2026-09-30"):
+            store.record_night_summary(
+                srct_night.SrctNightSummary(
+                    night_date=night_date, started_at=f"{night_date}T02:00:00"
+                ).to_row()
+            )
+        assert [row["night_date"] for row in store.night_summaries()] == [
+            "2026-10-01",
+            "2026-09-30",
+        ]
+    finally:
+        store.close()
 
 
 def test_day_page_transport_failure_continues(tmp_path: Path) -> None:

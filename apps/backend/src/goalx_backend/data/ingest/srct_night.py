@@ -52,6 +52,10 @@ from goalx_backend.rate_limit import default_limiter
 
 # 夜班窗口（spec story 3）：家宽低峰 01:00-08:00（本机墙钟，不跨午夜）
 NIGHT_WINDOW: tuple[dt_time, dt_time] = (dt_time(1, 0), dt_time(8, 0))
+# 开班容差（票 12）：Prefect 对 01:00 cron 的 flow 提交可提前亚秒（实测
+# 00:59:59.6/.755 两晚整班判死，且窗口外不落摘要行=晨检查库不可见），开班
+# 方向放宽 5 分钟；收班边界严格不动（白天防护语义不变）。
+NIGHT_OPEN_GRACE = timedelta(minutes=5)
 # 当季采集上界回看天数：隔一日再采，Over 页完场行稳态
 CURRENT_SEASON_LAG_DAYS = 2
 # 摘要 failed 采样上限（全量进日志，行内截断防爆；tasks/flow 返回同口径）
@@ -305,8 +309,12 @@ class SrctNightSummary:
 
 
 def _in_window(now: datetime, window: tuple[dt_time, dt_time]) -> bool:
-    """窗口内判断（start ≤ t < end；01:00-08:00 不跨午夜）。"""
-    return window[0] <= now.time() < window[1]
+    """窗口内判断（start-grace ≤ t < end；grace 落 0 点截断，不跨午夜回绕）。"""
+    midnight = datetime.combine(now.date(), dt_time())
+    open_edge = max(
+        datetime.combine(now.date(), window[0]) - NIGHT_OPEN_GRACE, midnight
+    ).time()
+    return open_edge <= now.time() < window[1]
 
 
 def _absorb(summary: SrctNightSummary, stats: srct.SrctCollectStats) -> None:
