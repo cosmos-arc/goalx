@@ -11,7 +11,7 @@
   "resolutions": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "brace-expansion": "2.1.7",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "ip-address": "10.7.4",
     "proxy-addr": "^2.0.8",
     "source-map-js": "^1.2.2"

@@ -19,3 +19,13 @@ ecosystem = "PyPI"
 name = "virtualenv"
 version = "21.14.5"
 ignore = true
+
+[[PackageOverrides]]
+# zod 3.25.76（GHSA-mrhx-c7xc-m3w5，8.2）：修版仅 4.6.6，但四个上游父件
+# （@ag-ui/client+proto、@modelcontextprotocol/sdk、shadcn）全部钉 ^3 且
+# 最新版未迁 zod4——无范围内修版，盲 override 碎运行时。研究栈非公开
+# SaaS，暴露面有限。复核触发器：任一父件发 zod4 线版本即删本条升级。
+ecosystem = "npm"
+name = "zod"
+version = "3.25.76"
+ignore = true
