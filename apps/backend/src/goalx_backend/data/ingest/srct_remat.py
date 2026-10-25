@@ -40,16 +40,31 @@ duckdb 桥视图为路径绑定（分区重写即时可见，无需重建）。
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import cast
 
+import psutil
 from loguru import logger
 
 from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore, RawArtifact
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 from goalx_backend.db import utc_now_iso
+
+# 全量物化内存余量下限（票 13）：16GB+6GB swap 常驻栈 ~4.5GB 的机器上，
+# 全量 odds 物化实测峰值 ~4.4GB 且有采样间隙尖峰——无人值守护栏全量低于
+# 此余量必被 memorystatus SIGKILL（10-22~24 四次实证，静默断链）；`--full`
+# 显式人值守不拦。低于即 deferred 降级（水位不推下轮重做），人按停栈
+# 安静全量口径处理。
+FULL_REMAT_MIN_HEADROOM_BYTES = 6 * 1024**3
+
+
+def _headroom_bytes() -> int:
+    """系统可挪用内存余量（可用物理 + swap 空闲；模块级供测试放宽）。"""
+    return psutil.virtual_memory().available + psutil.swap_memory().free
+
 
 # remat 消费面（水位快照/门控判据均限此集；shift_entry/夜班台账不是 silver 输入）
 REMAT_DATASETS: tuple[str, ...] = (
@@ -64,8 +79,9 @@ _UNKNOWN_PARTITION = ("_unknown", "_unknown")
 class RematReport:
     """一轮增量物化摘要（deployment 日志/晨检口径；odds 面另有树侧 _incremental.json）。"""  # noqa: E501
 
-    # odds 面四态：skip=零新工件 | incremental | full（护栏/首跑/强制）|
-    # degraded（增量中途异常——触及分区或部分推进，水位不推进下轮重做）
+    # odds 面五态：skip=零新工件 | incremental | full（护栏/首跑/强制）|
+    # degraded（增量中途异常——触及分区或部分推进，水位不推进下轮重做）|
+    # deferred（票 13 护栏全量余量不足——零写入早退，停栈安静全量后人跑）
     mode: str = "skip"
     guard_reason: str = ""  # mode=full 时的护栏命中原因（人读）
     watermark: str = ""  # 本轮起点快照（max fetched_at 审计面）
@@ -268,12 +284,43 @@ def _guard_reason(
     return ""
 
 
-def run_remat(store: CorpusStore, *, full: bool = False) -> RematReport:
+def _deferred_low_headroom(
+    report: RematReport, *, full: bool, headroom_fn: Callable[[], int] | None
+) -> bool:
+    """票 13：护栏全量前余量探测（--full 显式人值守不拦）；命中写降级返 True。"""
+    if full or not report.guard_reason:
+        return False
+    try:
+        headroom = headroom_fn() if headroom_fn is not None else _headroom_bytes()
+    except OSError:
+        # 探测自身不许成为 08:10 无人值守路径的新死因（票 13 correctness
+        # F1）——fail-open 照走全量，宁可回到护栏前行为也不静默断链
+        logger.warning("srct-remat 余量探测失败（OSError），跳过余量检查照走全量")
+        return False
+    if headroom >= FULL_REMAT_MIN_HEADROOM_BYTES:
+        return False
+    report.mode = "deferred"
+    report.degraded.append(f"full_deferred_low_headroom: {headroom / 1024**3:.1f}GiB")
+    logger.warning(
+        "srct-remat 护栏全量推迟：余量 {:.1f}GiB < {}GiB（停栈安静全量；水位不推下轮重做）",  # noqa: E501
+        headroom / 1024**3,
+        FULL_REMAT_MIN_HEADROOM_BYTES // 1024**3,
+    )
+    return True
+
+
+def run_remat(
+    store: CorpusStore,
+    *,
+    full: bool = False,
+    headroom_fn: Callable[[], int] | None = None,
+) -> RematReport:
     """
     一轮增量物化：水位快照 → 门控重建（fixture/xg/odds）→ 成功才推水位。
 
     full=True 强制全量（维护口径；护栏命中自动同路）。store 由调用方开合
-    （cli/flow 共用；测试注入临时树）。
+    （cli/flow 共用；测试注入临时树）。headroom_fn 注入余量探测（测试用；
+    缺省真实 psutil——护栏场景余量不足全量直接 deferred，见票 13）。
     """
     report = RematReport(built_at=utc_now_iso())
     state = store.remat_state()
@@ -291,6 +338,10 @@ def run_remat(store: CorpusStore, *, full: bool = False) -> RematReport:
     report.guard_reason = _guard_reason(
         store, full=full, state=state, new_raw=new_raw, recorded=recorded
     )
+    # 票 13：无人值守护栏全量先探余量，不足即 deferred——早退于任何阶段
+    # 写之前，语料停上一份完好态，摘要可见
+    if _deferred_low_headroom(report, full=full, headroom_fn=headroom_fn):
+        return report
     day_new = bool(new_raw.get(srct.DAY_DATASET))
     stats_new = bool(new_raw.get(srct.STATS_DATASET))
     odds_new = any(new_raw.get(dataset) for dataset in srct.ODDS_FAMILY)

@@ -30,10 +30,12 @@ from goalx_backend.data.ingest import srct, srct_odds, srct_remat, srct_silver
 
 @pytest.fixture(autouse=True)
 def _wide_rate_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """放宽滑窗硬顶（noop sleeper 下会忙转到真实时间翻窗）。"""
+    """放宽滑窗硬顶（noop sleeper 下会忙转到真实时间翻窗）+ 余量探测
+    钉高（票 13：护栏全量测试不受宿主机真实内存影响）。"""
     from limits import RateLimitItemPerMinute
 
     monkeypatch.setattr(srct, "_REQUEST_WINDOW", RateLimitItemPerMinute(10**6))
+    monkeypatch.setattr(srct_remat, "_headroom_bytes", lambda: 1 << 40)
 
 
 _ODDS_JS = (
@@ -335,6 +337,69 @@ def test_new_day_page_unlocks_orphan_partition(tmp_path: Path) -> None:
         face = _tree_face_digests(store)
         srct_odds.build_odds_change_events(store)
         assert _tree_face_digests(store) == face
+    finally:
+        store.close()
+
+
+def test_guard_full_defers_on_low_headroom(tmp_path: Path) -> None:
+    """票 13：无人值守护栏全量余量不足 → deferred 显式降级，零写入零水位。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    routes = _routes_for("2025-10-01", "90001", "英超")
+    _collect(store, settings, routes, "2025-10-01")
+    try:
+        report = srct_remat.run_remat(store, headroom_fn=lambda: 0)
+        assert report.mode == "deferred"
+        assert report.degraded == ["full_deferred_low_headroom: 0.0GiB"]
+        assert report.fixture == {}  # 早退于任何阶段写之前
+        assert store.remat_state() is None  # 水位不推
+    finally:
+        store.close()
+
+
+def test_explicit_full_ignores_low_headroom(tmp_path: Path) -> None:
+    """票 13：`--full` 显式人值守不拦——低余量照走全量。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    routes = _routes_for("2025-10-01", "90001", "英超")
+    _collect(store, settings, routes, "2025-10-01")
+    try:
+        report = srct_remat.run_remat(store, full=True, headroom_fn=lambda: 0)
+        assert report.mode == "full"
+        assert "full_deferred_low_headroom" not in report.degraded
+        assert store.remat_state() is not None  # 跑完推水位
+    finally:
+        store.close()
+
+
+def test_guard_full_proceeds_with_headroom(tmp_path: Path) -> None:
+    """票 13：护栏全量余量充足照跑（真实路径不因探测良性降级）。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    routes = _routes_for("2025-10-01", "90001", "英超")
+    _collect(store, settings, routes, "2025-10-01")
+    try:
+        report = srct_remat.run_remat(store, headroom_fn=lambda: 1 << 40)
+        assert report.mode == "full"
+        assert report.degraded == []
+    finally:
+        store.close()
+
+
+def test_headroom_probe_failure_fails_open(tmp_path: Path) -> None:
+    """correctness F1：探测自身异常不许成为无人值守新死因——fail-open 照走全量。"""
+
+    def _boom() -> int:
+        raise OSError("probe unavailable")
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    routes = _routes_for("2025-10-01", "90001", "英超")
+    _collect(store, settings, routes, "2025-10-01")
+    try:
+        report = srct_remat.run_remat(store, headroom_fn=_boom)
+        assert report.mode == "full"
+        assert report.degraded == []
     finally:
         store.close()
 
