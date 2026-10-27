@@ -297,5 +297,5 @@ def test_layer_state_records_prefused_stage():
         __import__("numpy").zeros(8),
     )
     entry = state.fusion.history[-1]
-    assert entry.applied == state.current.prefused(had_raw)
-    assert entry.applied != state.current.fused(had_raw, fair)
+    assert entry.prefused == state.current.prefused(had_raw)
+    assert entry.prefused != state.current.fused(had_raw, fair)

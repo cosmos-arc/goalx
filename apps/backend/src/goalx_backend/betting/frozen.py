@@ -44,13 +44,17 @@ _L5_PREFIXES = ("l5_",)
 CloseProvider = Callable[[str, str, str, str], tuple[float, str, str] | None]
 
 
+_DRIFT_CLASSES = ("anchor", "consensus")
+
+
 def _identity_class(ref: str | None) -> str:
     """
     参考身份类：anchor=单主锚，consensus=欧共识，NULL=unknown。
 
     report-audit-20261027 票 03：anchor 覆盖 entry ``pinnacle`` 与 close
     源T 主锚收盘标签（同一主锚的两条馈线）；跨类相减=参考切换伪装
-    漂移——漂移只在同类且非 unknown 时计算；raw 身份串本身已存列供审计。
+    漂移——漂移只在同类且属于白名单 anchor/consensus 时计算（未识别
+    杂源同落 other 不冒充同身份）；raw 身份串本身已存列供审计。
     """
     if ref is None:
         return "unknown"
@@ -59,6 +63,21 @@ def _identity_class(ref: str | None) -> str:
     if ref == "pinnacle" or ref.startswith("srct"):
         return "anchor"
     return "other"
+
+
+def _drift_skip_kind(anchor_ref: str | None, close_ref: str) -> str | None:
+    """
+    漂移置空的归因分层。
+
+    unknown=任一侧身份未知；mismatch=跨身份或非白名单类；None=可计算。
+    """
+    entry_cls = _identity_class(anchor_ref)
+    close_cls = _identity_class(close_ref)
+    if entry_cls == "unknown" or close_cls == "unknown":
+        return "unknown"
+    if entry_cls == close_cls and entry_cls in _DRIFT_CLASSES:
+        return None
+    return "mismatch"
 
 
 @dataclass
@@ -320,17 +339,17 @@ def _close_update(row: sqlite3.Row, close: tuple[float, str, str]) -> dict[str, 
     """
     收盘字段构造（两路共用：未结算同步面 / 已结算晚到补齐）。
 
-    漂移仅两端参考身份同类且非 unknown 时计算（票 03：共识锚入账 ×
-    主锚收盘相减=参考切换非市场移动）；身份不匹配 → 漂移置空、身份
-    计数由调用方入账，不静默混层。
+    漂移仅两端参考身份同类且属白名单类时计算（票 03：共识锚入账 ×
+    主锚收盘相减=参考切换非市场移动）；置空归因（unknown/mismatch）
+    由调用方经 ``_drift_skip_kind`` 分层计数，不静默混层。
     """
     update: dict[str, Any] = {
         "p_sharp_close": round(float(close[0]), 4),
         "close_ref": close[1],
     }
-    entry_cls = _identity_class(row["anchor_ref"])
-    close_cls = _identity_class(close[1])
-    if row["p_sharp"] is not None and entry_cls == close_cls and entry_cls != "unknown":
+    if row["p_sharp"] is not None and (
+        _drift_skip_kind(row["anchor_ref"], close[1]) is None
+    ):
         update["drift_after_lock"] = round(
             update["p_sharp_close"] - float(row["p_sharp"]), 4
         )
@@ -365,6 +384,7 @@ def reconcile_frozen_decisions(
         "missing_close_total": 0,
         "paper_profit_flat": 0.0,
         "drift_identity_mismatch": 0,
+        "drift_identity_unknown": 0,
     }
     pending = conn.execute(
         " ".join(
@@ -399,8 +419,9 @@ def reconcile_frozen_decisions(
             if close is not None:
                 update = _close_update(row, close)
                 stats["close_backfilled"] += 1
-                if "drift_after_lock" not in update and row["p_sharp"] is not None:
-                    stats["drift_identity_mismatch"] += 1
+                skip = _drift_skip_kind(row["anchor_ref"], close[1])
+                if skip and row["p_sharp"] is not None:
+                    stats[f"drift_identity_{skip}"] += 1
                 _apply_reconcile(conn, int(row["id"]), update, moment)
             continue
         result = rs_store.get_draw_result(conn, int(row["fixture_id"]))
@@ -409,8 +430,9 @@ def reconcile_frozen_decisions(
         if close is not None and row["p_sharp_close"] is None:
             update = _close_update(row, close)
             stats["closed"] += 1
-            if "drift_after_lock" not in update and row["p_sharp"] is not None:
-                stats["drift_identity_mismatch"] += 1
+            skip = _drift_skip_kind(row["anchor_ref"], close[1])
+            if skip and row["p_sharp"] is not None:
+                stats[f"drift_identity_{skip}"] += 1
         if result is None or int(result["void"] or 0):
             stats["still_pending"] += 1
             if update:
@@ -551,16 +573,29 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
         ),
         (business_date,),
     ).fetchone()[0]
-    drift_mismatch = conn.execute(
+    drift_skip = conn.execute(
         " ".join(
             (
-                "SELECT COUNT(*) FROM frozen_decisions WHERE business_date = ?",
+                "SELECT COALESCE(close_ref, '') ref, COUNT(*) n",
+                "FROM frozen_decisions WHERE business_date = ?",
                 "AND decision = 'would_bet' AND p_sharp IS NOT NULL",
                 "AND p_sharp_close IS NOT NULL AND drift_after_lock IS NULL",
+                "GROUP BY ref",
             )
         ),
         (business_date,),
-    ).fetchone()[0]
+    ).fetchall()
+    identity_rows = conn.execute(
+        " ".join(
+            (
+                "SELECT COALESCE(anchor_ref, 'unknown') ref, COUNT(*) n,",
+                "SUM(CASE WHEN drift_after_lock IS NOT NULL THEN 1 ELSE 0 END) drifted",
+                "FROM frozen_decisions WHERE business_date = ?",
+                "AND decision = 'would_bet' GROUP BY ref ORDER BY n DESC",
+            )
+        ),
+        (business_date,),
+    ).fetchall()
     day = funnel_day_row(conn, business_date)
     return {
         "business_date": business_date,
@@ -573,15 +608,23 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
             if recon[2] is not None
             else None,
             "missing_close": int(missing_close),
-            "drift_identity_mismatch": int(drift_mismatch),
+            "drift_skip_by_close_ref": {
+                str(r["ref"]) or "unset": int(r["n"]) for r in drift_skip
+            },
+        },
+        "drift_by_anchor_ref": {
+            str(r["ref"]): {"n": int(r["n"]), "drifted": int(r["drifted"] or 0)}
+            for r in identity_rows
         },
         "tax_face": tax.frozen_tax_face(conn, business_date),
         "funnel_on_sale": int(day["n_on_sale"]) if day else None,
         "note": (
             "冻结决策不自动写 bets 表（人裁决：先行观测 2-4 周）；正的价值代理"
             "≠盈利证明（收盘去水概率作估计），需配来源稳健性与长期赛果验证；"
-            "漂移仅两端参考身份同类时计算（票 03），身份不匹配行=参考切换"
-            "嫌疑，不并入漂移均值；收盘=源T published_at 回放语义（收盘评价"
-            "基准，非当时可知），与决策侧 prospective 观测语义分开出账"
+            "漂移仅两端参考身份同类（白名单 anchor/consensus）时计算"
+            "（票 03），置空行分 unknown/mismatch 两层不并入漂移均值，"
+            "drift_by_anchor_ref=各身份层分母；收盘=源T published_at 回放"
+            "语义（reconstructed_source_asof：收盘评价基准，非当时可知），"
+            "与决策侧 prospective 观测语义分开出账"
         ),
     }

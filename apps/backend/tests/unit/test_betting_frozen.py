@@ -637,4 +637,26 @@ def test_drift_identity_gating_and_anchor_ref_persisted(db) -> None:
     assert rows[cons_fx]["close_ref"] == "srct:1x2:177"
     assert stats["drift_identity_mismatch"] == 1
     summary = fz.frozen_summary(db, BUSINESS_DATE)
-    assert summary["reconciliation"]["drift_identity_mismatch"] == 1
+    # 日终面：置空行按收盘侧身份归因 + 各身份层分母（票 03 验收 3）
+    assert summary["reconciliation"]["drift_skip_by_close_ref"] == {"srct:1x2:177": 1}
+    identity_face = summary["drift_by_anchor_ref"]
+    assert identity_face["pinnacle"]["drifted"] == 1
+    assert (
+        identity_face[next(k for k in identity_face if k.startswith("eu_consensus"))][
+            "drifted"
+        ]
+        == 0
+    )
+
+
+def test_drift_skip_kind_whitelist_and_layering() -> None:
+    """漂移置空归因分层（票 03 评审修正）：白名单 anchor/consensus 之外
+    同串 other 不冒充同身份；任一侧未知=unknown 层，不混入 mismatch。"""
+    assert fz._drift_skip_kind("pinnacle", "srct:1x2:177") is None
+    assert (
+        fz._drift_skip_kind("eu_consensus[a,b]", "eu_consensus[c]") is None
+    )  # 同类共识（书集不同=共识构成漂移的已知限制，raw ref 已存列审计）
+    assert fz._drift_skip_kind("betfair", "betfair") == "mismatch"
+    assert fz._drift_skip_kind("eu_consensus[a]", "srct:1x2:177") == "mismatch"
+    assert fz._drift_skip_kind(None, "srct:1x2:177") == "unknown"
+    assert fz._drift_skip_kind("pinnacle", None) == "unknown"

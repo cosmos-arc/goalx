@@ -193,19 +193,8 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         study.skip("fit_failed")
         return
     study.fitted += 1
-    # 可行/冲突分开计数，冲突行不进认证面（包络与保守 EV 不可信）
-    if not _constraint_feasibility(
-        study, (center, lo_mat, hi_mat), fair, ou_line, p_over
-    ):
-        study.conflicts += 1
-        return
-    study.certified += 1
-    # 信息分离定价：1X2-only 反推矩阵（不含 OU 约束）——与约束族源分离
-    pricing = market_implied_matrix(fair)
-    if pricing is None:
-        study.skip("pricing_fit_failed")
-        return
-    # AH 半线联合一致性诊断（cid8 正=主让 → 矩阵 goal_line=−ah_line）
+    # AH 半线联合一致性诊断（cid8 正=主让 → 矩阵 goal_line=−ah_line）；
+    # 认证门前入账——冲突行的 AH 缺口正是"约束族不可联合满足"的直接证据
     ah_line = half_line_only(row.get("ah_close_line_med"))
     ah_home_w = row.get("ah_close_home_water_med")
     ah_away_w = row.get("ah_close_away_water_med")
@@ -221,6 +210,18 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         study.ah_gaps.append(gap)
         if gap <= AH_TOL:
             study.ah_joint_ok += 1
+    # 可行/冲突分开计数，冲突行不进认证面（包络与保守 EV 不可信）
+    if not _constraint_feasibility(
+        study, (center, lo_mat, hi_mat), fair, ou_line, p_over
+    ):
+        study.conflicts += 1
+        return
+    study.certified += 1
+    # 信息分离定价：1X2-only 反推矩阵（不含 OU 约束）——与约束族源分离
+    pricing = market_implied_matrix(fair)
+    if pricing is None:
+        study.skip("pricing_fit_failed")
+        return
     _ttg_bounds(study, mats, pricing, haircut)
     _hhad_bounds(study, mats, pricing, haircut)
 

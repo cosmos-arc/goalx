@@ -36,7 +36,7 @@ _EPS = 1e-15
 class _HistoryEntry(NamedTuple):
     """一条融合学习历史：融合前（校准后）三向 / fair 三向 / 赛果 / era。"""
 
-    applied: dict[str, float]
+    prefused: dict[str, float]
     fair: dict[str, float]
     ftr: str
     era: str
@@ -63,7 +63,7 @@ def fit_alpha(entries: list[_HistoryEntry]) -> float:
     if not entries:
         raise ValueError("融合拟合窗为空（引擎门槛前置，不可达路径 fail-loud）")
     logs_model = np.array(
-        [[np.log(max(e.applied[s], _EPS)) for s in SELECTIONS] for e in entries]
+        [[np.log(max(e.prefused[s], _EPS)) for s in SELECTIONS] for e in entries]
     )
     logs_fair = np.array(
         [[np.log(max(e.fair[s], _EPS)) for s in SELECTIONS] for e in entries]
@@ -113,13 +113,13 @@ class FusionState:
 
     def record(
         self,
-        applied_probs: dict[str, float],
+        prefused_probs: dict[str, float],
         fair_probs: dict[str, float],
         ftr: str,
         era: str,
     ) -> None:
         """一场（融合前三向, fair, 赛果, era）入史（本周冻结完毕后调用）。"""
-        self.history.append(_HistoryEntry(applied_probs, fair_probs, ftr, era))
+        self.history.append(_HistoryEntry(prefused_probs, fair_probs, ftr, era))
 
     def log_week(self, entry: dict[str, object]) -> None:
         """周级 α 轨迹入账（run summary 落 alpha_log）。"""
