@@ -59,6 +59,7 @@ from penaltyblog.models import goal_expectancy
 from scipy.optimize import minimize
 
 from goalx_backend import odds_math as om
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 
@@ -1504,6 +1505,8 @@ def run_backtest(
         "gold_built_at": meta.get("built_at"),
         "gold_maturity_today": meta.get("maturity_today"),
         "gold_input_digests": meta.get("input_digests"),
+        # 票 06：运行指纹（git/deps/db/corpus 四面），隔离复现可对工件倒推输入
+        "run_fingerprint": rfp.build_run_fingerprint(conn=conn, store=store),
     }
     cur = conn.execute(
         """

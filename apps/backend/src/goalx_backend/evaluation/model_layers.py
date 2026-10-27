@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation.backtest import run_summary
 from goalx_backend.evaluation.metrics import (
@@ -297,6 +298,8 @@ def build_model_layers_report(
             + "在**下注子集**（选择偏差），两口径不可互比"
         ),
     }
+    # 票 06：工件自证身份（git/deps/db/corpus）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(
