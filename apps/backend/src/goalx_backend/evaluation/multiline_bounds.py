@@ -63,6 +63,11 @@ class BoundsStudy:
     n_matches: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
     fitted: int = 0
+    certified: int = 0  # 约束可行（票 04：拟合端点全落声明区间内）
+    conflicts: int = 0  # 约束冲突：端点落带外——报冲突不造概率
+    endpoint_collapse: int = 0  # 认证行中端点塌缩（带内未达目标>eps/2，correctness I2）
+    ou_resids: list[float] = field(default_factory=list)
+    x12_resids: list[float] = field(default_factory=list)
     ah_joint_total: int = 0
     ah_joint_ok: int = 0
     ah_gaps: list[float] = field(default_factory=list)
@@ -122,6 +127,45 @@ def run_bounds_study(
     return payload
 
 
+def _constraint_feasibility(
+    study: BoundsStudy,
+    fits: tuple[ScoreMatrix | None, ScoreMatrix | None, ScoreMatrix | None],
+    fair: dict[str, float],
+    ou_line: float,
+    p_over: float,
+) -> bool:
+    """
+    逐拟合约束可行性（report-audit-20261027 票 04）。
+
+    无约束 NLS 的折中解可能把端点拟到声明区间 [p_over±eps] 外——此时
+    端点不是认证的可行族极值。OU 残差（vs 各自目标）与 1X2 贴合度入
+    账；返回全端点是否在带内（可行）。
+    """
+    targets = (p_over, p_over - study.eps, p_over + study.eps)
+    in_band_all = True
+    collapse = False
+    x12_resid_max = 0.0
+    for mat, target in zip(fits, targets, strict=False):
+        if mat is None:
+            continue
+        model_over = sum(p for b, p in mat.ttg().items() if float(b) > ou_line)
+        resid = abs(model_over - target)
+        study.ou_resids.append(resid)
+        if abs(model_over - p_over) > study.eps + 1e-9:
+            in_band_all = False
+        if resid > study.eps / 2:
+            # 端点塌缩（correctness I2）：在带内但未达自身目标——包络
+            # 窄于声明的可行族；认证保留但披露计数（不门控）
+            collapse = True
+        had = mat.had()
+        row_x12 = max(abs(had[s] - fair[s]) for s in ("h", "d", "a"))
+        x12_resid_max = max(x12_resid_max, row_x12)
+    study.x12_resids.append(x12_resid_max)
+    if in_band_all and collapse:
+        study.endpoint_collapse += 1
+    return in_band_all
+
+
 def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
     """单场：OU 约束端点包络 + AH 联合一致性 + 保守 EV。"""
     study.n_matches += 1
@@ -158,12 +202,8 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         study.skip("fit_failed")
         return
     study.fitted += 1
-    # 信息分离定价：1X2-only 反推矩阵（不含 OU 约束）——与约束族源分离
-    pricing = market_implied_matrix(fair)
-    if pricing is None:
-        study.skip("pricing_fit_failed")
-        return
-    # AH 半线联合一致性诊断（cid8 正=主让 → 矩阵 goal_line=−ah_line）
+    # AH 半线联合一致性诊断（cid8 正=主让 → 矩阵 goal_line=−ah_line）；
+    # 认证门前入账——冲突行的 AH 缺口正是"约束族不可联合满足"的直接证据
     ah_line = half_line_only(row.get("ah_close_line_med"))
     ah_home_w = row.get("ah_close_home_water_med")
     ah_away_w = row.get("ah_close_away_water_med")
@@ -179,6 +219,18 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         study.ah_gaps.append(gap)
         if gap <= AH_TOL:
             study.ah_joint_ok += 1
+    # 可行/冲突分开计数，冲突行不进认证面（包络与保守 EV 不可信）
+    if not _constraint_feasibility(
+        study, (center, lo_mat, hi_mat), fair, ou_line, p_over
+    ):
+        study.conflicts += 1
+        return
+    study.certified += 1
+    # 信息分离定价：1X2-only 反推矩阵（不含 OU 约束）——与约束族源分离
+    pricing = market_implied_matrix(fair)
+    if pricing is None:
+        study.skip("pricing_fit_failed")
+        return
     _ttg_bounds(study, mats, pricing, haircut)
     _hhad_bounds(study, mats, pricing, haircut)
 
@@ -258,7 +310,31 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
         "sample": {
             "n": study.n_matches,
             "fitted": study.fitted,
+            "certified": study.certified,
+            "conflicts": study.conflicts,
             "skipped": study.skipped,
+        },
+        "constraint_feasibility": {
+            "certified": study.certified,
+            "conflicts": study.conflicts,
+            "endpoint_collapse": study.endpoint_collapse,
+            "ou_resid_median": round(_median(study.ou_resids), 4)
+            if study.ou_resids
+            else None,
+            "ou_resid_max": round(max(study.ou_resids), 4) if study.ou_resids else None,
+            "x12_resid_median": round(_median(study.x12_resids), 4)
+            if study.x12_resids
+            else None,
+            "x12_resid_max": round(max(study.x12_resids), 4)
+            if study.x12_resids
+            else None,
+            "note": (
+                "冲突=拟合端点落 OU 声明区间 [p±eps] 外（约束族不可联合满足"
+                "或 NLS 折中越带）——该行不进界/保守 EV 认证面；faces 分母"
+                "=certified 行（非 fitted）；endpoint_collapse=认证行中端点"
+                "在带内但未达自身目标（>eps/2）——包络窄于声明可行族的披露"
+                "计数（不门控）"
+            ),
         },
         "ah_joint": {
             "n": study.ah_joint_total,
@@ -271,9 +347,9 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
         "ev_lower_total_hits": total_hits,
         "ev_lower_total_faces": total_face,
         "conclusion": (
-            "保守界下仍有非零正 EV 候选"
+            "认证面（约束可行行）保守界下仍有非零正 EV 候选"
             if total_hits > 0
-            else "保守界下无正 EV 候选——B 线按界口径不可转正"
+            else "认证面（约束可行行）保守界下无正 EV 候选——B 线按界口径不可转正"
         ),
     }
 
@@ -286,14 +362,20 @@ def _write_report(store: CorpusStore, payload: dict[str, Any]) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     ah = payload["ah_joint"]
+    feas = payload["constraint_feasibility"]
     lines = [
         "# OU 多盘口约束求界 + AH 联合一致性（measure-10，B 线可行性）",
         "",
         f"抽样 {payload['sample']['n']} 场（era×联赛分层，seed 固定）"
-        + f"｜拟合 {payload['sample']['fitted']}｜eps={payload['eps']}",
+        + f"｜拟合 {payload['sample']['fitted']}"
+        + f"｜认证 {feas['certified']}｜约束冲突 {feas['conflicts']}"
+        + f"｜eps={payload['eps']}",
         f"跳过：{payload['sample']['skipped']}",
+        f"约束可行性：OU 残差中位 {feas['ou_resid_median']}"
+        + f"/max {feas['ou_resid_max']}，1X2 残差中位 "
+        + f"{feas['x12_resid_median']}/max {feas['x12_resid_max']}",
         f"AH 联合一致性：{ah['ok']}/{ah['n']}"
-        + f"（rate={ah['rate']}，gap 中位 {ah['gap_median']}，max {ah['gap_max']}）",
+        + f"（rate={ah['rate']}，gap 中位 {ah['gap_median']},max {ah['gap_max']}）",
         "",
         "| 面 | n | 界宽中位 | 界宽max | 保守EV命中 | 命中率 |",
         "|---|---|---|---|---|---|",
@@ -312,9 +394,11 @@ def _write_report(store: CorpusStore, payload: dict[str, Any]) -> None:
         " ".join(
             (
                 "判读注意：界=双 Poisson 族内 OU 约束端点近似包络（Poisson pmf",
-                "单峰，峰值邻桶上界可能低估；非分布无关界）；模拟价=1X2-only",
-                "反推定价×(1−haircut)（与约束族信息分离）；no_ou_half_line",
-                "跳过且缺向随 era/联赛而异（拟合面非随机子样）；抽样口径非全量。",
+                "单峰，峰值邻桶上界可能低估；非分布无关界）；拟合端点落声明",
+                "区间外=约束冲突行，不进认证面（faces 分母=certified）；模拟价",
+                "=1X2-only 反推定价×(1−haircut)（与约束族信息分离）；",
+                "no_ou_half_line 跳过且缺向随 era/联赛而异（拟合面非随机",
+                "子样）；抽样口径非全量。",
             )
         ),
     ]

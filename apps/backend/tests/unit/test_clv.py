@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from goalx_backend import odds_math as om
@@ -843,3 +845,63 @@ def test_golden_ols_slope() -> None:
     assert clv._ols_slope([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2.0] * 6) == (0.0, None)
     # n<MIN 守卫
     assert clv._ols_slope([1.0], [1.0]) == (None, None)
+
+
+def test_sid_fallback_ambiguous_candidates_rejected() -> None:
+    """兜底多候选=歧义拒绝（report-audit-20261027 票 05）：不再
+    ORDER BY sid 任选首行——返回 None 并告警，锚缺席走诚实 skip。"""
+    import duckdb
+
+    from goalx_backend.data import quote_evidence as qe
+
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE fixture_universe"
+        " (sid VARCHAR, league VARCHAR, kickoff TIMESTAMP, home VARCHAR,"
+        " away VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO fixture_universe VALUES"
+        " ('2790001', '英超', TIMESTAMP '2026-09-13 03:00:00', '主队英超', '客队英超'),"
+        " ('2790002', '英超', TIMESTAMP '2026-09-13 03:00:00', '主队英超', '客队英超')"
+    )
+    # 同日且同 kickoff：两步都无法唯一 → 拒绝（旧行为返回 2790001；
+    # 不同 kickoff 的同日双赛由精确 kickoff 消歧，见 doubleheader 测试）
+    resolved = qe._resolve_sid_fallback(
+        con, "主队英超", "客队英超", datetime(2026, 9, 13, 3, 0)
+    )
+    assert resolved is None
+    con.close()
+
+
+def test_sid_fallback_doubleheader_disambiguated_by_kickoff() -> None:
+    """同日双赛（correctness I4）：第一步多候选时精确 kickoff 唯一 → 消歧
+    接受；kickoff 也撞（真歧义）→ 拒绝。"""
+    import duckdb
+
+    from goalx_backend.data import quote_evidence as qe
+
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE fixture_universe"
+        " (sid VARCHAR, league VARCHAR, kickoff TIMESTAMP, home VARCHAR,"
+        " away VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO fixture_universe VALUES"
+        " ('2790001', '英超', TIMESTAMP '2026-09-13 03:00:00', '主队英超', '客队英超'),"
+        " ('2790002', '英超', TIMESTAMP '2026-09-13 19:00:00', '主队英超', '客队英超')"
+    )
+    resolved = qe._resolve_sid_fallback(
+        con, "主队英超", "客队英超", datetime(2026, 9, 13, 19, 0)
+    )
+    assert resolved == "2790002"  # 精确 kickoff 消歧
+    # 两行同 kickoff：第一步与消歧步都歧义 → 拒绝
+    con.execute("UPDATE fixture_universe SET kickoff = TIMESTAMP '2026-09-13 03:00:00'")
+    assert (
+        qe._resolve_sid_fallback(
+            con, "主队英超", "客队英超", datetime(2026, 9, 13, 3, 0)
+        )
+        is None
+    )
+    con.close()

@@ -15,8 +15,8 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     assert db.current_version(conn) == 0
     # v7..v26 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表 + 票 13 换键
     # + caliber-loop 票 04 机会漏斗表
-    assert db.migrate(conn) == 30
-    assert db.migrate(conn) == 30  # 重跑幂等
+    assert db.migrate(conn) == 31
+    assert db.migrate(conn) == 31  # 重跑幂等
     # v16（票 48）：ev_assessments 脚手架 DROP
     dropped = {
         row["name"]
@@ -189,7 +189,7 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 30
+    assert db.migrate(conn) == 31
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before
@@ -223,7 +223,7 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
                     '{"h":0.4}', '{"h":0.5}', 'psc', 'fp', '2023-12-31')
             """
         )
-        assert db.migrate(conn) == 30
+        assert db.migrate(conn) == 31
         row = conn.execute(
             "SELECT * FROM backtest_predictions WHERE run_id = 1"
         ).fetchone()
@@ -254,3 +254,18 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
             )
     finally:
         conn.close()
+
+
+def test_v31_reentrant_after_interrupted_migration() -> None:
+    """v31 幂等守卫（correctness W1）：DDL 已落而版本戳未提交的崩溃窗
+    （或中间版代码先动过主库）后重跑 migrate 不得 duplicate column 卡死。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    assert db.migrate(conn) == 31
+    # 模拟中断窗：抹掉版本戳但保留 v31 列（DDL 已提交、戳未提交）
+    conn.execute("DELETE FROM schema_migrations WHERE version = 31")
+    conn.commit()
+    assert db.migrate(conn) == 31  # 重入不抛，列存在守卫短路 ALTER
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(frozen_decisions)")}
+    assert {"anchor_ref", "close_ref"} <= cols
+    conn.close()

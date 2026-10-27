@@ -338,6 +338,7 @@ def test_dual_track_face_in_day_report(db: sqlite3.Connection) -> None:
             captured_at="2026-10-16T02:00:05+00:00",
             purchasable=True,
             jc_odds={"h": 2.5, "d": 3.4, "a": 3.2},
+            jc_age_seconds=4200.0,  # > 新鲜窗 → 资格分层披露面计数
             p_sharp={"h": 0.50, "d": 0.30, "a": 0.20},
             anchor_ref="pinnacle",
         ),
@@ -348,6 +349,9 @@ def test_dual_track_face_in_day_report(db: sqlite3.Connection) -> None:
     assert compare["mean_value_proxy"]["24h"]["h"] == round(2.5 * 0.50 - 1.0, 4)
     assert compare["mean_value_proxy"]["freeze"]["h"] is not None  # 轨一并列
     assert compare["late_snapshots"] == {"24h": 0, "12h": 0}
+    # 资格差异分层披露（票 05）：JC 陈旧计数 + 锚身份分布，headline 不变
+    assert compare["qualification"]["jc_stale"]["24h"] == 1
+    assert compare["qualification"]["anchor_ref_mix"]["24h"] == {"pinnacle": 1}
     # 日行 JSON 持久化 track2_compare
     day = fn.funnel_day_row(db, BUSINESS_DATE)
     assert "track2_compare" in json.loads(day["value_proxy_stats"])

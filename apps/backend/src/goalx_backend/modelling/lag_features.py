@@ -123,10 +123,14 @@ def _push_pair(
     value: float | None,
     against: float | None,
 ) -> None:
-    """计数对入窗（缺值场不进窗，不冒充 0）。"""
-    if value is not None:
+    """
+    计数对入窗（配对观测：任一侧缺则整场不进两侧窗，不冒充 0）。
+
+    与 xG 对同语义（report-audit-20261027 票 05 修旧 0 填充）。
+    """
+    if value is not None and against is not None:
         for_win.append(value)
-        against_win.append(0 if against is None else against)
+        against_win.append(against)
 
 
 def build_lag_features(

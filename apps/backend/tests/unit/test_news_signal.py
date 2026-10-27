@@ -431,3 +431,54 @@ def test_pit_group_all_unmatched_still_visible(gold_env, tmp_path):
         # 组视图（匹配前全体）仍披露 strict 存在——不静默消失
         assert h["event_by_pit_group"]["strict_pit"]["n"] == 1
         report_store.close()
+
+
+def test_control_pool_shrinks_with_strict_main_group():
+    """严格对照收缩（report-audit-20261027 票 02）：主结论面=strict 时，
+    unproven 事件的专属对照不进对照池——严格事件差值不被外组对照翻转。"""
+    from datetime import date
+
+    from goalx_backend.data.silver import PIT_STRICT, PIT_UNPROVEN
+
+    def _pred(league: str, realized_h: float) -> nsw._Pred:
+        return nsw._Pred(
+            realized={"h": realized_h, "d": 0.0, "a": 0.0},
+            fair={"h": 0.4, "d": 0.3, "a": 0.3},
+            league=league,
+            season="2023-24",
+            week_monday=date(2024, 3, 11),
+        )
+
+    preds = {
+        "se": _pred("E0", 0.1),  # strict 事件场（残差 +0.1）
+        "ue": _pred("SP1", -0.1),  # unproven 事件场（外联赛）
+        "c1": _pred("E0", 0.0),  # strict 事件的对照（0.0）
+        "c2": _pred("SP1", 0.6),  # unproven 事件的独占对照（+0.6）
+    }
+    samples = [
+        nsw._Sample("se", "h", 0.1, preds["se"], 1, PIT_STRICT),
+        nsw._Sample("ue", "h", -0.1, preds["ue"], 1, PIT_UNPROVEN),
+    ]
+    face = nsw._side_face(samples, preds, {"se", "ue"}, "h")
+    # 对照池=strict 事件的命中集（c1 only）：差值保持 +0.1
+    # （旧口径混入 c2 后对照均值 0.3 → 差值被翻转为 −0.2）
+    assert face["main_pit_groups"] == [PIT_STRICT]
+    assert face["control"]["n"] == 1
+    assert face["control"]["mean"] == 0.0
+    assert face["diff"] == 0.1
+
+
+def test_paired_week_bootstrap_zero_when_arms_identical():
+    """同步周重抽（票 02）：两臂同周同值 → 配对差恒 0，区间收缩到 0；
+    独立重抽两臂会给出约 [−0.3, 0.3] 的伪区间（机制反例）。"""
+    from datetime import date
+
+    weeks = [date(2024, 3, 4 + 7 * i) for i in range(4)]
+    values = [-0.3, -0.1, 0.1, 0.3]
+    event = [(v, w) for v, w in zip(values, weeks, strict=True)]
+    control = [(v, w) for v, w in zip(values, weeks, strict=True)]
+    boot = nsw._week_block_bootstrap(event, control)
+    assert boot is not None
+    assert boot["resample"] == "paired_union_weeks"
+    assert boot["p2_5"] == 0.0
+    assert boot["p97_5"] == 0.0

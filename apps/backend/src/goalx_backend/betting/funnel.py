@@ -543,10 +543,21 @@ def _dual_track_face(
     }
     purchasable_counts = {"24h": [0, 0], "12h": [0, 0]}  # [可购, 总]
     late_counts = {"24h": 0, "12h": 0}
+    # 资格差异分层披露（report-audit-20261027 票 05）：轨二 purchasable
+    # =拍点停售状态单维，轨一另有 L3 陈旧门与 L5 单关门——只分层披露，
+    # 不静默对齐（改口径会破坏延迟曲线的历史可比性）
+    jc_stale_counts = {"24h": 0, "12h": 0}
+    anchor_mix: dict[str, dict[str, int]] = {"24h": {}, "12h": {}}
     for fid in fixture_ids:
         snaps = track2_snapshots_of(conn, fid)
         for snap_type, snap in snaps.items():
             purchasable_counts[snap_type][1] += 1
+            jc_age = snap.get("jc_age_seconds")
+            if jc_age is not None and float(jc_age) > FRESHNESS_WINDOW_SECONDS:
+                jc_stale_counts[snap_type] += 1
+            ref = str(snap.get("anchor_ref") or "absent")
+            ref_kind = "consensus" if ref.startswith("eu_consensus") else ref
+            anchor_mix[snap_type][ref_kind] = anchor_mix[snap_type].get(ref_kind, 0) + 1
             if snap["late_flag"]:
                 late_counts[snap_type] += 1
                 continue  # 迟到拍不进段均值（读数时点漂移）
@@ -575,6 +586,15 @@ def _dual_track_face(
             k: {"eligible": v[0], "total": v[1]} for k, v in purchasable_counts.items()
         },
         "late_snapshots": late_counts,
+        "qualification": {
+            "jc_stale": jc_stale_counts,
+            "anchor_ref_mix": anchor_mix,
+            "note": (
+                "轨二 purchasable=拍点停售状态单维；轨一另有 L3 锚/JC 陈旧"
+                "门与 L5 单关资格门——jc_stale/anchor_ref_mix 为该差异的"
+                "分层披露（headline 口径不变）"
+            ),
+        },
         "note": (
             "mean_value_proxy=各阶段各自样本面（只计准时可购拍；迟到拍单列"
             "计数不进均值——读数时点漂移会压低衰减）；decay_chain_same_"

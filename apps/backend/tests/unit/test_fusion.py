@@ -247,3 +247,55 @@ def test_engine_fusion_invalid_fails_loud(gold_env):
                 ),
                 label="bad2",
             )
+
+
+def test_fit_alpha_golden_case_train_apply_same_stage():
+    """黄金样例（report-audit-20261027 票 01）：模型 (0.8,0.1,0.1)、市场
+    (0.4,0.3,0.3)、结果频率 (0.6,0.2,0.2) → 正确几何融合权重 0.45、
+    主胜 0.598886；在融合后输出历史上拟合会得到 α=1（旧口径反例）。"""
+    model = _triplet(0.8, 0.1, 0.1)
+    fair = _triplet(0.4, 0.3, 0.3)
+    outcomes = ["h"] * 60 + ["d"] * 20 + ["a"] * 20
+    history = [fu._HistoryEntry(model, fair, ftr, "psc_proxy") for ftr in outcomes]
+    alpha = fit_alpha(history)
+    assert alpha == 0.45
+    assert fuse(model, fair, alpha)["h"] == pytest.approx(0.598886, abs=1e-6)
+    # 旧口径反例：历史若存的是融合后输出（正确 α=0.45 下的 0.598886
+    # 表示），拟合锁死 α=1，再用于原始概率返回 0.8——输入空间错位的
+    # 机制复现（在融合后历史上学的权重不适用于融合前输入）
+    fused_out = fuse(model, fair, alpha)
+    buggy = [fu._HistoryEntry(fused_out, fair, ftr, "psc_proxy") for ftr in outcomes]
+    assert fit_alpha(buggy) == 1.0
+    assert fuse(model, fair, fit_alpha(buggy))["h"] == pytest.approx(0.8)
+
+
+def test_layer_state_records_prefused_stage():
+    """不变量：融合史存的是融合前（校准后）三向——与 fuse() 应用输入
+    同阶段，不是融合后输出（输入空间错位回归钉死）。"""
+    from goalx_backend.evaluation.backtest import _LayerState, _WeekLayers
+
+    class _ShiftCal:
+        def apply(self, had: dict[str, float]) -> dict[str, float]:
+            total = had["h"] + 0.1 + had["d"] + had["a"]
+            return {
+                "h": (had["h"] + 0.1) / total,
+                "d": had["d"] / total,
+                "a": had["a"] / total,
+            }
+
+    state = _LayerState(cal=None, fusion=FusionState(mode="global"), residual=None)
+    state.current = _WeekLayers(calibrator=_ShiftCal(), alpha=0.5)
+    had_raw = _triplet(0.5, 0.3, 0.2)
+    fair = _triplet(0.4, 0.3, 0.3)
+    state.record(
+        had_raw,
+        state.current.prefused(had_raw),
+        state.current.fused(had_raw, fair),
+        fair,
+        "h",
+        "psc_proxy",
+        __import__("numpy").zeros(8),
+    )
+    entry = state.fusion.history[-1]
+    assert entry.prefused == state.current.prefused(had_raw)
+    assert entry.prefused != state.current.fused(had_raw, fair)
