@@ -1222,6 +1222,8 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `settled_outcome` | TEXT | — |
 | `settled_profit` | REAL | — |
 | `reconciled_at` | TEXT | — |
+| `anchor_ref` | TEXT | — |
+| `close_ref` | TEXT | — |
 
 唯一键 `UNIQUE(`business_date`, `fixture_id`, `selection_code`)`
 <!-- schema-doc:END:table:frozen_decisions -->

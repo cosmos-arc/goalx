@@ -547,3 +547,94 @@ def test_frozen_dual_would_bet_selections_close_backfill(
     ).fetchone()
     assert frow["p_sharp_close_h"] == 0.52  # 两选向各自回填（守卫按目标列）
     assert frow["p_sharp_close_d"] == 0.52
+
+
+def test_drift_identity_gating_and_anchor_ref_persisted(db) -> None:
+    """参考身份贯通（report-audit-20261027 票 03）：
+
+    - anchor_ref 入冻结账（主锚入账行="pinnacle"）；
+    - 同类（anchor×源T 主锚收盘）→ 漂移照算；
+    - 跨类（欧共识入账 × 主锚收盘）→ 漂移置空 + mismatch 计数 +
+      close_ref 落列——参考切换不伪装成市场漂移。
+    """
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    def _consensus_quotes(fx: int) -> None:
+        # 只放非主锚书（欧共识回退路径）→ funnel anchor_ref=eu_consensus[...]
+        for book in ("odds_api:bookA", "odds_api:bookB"):
+            for sel, odds in {"h": 2.0, "d": 3.4, "a": 4.0}.items():
+                fx_store.insert_odds_snapshot(
+                    db,
+                    SnapshotInput(
+                        fixture_id=fx,
+                        market_code="had",
+                        selection_code=sel,
+                        source=book,
+                        odds=odds,
+                        captured_at=SOURCE_TIME,
+                        observed_at=OBSERVED,
+                        source_updated_at=SOURCE_TIME,
+                    ),
+                )
+        db.commit()
+
+    # 行 1：主锚入账（_add_quotes 放 odds_api:pinnacle）
+    anchor_fx = _seed_fixture(db, 0)
+    _add_quotes(
+        db, anchor_fx, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, anchor_fx)
+    # 行 2：共识入账（无主锚书——只灌 JC + 两本欧书）
+    cons_fx = _seed_fixture(db, 1)
+    for sel, odds in {"h": 3.0, "d": 3.3, "a": 3.5}.items():
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=cons_fx,
+                market_code="had",
+                selection_code=sel,
+                source="sporttery",
+                odds=odds,
+                captured_at=SOURCE_TIME,
+                observed_at=OBSERVED,
+                source_updated_at=SOURCE_TIME,
+            ),
+        )
+    _consensus_quotes(cons_fx)
+    _add_sale(db, cons_fx)
+
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+
+    refs = {
+        int(r["fixture_id"]): r["anchor_ref"]
+        for r in db.execute(
+            "SELECT fixture_id, anchor_ref FROM frozen_decisions"
+            " WHERE decision='would_bet'"
+        )
+    }
+    assert refs[anchor_fx] == "pinnacle"
+    assert refs[cons_fx].startswith("eu_consensus")
+
+    def close_provider(home, away, kickoff, selection):
+        return (0.52, "srct:1x2:177", "s1")
+
+    stats = fz.reconcile_frozen_decisions(
+        db, close_provider, now="2026-10-18T00:00:00+00:00"
+    )
+    rows = {
+        int(r["fixture_id"]): r
+        for r in db.execute(
+            "SELECT fixture_id, drift_after_lock, close_ref FROM frozen_decisions"
+            " WHERE decision='would_bet'"
+        )
+    }
+    # 同类（pinnacle × 源T 收盘）→ 漂移照算 + close_ref 落列
+    assert rows[anchor_fx]["drift_after_lock"] is not None
+    assert rows[anchor_fx]["close_ref"] == "srct:1x2:177"
+    # 跨类（共识入账 × 主锚收盘）→ 漂移置空 + mismatch 计数
+    assert rows[cons_fx]["drift_after_lock"] is None
+    assert rows[cons_fx]["close_ref"] == "srct:1x2:177"
+    assert stats["drift_identity_mismatch"] == 1
+    summary = fz.frozen_summary(db, BUSINESS_DATE)
+    assert summary["reconciliation"]["drift_identity_mismatch"] == 1

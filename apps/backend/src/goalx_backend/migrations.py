@@ -1684,6 +1684,19 @@ def _apply_v30(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v31(conn: sqlite3.Connection) -> None:
+    """
+    v31（report-audit-20261027 票 03）：冻结决策参考身份。
+
+    frozen_decisions 增 anchor_ref（入账时参考取法身份，源自漏斗行）与
+    close_ref（收盘基准标签）两列——锁后漂移只在两端参考身份同类时
+    计算，参考切换（欧共识入账 × 主锚收盘）不再伪装成市场漂移。旧行
+    两列 NULL=身份未知（漂移诚实置空，不回填猜测）。
+    """
+    conn.execute("ALTER TABLE frozen_decisions ADD COLUMN anchor_ref TEXT")
+    conn.execute("ALTER TABLE frozen_decisions ADD COLUMN close_ref TEXT")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1715,4 +1728,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (28, _apply_v28),
     (29, _apply_v29),
     (30, _apply_v30),
+    (31, _apply_v31),
 )
