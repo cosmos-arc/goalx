@@ -30,6 +30,7 @@ from typing import Any, cast
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation.metrics import load_backtest_run
@@ -478,6 +479,8 @@ def build_bucket_reaudit_report(
             + "（唯一真相源不手抄）；观察性研究不进引擎不改参数"
         ),
     }
+    # 票 06：工件自证身份（git/deps/corpus/db）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(

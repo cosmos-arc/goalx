@@ -25,6 +25,7 @@ from typing import Any
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader, quote_evidence
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.mapping import srct_sid_for_fixture
@@ -241,6 +242,8 @@ def calibrate_decade(
             "selection 样本强相关（共享 overround），有效 n≈n_fixtures"
         ),
     }
+    # 票 06：工件自证身份（git/deps/corpus/db）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.json").write_text(

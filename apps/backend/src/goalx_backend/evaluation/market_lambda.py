@@ -153,7 +153,7 @@ def build_market_lambda_report(
                 }
         payload[f"ttg_implied_{method}"] = implied
 
-    # 票 06：工件自证身份（git/deps/db/corpus）
+    # 票 06：工件自证身份（git/deps/corpus；本报告无运行面库依赖）
     payload["run_fingerprint"] = rfp.build_run_fingerprint(store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)

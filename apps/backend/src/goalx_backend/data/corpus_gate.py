@@ -56,6 +56,7 @@ from typing import Any, cast
 import duckdb
 
 from goalx_backend import db
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, silver
 from goalx_backend.data.corpus_store import CorpusStore
@@ -1145,6 +1146,8 @@ def build_phase1_gate_report(
         },
         "coverage": coverage,
     }
+    # 票 06：工件自证身份（git/deps/corpus；本报告无运行面库依赖）
+    report["run_fingerprint"] = rfp.build_run_fingerprint(store=store)
     reports = store.root / REPORTS_DIR
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.json").write_text(
