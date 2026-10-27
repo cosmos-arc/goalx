@@ -209,3 +209,16 @@ def test_unsorted_input_fails_loud():
 
     with pytest.raises(ValueError, match="升序"):
         build_lag_features(rows)
+
+
+def test_shots_pair_not_split():
+    """射门对配对观测（report-audit-20261027 票 05）：一侧缺则整场不进
+    两侧窗——旧实现把缺失 against 冒充 0（真树当前零触发，守卫防复发）。"""
+    rows = [
+        _row("m1", "2024-01-01", shots_h=15, shots_a=None),  # 只有 home 侧射门
+        _row("m2", "2024-01-02"),
+    ]
+    feats = build_lag_features(rows)
+    # m1 整场没进窗——m2 的射门窗为空（旧：for=15、against=0 冒充）
+    assert feats["m2"]["shots_for_diff"] is None
+    assert feats["m2"]["shots_against_diff"] is None

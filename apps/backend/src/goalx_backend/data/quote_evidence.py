@@ -621,27 +621,43 @@ def _resolve_sid_fallback(
     con: duckdb.DuckDBPyConnection, home: str, away: str, beijing: datetime
 ) -> str | None:
     """
-    无链兜底：两步确定性键查询（票 75 语义保持——多命中取 sid 首行）。
+    无链兜底：两步确定性键查询（票 75 语义）。
+
+    多命中=歧义 → 拒绝并告警（report-audit-20261027 票 05：不再
+    ORDER BY sid 任选首行——确定性任意选择仍是任意选择，歧义显式
+    拒绝并把候选集留审计痕迹）。
 
     命名注记：这是确定性精确匹配的兜底路径，非模糊匹配（词条 _Avoid_）。
     """
-    sid_row = con.execute(
-        """
-        SELECT sid FROM fixture_universe
-        WHERE home = ? AND away = ? AND CAST(kickoff AS DATE) = ?
-        ORDER BY sid LIMIT 1
-        """,
-        [home, away, beijing.date().isoformat()],
-    ).fetchone()
-    if sid_row is None:
-        sid_row = con.execute(
+    for sql, params in (
+        (
             """
             SELECT sid FROM fixture_universe
-            WHERE kickoff = ? AND home = ? ORDER BY sid LIMIT 1
+            WHERE home = ? AND away = ? AND CAST(kickoff AS DATE) = ?
+            """,
+            [home, away, beijing.date().isoformat()],
+        ),
+        (
+            """
+            SELECT sid FROM fixture_universe
+            WHERE kickoff = ? AND home = ?
             """,
             [beijing, home],
-        ).fetchone()
-    return str(sid_row[0]) if sid_row else None
+        ),
+    ):
+        rows = con.execute(sql, params).fetchall()
+        if len(rows) == 1:
+            return str(rows[0][0])
+        if len(rows) > 1:
+            logger.warning(
+                "sid 兜底多候选拒绝: home={} away={} kickoff={} candidates={}",
+                home,
+                away,
+                beijing.isoformat(),
+                [str(r[0]) for r in rows],
+            )
+            return None
+    return None
 
 
 def jc_sp_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
