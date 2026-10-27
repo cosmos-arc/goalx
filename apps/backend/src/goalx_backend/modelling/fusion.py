@@ -10,8 +10,9 @@ research/22 十年复验的定量兑现：p_final ∝ p_calib^α × p_fair^(1−
 - 融合不引入新信息源（只重分配模型/市场权重）；p_fair=引擎同链
   公平概率（era 正典）；
 - walk-forward 协议同 K1 校准（窗内拟合、本周冻结、PIT：本周赛果
-  不进拟合）；历史累积**融合后已应用**的三向（α 在模型实际输出含
-  上游校准上学习，校准变则 α 自适应）；
+  不进拟合）；历史累积**融合前（校准后）**的三向——训练输入阶段
+  与应用输入阶段一致（report-audit-20261027 票 01：旧口径在融合后
+  历史上拟合、应用于融合前概率，输入空间错位已修）；
 - 纯确定性（网格穷举无随机源）。
 """
 
@@ -33,7 +34,7 @@ _EPS = 1e-15
 
 
 class _HistoryEntry(NamedTuple):
-    """一条融合学习历史：融合后已应用三向 / fair 三向 / 赛果 / era。"""
+    """一条融合学习历史：融合前（校准后）三向 / fair 三向 / 赛果 / era。"""
 
     applied: dict[str, float]
     fair: dict[str, float]
@@ -117,7 +118,7 @@ class FusionState:
         ftr: str,
         era: str,
     ) -> None:
-        """一场（融合后三向, fair, 赛果, era）入史（本周冻结完毕后调用）。"""
+        """一场（融合前三向, fair, 赛果, era）入史（本周冻结完毕后调用）。"""
         self.history.append(_HistoryEntry(applied_probs, fair_probs, ftr, era))
 
     def log_week(self, entry: dict[str, object]) -> None:

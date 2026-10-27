@@ -878,11 +878,15 @@ class _WeekLayers:
     alpha: float | None = None
     residual: ResidualModel | None = None
 
+    def prefused(self, had: dict[str, float]) -> dict[str, float]:
+        """原始三向 → 校准（融合阶段的输入表示）。"""
+        return self.calibrator.apply(had) if self.calibrator is not None else had
+
     def fused(
         self, had: dict[str, float], fair_probs: dict[str, float]
     ) -> dict[str, float]:
         """原始三向 → 校准 → 融合（判别前的链头；全透传时恒等）。"""
-        out = self.calibrator.apply(had) if self.calibrator is not None else had
+        out = self.prefused(had)
         if self.alpha is not None:
             out = fuse(out, fair_probs, self.alpha)
         return out
@@ -903,8 +907,8 @@ class _LayerState:
 
     prepare_week 拟合冻结挂 current（本周赛果不进拟合=PIT）；record 在
     本周全部预测落库后入史。校准历史=原始三向（防套娃漂移）；融合
-    历史=融合后已应用三向（α 在实际输出上学习）；判别历史=（特征,
-    融合后三向, 赛果）。
+    历史=融合前（校准后）三向——训练输入阶段与应用输入阶段一致
+    （report-audit-20261027 票 01）；判别历史=（特征, 融合后三向, 赛果）。
     """
 
     cal: _CalibrationState | None
@@ -957,19 +961,25 @@ class _LayerState:
     def record(
         self,
         had_raw: dict[str, float],
-        had_applied: dict[str, float],
+        had_prefused: dict[str, float],
+        had_fused: dict[str, float],
         fair_probs: dict[str, float],
         ftr: str,
         era: str,
         features: np.ndarray,
     ) -> None:
-        """一场入史（本周冻结完毕后调用；features 供判别层学习）。"""
+        """
+        一场入史（本周冻结完毕后调用；features 供判别层学习）。
+
+        融合史=融合前（校准后）三向 had_prefused——与 fuse() 的应用
+        输入同阶段（训练/应用输入空间一致，report-audit-20261027 票 01）。
+        """
         if self.cal is not None:
             self.cal.record(had_raw, ftr)
         if self.fusion is not None:
-            self.fusion.record(had_applied, fair_probs, ftr, era)
+            self.fusion.record(had_prefused, fair_probs, ftr, era)
         if self.residual is not None:
-            self.residual.record(features, had_applied, ftr)
+            self.residual.record(features, had_fused, ftr)
 
 
 def _model_probs(
@@ -1070,8 +1080,17 @@ def _record_week_predictions(
             ),
         )
         result.predictions += 1
+        # 融合史存融合前（校准后）三向（训练/应用同输入空间，票 01）；
         # 判别史存融合后（判别前）三向——判别不学在自己的输出上
-        layer_state.record(had, had_fused, fair_probs, ftr, match.era, features)
+        layer_state.record(
+            had,
+            layer_state.current.prefused(had),
+            had_fused,
+            fair_probs,
+            ftr,
+            match.era,
+            features,
+        )
         jc_had = simulated_jc_odds(fair_probs, params.haircut)
         market_matrix = None
         if matrix is None:
