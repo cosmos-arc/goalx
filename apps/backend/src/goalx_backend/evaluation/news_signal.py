@@ -50,6 +50,7 @@ PROB_BAND_WIDTH = 0.2  # 市场概率档宽度=五分位（粒度裁决见票 01
 DOSE_SPLIT = 2  # 剂量分层界：1 条 vs 2+ 条
 BOOTSTRAP_DRAWS = 1000
 MIN_BOOTSTRAP_WEEKS = 2  # 周簇少于此数=区间不可估（置 None）
+MIN_BOOTSTRAP_DRAWS = 2  # 有效重抽少于此数=分位不可估（置 None）
 BOOTSTRAP_SEED = 20261016
 MATCH_PARAMS: dict[str, Any] = {
     "league": "equal",
@@ -231,12 +232,12 @@ def _side_face(
     单侧主面：匹配对照 + 版本组分层 + 剂量分层 + 周分块 bootstrap。
 
     主结论面（event/diff/bootstrap）=strict_pit 样本（存在时）——unproven
-    不与 strict 混合下结论（票 02）；零 strict 时回退全体并在
-    main_pit_groups 如实标注（legacy 数据 unmarked 单列）。
+    不与 strict 混合下结论（票 02）；对照池随主结论组同步收缩
+    （report-audit-20261027 票 02：外组事件的对照不进主面）；零 strict
+    时回退全体并在 main_pit_groups 如实标注（legacy 数据 unmarked 单列）。
     """
     side_samples = [s for s in samples if s.outcome_side == side]
-    matched: list[_Sample] = []
-    control_sids: set[str] = set()
+    hits_of: list[tuple[_Sample, list[str]]] = []
     for sample in side_samples:
         hits = [
             sid
@@ -244,16 +245,23 @@ def _side_face(
             if sid not in event_sids and _match_control(sample.pred, pred, side)
         ]
         if hits:
-            matched.append(sample)
-            control_sids.update(hits)
-    control_values = [
-        (preds[sid].realized[side], preds[sid].week_monday) for sid in control_sids
-    ]
+            hits_of.append((sample, hits))
+    matched = [s for s, _ in hits_of]
     by_group: dict[str, list[_Sample]] = {}
     for sample in matched:
         by_group.setdefault(sample.pit_group, []).append(sample)
     main_groups = [PIT_STRICT] if by_group.get(PIT_STRICT) else sorted(by_group)
     main_samples = [s for g in main_groups for s in by_group.get(g, [])]
+    # 对照池随主结论组同步收缩（report-audit-20261027 票 02）：非主组
+    # 事件（unproven/unmarked）的专属对照不混入主面——严格事件的差值
+    # 不被外组对照稀释/翻转
+    control_sids: set[str] = set()
+    for sample, hits in hits_of:
+        if sample.pit_group in main_groups:
+            control_sids.update(hits)
+    control_values = [
+        (preds[sid].realized[side], preds[sid].week_monday) for sid in control_sids
+    ]
     # 组视图=全体侧样本（匹配前）——strict 存在但全被对照匹配剔除时
     # 仍可见，与主结论面（matched 池）分层披露不混淆
     event_values = [(s.value, s.pred.week_monday) for s in main_samples]
@@ -289,10 +297,14 @@ def _week_block_bootstrap(
     event: list[tuple[float, date]], control: list[tuple[float, date]]
 ) -> dict[str, Any] | None:
     """
-    比赛周分块 bootstrap：周为聚类单元重抽，diff 的 2.5–97.5 分位。
+    比赛周分块 bootstrap（同步周重抽）：同一组周索引驱动两臂。
 
-    任一臂周簇 <2 时返回 None（单簇重抽恒等 → 零宽区间冒充不确定性，
-    诚实置空由渲染层标"样本不足"）。
+    周为聚类单元，**同一组周索引驱动两臂**重抽，diff 的 2.5–97.5 分位。
+
+    对照按 ±2 ISO 周匹配 → 两臂周高度重叠；独立重抽两臂会破坏共享周
+    的配对协方差（report-audit-20261027 票 02）。任一臂周簇 <2 时返回
+    None（单簇重抽恒等 → 零宽区间冒充不确定性，诚实置空由渲染层标
+    "样本不足"）。
     """
     e_by_week: dict[date, list[float]] = {}
     for value, week in event:
@@ -302,20 +314,25 @@ def _week_block_bootstrap(
         c_by_week.setdefault(week, []).append(value)
     if len(e_by_week) < MIN_BOOTSTRAP_WEEKS or len(c_by_week) < MIN_BOOTSTRAP_WEEKS:
         return None
-    e_weeks = sorted(e_by_week)
-    c_weeks = sorted(c_by_week)
+    weeks = sorted(set(e_by_week) | set(c_by_week))
     rng = random.Random(BOOTSTRAP_SEED)  # noqa: S311
     diffs = []
     for _ in range(BOOTSTRAP_DRAWS):
-        e_vals = [v for w in rng.choices(e_weeks, k=len(e_weeks)) for v in e_by_week[w]]
-        c_vals = [v for w in rng.choices(c_weeks, k=len(c_weeks)) for v in c_by_week[w]]
-        diffs.append(fmean(e_vals) - fmean(c_vals))
+        drawn = rng.choices(weeks, k=len(weeks))
+        e_vals = [v for w in drawn for v in e_by_week.get(w, [])]
+        c_vals = [v for w in drawn for v in c_by_week.get(w, [])]
+        # 抽中周恰不含某臂任何簇（并集周远大于该臂周簇时可能）→ 该抽作废
+        if e_vals and c_vals:
+            diffs.append(fmean(e_vals) - fmean(c_vals))
+    if len(diffs) < MIN_BOOTSTRAP_DRAWS:
+        return None
     cuts = quantiles(diffs, n=40)
     return {
         "p2_5": round(cuts[0], 4),
         "p97_5": round(cuts[-1], 4),
-        "draws": BOOTSTRAP_DRAWS,
+        "draws": len(diffs),
         "unit": "iso_week",
+        "resample": "paired_union_weeks",
         "n_weeks_event": len(e_by_week),
         "n_weeks_control": len(c_by_week),
     }
@@ -430,10 +447,12 @@ def build_news_signal_report(
             "主分母=独立场次数（fixture×side 至多一个样本，headline 先报"
             + " n_fixtures）；事件加权旧口径降为非独立样本次面；对照=同联赛"
             + "+同季+近比赛周(±2)+概率档(五分位，收盘公允 fair_probs)匹配的"
-            + "无事件场，匹配不上剔除并计数；版本组分层（票 02）：主结论面="
+            + "无事件场，匹配不上剔除并计数，对照池随主结论组同步收缩；"
+            + "版本组分层（票 02）：主结论面="
             + "strict_pit（存在时），unproven 不与 strict 混合下结论，legacy "
-            + "无标记=unmarked 单列；不确定性=比赛周分块 bootstrap"
-            + "（fixture 聚类由样本单位自然满足）；时距=北京墙钟−8h 真 UTC"
+            + "无标记=unmarked 单列；不确定性=比赛周分块 bootstrap（同步周"
+            + "重抽：同一组周索引驱动两臂，共享周配对协方差进区间）；"
+            + "时距=北京墙钟−8h 真 UTC"
             + "（与抽取器共用单一真相源；旧口径标签替换恒高估 8h）；"
             + "price-in 面只覆盖临场 1h→收盘（发布→1h "
             + "主反应窗未测，不作未 price-in 结论）；时间错位/事件置换对照="
