@@ -254,3 +254,18 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
             )
     finally:
         conn.close()
+
+
+def test_v31_reentrant_after_interrupted_migration() -> None:
+    """v31 幂等守卫（correctness W1）：DDL 已落而版本戳未提交的崩溃窗
+    （或中间版代码先动过主库）后重跑 migrate 不得 duplicate column 卡死。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    assert db.migrate(conn) == 31
+    # 模拟中断窗：抹掉版本戳但保留 v31 列（DDL 已提交、戳未提交）
+    conn.execute("DELETE FROM schema_migrations WHERE version = 31")
+    conn.commit()
+    assert db.migrate(conn) == 31  # 重入不抛，列存在守卫短路 ALTER
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(frozen_decisions)")}
+    assert {"anchor_ref", "close_ref"} <= cols
+    conn.close()

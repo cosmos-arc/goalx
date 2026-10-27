@@ -638,7 +638,9 @@ def test_drift_identity_gating_and_anchor_ref_persisted(db) -> None:
     assert stats["drift_identity_mismatch"] == 1
     summary = fz.frozen_summary(db, BUSINESS_DATE)
     # 日终面：置空行按收盘侧身份归因 + 各身份层分母（票 03 验收 3）
-    assert summary["reconciliation"]["drift_skip_by_close_ref"] == {"srct:1x2:177": 1}
+    assert summary["reconciliation"]["drift_skip_by_close_ref"] == {
+        "srct:1x2:177": {"unknown": 0, "mismatch": 1}
+    }
     identity_face = summary["drift_by_anchor_ref"]
     assert identity_face["pinnacle"]["drifted"] == 1
     assert (

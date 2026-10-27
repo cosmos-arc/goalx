@@ -65,6 +65,7 @@ class BoundsStudy:
     fitted: int = 0
     certified: int = 0  # 约束可行（票 04：拟合端点全落声明区间内）
     conflicts: int = 0  # 约束冲突：端点落带外——报冲突不造概率
+    endpoint_collapse: int = 0  # 认证行中端点塌缩（带内未达目标>eps/2，correctness I2）
     ou_resids: list[float] = field(default_factory=list)
     x12_resids: list[float] = field(default_factory=list)
     ah_joint_total: int = 0
@@ -142,18 +143,26 @@ def _constraint_feasibility(
     """
     targets = (p_over, p_over - study.eps, p_over + study.eps)
     in_band_all = True
+    collapse = False
     x12_resid_max = 0.0
     for mat, target in zip(fits, targets, strict=False):
         if mat is None:
             continue
         model_over = sum(p for b, p in mat.ttg().items() if float(b) > ou_line)
-        study.ou_resids.append(abs(model_over - target))
+        resid = abs(model_over - target)
+        study.ou_resids.append(resid)
         if abs(model_over - p_over) > study.eps + 1e-9:
             in_band_all = False
+        if resid > study.eps / 2:
+            # 端点塌缩（correctness I2）：在带内但未达自身目标——包络
+            # 窄于声明的可行族；认证保留但披露计数（不门控）
+            collapse = True
         had = mat.had()
         row_x12 = max(abs(had[s] - fair[s]) for s in ("h", "d", "a"))
         x12_resid_max = max(x12_resid_max, row_x12)
     study.x12_resids.append(x12_resid_max)
+    if in_band_all and collapse:
+        study.endpoint_collapse += 1
     return in_band_all
 
 
@@ -308,16 +317,23 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
         "constraint_feasibility": {
             "certified": study.certified,
             "conflicts": study.conflicts,
-            "ou_resid_median": round(_median(study.ou_resids), 4),
+            "endpoint_collapse": study.endpoint_collapse,
+            "ou_resid_median": round(_median(study.ou_resids), 4)
+            if study.ou_resids
+            else None,
             "ou_resid_max": round(max(study.ou_resids), 4) if study.ou_resids else None,
-            "x12_resid_median": round(_median(study.x12_resids), 4),
+            "x12_resid_median": round(_median(study.x12_resids), 4)
+            if study.x12_resids
+            else None,
             "x12_resid_max": round(max(study.x12_resids), 4)
             if study.x12_resids
             else None,
             "note": (
                 "冲突=拟合端点落 OU 声明区间 [p±eps] 外（约束族不可联合满足"
                 "或 NLS 折中越带）——该行不进界/保守 EV 认证面；faces 分母"
-                "=certified 行（非 fitted）"
+                "=certified 行（非 fitted）；endpoint_collapse=认证行中端点"
+                "在带内但未达自身目标（>eps/2）——包络窄于声明可行族的披露"
+                "计数（不门控）"
             ),
         },
         "ah_joint": {

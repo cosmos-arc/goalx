@@ -1684,6 +1684,17 @@ def _apply_v30(conn: sqlite3.Connection) -> None:
     )
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """
+    列存在检查（ALTER 幂等守卫）。
+
+    DDL 与版本戳分两次提交，中间态崩溃后重跑不得 duplicate column
+    卡死全栈（v29/v30 教训同类）。
+    """
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(str(row[1]) == column for row in rows)
+
+
 def _apply_v31(conn: sqlite3.Connection) -> None:
     """
     v31（report-audit-20261027 票 03）：冻结决策参考身份。
@@ -1691,10 +1702,12 @@ def _apply_v31(conn: sqlite3.Connection) -> None:
     frozen_decisions 增 anchor_ref（入账时参考取法身份，源自漏斗行）与
     close_ref（收盘基准标签）两列——锁后漂移只在两端参考身份同类时
     计算，参考切换（欧共识入账 × 主锚收盘）不再伪装成市场漂移。旧行
-    两列 NULL=身份未知（漂移诚实置空，不回填猜测）。
+    两列 NULL=身份未知（漂移诚实置空，不回填猜测）。列存在守卫=重入
+    幂等（DDL 已落而版本戳未落的中断窗，correctness W1）。
     """
-    conn.execute("ALTER TABLE frozen_decisions ADD COLUMN anchor_ref TEXT")
-    conn.execute("ALTER TABLE frozen_decisions ADD COLUMN close_ref TEXT")
+    for column in ("anchor_ref", "close_ref"):
+        if not _column_exists(conn, "frozen_decisions", column):
+            conn.execute(f"ALTER TABLE frozen_decisions ADD COLUMN {column} TEXT")
 
 
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (

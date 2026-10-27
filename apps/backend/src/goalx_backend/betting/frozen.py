@@ -576,7 +576,9 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
     drift_skip = conn.execute(
         " ".join(
             (
-                "SELECT COALESCE(close_ref, '') ref, COUNT(*) n",
+                "SELECT COALESCE(close_ref, 'unset') ref, COUNT(*) n,",
+                "SUM(CASE WHEN anchor_ref IS NULL THEN 1 ELSE 0 END) unknown_n,",
+                "SUM(CASE WHEN anchor_ref IS NOT NULL THEN 1 ELSE 0 END) mismatch_n",
                 "FROM frozen_decisions WHERE business_date = ?",
                 "AND decision = 'would_bet' AND p_sharp IS NOT NULL",
                 "AND p_sharp_close IS NOT NULL AND drift_after_lock IS NULL",
@@ -609,7 +611,11 @@ def frozen_summary(conn: sqlite3.Connection, business_date: str) -> dict[str, An
             else None,
             "missing_close": int(missing_close),
             "drift_skip_by_close_ref": {
-                str(r["ref"]) or "unset": int(r["n"]) for r in drift_skip
+                str(r["ref"]): {
+                    "unknown": int(r["unknown_n"] or 0),
+                    "mismatch": int(r["mismatch_n"] or 0),
+                }
+                for r in drift_skip
             },
         },
         "drift_by_anchor_ref": {

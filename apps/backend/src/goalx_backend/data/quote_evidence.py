@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import Any
 
 import duckdb
 from loguru import logger
@@ -629,34 +630,39 @@ def _resolve_sid_fallback(
 
     命名注记：这是确定性精确匹配的兜底路径，非模糊匹配（词条 _Avoid_）。
     """
-    for sql, params in (
-        (
-            """
-            SELECT sid FROM fixture_universe
-            WHERE home = ? AND away = ? AND CAST(kickoff AS DATE) = ?
-            """,
-            [home, away, beijing.date().isoformat()],
-        ),
-        (
-            """
-            SELECT sid FROM fixture_universe
-            WHERE kickoff = ? AND home = ?
-            """,
-            [beijing, home],
-        ),
-    ):
-        rows = con.execute(sql, params).fetchall()
-        if len(rows) == 1:
-            return str(rows[0][0])
-        if len(rows) > 1:
-            logger.warning(
-                "sid 兜底多候选拒绝: home={} away={} kickoff={} candidates={}",
-                home,
-                away,
-                beijing.isoformat(),
-                [str(r[0]) for r in rows],
-            )
-            return None
+
+    def _rows(sql: str, params: list[object]) -> list[Any]:
+        return con.execute(sql, params).fetchall()
+
+    day_rows = _rows(
+        """
+        SELECT sid FROM fixture_universe
+        WHERE home = ? AND away = ? AND CAST(kickoff AS DATE) = ?
+        """,
+        [home, away, beijing.date().isoformat()],
+    )
+    kickoff_rows = _rows(
+        """
+        SELECT sid FROM fixture_universe
+        WHERE kickoff = ? AND home = ?
+        """,
+        [beijing, home],
+    )
+    if len(day_rows) == 1:
+        return str(day_rows[0][0])
+    if len(kickoff_rows) == 1:
+        # 第一步零匹配走原第二步路径；同日多场（correctness I4）第一步
+        # 歧义但精确 kickoff 唯一 → 消歧接受
+        return str(kickoff_rows[0][0])
+    ambiguous = day_rows if day_rows else kickoff_rows
+    if len(ambiguous) > 1:
+        logger.warning(
+            "sid 兜底多候选拒绝: home={} away={} kickoff={} candidates={}",
+            home,
+            away,
+            beijing.isoformat(),
+            [str(r[0]) for r in ambiguous],
+        )
     return None
 
 
