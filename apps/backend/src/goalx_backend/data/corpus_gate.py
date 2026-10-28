@@ -1146,8 +1146,13 @@ def build_phase1_gate_report(
         },
         "coverage": coverage,
     }
-    # 票 06：工件自证身份（git/deps/corpus；本报告无运行面库依赖）
-    report["run_fingerprint"] = rfp.build_run_fingerprint(store=store)
+    # 票 06：工件自证身份——门①读运行面 admin 判赛排除表，db 面必须在
+    # （正确性审查 F4：报告依赖的表变化必须入指纹）
+    face = db.connect(settings.db_path, readonly=True)
+    try:
+        report["run_fingerprint"] = rfp.build_run_fingerprint(conn=face, store=store)
+    finally:
+        face.close()
     reports = store.root / REPORTS_DIR
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.json").write_text(

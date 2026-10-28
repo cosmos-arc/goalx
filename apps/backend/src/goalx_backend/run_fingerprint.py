@@ -46,6 +46,16 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _is_repo_root(root: Path) -> bool:
+    """
+    布局自证：根下必须有根 pyproject。
+
+    防文件挪位后 parents[4] 落入别家 git 仓库记错身份——比 None 更糟
+    的是记成别人的 SHA。
+    """
+    return (root / "pyproject.toml").is_file()
+
+
 def _git_face(root: Path) -> dict[str, Any]:
     """提交身份：SHA + dirty 旗；git 缺席/非仓库时如实置 None。"""
     git = shutil.which("git")
@@ -84,11 +94,25 @@ def _deps_face(root: Path) -> dict[str, str | None]:
 
 
 def _db_face(conn: sqlite3.Connection) -> dict[str, Any]:
-    """运行面库身份：schema 版本 + 两归属域核心表指纹。"""
-    tables: dict[str, dict[str, object]] = {}
-    tables.update(data_fp.table_fingerprints(conn))
-    tables.update(betting_fp.table_fingerprints(conn))
-    return {"schema_version": current_version(conn), "tables": tables}
+    """
+    运行面库身份：schema 版本 + 两归属域核心表指纹。
+
+    全部表读包在一个只读事务里（WAL 读快照隔离）——不包的话逐表
+    SELECT 间落一次 daily-wrap 提交，会得到不对应任何真实时点的
+    "跨表涂抹"指纹（正确性审查 minor：跨表一致性）。
+    """
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN")
+    try:
+        tables: dict[str, dict[str, object]] = {}
+        tables.update(data_fp.table_fingerprints(conn))
+        tables.update(betting_fp.table_fingerprints(conn))
+        version = current_version(conn)
+    finally:
+        if own_txn:
+            conn.execute("ROLLBACK")  # 纯读快照，不留事务
+    return {"schema_version": version, "tables": tables}
 
 
 def _corpus_face(store: CorpusStore) -> dict[str, Any]:
@@ -108,10 +132,11 @@ def build_run_fingerprint(
 ) -> dict[str, Any]:
     """组装运行指纹；conn/store 缺席的面如实置 None（不假装有身份）。"""
     root = _repo_root()
+    trusted = _is_repo_root(root)
     fingerprint: dict[str, Any] = {
         "schema": SCHEMA,
-        "git": _git_face(root),
-        "deps": _deps_face(root),
+        "git": _git_face(root) if trusted else {"sha": None, "dirty": None},
+        "deps": _deps_face(root) if trusted else None,
     }
     fingerprint["db"] = _db_face(conn) if conn is not None else None
     fingerprint["corpus"] = _corpus_face(store) if store is not None else None

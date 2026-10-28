@@ -592,3 +592,7 @@ def test_cli_srct_gate_payload(
     }
     assert payload["overall"] == "provisional"
     assert payload["md_path"].endswith("phase1-gate.md")
+    # 票 06（F4）：门①读运行面 admin 判赛排除表 → 指纹 db 面必须在且覆盖该表
+    run_fp = payload["run_fingerprint"]
+    assert "admin_match_exclusions" in run_fp["db"]["tables"]
+    assert run_fp["corpus"]["inventory"]["duckdb"] == {"present": True}
