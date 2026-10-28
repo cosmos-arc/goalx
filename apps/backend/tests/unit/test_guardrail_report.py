@@ -106,3 +106,19 @@ def test_guardrail_haircut_value_sensitivity(gold_env) -> None:
         finally:
             duck_con.close()
             face.close()
+
+
+def test_guardrail_payload_carries_run_fingerprint(gold_env) -> None:
+    """票 06：报告工件自证身份——store-only 报告 db 面如实缺席、corpus 面在。"""
+    with gold_env([_row("9951")]) as (face, duck_con, store):
+        try:
+            payload = gr.build_guardrail_report(
+                store, duck_con, today=date(2026, 10, 28)
+            )
+            run_fp = payload["run_fingerprint"]
+            assert run_fp["db"] is None  # 本报告不读运行面库，缺席不假装
+            assert run_fp["corpus"]["inventory"]["raw"] == {}  # 合成树无 raw
+            assert run_fp["git"]["sha"]
+        finally:
+            duck_con.close()
+            face.close()

@@ -29,3 +29,14 @@ ecosystem = "npm"
 name = "zod"
 version = "3.25.76"
 ignore = true
+
+[[PackageOverrides]]
+# deepmerge 4.3.1（GHSA-gcqx-w48m-w2h4，low：mergeObject() 返回对象原型
+# 污染）：公告全域 >=4.2.0 <=4.3.1 且 first_patched_version=null——4.3.1
+# 即最新版，无任何修版可升。仅 dev/CLI 链（shadcn CLI、@shadcn/registry），
+# 不进运行时 bundle，不触不可信输入合并。复核触发器：deepmerge 发修
+# 复版（或上游迁 5.x）即删本条升级。
+ecosystem = "npm"
+name = "deepmerge"
+version = "4.3.1"
+ignore = true

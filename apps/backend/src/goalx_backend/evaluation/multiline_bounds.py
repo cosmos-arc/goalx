@@ -30,6 +30,7 @@ from typing import Any
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation.backtest import (
@@ -123,6 +124,8 @@ def run_bounds_study(
     for row in sampled:
         _study_row(row, study, haircut)
     payload = _payload(study)
+    # 票 06：工件自证身份（git/deps/corpus；本报告无运行面库依赖）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(store=store)
     _write_report(store, payload)
     return payload
 

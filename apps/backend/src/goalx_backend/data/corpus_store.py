@@ -35,7 +35,7 @@ import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from goalx_backend.db import utc_now_iso
 
@@ -357,6 +357,59 @@ class CorpusStore:
     def gold_path(self, provider: str, dataset: str) -> Path:
         """Gold 数据集根（布局唯一落点；B 相特征面，schema 归 data/gold.py）。"""
         return self.root / "gold" / provider / dataset
+
+    def dataset_inventory(self) -> dict[str, Any]:
+        """
+        语料树弱指纹（票 06：运行指纹）——计数+字节数，不做全内容哈希。
+
+        raw 走 checkpoint 聚合（provider×dataset 行数/字节/最新抓取戳，
+        十万级 raw 文件不重walk）；bronze/silver/gold 走树 walk 计数；
+        duckdb 只记在场（派生视图文件——CREATE OR REPLACE VIEW 重写即
+        变字节，内容哈希=重建噪声非输入信号，正确性审查 F1；其身份由
+        源树清单+git 承担）。mtime 不入指纹（拷贝触碰即变，非内容信号）。
+
+        确定性纪律（fail-closed）：checkpoint 聚合不吞 OperationalError
+        ——锁竞争静默降级成 raw:None 会让同一棵树两次指纹不同还无从分辨
+        （正确性审查 F3），宁可让调用方重试。树 walk 对瞬时文件
+        （.part/.tmp 落盘中间态、并发删除竞态）逐文件容错跳过（F5）。
+        """
+        inventory: dict[str, Any] = {}
+        rows = (
+            self._checkpoint()
+            .execute(
+                """
+                SELECT provider, dataset, COUNT(*) AS n,
+                       COALESCE(SUM(byte_size), 0) AS bytes,
+                       MAX(fetched_at) AS latest
+                FROM raw_artifacts GROUP BY provider, dataset
+                """
+            )
+            .fetchall()
+        )
+        inventory["raw"] = {
+            f"{r['provider']}/{r['dataset']}": {
+                "files": int(r["n"]),
+                "bytes": int(r["bytes"]),
+                "latest_fetched_at": r["latest"],
+            }
+            for r in rows
+        }
+        for sub in ("bronze", "silver", "gold"):
+            files = 0
+            total = 0
+            for path in (self.root / sub).rglob("*"):
+                if path.name.endswith((".part", ".tmp")):
+                    continue  # 落盘中间态，非稳定输入
+                try:
+                    if path.is_file():
+                        files += 1
+                        total += path.stat().st_size
+                except OSError:
+                    continue  # 并发删除竞态：宁可少计一个文件不炸整份报告
+            inventory[sub] = {"files": files, "bytes": total}
+        duck = self.root / "duckdb" / "corpus.duckdb"
+        inventory["duckdb"] = {"present": duck.exists()}
+        return inventory
 
     def ingest_raw(
         self, provider: str, dataset: str, key: str, body: bytes, *, ext: str = ""

@@ -305,6 +305,12 @@ def test_run_backtest_end_to_end(gold_env) -> None:
         assert run_params["gold_input_digests"] == {"srct/fixture_universe": "deadbeef"}
         assert run_params["data_source"] == "gold/match_features"
         assert run_params["price_model"] == "simulated_jc"
+        # 票 06：运行指纹随 run 入档（git/deps/db/corpus 四面齐备）
+        run_fp = run_params["run_fingerprint"]
+        assert run_fp["db"]["schema_version"] >= 31
+        assert "fixtures" in run_fp["db"]["tables"]
+        assert run_fp["corpus"]["gold_version"] == gold_mod.GOLD_VERSION
+        assert run_fp["git"]["sha"]
 
 
 def test_run_backtest_run_isolation(gold_env) -> None:

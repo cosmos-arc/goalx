@@ -35,6 +35,7 @@ from typing import Any
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import FD_TO_LEAGUE
@@ -186,6 +187,8 @@ def build_unlock_report(
         _collect_row(row, report, ttg_imp, ttg_act)
     _normalize_ttg(report, ttg_imp, ttg_act)
     payload = report.as_dict()
+    # 票 06：工件自证身份（git/deps/corpus；本报告无运行面库依赖）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(store=store)
     _write_report(store, payload)
     return payload
 

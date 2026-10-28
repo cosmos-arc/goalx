@@ -56,6 +56,7 @@ from typing import Any, cast
 import duckdb
 
 from goalx_backend import db
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, silver
 from goalx_backend.data.corpus_store import CorpusStore
@@ -1145,6 +1146,13 @@ def build_phase1_gate_report(
         },
         "coverage": coverage,
     }
+    # 票 06：工件自证身份——门①读运行面 admin 判赛排除表，db 面必须在
+    # （正确性审查 F4：报告依赖的表变化必须入指纹）
+    face = db.connect(settings.db_path, readonly=True)
+    try:
+        report["run_fingerprint"] = rfp.build_run_fingerprint(conn=face, store=store)
+    finally:
+        face.close()
     reports = store.root / REPORTS_DIR
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.json").write_text(

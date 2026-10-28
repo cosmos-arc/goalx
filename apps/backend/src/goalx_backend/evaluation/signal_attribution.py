@@ -38,6 +38,7 @@ from typing import Any, cast
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation.metrics import load_backtest_run
@@ -398,6 +399,8 @@ def build_signal_attribution_report(
             + "era 分层，跨 era 比较不作数（caliber-loop 票 08 判读注意）"
         ),
     }
+    # 票 06：工件自证身份（git/deps/db/corpus）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(

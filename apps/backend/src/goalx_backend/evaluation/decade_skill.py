@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_PSC_PROXY, ERA_TRAJECTORY
 from goalx_backend.evaluation.metrics import (
@@ -392,6 +393,8 @@ def build_decade_skill_report(
         "ev_realization": ev_faces,
         "era_contrast": _era_contrast(pred_faces, bet_faces),
     }
+    # 票 06：工件自证身份（git/deps/db/corpus）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     # md 先写、json 最后写（json 为真源，落成即成对完整）

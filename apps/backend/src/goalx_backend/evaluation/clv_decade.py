@@ -32,6 +32,7 @@ from typing import Any
 
 import duckdb
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.evaluation.backtest import MIN_MARKET_PROB
@@ -334,6 +335,8 @@ def build_clv_decade_report(
             + "观察性报告不回写引擎参数"
         ),
     }
+    # 票 06：工件自证身份（git/deps/db/corpus）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(

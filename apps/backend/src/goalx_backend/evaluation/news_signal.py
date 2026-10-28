@@ -37,6 +37,7 @@ from typing import Any
 import duckdb
 import pyarrow.parquet as pq
 
+from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.fixtures import kickoff_to_utc
@@ -460,6 +461,8 @@ def build_news_signal_report(
             + "观察性报告不进模型不改参数；全量回填=门后另裁"
         ),
     }
+    # 票 06：工件自证身份（git/deps/db/corpus）
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(
