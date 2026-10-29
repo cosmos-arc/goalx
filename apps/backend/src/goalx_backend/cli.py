@@ -53,7 +53,14 @@ from goalx_backend import datasets, tasks
 from goalx_backend.betting import funnel as fn
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, corpus_gate, gold, mapping, reconcile
+from goalx_backend.data import (
+    corpus_duckdb,
+    corpus_gate,
+    delay_survival,
+    gold,
+    mapping,
+    reconcile,
+)
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
@@ -812,6 +819,58 @@ def _cmd_srct_gate(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_delay_audit(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    延迟生存率 Stage 1 到达率审计（票 07 预注册首跑/shadow 复跑）。
+
+    四层分母+主指标（Wilson CI）按预注册口径只读账本出报告，落语料树
+    reports/（JSON+MD 两视图），JSON 同步 stdout。收盘面=corpus duckdb
+    源T 主锚收盘（clv.srct_closing_prob 同口径；缺桥 fail-loud——
+    没有收盘的主指标不完整，不静默降级。--skip-close 仅供无语料环境
+    的口径冒烟）。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    duck_con: duckdb.DuckDBPyConnection | None = None
+    close_provider: delay_survival.CloseProvider | None = None
+    if not args.skip_close:
+        duck_con = corpus_duckdb.connect(resolved)
+        active = duck_con
+
+        def provide(
+            home: str, away: str, kickoff_utc: str, selection: str
+        ) -> tuple[float, str, str] | None:
+            return clv_mod.srct_closing_prob(active, home, away, kickoff_utc, selection)
+
+        close_provider = provide
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        conn = connect(resolved.db_path, readonly=True)
+        try:
+            report = delay_survival.build_arrival_audit_report(
+                conn,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                close_provider=close_provider,
+                store=store,
+            )
+        finally:
+            conn.close()
+    finally:
+        store.close()
+        if duck_con is not None:
+            duck_con.close()
+    reports = store.root / delay_survival.REPORTS_DIR
+    payload = {
+        **report,
+        "md_path": str(reports / f"{delay_survival.REPORT_BASENAME}.md"),
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_jc_collect(
     args: argparse.Namespace, *, settings: Settings | None = None
 ) -> None:
@@ -1561,6 +1620,21 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "srct-gate",
         help="Phase1 五门报告(票56切片17;三对账+转换完整性+管线健康,JSON/MD 两视图)",
     )
+    delay_audit = sub.add_parser(
+        "delay-audit",
+        help="延迟生存率Stage1到达率审计(票07;四层分母+主指标Wilson CI,预注册口径)",
+    )
+    delay_audit.add_argument(
+        "--date-from", required=True, help="回看窗起始日 YYYY-MM-DD(含)"
+    )
+    delay_audit.add_argument(
+        "--date-to", required=True, help="回看窗截止日 YYYY-MM-DD(含)"
+    )
+    delay_audit.add_argument(
+        "--skip-close",
+        action="store_true",
+        help="跳过收盘面(无语料环境口径冒烟;主指标收盘列如实置空)",
+    )
     jc_audit_parser = sub.add_parser(
         "jc-audit",
         help="JC audit 面(票67;TTG 按年密度+存档最早年限+官方vs cid1129 对账)",
@@ -1665,6 +1739,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-odds": lambda: _cmd_srct_odds(args),
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
+        "delay-audit": lambda: _cmd_delay_audit(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),
         "jc-backfill": lambda: _cmd_jc_backfill(args),

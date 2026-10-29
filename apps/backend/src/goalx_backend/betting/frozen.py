@@ -29,6 +29,7 @@ from typing import Any
 from goalx_backend.betting import tax
 from goalx_backend.betting.funnel import L_ELIGIBLE, funnel_day_row
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
 from goalx_backend.data import results as rs_store
 from goalx_backend.markets import SELECTIONS
 
@@ -46,23 +47,9 @@ CloseProvider = Callable[[str, str, str, str], tuple[float, str, str] | None]
 
 _DRIFT_CLASSES = ("anchor", "consensus")
 
-
-def _identity_class(ref: str | None) -> str:
-    """
-    参考身份类：anchor=单主锚，consensus=欧共识，NULL=unknown。
-
-    report-audit-20261027 票 03：anchor 覆盖 entry ``pinnacle`` 与 close
-    源T 主锚收盘标签（同一主锚的两条馈线）；跨类相减=参考切换伪装
-    漂移——漂移只在同类且属于白名单 anchor/consensus 时计算（未识别
-    杂源同落 other 不冒充同身份）；raw 身份串本身已存列供审计。
-    """
-    if ref is None:
-        return "unknown"
-    if ref.startswith("eu_consensus"):
-        return "consensus"
-    if ref == "pinnacle" or ref.startswith("srct"):
-        return "anchor"
-    return "other"
+# 参考身份分类（票 03）已上提 data 层共享：账本侧到达审计（票 07
+# Stage 1）与漂移对账同用一套身份白名单，不两处各写一份。
+_identity_class = quote_evidence.reference_identity_class
 
 
 def _drift_skip_kind(anchor_ref: str | None, close_ref: str) -> str | None:
