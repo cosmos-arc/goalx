@@ -46,6 +46,28 @@ def seconds_between(later: str, earlier: str) -> float:
     return (parse_ts(later) - parse_ts(earlier)).total_seconds()
 
 
+# 可比身份白名单（票 03）：漂移对账（betting.frozen）与账本侧主指标
+# （data.delay_survival）共用——跨类相减=参考切换伪装漂移/伪装存活。
+IDENTITY_COMPARABLE_CLASSES: tuple[str, ...] = ("anchor", "consensus")
+
+
+def reference_identity_class(ref: str | None) -> str:
+    """
+    参考取法身份类：anchor=单主锚，consensus=欧共识，NULL=unknown，其余 other。
+
+    report-audit-20261027 票 03 口径：anchor 覆盖 entry ``pinnacle`` 与
+    源T 主锚两条馈线（asof/closing 标签）；跨类相减=参考切换伪装漂移，
+    两端同身份才算可比。raw 身份串存列，本函数只给分类判定。
+    """
+    if ref is None:
+        return "unknown"
+    if ref.startswith("eu_consensus"):
+        return "consensus"
+    if ref == "pinnacle" or ref.startswith("srct"):
+        return "anchor"
+    return "other"
+
+
 def effective_observed_at(row: sqlite3.Row) -> str | None:
     """本机观测时间；旧行按源解释（odds_api*=captured_at，sporttery=未知）。"""
     observed = row["observed_at"]
