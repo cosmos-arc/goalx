@@ -182,26 +182,30 @@ def test_full_funnel_layers_reasons_metric(db: sqlite3.Connection) -> None:
         "faded": 1,
     }
     metric = overall["metric"]
-    # 分母=L2∩可算（E 无参考出局）；正候选 8；同身份收盘可比 4（F/H/I/N
-    # ——回填行属 L2，主指标照算，剔除回填是预指定对照不是主口径）
-    assert metric["n_base"] == 9
+    # L2 可算 9（E 无参考出局）；分母=同身份收盘可比 5（F/H/I/M/N——
+    # 身份/收盘缺的 J/K/L/G 分母外单列，票 03"不静默混层"）
+    assert metric["n_l2_computable"] == 9
+    assert metric["n_denominator"] == 5
     assert metric["positive_at_decision"] == 8
     assert metric["close_computable_positive"] == 4
     assert metric["survived"] == 3
-    assert metric["survival_share"] == pytest.approx(3 / 9)
+    assert metric["survival_share"] == pytest.approx(3 / 5)
     ci = metric["wilson95"]
     assert ci is not None
-    assert ci[0] <= 3 / 9 <= ci[1]
+    assert ci[0] <= 3 / 5 <= ci[1]
     assert metric["positive_excluded"] == {
         "identity_unknown": 1,
         "identity_mismatch": 1,
         "close_missing": 2,  # G 无收盘桩 + L 提供方空手
     }
-    # 预指定对照：剔陈旧>300s 后 F(3600s) 出分母、G(200s) 留
+    # 预指定对照：剔陈旧>300s 后 F(3600s) 出分母、G(200s) 留（但 G 收盘
+    # 缺仍出主指标分母）；陈旧度不可算行同剔（与漏斗 stale 语义一致）
     contrast = overall["contrasts"]["excl_stale_gt_300s"]
-    assert contrast["n_base"] == 8
+    assert contrast["n_l2_computable"] == 8
+    assert contrast["n_denominator"] == 4
     assert contrast["positive_at_decision"] == 7
     assert contrast["survived"] == 2
+    assert contrast["survival_share"] == pytest.approx(0.5)
     # 档位骨架：只判读 d=0；300s 档 G 变可达（照记数、标 pending）
     tiers = {t["tier_s"]: t for t in overall["delay_tiers"]}
     assert tiers[0]["status"] == "reported"
@@ -210,6 +214,17 @@ def test_full_funnel_layers_reasons_metric(db: sqlite3.Connection) -> None:
     assert tiers[300]["status"] == "pending"
     assert tiers[300]["l3"] == 8
     assert report["close_face"] == "injected"
+    # 缺失原因分层含身份不明维度（prereg §5 全维度）
+    missing = {r["key"]: r["rows"] for r in report["stratification"]["missing_reason"]}
+    assert missing == {
+        "not_l2": 4,
+        "no_reference": 1,
+        "backfilled": 1,
+        "identity_unknown": 1,
+        "identity_mismatch": 1,
+        "close_missing": 2,  # G（无收盘桩）+ L（提供方空手）
+        "fresh": 4,  # H/I/M/N
+    }
 
 
 def test_stop_condition_arithmetic(db: sqlite3.Connection) -> None:
@@ -228,6 +243,8 @@ def test_stop_condition_arithmetic(db: sqlite3.Connection) -> None:
     assert sc["backfill_share"] == pytest.approx(0.75)
     assert sc["l3_positive_ex_backfill_ex_stale"] == 0
     assert sc["per_week"] == pytest.approx(0.0)
+    assert sc["active_days"] == 1  # 仅 10-20 有账本行
+    assert sc["per_week_active_day_basis"] == pytest.approx(0.0)
     assert sc["triggered"] is True
 
 
@@ -257,7 +274,7 @@ def test_day_classification_and_gate(db: sqlite3.Connection) -> None:
     assert classes == {
         "2026-10-20": "active",
         "2026-10-21": "suspected_outage",
-        "2026-10-22": "no_sale_evidence",
+        "2026-10-22": "zero_opportunity",  # 有销售态观测但无在售行（prereg 措辞）
         "2026-10-23": "outage_no_data",
     }
     assert report["protocol"]["sale_days_strict"] == 2
@@ -304,7 +321,7 @@ def test_wilson_ci_basics() -> None:
 
 
 def test_close_face_absent(db: sqlite3.Connection) -> None:
-    """无收盘提供方：收盘面 absent，正候选落 close_missing 不冒充。"""
+    """无收盘提供方：收盘面 absent，分母 0 → 比例/CI 如实 None 不冒充 0%。"""
     _seed_fixture(db, 1)
     _ledger_row(db)  # 新鲜正候选
     report = ds.build_arrival_audit_report(
@@ -312,7 +329,11 @@ def test_close_face_absent(db: sqlite3.Connection) -> None:
     )
     assert report["close_face"] == "absent"
     assert report["overall"]["reasons"]["close_missing"] == 1
-    assert report["overall"]["metric"]["survived"] == 0
+    metric = report["overall"]["metric"]
+    assert metric["survived"] == 0
+    assert metric["n_denominator"] == 0
+    assert metric["survival_share"] is None
+    assert metric["wilson95"] is None
 
 
 def test_window_validation(db: sqlite3.Connection) -> None:
@@ -364,6 +385,47 @@ def test_report_writes_two_views_with_fingerprint(
     fingerprint: dict[str, Any] = report["run_fingerprint"]
     assert "price_deviation_ledger" in fingerprint["db"]["tables"]
     assert report["overall"]["l4"] is None  # L4 留空如实记
+
+
+def test_reads_share_one_snapshot_during_provider(db: sqlite3.Connection) -> None:
+    """F1 回归：收盘提供方回调期间，全部读须在同一读事务窗内。"""
+    _seed_fixture(db, 1)
+    _ledger_row(db)
+    seen: list[bool] = []
+
+    def provider(
+        home: str, away: str, kickoff_utc: str, selection: str
+    ) -> tuple[float, str, str]:
+        seen.append(db.in_transaction)
+        return 0.5, "srct_1x2_closing", "srct_pinnacle"
+
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20", close_provider=provider
+    )
+    assert len(seen) > 0
+    assert all(seen)
+    assert report["overall"]["metric"]["survived"] == 1
+    assert not db.in_transaction  # 纯读快照，收尾不留事务壳
+
+
+def test_close_provider_cached_per_identity(db: sqlite3.Connection) -> None:
+    """F2 回归：收盘提供方按 (home,away,kickoff,selection) 记忆化。"""
+    _seed_fixture(db, 1)
+    for odds in (3.0, 3.1, 3.2):  # 同场同选向三笔观测
+        _ledger_row(db, odds=odds)
+    calls: list[str] = []
+
+    def provider(
+        home: str, away: str, kickoff_utc: str, selection: str
+    ) -> tuple[float, str, str]:
+        calls.append(home)
+        return 0.5, "srct_1x2_closing", "srct_pinnacle"
+
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20", close_provider=provider
+    )
+    assert len(calls) == 1  # 三行同键一查（kickoff 锚定确定性，缓存=精确值）
+    assert report["overall"]["metric"]["n_denominator"] == 3
 
 
 def _file_db(tmp_path: Path) -> sqlite3.Connection:

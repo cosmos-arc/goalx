@@ -46,6 +46,11 @@ def seconds_between(later: str, earlier: str) -> float:
     return (parse_ts(later) - parse_ts(earlier)).total_seconds()
 
 
+# 可比身份白名单（票 03）：漂移对账（betting.frozen）与账本侧主指标
+# （data.delay_survival）共用——跨类相减=参考切换伪装漂移/伪装存活。
+IDENTITY_COMPARABLE_CLASSES: tuple[str, ...] = ("anchor", "consensus")
+
+
 def reference_identity_class(ref: str | None) -> str:
     """
     参考取法身份类：anchor=单主锚，consensus=欧共识，NULL=unknown，其余 other。

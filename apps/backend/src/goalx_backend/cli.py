@@ -838,12 +838,14 @@ def _cmd_delay_audit(
     close_provider: delay_survival.CloseProvider | None = None
     if not args.skip_close:
         duck_con = corpus_duckdb.connect(resolved)
-        active = duck_con
+        duck_face = duck_con
 
         def provide(
             home: str, away: str, kickoff_utc: str, selection: str
         ) -> tuple[float, str, str] | None:
-            return clv_mod.srct_closing_prob(active, home, away, kickoff_utc, selection)
+            return clv_mod.srct_closing_prob(
+                duck_face, home, away, kickoff_utc, selection
+            )
 
         close_provider = provide
     store = CorpusStore(resolved.corpus_root)

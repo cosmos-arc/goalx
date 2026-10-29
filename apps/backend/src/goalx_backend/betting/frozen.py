@@ -45,10 +45,9 @@ _L5_PREFIXES = ("l5_",)
 CloseProvider = Callable[[str, str, str, str], tuple[float, str, str] | None]
 
 
-_DRIFT_CLASSES = ("anchor", "consensus")
-
-# 参考身份分类（票 03）已上提 data 层共享：账本侧到达审计（票 07
-# Stage 1）与漂移对账同用一套身份白名单，不两处各写一份。
+# 漂移可比身份白名单（票 03）——与账本侧到达审计同表（quote_evidence
+# 单一来源，防两处漂移）；分类器同源（reference_identity_class）。
+_DRIFT_CLASSES = quote_evidence.IDENTITY_COMPARABLE_CLASSES
 _identity_class = quote_evidence.reference_identity_class
 
 

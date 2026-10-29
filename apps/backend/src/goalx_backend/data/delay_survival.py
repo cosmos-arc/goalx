@@ -56,8 +56,9 @@ L3_POSITIVE_PER_WEEK_STOP = 1.0
 
 SALE_DAY_GATE = 30  # 正式判读门槛（prereg §7）
 
-# 主指标收盘比对的身份白名单（票 03；与 betting.frozen 漂移白名单同口径）
-_METRIC_IDENTITY_CLASSES = ("anchor", "consensus")
+# 主指标收盘比对的身份白名单（票 03；与 betting.frozen 漂移白名单同源
+# 常量 quote_evidence.IDENTITY_COMPARABLE_CLASSES，单一来源）
+_METRIC_IDENTITY_CLASSES = qe.IDENTITY_COMPARABLE_CLASSES
 
 CloseProvider = Callable[[str, str, str, str], tuple[float, str, str] | None]
 
@@ -281,26 +282,45 @@ def _close_face(
 
 
 def _metric(rows: list[_RowAudit]) -> dict[str, Any]:
-    """主指标：L2 ∩ 可算行中，决策时刻 value_proxy>0 且收盘仍正的比例。"""
+    """
+    主指标（prereg §4）：L2 可算行中，决策时刻 value_proxy>0 且收盘仍正的比例。
+
+    分母=同身份收盘可比行（票 03 白名单）；identity_unknown/mismatch 与
+    收盘缺的行**分母外单列**（positive_excluded），不静默混层——收盘面
+    整体缺席（close_provider=None）时分母为 0、比例与 CI 如实 None，
+    不冒充 0%。参考三向概率只映射 1x2：scope=had 单选。
+    """
     base = [
         r
         for r in rows
         if r.l2 and r.has_reference and r.market == "had" and r.value_proxy is not None
     ]
     positive = [r for r in base if r.value_proxy is not None and r.value_proxy > 0]
-    gate_none = [r for r in positive if r.identity_gate is None]
-    survived = [r for r in gate_none if r.close_positive]
+    denominator = [
+        r for r in base if r.identity_gate is None and r.close_positive is not None
+    ]
+    survived = [
+        r
+        for r in denominator
+        if r.value_proxy is not None and r.value_proxy > 0 and r.close_positive
+    ]
+    excluded = {
+        gate: sum(1 for r in positive if r.identity_gate == gate)
+        for gate in ("identity_unknown", "identity_mismatch", "close_missing")
+    }
+    n_denominator = len(denominator)
     return {
-        "n_base": len(base),
+        "scope": "had 单选（参考三向概率仅映射 1x2 选项）",
+        "n_l2_computable": len(base),
+        "n_denominator": n_denominator,
         "positive_at_decision": len(positive),
-        "close_computable_positive": len(gate_none),
+        "close_computable_positive": len(
+            [r for r in denominator if r.value_proxy is not None and r.value_proxy > 0]
+        ),
         "survived": len(survived),
-        "survival_share": (len(survived) / len(base)) if base else None,
-        "wilson95": _wilson_ci(len(survived), len(base)),
-        "positive_excluded": {
-            gate: sum(1 for r in positive if r.identity_gate == gate)
-            for gate in ("identity_unknown", "identity_mismatch", "close_missing")
-        },
+        "survival_share": (len(survived) / n_denominator) if n_denominator else None,
+        "wilson95": _wilson_ci(len(survived), n_denominator),
+        "positive_excluded": excluded,
     }
 
 
@@ -344,6 +364,22 @@ def _staleness_distribution(rows: list[_RowAudit]) -> dict[str, Any]:
     }
 
 
+def _missing_reason_key(r: _RowAudit) -> str:
+    """缺失原因分层键（prereg §5：回填/陈旧/身份不明全维度）。"""
+    if not r.l2:
+        return "not_l2"
+    if not r.has_reference:
+        return "no_reference"
+    if r.backfilled:
+        return "backfilled"
+    if r.staleness_s is None or r.staleness_s > STALE_STOP_SECONDS:
+        return "stale_unknown" if r.staleness_s is None else "stale_gt_300s"
+    if r.identity_gate is not None:
+        # identity_unknown / identity_mismatch / close_missing
+        return r.identity_gate
+    return "fresh"
+
+
 def _stratifications(rows: list[_RowAudit]) -> dict[str, list[dict[str, Any]]]:
     """描述层分层（计数与正候选数，不做检验不设门槛）。"""
 
@@ -365,17 +401,6 @@ def _stratifications(rows: list[_RowAudit]) -> dict[str, list[dict[str, Any]]]:
             )
         ]
 
-    def missing_key(r: _RowAudit) -> str:
-        if not r.l2:
-            return "not_l2"
-        if not r.has_reference:
-            return "no_reference"
-        if r.backfilled:
-            return "backfilled"
-        if r.staleness_s is not None and r.staleness_s > STALE_STOP_SECONDS:
-            return "stale_gt_300s"
-        return "fresh"
-
     return {
         "league": table(lambda r: r.league),
         "market": table(lambda r: r.market),
@@ -386,7 +411,7 @@ def _stratifications(rows: list[_RowAudit]) -> dict[str, list[dict[str, Any]]]:
                 else "unknown"
             )
         ),
-        "missing_reason": table(missing_key),
+        "missing_reason": table(_missing_reason_key),
         "identity_class": table(lambda r: qe.reference_identity_class(r.anchor_ref)),
     }
 
@@ -397,9 +422,12 @@ def _day_classes(
     """
     逐日分类（prereg §7）。
 
-    active / suspected_outage / no_sale_evidence / outage_no_data——在售
-    而账本零行=疑似断采（需查证，不算"无机会"）；无在售证据的日子不
-    冒充真零机会日，如实标证据缺。
+    active（账本有行）/ suspected_outage（在售而账本零行=疑似断采，需
+    查证不算"无机会"）/ zero_opportunity（有销售态观测但全窗无在售行
+    =无在售，prereg 措辞的真零机会日）/ outage_no_data（销售态观测也
+    缺=管线无数据日）。注意：on_sale 观测是仪器面——全库从未落 on_sale
+    行时 zero_opportunity 分类依赖"缺席证据"，报告头部照记在售行数供
+    读者校验（shakeout 发现，非协议修订）。
     """
     status_by_date = {
         str(r["d"]): r
@@ -425,7 +453,7 @@ def _day_classes(
         elif on_sale_n > 0:
             day_class = "suspected_outage"
         elif statuses_n > 0:
-            day_class = "no_sale_evidence"
+            day_class = "zero_opportunity"
         else:
             day_class = "outage_no_data"
         out.append(
@@ -440,22 +468,24 @@ def _day_classes(
     return out
 
 
-def _stop_condition(rows: list[_RowAudit], *, window_days: int) -> dict[str, Any]:
-    """停止条件输入（prereg §6 定值；触发与否如实报，shakeout 不产结论）。"""
+def _stop_condition(
+    rows: list[_RowAudit], *, window_days: int, active_days: int
+) -> dict[str, Any]:
+    """
+    停止条件输入（prereg §6 定值；触发与否如实报，shakeout 不产结论）。
+
+    per_week 主口径=日历窗（窗口定义即日历窗）；另报活跃日基准
+    （账本有行的日子）——断采日计入日历分母会压低速率偏向触发，两个
+    读数并陈供判读，不预设哪个为准。
+    """
     l1 = len(rows)
     backfilled = sum(1 for r in rows if r.backfilled)
     share = (backfilled / l1) if l1 else None
     l3_positive = sum(
-        1
-        for r in rows
-        if r.l2
-        and not r.backfilled
-        and r.has_reference
-        and r.staleness_s is not None
-        and r.staleness_s <= STALE_STOP_SECONDS
-        and (r.value_proxy or 0) > 0
+        1 for r in rows if r.l3(STALE_STOP_SECONDS) and (r.value_proxy or 0) > 0
     )
     per_week = (l3_positive / window_days * 7) if window_days > 0 else None
+    per_week_active = (l3_positive / active_days * 7) if active_days > 0 else None
     triggered = bool(
         share is not None
         and share > BACKFILL_SHARE_STOP
@@ -469,6 +499,8 @@ def _stop_condition(rows: list[_RowAudit], *, window_days: int) -> dict[str, Any
         "backfill_share_threshold": BACKFILL_SHARE_STOP,
         "l3_positive_ex_backfill_ex_stale": l3_positive,
         "per_week": per_week,
+        "per_week_active_day_basis": per_week_active,
+        "active_days": active_days,
         "per_week_threshold": L3_POSITIVE_PER_WEEK_STOP,
         "triggered": triggered,
         "note": "shakeout 首跑不产结论；触发判定累计窗≥30 销售日后生效",
@@ -533,8 +565,10 @@ def _overall_face(rows: list[_RowAudit]) -> dict[str, Any]:
                 [
                     r
                     for r in rows
+                    # 陈旧度不可算行同剔（与漏斗 stale 语义一致，Spec 轴三审）
                     if r.l2
-                    and (r.staleness_s is None or r.staleness_s <= STALE_STOP_SECONDS)
+                    and r.staleness_s is not None
+                    and r.staleness_s <= STALE_STOP_SECONDS
                 ]
             ),
         },
@@ -559,15 +593,44 @@ def _protocol_face(sale_days_strict: int) -> dict[str, Any]:
 
 
 def _write_two_views(store: CorpusStore, report: dict[str, Any]) -> None:
-    """报告落语料树 reports/（JSON+MD 两视图）。"""
+    """
+    报告落语料树 reports/（JSON+MD 两视图，temp+rename）。
+
+    先写两份临时文件再各自 rename——崩溃窗从"写两段"缩到"两次 rename"，
+    且崩溃遗留的是 .tmp 不半新半旧（correctness F3；重跑幂等覆盖自愈）。
+    """
     reports = store.root / REPORTS_DIR
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / f"{REPORT_BASENAME}.json").write_text(
+    json_tmp = reports / f"{REPORT_BASENAME}.json.tmp"
+    md_tmp = reports / f"{REPORT_BASENAME}.md.tmp"
+    json_tmp.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    (reports / f"{REPORT_BASENAME}.md").write_text(
-        _render_markdown(report), encoding="utf-8"
-    )
+    md_tmp.write_text(_render_markdown(report), encoding="utf-8")
+    json_tmp.replace(reports / f"{REPORT_BASENAME}.json")
+    md_tmp.replace(reports / f"{REPORT_BASENAME}.md")
+
+
+def _cached_provider(
+    provider: CloseProvider, cache: dict[tuple[str, str, str, str], Any]
+) -> CloseProvider:
+    """
+    收盘提供方按 (home,away,kickoff,selection) 记忆化（correctness F2）。
+
+    收盘查 kickoff 锚定、确定性——同键重复查是纯浪费：CLI 桥对 30M 行
+    未按 sid 索引的 odds_change_event 视图逐行扫，账本 append-only 下
+    线性涨；缓存=精确值不是近似。None 结果同样缓存（查无也是答案）。
+    """
+
+    def wrapped(
+        home: str, away: str, kickoff_utc: str, selection: str
+    ) -> tuple[float, str, str] | None:
+        key = (home, away, kickoff_utc, selection)
+        if key not in cache:
+            cache[key] = provider(home, away, kickoff_utc, selection)
+        return cache[key]
+
+    return wrapped
 
 
 def build_arrival_audit_report(
@@ -584,8 +647,48 @@ def build_arrival_audit_report(
     conn=运行面连接（只读即可）；close_provider 缺席时收盘面整体标
     absent（主指标收盘不可算如实计数，不冒充）。store 在场时报告落
     语料树 reports/（JSON+MD 两视图），并随运行指纹。
+
+    全部读同窗一个读事务（correctness F1：活库 WAL 并发写下，孤儿
+    检查/账本 JOIN/销售态聚合/指纹各自成快照会跨表涂抹——计数与自证
+    指纹描述不同的库态；指纹的 _db_face 见 in_transaction 会并入本
+    事务）。收盘提供方经 (home,away,kickoff,selection) 记忆化（F2）。
     """
     dates = _window_dates(date_from, date_to)
+    provider = (
+        _cached_provider(close_provider, {}) if close_provider is not None else None
+    )
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN")  # 纯读快照：deferred，首读才锁定视图
+    try:
+        report = _assemble_report(
+            conn,
+            dates=dates,
+            date_from=date_from,
+            date_to=date_to,
+            close_provider=provider,
+            close_face="injected" if close_provider is not None else "absent",
+            store=store,
+        )
+    finally:
+        if own_txn:
+            conn.execute("ROLLBACK")  # 不留事务壳
+    if store is not None:
+        _write_two_views(store, report)
+    return report
+
+
+def _assemble_report(
+    conn: sqlite3.Connection,
+    *,
+    dates: list[str],
+    date_from: str,
+    date_to: str,
+    close_provider: CloseProvider | None,
+    close_face: str,
+    store: CorpusStore | None,
+) -> dict[str, Any]:
+    """单读事务内的报告装配（调用方负责事务壳与落盘）。"""
     # fail-closed：账本行必须能关联到场次（关联不上=数据完整性事故，
     # 不允许静默缩分母）
     orphan = conn.execute(
@@ -607,6 +710,7 @@ def build_arrival_audit_report(
         ledger_by_date[row.date] += 1
     day_classes = _day_classes(conn, dates, ledger_by_date)
     sale_days_strict = sum(1 for d in day_classes if d["on_sale_rows"] > 0)
+    active_days = sum(1 for d in day_classes if d["ledger_rows"] > 0)
     class_by_date = {d["date"]: d["class"] for d in day_classes}
     report: dict[str, Any] = {
         "schema": "delay-survival-stage1/1",
@@ -628,15 +732,16 @@ def build_arrival_audit_report(
             for date in dates
         ],
         "day_classification": day_classes,
-        "stop_condition": _stop_condition(rows, window_days=len(dates)),
+        "stop_condition": _stop_condition(
+            rows, window_days=len(dates), active_days=active_days
+        ),
         "stratification": _stratifications(rows),
-        "close_face": "injected" if close_provider is not None else "absent",
+        "close_face": close_face,
         "known_boundaries": list(_KNOWN_BOUNDARIES),
         "failure_variants": [],
     }
     if store is not None:
         report["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
-        _write_two_views(store, report)
     return report
 
 
@@ -653,12 +758,13 @@ def _fmt_pct(value: float | None) -> str:
 
 
 def _metric_line(w: Callable[[str], None], label: str, m: dict[str, Any]) -> None:
-    """主指标表格行（CI 缺=n=0，如实留空）。"""
+    """主指标表格行（分母=同身份收盘可比；CI 缺=分母 0，如实留空）。"""
     ci = m["wilson95"]
     ci_txt = "—" if ci is None else f"[{ci[0]:.3f}, {ci[1]:.3f}]"
     share = "—" if m["survival_share"] is None else f"{m['survival_share']:.1%}"
     w(
-        f"| {label} | {m['n_base']} | {m['positive_at_decision']}"
+        f"| {label} | {m['n_l2_computable']} | {m['n_denominator']}"
+        + f" | {m['positive_at_decision']}"
         + f" | {m['close_computable_positive']} | {m['survived']} | {share} {ci_txt} |"
     )
 
@@ -679,7 +785,10 @@ def _md_summary(report: dict[str, Any], w: Callable[[str], None]) -> None:
         + f"/门槛 {report['protocol']['sale_day_gate']}；"
         + f"首跑定位 {report['protocol']['first_run_position']}——不产结论）"
     )
-    w(f"- 主指标：L2 中决策时刻正且收盘仍正的比例；收盘面 = {report['close_face']}")
+    w(
+        f"- 主指标：L2 中决策时刻正且收盘仍正的比例（{metric['scope']}）；"
+        + f"收盘面 = {report['close_face']}"
+    )
     w(
         f"- L1={overall['l1']} L2={overall['l2']} L3(d=0)={overall['l3']}"
         + f" 存活比例={_fmt_pct(overall['survival_ratio'])}"
@@ -687,11 +796,16 @@ def _md_summary(report: dict[str, Any], w: Callable[[str], None]) -> None:
     w("")
     w("## 主指标（Wilson 95% CI）与预指定对照")
     w("")
-    w("| 口径 | 分母 | 决策时刻正 | 收盘可比 | 存活 | 比例 [CI] |")
-    w("|---|---|---|---|---|---|")
+    header = (
+        "| 口径 | L2可算 | 分母(同身份收盘可比) |"
+        " 决策时刻正 | 收盘可比正 | 存活 | 比例 [CI] |"
+    )
+    w(header)
+    w("|---|---|---|---|---|---|---|")
     _metric_line(w, "总体（L2）", metric)
     _metric_line(w, "剔除回填前/后·后", overall["contrasts"]["excl_backfilled"])
-    _metric_line(w, "剔除陈旧>300s前/后·后", overall["contrasts"]["excl_stale_gt_300s"])
+    excl_stale = overall["contrasts"]["excl_stale_gt_300s"]
+    _metric_line(w, "剔除陈旧>300s前/后·后", excl_stale)
     w("")
     excluded = metric["positive_excluded"]
     w(
@@ -713,7 +827,8 @@ def _md_day_tables(report: dict[str, Any], w: Callable[[str], None]) -> None:
         w(
             f"| {day['date']} | {day['day_class']} | {day['l1']} | {day['l2']}"
             + f" | {day['l3']} | {_fmt_pct(day['survival_ratio'])}"
-            + f" | {m['n_base']} | {m['positive_at_decision']} | {m['survived']} |"
+            + f" | {m['n_denominator']} | {m['positive_at_decision']}"
+            + f" | {m['survived']} |"
         )
     w("")
     w("## 拒绝原因分布（d=0，互斥首中）")
@@ -744,10 +859,12 @@ def _md_dist_stop(report: dict[str, Any], w: Callable[[str], None]) -> None:
         + f">300s 共 {st['gt_300s']} 行"
     )
     qd = st["quantiles"]
-    w(
-        "- 分位数：min={min} p25={p25} median={median} p75={p75} p90={p90}"
-        + " max={max}".format(**{k: _fmt(v) for k, v in qd.items()})
+    quantile_txt = (
+        "min={min} p25={p25} median={median} p75={p75} p90={p90} max={max}".format(
+            **{k: _fmt(v) for k, v in qd.items()}
+        )
     )
+    w("- 分位数：" + quantile_txt)
     w("- 直方桶：" + "，".join(f"{k}={v}" for k, v in st["buckets"].items()))
     w("")
     sc = report["stop_condition"]
@@ -759,9 +876,16 @@ def _md_dist_stop(report: dict[str, Any], w: Callable[[str], None]) -> None:
         + f"（阈值 >{_fmt_pct(sc['backfill_share_threshold'])}）"
     )
     per_week_txt = "—" if sc["per_week"] is None else f"{sc['per_week']:.2f}"
+    active_txt = (
+        "—"
+        if sc["per_week_active_day_basis"] is None
+        else f"{sc['per_week_active_day_basis']:.2f}"
+    )
     w(
         f"- 剔除回填与陈旧后 L3 正EV：{sc['l3_positive_ex_backfill_ex_stale']} 个"
-        + f"≈{per_week_txt}/周（阈值 <{sc['per_week_threshold']}/周）"
+        + f"≈{per_week_txt}/周（日历窗）/"
+        + f" {active_txt}/周（活跃日 {sc['active_days']} 天）"
+        + f"（阈值 <{sc['per_week_threshold']}/周）"
     )
     w(f"- 两臂同触发的形式判定：{'是' if sc['triggered'] else '否'}——{sc['note']}")
     w("")
@@ -784,6 +908,14 @@ def _md_tail(report: dict[str, Any], w: Callable[[str], None]) -> None:
             + f" | {day['sale_status_rows']} | {day['on_sale_rows']} |"
         )
     w("")
+    on_sale_total = sum(d["on_sale_rows"] for d in report["day_classification"])
+    if on_sale_total == 0:
+        w(
+            "> 仪器面提示：全窗在售行=0——sale_statuses 从未落 on_sale 观测，"
+            + "zero_opportunity/suspected_outage 分类依赖缺席证据，严格销售日"
+            + "门槛（≥30）在本仪器状态下无法达成（shakeout 发现，非协议修订）。"
+        )
+        w("")
     w("## 已知数据边界（预注册 §9 原样）")
     w("")
     for boundary in report["known_boundaries"]:
