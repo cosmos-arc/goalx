@@ -881,8 +881,9 @@ def _cmd_repair_sale_status(
 
     按计算器端点 raw 证据重解析（修正后 SELL_STATUS_MAP）对账
     sale_statuses 与 price_deviation_ledger 历史行：旧映射把在售记成
-    停售、未开售记成 unknown。apply 前置=v32 已迁移；UPDATE 防线触发器
-    摘除后按原文重建。JSON 审计（迁移分布/行数守卫）同步 stdout。
+    停售、未开售记成 unknown。dry-run 数据面零改动（migrate 幂等 DDL
+    先行）；--apply 前置=v32 已迁移，UPDATE 防线触发器在原子壳内
+    摘除→改→按原文重建（中途崩全回滚）。JSON 审计同步 stdout。
     """
     resolved = settings if settings is not None else get_settings()
     if not resolved.db_path.exists():
@@ -906,6 +907,8 @@ def _cmd_repair_sale_status(
         },
         "ledger": {"inspected": report.ledger_inspected, "fixes": report.ledger_fixes},
         "unresolved_rows": report.unresolved_rows,
+        "sale_statuses_unlinked": report.sale_statuses_unlinked,
+        "ledger_unlinked": report.ledger_unlinked,
         "by_transition": report.by_transition,
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")

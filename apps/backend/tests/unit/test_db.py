@@ -256,6 +256,44 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
         conn.close()
 
 
+def test_v32_survives_orphan_temp_table_from_crash_window() -> None:
+    """correctness F1（实证复现）：CREATE 已落盘、INSERT 前死进程留孤儿
+    sale_statuses_v32——重跑 migrate 不得 table already exists 卡死全栈。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    assert db.migrate(conn) == 32
+    conn.execute("INSERT INTO competitions (name, created_at) VALUES ('x', 't')")
+    conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('a', 't')")
+    conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('b', 't')")
+    conn.execute(
+        """
+        INSERT INTO fixtures
+        (competition_id, kickoff_utc, home_team_id, away_team_id)
+        VALUES (1, '2026-01-01', 1, 2)
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sale_statuses
+        (fixture_id, market_code, sale_state, observed_at, created_at)
+        VALUES (1, 'had', 'stopped', 't', 't')
+        """
+    )
+    conn.commit()
+    # 模拟崩溃窗：抹 v32 戳 + 手造孤儿临时表（DDL 已落、拷行未发生）
+    conn.execute("DELETE FROM schema_migrations WHERE version = 32")
+    conn.execute("CREATE TABLE sale_statuses_v32 (junk INTEGER)")
+    conn.commit()
+    assert db.migrate(conn) == 32  # 残迹被清扫，不抛 already exists
+    row = conn.execute(
+        "SELECT sale_state FROM sale_statuses WHERE fixture_id = 1"
+    ).fetchone()
+    assert row["sale_state"] == "stopped"  # 数据经重建保住
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute("UPDATE sale_statuses SET sale_state = 'unknown'")
+    conn.close()
+
+
 def test_v32_not_on_sale_value_domain_and_reentrant() -> None:
     """v32（票 09）：not_on_sale 入值域、表重建保行保索引保防线、重入幂等。"""
     conn = sqlite3.connect(":memory:")

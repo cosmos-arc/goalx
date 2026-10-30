@@ -591,6 +591,30 @@ def _seed_repair_fixture(db, tmp_path) -> tuple[int, int, int]:
     return fixture_id, observation_id, probe_obs_id
 
 
+def test_repair_fails_closed_on_hash_mismatch(db, tmp_path) -> None:
+    """correctness F2：证据哈希对不上=fail-closed（修正脚本有权改史，
+    不得吃损坏/篡改证据静默重写）；截断 gzip 只计数不炸全局。"""
+    _fixture, _obs, _probe = _seed_repair_fixture(db, tmp_path)
+    ref = db.execute(
+        "SELECT raw_ref FROM quote_observations WHERE endpoint ="
+        " 'getMatchCalculatorV1.qry' ORDER BY id LIMIT 1"
+    ).fetchone()["raw_ref"]
+    target = tmp_path / str(ref)
+    target.write_bytes(gzip.compress(b"tampered"))
+    with pytest.raises(ValueError, match="hash mismatch"):
+        sporttery.repair_sale_status_semantics(db, raw_root=tmp_path)
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM sale_statuses WHERE sale_state = 'on_sale'"
+    ).fetchone()
+    assert row["n"] == 0  # 库一动未动
+    target.write_bytes(  # 截断 gzip → EOFError 计 payloads_missing
+        gzip.compress(json.dumps(SAMPLE).encode())[:20]
+    )
+    report = sporttery.repair_sale_status_semantics(db, raw_root=tmp_path)
+    assert report.payloads_missing >= 1
+    assert report.sale_statuses_fixes == 0
+
+
 def test_repair_sale_status_semantics_dry_run_then_apply(db, tmp_path) -> None:
     """dry-run 只读对账→apply 改行+防线原文重建→幂等；探针停售行不动。"""
     fixture_id, observation_id, probe_obs_id = _seed_repair_fixture(db, tmp_path)

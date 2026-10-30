@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +45,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
-from goalx_backend.db import table_sql, trigger_sqls, utc_now_iso
+from goalx_backend.db import atomic, table_sql, trigger_sqls, utc_now_iso
 from goalx_backend.markets import GOALS_MARKETS
 from goalx_backend.models import (
     MatchCodeInput,
@@ -720,7 +721,9 @@ class SaleStatusRepairReport:
     sale_statuses_fixes: int = 0
     ledger_inspected: int = 0
     ledger_fixes: int = 0
-    unresolved_rows: int = 0  # 无 match_codes 链或 payload 缺证据的行（不动）
+    unresolved_rows: int = 0  # 扫到但无 match_codes 链/payload 无该场的行（不动）
+    sale_statuses_unlinked: int = 0  # observation_id NULL 的行（扫描不可达，F3）
+    ledger_unlinked: int = 0  # 快照无 observation_id 链的账本行（同上）
     by_transition: dict[str, int] = field(default_factory=dict)
     applied: bool = False
 
@@ -790,7 +793,7 @@ def repair_sale_status_semantics(
     ledger_fixes: list[tuple[int, str]] = []
     for obs in conn.execute(
         """
-        SELECT id, raw_ref FROM quote_observations
+        SELECT id, raw_sha256, raw_ref FROM quote_observations
         WHERE source = 'sporttery' AND raw_ref IS NOT NULL
           AND endpoint = 'getMatchCalculatorV1.qry'
         ORDER BY id
@@ -798,10 +801,16 @@ def repair_sale_status_semantics(
     ).fetchall():
         report.observations += 1
         try:
-            payload = json.loads(observations.read_raw(raw_root, str(obs["raw_ref"])))
-        except (OSError, json.JSONDecodeError):
+            raw = observations.read_raw(raw_root, str(obs["raw_ref"]))
+        except (OSError, EOFError, zlib.error):
+            # 截断 gzip 抛 EOFError（非 OSError 子类，correctness F2）
             report.payloads_missing += 1
             continue
+        if observations.sha256_hex(raw) != str(obs["raw_sha256"]):
+            # 证据损坏=fail-closed（reprocess_observations 同纪律），修正
+            # 脚本有权改史，更不得吃下对不上的证据静默重写
+            raise ValueError(f"raw evidence hash mismatch: observation {obs['id']}")
+        payload = json.loads(raw)
         report.payloads_read += 1
         corrected_by_mid = _corrected_states_by_observation(payload)
         sale_rows = conn.execute(
@@ -840,19 +849,35 @@ def repair_sale_status_semantics(
         )
         report.ledger_inspected += inspected
         report.ledger_fixes += changed
+    report.sale_statuses_unlinked = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM sale_statuses WHERE observation_id IS NULL"
+        ).fetchone()[0]
+    )
+    report.ledger_unlinked = int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM price_deviation_ledger l
+            JOIN odds_snapshots o ON o.id = l.snapshot_id
+            WHERE o.observation_id IS NULL AND l.sale_state IS NOT NULL
+            """
+        ).fetchone()[0]
+    )
     if apply and (sale_fixes or ledger_fixes):
         originals = trigger_sqls(conn, _REPAIR_TRIGGERS)
-        for name in originals:
-            conn.execute(f"DROP TRIGGER {name}")
-        conn.executemany(
-            "UPDATE sale_statuses SET sale_state = ? WHERE id = ?",
-            [(state, row_id) for row_id, state in sale_fixes],
-        )
-        conn.executemany(
-            "UPDATE price_deviation_ledger SET sale_state = ? WHERE id = ?",
-            [(state, row_id) for row_id, state in ledger_fixes],
-        )
-        for sql in originals.values():
-            conn.execute(sql)
-        conn.commit()
+        # 原子壳（Spec 轴审查）：legacy 模式下裸 DROP TRIGGER 即时落盘，
+        # UPDATE 中途崩会永久丢防线——显式 BEGIN 下 DDL 同事务，失败全回滚
+        with atomic(conn):
+            for name in originals:
+                conn.execute(f"DROP TRIGGER {name}")
+            conn.executemany(
+                "UPDATE sale_statuses SET sale_state = ? WHERE id = ?",
+                [(state, row_id) for row_id, state in sale_fixes],
+            )
+            conn.executemany(
+                "UPDATE price_deviation_ledger SET sale_state = ? WHERE id = ?",
+                [(state, row_id) for row_id, state in ledger_fixes],
+            )
+            for sql in originals.values():
+                conn.execute(sql)
     return report

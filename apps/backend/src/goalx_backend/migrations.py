@@ -1731,6 +1731,10 @@ def _apply_v32(conn: sqlite3.Connection) -> None:
     """
     if _sale_statuses_check_has_not_on_sale(conn):
         return
+    # 崩溃残迹清扫（correctness F1）：legacy 模式下 CREATE TABLE 即时落盘，
+    # INSERT 前死进程会留孤儿表卡死后续 migrate；成功路径必换名走，残留
+    # 只能是残迹——先 DROP IF EXISTS（W1 同族教训）
+    conn.execute("DROP TABLE IF EXISTS sale_statuses_v32")
     conn.execute(
         """
         CREATE TABLE sale_statuses_v32 (
