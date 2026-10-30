@@ -202,6 +202,16 @@ def test_sale_stopped_rejected(db) -> None:
     assert verdict.reasons == ["sale_stopped"]
 
 
+def test_sale_not_on_sale_rejected(db) -> None:
+    """票 09：未开售≠停售——独立拒绝原因，不冒充在售也不混停售桶。"""
+    fixture = seed_fixture(db)
+    add_jc(db, fixture, {"h": 2.10, "d": 3.40, "a": 3.20})
+    add_sale(db, fixture, state="not_on_sale")
+    verdict = qe.adjudicate_had_quote(db, fixture, AS_OF)
+    assert verdict.status == qe.REJECTED
+    assert verdict.reasons == ["sale_not_on_sale"]
+
+
 def test_missing_three_way_rejected(db) -> None:
     fixture = seed_fixture(db)
     add_jc(db, fixture, {"h": 2.10, "a": 3.20})  # 缺平局价

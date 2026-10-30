@@ -93,11 +93,12 @@ def test_registry_pinned_to_full_batch() -> None:
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：18 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 5 个在前、注册面 13 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：19 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 6 个在前、注册面 13 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
+        "daily-capture-window",
         "draw-results-sync",
         "draw-results-sweep",
         "weekly-refresh",
@@ -108,11 +109,12 @@ def test_schedules_serve_list_pinned_golden() -> None:
     for name, dep in deps.items():
         schedules_on_dep = dep.schedules
         assert len(schedules_on_dep) == 1
-        assert dep.name == "protocol-v1" or name == "draw-results-sweep"
+        assert dep.name.startswith("protocol-v1") or name == "draw-results-sweep"
         assert schedules_on_dep[0].schedule.timezone == "Asia/Shanghai"
         crons[name] = schedules_on_dep[0].schedule.cron
     assert crons == {
         "daily-capture": "0 10,19 * * *",
+        "daily-capture-window": "30 12,16 * * *",
         "eu-odds-closing": "*/30 * * * *",
         "draw-results-sync": "*/30 0-5,18-23 * * *",
         "draw-results-sweep": "0 8 * * *",

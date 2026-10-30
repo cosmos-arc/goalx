@@ -107,6 +107,10 @@ def _classify_fixture(  # noqa: PLR0911
         # 报价级未评估——level_reached 停在 L1，归因只进流失桶不进中级分母
         row.loss_reason = "l5_sale_stopped"
         return row
+    if verdict.sale_state == "not_on_sale":
+        # 未开售（票 09 独立值）同归 L5 资格面，归因独立不混停售桶
+        row.loss_reason = "l5_sale_not_on_sale"
+        return row
     if not verdict.jc_odds:
         # 竞彩三向缺（无快照/不完整/观测时刻不可证）——取首个 jc_ 原因
         detail = next(
@@ -428,7 +432,11 @@ def rederive_purchasable(conn: sqlite3.Connection) -> int:
             else (
                 "sale_stopped"
                 if str(sale["sale_state"]) == "stopped"
-                else "sale_status_unknown_value"
+                else (
+                    "sale_not_on_sale"
+                    if str(sale["sale_state"]) == "not_on_sale"
+                    else "sale_status_unknown_value"
+                )
             )
         )
         with conn:

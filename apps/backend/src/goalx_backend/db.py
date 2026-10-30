@@ -95,3 +95,24 @@ def atomic(conn: sqlite3.Connection) -> Generator[None]:
             conn.execute("RELEASE lifecycle")
         else:
             conn.commit()
+
+
+def table_sql(conn: sqlite3.Connection, name: str) -> str | None:
+    """系统目录里的建表原文（不存在=None）。目录读取归 infra 本职。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", (name,)
+    ).fetchone()
+    return str(row[0]) if row is not None else None
+
+
+def trigger_sqls(conn: sqlite3.Connection, names: tuple[str, ...]) -> dict[str, str]:
+    """按名取触发器建文原文（供一次性修正摘防线后按原文重建）。"""
+    originals: dict[str, str] = {}
+    for name in names:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name = ?",
+            (name,),
+        ).fetchone()
+        if row is not None:
+            originals[name] = str(row[0])
+    return originals

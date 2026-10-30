@@ -1710,6 +1710,75 @@ def _apply_v31(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE frozen_decisions ADD COLUMN {column} TEXT")
 
 
+def _sale_statuses_check_has_not_on_sale(conn: sqlite3.Connection) -> bool:
+    """现表 CHECK 是否已含 not_on_sale（v32 重入幂等守卫，同 W1 教训）。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='sale_statuses'"
+    ).fetchone()
+    return row is not None and "not_on_sale" in str(row[0])
+
+
+def _apply_v32(conn: sqlite3.Connection) -> None:
+    """
+    v32（report-audit-20261027 票 09）：销售态值域加 not_on_sale。
+
+    sellStatus 语义考据（49 份计算器端点 raw，845 场次行 matchStatus 全
+    ='Selling'）实证现行映射反转：原值 1=在售（非停售）、2=未开售、
+    0 从未出现——"未开售"须有独立值与"停售/在售"三分。SQLite 不能
+    ALTER CHECK → 标准表重建（拷行→换名→索引/append-only 触发器照原
+    样重建）。历史错行修正走 sporttery.repair_sale_status_semantics
+    （显式审计脚本，不在迁移里夹数据修正）。
+    """
+    if _sale_statuses_check_has_not_on_sale(conn):
+        return
+    # 崩溃残迹清扫（correctness F1）：legacy 模式下 CREATE TABLE 即时落盘，
+    # INSERT 前死进程会留孤儿表卡死后续 migrate；成功路径必换名走，残留
+    # 只能是残迹——先 DROP IF EXISTS（W1 同族教训）
+    conn.execute("DROP TABLE IF EXISTS sale_statuses_v32")
+    conn.execute(
+        """
+        CREATE TABLE sale_statuses_v32 (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            market_code TEXT,
+            sale_state TEXT NOT NULL
+                CHECK (sale_state IN ('on_sale', 'not_on_sale', 'stopped', 'unknown')),
+            single_eligible INTEGER,
+            observed_at TEXT NOT NULL,
+            source_updated_at TEXT,
+            observation_id INTEGER REFERENCES quote_observations(id),
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sale_statuses_v32
+        SELECT id, fixture_id, market_code, sale_state, single_eligible,
+               observed_at, source_updated_at, observation_id, created_at
+        FROM sale_statuses
+        """
+    )
+    conn.execute("DROP TABLE sale_statuses")  # 随表删触发器
+    conn.execute("ALTER TABLE sale_statuses_v32 RENAME TO sale_statuses")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sale_statuses_lookup"
+        + " ON sale_statuses(fixture_id, market_code, observed_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER sale_statuses_no_update BEFORE UPDATE ON sale_statuses
+        BEGIN SELECT RAISE(ABORT, 'sale_statuses is append-only'); END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER sale_statuses_no_delete BEFORE DELETE ON sale_statuses
+        BEGIN SELECT RAISE(ABORT, 'sale_statuses is append-only'); END
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1742,4 +1811,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (29, _apply_v29),
     (30, _apply_v30),
     (31, _apply_v31),
+    (32, _apply_v32),
 )

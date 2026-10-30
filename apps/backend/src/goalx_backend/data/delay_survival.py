@@ -149,8 +149,12 @@ def _kickoff_bucket(seconds: float) -> str:
 
 def _terminal_reason(row: _RowAudit, *, tier_s: float) -> str:
     """一行在漏斗上的终态标签（首中即返；分层数互斥不重复计）。"""
+    if row.sale_state == "stopped":
+        return "sale_stopped"
+    if row.sale_state == "not_on_sale":
+        return "sale_not_on_sale"  # 票 09 独立值：未开售≠停售≠未知
     if row.sale_state != "on_sale":
-        return "sale_stopped" if row.sale_state == "stopped" else "sale_unknown"
+        return "sale_unknown"
     if row.single_eligible != 1:
         return "single_ineligible" if row.single_eligible == 0 else "single_unknown"
     return _post_l2_reason(row, tier_s=tier_s)

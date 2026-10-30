@@ -320,6 +320,22 @@ def test_wilson_ci_basics() -> None:
     assert ds._wilson_ci(0, 0) is None
 
 
+def test_not_on_sale_has_own_terminal_reason(db: sqlite3.Connection) -> None:
+    """票 09 回归：未开售独立终态标签，不混停售/未知桶，L2 不收。"""
+    _seed_fixture(db, 1)
+    _ledger_row(db, sale="not_on_sale")
+    _seed_fixture(db, 2)
+    _ledger_row(db, sale="stopped")  # 锚一枚真停售对照
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20"
+    )
+    reasons = report["overall"]["reasons"]
+    assert reasons["sale_not_on_sale"] == 1
+    assert reasons["sale_stopped"] == 1
+    assert "sale_unknown" not in reasons
+    assert report["overall"]["l2"] == 0
+
+
 def test_close_face_absent(db: sqlite3.Connection) -> None:
     """无收盘提供方：收盘面 absent，分母 0 → 比例/CI 如实 None 不冒充 0%。"""
     _seed_fixture(db, 1)

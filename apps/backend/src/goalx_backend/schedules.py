@@ -63,7 +63,7 @@ from goalx_backend.flows import (
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：组合面手写（票 03 后仅 5 面）+ 注册表推导面（12 面）。
+    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（12 面）。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
@@ -78,6 +78,17 @@ def build_deployments() -> dict[str, RunnerDeployment]:
     # 票 42：赛程集中在 18:00-次日 06:00，半小时一拍；08:00 补扫收尾晚场。
     # Prefect Schedule 单 deployment 只收一个 cron → 同 flow 双 deployment
     # （建议频率写入票 Answer 待追认）——双 cron 形状不进注册表，手写保留
+    # 票 09 可购窗拍点（同 flow 第三/四拍）：开售 ~11:30 后到逐场停售之间
+    # 12:30/16:30 两拍落 on_sale 观测——此前 10 点拍全未开售、19 点拍是
+    # 唯一在售拍，L2 证据恒空（delay-audit 首跑实证）。每拍=计算器端点
+    # 1 请求，预算可忽略。
+    daily_window = cast(
+        RunnerDeployment,
+        daily_capture_flow.to_deployment(
+            name="protocol-v1-window",
+            schedule=Schedule(cron="30 12,16 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     draw_sync = cast(
         RunnerDeployment,
         draw_results_sync_flow.to_deployment(
@@ -111,6 +122,7 @@ def build_deployments() -> dict[str, RunnerDeployment]:
     )
     deployments: dict[str, RunnerDeployment] = {
         "daily-capture": daily,
+        "daily-capture-window": daily_window,
         "draw-results-sync": draw_sync,
         "draw-results-sweep": draw_sync_sweep,
         "weekly-refresh": weekly,
