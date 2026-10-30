@@ -63,7 +63,7 @@ from goalx_backend.flows import (
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（12 面）。
+    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（14 面）=20 面。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
