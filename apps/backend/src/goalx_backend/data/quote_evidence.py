@@ -269,6 +269,10 @@ def adjudicate_had_quote(
         if sale["sale_state"] == "stopped":
             verdict.reject("sale_stopped")
             return verdict
+        if sale["sale_state"] == "not_on_sale":
+            # 票 09：未开售≠停售≠未知——不可购同样短路，但归因独立
+            verdict.reject("sale_not_on_sale")
+            return verdict
         if sale["sale_state"] == "unknown":
             verdict.mark_unknown("sale_status_unknown_value")
         if sale["single_eligible"] is not None:

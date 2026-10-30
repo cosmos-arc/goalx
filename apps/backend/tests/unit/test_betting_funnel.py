@@ -249,6 +249,17 @@ def test_funnel_stopped_sale_attributed_to_l5(db: sqlite3.Connection) -> None:
     assert report.n_eligible == 0
 
 
+def test_funnel_not_on_sale_attributed_to_l5(db: sqlite3.Connection) -> None:
+    """票 09：未开售归 L5 独立原因，不混停售桶也不放行。"""
+    fixture = _seed_fixture(db, n=10)
+    _add_jc(db, fixture, {"h": 2.0, "d": 3.3, "a": 3.5})
+    _add_anchor(db, fixture, {"h": 2.2, "d": 3.4, "a": 3.6})
+    _add_sale(db, fixture, state="not_on_sale")
+    report = fn.record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    assert report.loss_reasons == {"l5_sale_not_on_sale": 1}
+    assert report.n_eligible == 0
+
+
 def test_funnel_duplicate_match_code_deduped(db: sqlite3.Connection) -> None:
     """同场同日双销售编号（correctness F2）：去重不炸 UNIQUE、不双计。"""
 

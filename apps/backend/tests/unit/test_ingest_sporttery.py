@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import sqlite3
 from datetime import UTC, datetime
 
 import httpx
@@ -193,7 +194,7 @@ def test_capture_records_observation_and_reparse(tmp_path, db) -> None:
 
 def test_capture_parses_sale_status_and_single(tmp_path, db) -> None:
     payload = json.loads(json.dumps(SAMPLE))
-    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "0"
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
     payload["value"]["matchInfoList"][0]["subMatchList"][0]["had"]["single"] = "1"
     client = httpx.Client(
         transport=httpx.MockTransport(
@@ -212,8 +213,23 @@ def test_capture_parses_sale_status_and_single(tmp_path, db) -> None:
         "SELECT * FROM sale_statuses WHERE fixture_id=? AND market_code='had'",
         (fixture,),
     ).fetchone()
-    assert had["sale_state"] == "on_sale"
+    assert had["sale_state"] == "on_sale"  # 票 09：sellStatus=1=在售
     assert had["single_eligible"] == 1
+    # 未开售（票 09 独立值）：开售前 10 点拍所见
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "2"
+    sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 14, 32, tzinfo=UTC),
+    )
+    latest = db.execute(
+        "SELECT * FROM sale_statuses WHERE fixture_id=? AND market_code='had'"
+        " ORDER BY id DESC LIMIT 1",
+        (fixture,),
+    ).fetchone()
+    assert latest["sale_state"] == "not_on_sale"
     # 未知 sellStatus 值 → unknown，不伪造
     payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "9"
     payload["value"]["matchInfoList"][0]["subMatchList"][0]["had"].pop("single")
@@ -494,6 +510,134 @@ def test_reprocess_fails_closed_on_hash_mismatch(db, tmp_path) -> None:
         sporttery.reprocess_observations(db, tmp_path)
 
 
+# --- 票 09：历史销售态语义一次性修正 ---
+
+
+def _seed_repair_fixture(db, tmp_path) -> tuple[int, int, int]:
+    """
+    旧映射时代的错误行底座：obs+raw(sellStatus=1=在售)×fixture/match_code，
+    sale_statuses 与 ledger 各落一行错值 stopped（模拟 v3 时代写入），
+    另挂一条探针写的消失停售行（payload 无该场=真停售，不得被动）。
+    返回 (fixture_id, observation_id, probe_observation_id)。
+    """
+    from goalx_backend.models import MatchCodeInput, SnapshotInput
+
+    payload = json.loads(json.dumps(SAMPLE))
+    payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
+    observation_id, observed_at = _seed_observation(db, tmp_path, payload=payload)
+    competition = fx_store.upsert_competition(db, "荷甲")
+    home = fx_store.upsert_team(db, "修主")
+    away = fx_store.upsert_team(db, "修客")
+    fixture_id = fx_store.upsert_fixture(
+        db, competition, "2026-09-12T18:00:00+00:00", home, away
+    )
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture_id,
+            kind="jingcai",
+            business_date="2026-09-12",
+            code="周六0R",
+            source_match_id="2041430",
+        ),
+    )
+    db.execute(
+        """
+        INSERT INTO sale_statuses
+        (fixture_id, market_code, sale_state, single_eligible, observed_at,
+         observation_id, created_at)
+        VALUES (?, 'had', 'stopped', 1, ?, ?, ?)
+        """,
+        (fixture_id, observed_at, observation_id, observed_at),
+    )
+    sid = fx_store.insert_odds_snapshot(
+        db,
+        SnapshotInput(
+            fixture_id=fixture_id,
+            market_code="had",
+            selection_code="h",
+            source="sporttery",
+            odds=3.0,
+            captured_at=observed_at,
+            observed_at=observed_at,
+            source_updated_at=observed_at,
+            observation_id=observation_id,
+        ),
+    )
+    assert sid is not None
+    db.execute(
+        """
+        INSERT INTO price_deviation_ledger
+        (fixture_id, market_code, selection_code, jc_odds, observed_at,
+         source_updated_at, snapshot_id, p_sharp_h, p_sharp_d, p_sharp_a,
+         sale_state, single_eligible, created_at)
+        VALUES (?, 'had', 'h', 3.0, ?, ?, ?, 0.5, 0.3, 0.2,
+                'stopped', 1, ?)
+        """,
+        (fixture_id, observed_at, observed_at, sid, observed_at),
+    )
+    # 探针观测（空 payload）+ 该观测名下的消失停售行：repair 不得动
+    probe_obs_id, probe_at = _seed_observation(db, tmp_path, payload=EMPTY_PAYDAY)
+    db.execute(
+        """
+        INSERT INTO sale_statuses
+        (fixture_id, market_code, sale_state, observed_at,
+         observation_id, created_at)
+        VALUES (?, NULL, 'stopped', ?, ?, ?)
+        """,
+        (fixture_id, probe_at, probe_obs_id, probe_at),
+    )
+    db.commit()
+    return fixture_id, observation_id, probe_obs_id
+
+
+def test_repair_sale_status_semantics_dry_run_then_apply(db, tmp_path) -> None:
+    """dry-run 只读对账→apply 改行+防线原文重建→幂等；探针停售行不动。"""
+    fixture_id, observation_id, probe_obs_id = _seed_repair_fixture(db, tmp_path)
+    dry = sporttery.repair_sale_status_semantics(db, raw_root=tmp_path)
+    assert dry.applied is False
+    assert dry.payloads_read == 2
+    assert dry.sale_statuses_fixes == 1
+    assert dry.ledger_fixes == 1
+    assert dry.by_transition == {
+        "sale_statuses:stopped→on_sale": 1,
+        "price_deviation_ledger:stopped→on_sale": 1,
+    }
+    row = db.execute(
+        "SELECT sale_state FROM sale_statuses WHERE observation_id = ?",
+        (observation_id,),
+    ).fetchone()
+    assert row["sale_state"] == "stopped"  # dry-run 不动库
+    applied = sporttery.repair_sale_status_semantics(db, raw_root=tmp_path, apply=True)
+    assert applied.sale_statuses_fixes == 1
+    assert applied.ledger_fixes == 1
+    row = db.execute(
+        "SELECT sale_state FROM sale_statuses WHERE observation_id = ?",
+        (observation_id,),
+    ).fetchone()
+    assert row["sale_state"] == "on_sale"
+    ledger = db.execute(
+        "SELECT sale_state FROM price_deviation_ledger WHERE fixture_id = ?",
+        (fixture_id,),
+    ).fetchone()
+    assert ledger["sale_state"] == "on_sale"
+    # 探针写的消失停售行（payload 无该场）保持 stopped
+    probe_row = db.execute(
+        "SELECT sale_state FROM sale_statuses WHERE observation_id = ?",
+        (probe_obs_id,),
+    ).fetchone()
+    assert probe_row["sale_state"] == "stopped"
+    # 防线按原文重建：直改再被拦
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        db.execute("UPDATE sale_statuses SET sale_state = 'unknown' WHERE id = 1")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE price_deviation_ledger SET sale_state = 'stopped'")
+    # 幂等：对账归零
+    again = sporttery.repair_sale_status_semantics(db, raw_root=tmp_path, apply=True)
+    assert again.sale_statuses_fixes == 0
+    assert again.ledger_fixes == 0
+
+
 # --- 票 47：停售加密探测（决策锚触发器） ---
 
 EMPTY_PAYDAY = {"errorCode": "0", "value": {"matchInfoList": []}}
@@ -570,15 +714,18 @@ def test_probe_disappearance_marks_stopped_once(db, tmp_path) -> None:
     assert calls2 == []
 
 
-def test_probe_explicit_sell_status_stopped(db, tmp_path) -> None:
+def test_probe_sell_status_one_means_on_sale_not_stopped(db, tmp_path) -> None:
+    """票 09 语义修正回归：sellStatus=1=在售（非停售）——仍在列表=仍在售，
+    停售的唯一信号是从在售列表消失，显式值不构成停售证据。"""
     _seed_joined_sample(db, tmp_path)
-    stopped_payload = json.loads(json.dumps(SAMPLE))
-    stopped_payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
+    selling_payload = json.loads(json.dumps(SAMPLE))
+    selling_payload["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
     now = datetime(2026, 9, 12, 17, 0, tzinfo=UTC)
     probe = sporttery.probe_sale_stops(
-        db, Settings(), _probe_client(stopped_payload, []), raw_root=tmp_path, now=now
+        db, Settings(), _probe_client(selling_payload, []), raw_root=tmp_path, now=now
     )
-    assert len(probe.stopped) == 1
+    assert probe.candidates == 1
+    assert probe.stopped == []
 
 
 def test_probe_on_sale_no_anchor(db, tmp_path) -> None:

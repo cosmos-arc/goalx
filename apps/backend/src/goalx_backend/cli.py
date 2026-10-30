@@ -873,6 +873,44 @@ def _cmd_delay_audit(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_repair_sale_status(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    历史销售态语义一次性修正（票 09；dry-run 默认，--apply 才动库）。
+
+    按计算器端点 raw 证据重解析（修正后 SELL_STATUS_MAP）对账
+    sale_statuses 与 price_deviation_ledger 历史行：旧映射把在售记成
+    停售、未开售记成 unknown。apply 前置=v32 已迁移；UPDATE 防线触发器
+    摘除后按原文重建。JSON 审计（迁移分布/行数守卫）同步 stdout。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        report = sporttery.repair_sale_status_semantics(
+            conn, raw_root=resolved.observations_dir, apply=bool(args.apply)
+        )
+    finally:
+        conn.close()
+    payload = {
+        "applied": report.applied,
+        "observations": report.observations,
+        "payloads_read": report.payloads_read,
+        "payloads_missing": report.payloads_missing,
+        "sale_statuses": {
+            "inspected": report.sale_statuses_inspected,
+            "fixes": report.sale_statuses_fixes,
+        },
+        "ledger": {"inspected": report.ledger_inspected, "fixes": report.ledger_fixes},
+        "unresolved_rows": report.unresolved_rows,
+        "by_transition": report.by_transition,
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_jc_collect(
     args: argparse.Namespace, *, settings: Settings | None = None
 ) -> None:
@@ -1637,6 +1675,15 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="跳过收盘面(无语料环境口径冒烟;主指标收盘列如实置空)",
     )
+    repair_parser = sub.add_parser(
+        "repair-sale-status",
+        help="历史销售态语义修正(票09;旧映射在售误记停售,dry-run默认)",
+    )
+    repair_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="实改(前置v32迁移;UPDATE防线触发器摘除后按原文重建)",
+    )
     jc_audit_parser = sub.add_parser(
         "jc-audit",
         help="JC audit 面(票67;TTG 按年密度+存档最早年限+官方vs cid1129 对账)",
@@ -1742,6 +1789,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
         "delay-audit": lambda: _cmd_delay_audit(args),
+        "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),
         "jc-backfill": lambda: _cmd_jc_backfill(args),

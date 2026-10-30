@@ -697,6 +697,8 @@ def _capture_track2_fixture(
         purchasable, reason = True, None
     elif str(sale["sale_state"]) == "stopped":
         purchasable, reason = False, "sale_stopped"
+    elif str(sale["sale_state"]) == "not_on_sale":
+        purchasable, reason = False, "sale_not_on_sale"
     else:
         purchasable, reason = False, "sale_status_unknown_value"
     record_track2_snapshot(

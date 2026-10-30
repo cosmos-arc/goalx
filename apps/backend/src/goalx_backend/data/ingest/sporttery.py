@@ -44,7 +44,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
-from goalx_backend.db import utc_now_iso
+from goalx_backend.db import table_sql, trigger_sqls, utc_now_iso
 from goalx_backend.markets import GOALS_MARKETS
 from goalx_backend.models import (
     MatchCodeInput,
@@ -59,10 +59,15 @@ CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
 POOL_CODES = ("had", "hhad", "crs", "ttg", "hafu")
 # v3（票 38）：had 单固补 poolList 池级解析（v2 会把 poolList single=1 的
 # 场次误记为非单固）；重解析历史证据时以本版本为准。
-PARSE_VERSION = "sporttery_calculator_v3"
+PARSE_VERSION = "sporttery_calculator_v4"  # v4=票09 sellStatus 语义修正
 
-# sellStatus 原始值 → 内部状态；未列出值视为未知（保守拒绝，票 35）。
-SELL_STATUS_MAP: dict[str, str] = {"0": "on_sale", "1": "stopped"}
+# sellStatus 原始值 → 内部状态（票 09 语义修正，2026-10-29 考据实证）：
+# 计算器端点只列在售场次（49 份 raw×845 行 matchStatus 全='Selling'）；
+# 原值 1=在售（18-20 点拍当晚场+次日预售场）、2=未开售（10 点拍开售前）、
+# 0 从未出现（停售场直接从列表消失）。旧映射 {"0":on_sale,"1":stopped}
+# 语义反转——历史错行修正走 repair_sale_status_semantics。未列出值仍
+# 保守 unknown（票 35 纪律不放松）。
+SELL_STATUS_MAP: dict[str, str] = {"1": "on_sale", "2": "not_on_sale"}
 
 
 # 竞彩联赛缩写 → (Odds API sport key, tier)（票 17：Tier 1=五大+欧冠+欧联）
@@ -132,7 +137,7 @@ class ParsedMatch:
 
     @property
     def sale_state(self) -> str:
-        """销售状态（端点只列在售场次，缺字段=on_sale，未知值保守 unknown）。"""
+        """销售状态（端点只列在售场次；1=在售、2=未开售，未列出值保守 unknown）。"""
         if self.sell_status_raw is None:
             return "on_sale"
         return SELL_STATUS_MAP.get(self.sell_status_raw, "unknown")
@@ -584,10 +589,12 @@ def probe_sale_stops(
     候选 = 已 join、未 stopped、「开球 ≤3h 或 北京 ≥19 点的 16h 内场次」。
 
     无候选零请求（探测载体不空耗）；有候选走全链路采集（证据/快照/销售
-    状态幂等吸收），随后判定停售迁移：payload 显式 sellStatus=1（store_matches
-    已落 stopped 行）或**从在售列表消失**（本函数补显式 stopped 行——端点
-    只列在售场次，消失即停售；不补行则迁移时刻不可重建）。返回检出停售的
-    候选行（含 odds_api_event_id/sport_key，供决策锚定向拉取）。
+    状态幂等吸收），随后判定停售迁移：**从在售列表消失**（本函数补显式
+    stopped 行——端点只列在售场次，消失即停售；不补行则迁移时刻不可
+    重建）。票 09 语义修正后 sellStatus=1=在售（非停售），显式值不再
+    构成停售证据，消失是唯一停售信号；已落 stopped（本函数前轮写入）
+    的候选行确认为已检出。返回检出停售的候选行（含
+    odds_api_event_id/sport_key，供决策锚定向拉取）。
     """
     moment = now or datetime.now(UTC)
     now_iso = moment.isoformat(timespec="seconds")
@@ -633,7 +640,7 @@ def probe_sale_stops(
             (fixture_id,),
         ).fetchone()
         if latest is not None and str(latest["sale_state"]) == "stopped":
-            probe.stopped.append(row)  # payload 显式停售（store_matches 已落行）
+            probe.stopped.append(row)  # 前轮探测已落的显式停售行（确认检出）
             continue
         source_match_id = code_by_fixture.get(fixture_id)
         if (
@@ -700,3 +707,152 @@ def reprocess_observations(conn: sqlite3.Connection, raw_root: Path) -> Reproces
         stats.duplicate_snapshots += replayed.duplicate_snapshots
     conn.commit()
     return stats
+
+
+@dataclass
+class SaleStatusRepairReport:
+    """票 09 历史销售态语义修正的一次审计（dry-run 与 apply 同构）。"""
+
+    observations: int = 0
+    payloads_read: int = 0
+    payloads_missing: int = 0
+    sale_statuses_inspected: int = 0
+    sale_statuses_fixes: int = 0
+    ledger_inspected: int = 0
+    ledger_fixes: int = 0
+    unresolved_rows: int = 0  # 无 match_codes 链或 payload 缺证据的行（不动）
+    by_transition: dict[str, int] = field(default_factory=dict)
+    applied: bool = False
+
+
+# 修正涉及的两条 append-only 防线（apply 时摘除→改→按 sqlite_master 原文重建）
+_REPAIR_TRIGGERS = ("sale_statuses_no_update", "trg_price_ledger_no_struct_update")
+
+
+def _corrected_states_by_observation(payload: dict[str, Any]) -> dict[str, str]:
+    """Payload → {matchId: 修正后销售态}（现行 SELL_STATUS_MAP 语义）。"""
+    return {m.source_match_id: m.sale_state for m in parse_matches(payload)}
+
+
+def _inspect_repair_rows(
+    rows: list[sqlite3.Row],
+    *,
+    corrected_by_mid: dict[str, str],
+    fixture2match: dict[int, str],
+    out: list[tuple[int, str]],
+    report: SaleStatusRepairReport,
+) -> tuple[int, int]:
+    """逐行对账：返回 (检视数, 修正数)；无证据行计入 unresolved 不动。"""
+    inspected = changed = 0
+    for row in rows:
+        inspected += 1
+        mid = fixture2match.get(int(row["fixture_id"]))
+        corrected = corrected_by_mid.get(mid) if mid is not None else None
+        if corrected is None:
+            report.unresolved_rows += 1
+            continue
+        if corrected != str(row["sale_state"]):
+            out.append((int(row["id"]), corrected))
+            key = f"{row['table_name']}:{row['sale_state']}→{corrected}"
+            report.by_transition[key] = report.by_transition.get(key, 0) + 1
+            changed += 1
+    return inspected, changed
+
+
+def repair_sale_status_semantics(
+    conn: sqlite3.Connection, *, raw_root: Path, apply: bool = False
+) -> SaleStatusRepairReport:
+    """
+    历史销售态语义一次性修正（票 09；dry-run 默认，apply 才动库）。
+
+    旧映射 {"0":on_sale,"1":stopped} 把在售记成停售、未开售记成
+    unknown——本函数按 raw 证据（quote_observations → 计算器 payload，
+    用修正后的 SELL_STATUS_MAP 重解析）重算每个观测关联的
+    sale_statuses 行与 price_deviation_ledger 行（经 odds_snapshots.
+    observation_id 链），不一致才改；探针写的"消失即停售"行天然跳过
+    （该场不在 payload）。apply 前置=v32 已迁移（not_on_sale 值域）；
+    改行须临时摘 UPDATE 防线触发器，改完按原文重建（防线不弱化）。
+    """
+    report = SaleStatusRepairReport(applied=apply)
+    check_sql = table_sql(conn, "sale_statuses")
+    if apply and (check_sql is None or "not_on_sale" not in check_sql):
+        raise RuntimeError("apply 须先迁移 v32（sale_statuses 值域含 not_on_sale）")
+    fixture2match = {
+        int(r["fixture_id"]): str(r["source_match_id"])
+        for r in conn.execute(
+            """
+            SELECT fixture_id, source_match_id FROM match_codes
+            WHERE kind = 'jingcai' AND source_match_id IS NOT NULL
+            """
+        ).fetchall()
+    }
+    sale_fixes: list[tuple[int, str]] = []
+    ledger_fixes: list[tuple[int, str]] = []
+    for obs in conn.execute(
+        """
+        SELECT id, raw_ref FROM quote_observations
+        WHERE source = 'sporttery' AND raw_ref IS NOT NULL
+          AND endpoint = 'getMatchCalculatorV1.qry'
+        ORDER BY id
+        """
+    ).fetchall():
+        report.observations += 1
+        try:
+            payload = json.loads(observations.read_raw(raw_root, str(obs["raw_ref"])))
+        except (OSError, json.JSONDecodeError):
+            report.payloads_missing += 1
+            continue
+        report.payloads_read += 1
+        corrected_by_mid = _corrected_states_by_observation(payload)
+        sale_rows = conn.execute(
+            """
+            SELECT id, fixture_id, sale_state,
+                   'sale_statuses' AS table_name FROM sale_statuses
+            WHERE observation_id = ?
+            """,
+            (obs["id"],),
+        ).fetchall()
+        ledger_rows = conn.execute(
+            """
+            SELECT l.id AS id, l.fixture_id AS fixture_id, l.sale_state AS sale_state,
+                   'price_deviation_ledger' AS table_name
+            FROM price_deviation_ledger l
+            JOIN odds_snapshots o ON o.id = l.snapshot_id
+            WHERE o.observation_id = ? AND l.sale_state IS NOT NULL
+            """,
+            (obs["id"],),
+        ).fetchall()
+        inspected, changed = _inspect_repair_rows(
+            sale_rows,
+            corrected_by_mid=corrected_by_mid,
+            fixture2match=fixture2match,
+            out=sale_fixes,
+            report=report,
+        )
+        report.sale_statuses_inspected += inspected
+        report.sale_statuses_fixes += changed
+        inspected, changed = _inspect_repair_rows(
+            ledger_rows,
+            corrected_by_mid=corrected_by_mid,
+            fixture2match=fixture2match,
+            out=ledger_fixes,
+            report=report,
+        )
+        report.ledger_inspected += inspected
+        report.ledger_fixes += changed
+    if apply and (sale_fixes or ledger_fixes):
+        originals = trigger_sqls(conn, _REPAIR_TRIGGERS)
+        for name in originals:
+            conn.execute(f"DROP TRIGGER {name}")
+        conn.executemany(
+            "UPDATE sale_statuses SET sale_state = ? WHERE id = ?",
+            [(state, row_id) for row_id, state in sale_fixes],
+        )
+        conn.executemany(
+            "UPDATE price_deviation_ledger SET sale_state = ? WHERE id = ?",
+            [(state, row_id) for row_id, state in ledger_fixes],
+        )
+        for sql in originals.values():
+            conn.execute(sql)
+        conn.commit()
+    return report
