@@ -27,11 +27,11 @@
 | 新闻提取（NewsShock 抽取器） | ✓ | ✓ | — | — | caliber-loop N 相 137 事件（[a662b36](https://github.com/cosmos-arc/goalx/commit/a662b36)）；线已终审冻结归档（证据不足），不做日常运行 |
 | 估值带（multiline 约束可行性，B 线归档工具） | ✓ | ✓ | — | — | measure 票 10（[3396a3c](https://github.com/cosmos-arc/goalx/commit/3396a3c)）+ PR#181 票 04 certified/conflicts 分流；归档为估值带工具非运行面 |
 | 密集锚/轨二快照（track2_snapshots） | ✓ | — | **✗** | — | 票 47（PR#57）+ 轨二（PR#169 [2288297](https://github.com/cosmos-arc/goalx/commit/2288297)）；**主库 0 行——代码在册、零候选触发，运行验收不达成是本表第一价值行** |
-| **今日页欧赔共识 + had 判定 EV 面** | ✓ | — | **✗** | — | **2026-10-31 补行（用户使用投诉触发）**：自 9-25 换源裁决结构性断供——读侧死命名空间（`odds_api:%`）+ 当期零映射 + 当日物化缺通道（诊断记忆 `goalx-today-page-eu-feed-dead-20261031`）；10-31 晚 23 场在售 books=0/EV 全空实证。修复板 `.scratch/odds-read-switch/` 票 01-03 |
+| **今日页欧赔共识 + had 判定 EV 面** | ✓ | — | **◐** | — | **2026-10-31 补行（用户使用投诉触发）**：自 9-25 换源裁决结构性断供——读侧死命名空间（`odds_api:%`）+ 当期零映射 + 当日物化缺通道（诊断记忆 `goalx-today-page-eu-feed-dead-20261031`）；10-31 晚 23 场在售 books=0/EV 全空实证。修复板 `.scratch/odds-read-switch/` 票 01-03 |
 | **陈盘信号（stale_line）** | ✓ | ✓ | **✗** | — | **同日补行：sharp 锚 `odds_api:pinnacle` 同死源**（票48 落地 9-21，源 9-25 摘除后主锚从未活过）；cid177 切换在修复板票 02。10-31 晚全部在售场 sharp_ref/drift=NULL 实证 |
 | **had 纸面下注闭环（join→quote→stake→bet）** | ✓ | — | **✗** | — | **同日补行：`bets` 表 0 行，闭环从未真实发生过**（闸门 fail-closed 全拒 + 输入断供双因）；修复板落地后首注即本行运行验收证据 |
 | 语料树（raw-first + checkpoint + silver/gold） | ✓ | ✓ | ✓ | — | PR#77 体系；12 个 raw 数据集、fixture_universe 48,952 行、_meta 新鲜（10-27T00:10Z） |
-| serve 栈 + 晨检（18 面注册 + 09:05 七项） | ✓ | — | ✓ | — | schedules.py；PR#186（[0f60040](https://github.com/cosmos-arc/goalx/commit/0f60040)）daily-capture-window 补进恢复清单，2026-10-31 12:36 重启注册 18 面（protocol-v1-window 在列，--only 日志行可证）；2026-10-28 七项全绿（见下节对账） |
+| serve 栈 + 晨检（18 面注册 + 09:05 八项） | ✓ | — | ✓ | — | schedules.py；PR#186（[0f60040](https://github.com/cosmos-arc/goalx/commit/0f60040)）daily-capture-window 补进恢复清单，2026-10-31 12:36 重启注册 18 面（protocol-v1-window 在列，--only 日志行可证）；2026-10-28 七项全绿（见下节对账） |
 
 ## 与 09:05 晨检七项对账（2026-10-28，建表时手跑）
 
@@ -73,3 +73,7 @@
 - 2026-10-31：补三行（今日页欧赔共识+had EV 面、陈盘信号、纸面下注闭环，
   均运行 ✗ 断供/零触发在案）；新增维护纪律两条（普查纪律、摘源扫依赖）。
   触发=用户使用投诉（欧赔/EV 全空、闸门全拒）。
+- 2026-10-31 晚：odds-read-switch 票 01-03 合 main 后欧赔面行 ✗→◐（待
+  首绿）；晨检七项→八项（+今日页欧赔输入面，票04；红线语义=红不许静默
+  跳过）。",
+
