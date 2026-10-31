@@ -40,3 +40,23 @@ ecosystem = "npm"
 name = "deepmerge"
 version = "4.3.1"
 ignore = true
+
+[[PackageOverrides]]
+# minimatch 5.1.9 + 10.2.6（GHSA-g3hv-75wg-m249 / CVE-2026-118764，6.9：
+# glob 模式两相预处理的资源放大 DoS，修 11.0.1）——2026-10-30 新发公告。
+# 两父件均无范围内修版：@redocly/openapi-core@1.34.22 钉死 "5.1.9"（契约
+# lint 链）、@ts-morph/common@0.27.0 钉 "^10.0.1"（types/codemod 链）。
+# 全在 dev/CI 工具链，不进运行时 bundle，glob 模式全部自供无不可信输入。
+# 复核触发器：任一父件放开到 ≥11（redocly 换 minimatch 或 ts-morph 迁
+# ^11）即删本两条并升级。
+ecosystem = "npm"
+name = "minimatch"
+version = "5.1.9"
+ignore = true
+
+[[PackageOverrides]]
+# 同上：@ts-morph/common 的 ^10 钉线。
+ecosystem = "npm"
+name = "minimatch"
+version = "10.2.6"
+ignore = true
