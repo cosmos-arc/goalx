@@ -30,10 +30,12 @@ import fcntl
 import gzip
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -191,6 +193,28 @@ CREATE TABLE IF NOT EXISTS srct_remat_state (
     updated_at TEXT NOT NULL
 )
 """
+# remat 互斥锁（odds-read-switch 票 03 correctness F1）：单行持锁——拍后
+# 增量钩子与 08:10 全量并发时，护栏全量 ~3h 内每 30min 拍都会再起全量
+# （水位只随整轮成功推进），N×并发全量互删分区；started_at 超窗视为
+# 持锁进程已死（全量实测 ~3h，天花板 6h）
+_SRCT_REMAT_LOCK_SQL = """
+CREATE TABLE IF NOT EXISTS srct_remat_lock (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    holder_pid INTEGER NOT NULL,
+    started_at TEXT NOT NULL
+)
+"""
+# live 锚定 sid 的末次发射分区（票 03 correctness F2）：当期班行跨拍改档
+# （league/kickoff 漂移）时旧分区无从从现行数据推导——sidecar 记末次
+# 发射分区，增量触及集并入迁出，防跨分区残留分叉
+_SRCT_LIVE_SID_PARTITIONS_SQL = """
+CREATE TABLE IF NOT EXISTS srct_live_sid_partitions (
+    sid TEXT PRIMARY KEY,
+    season TEXT NOT NULL,
+    competition TEXT NOT NULL,
+    emitted_at TEXT NOT NULL
+)
+"""
 # Bronze sid 索引：解析层防重（_bronze_sids 原全量解压 bronze GB 级 ~10 分钟/
 # 每日一次）的 O(1) 载体——append_bronze 同步 upsert；anchor=文件 size:mtime，
 # 外部改动（文件被删/旧代码进程直写）触发整体重扫，保住"文件即真相"自愈
@@ -229,6 +253,8 @@ _CHECKPOINT_TABLE_SQL = (
     _BRONZE_SIDS_SQL,
     _BRONZE_SID_BACKFILL_SQL,
     _SRCT_REMAT_STATE_SQL,
+    _SRCT_REMAT_LOCK_SQL,
+    _SRCT_LIVE_SID_PARTITIONS_SQL,
 )
 _TABLE_NAME_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)")
 
@@ -915,6 +941,74 @@ class CorpusStore:
             """,
             (watermark, last_rowid, bronze_sid_counts, utc_now_iso()),
         )
+        self._checkpoint().commit()
+
+    def try_acquire_remat_lock(
+        self, *, stale_after_seconds: float
+    ) -> dict[str, object] | None:
+        """
+        Remat 互斥锁（票 03 F1）：空闲/过期则持锁并返回 None，占用返回持锁行。
+
+        过期判据=started_at 距今超 ``stale_after_seconds``（持锁进程已死
+        假设；天花板须大于全量实测时长）。fail-closed：锁表读写异常向上
+        抛——锁态未知不放行（批二口径）。
+        """
+        now = datetime.now(UTC)
+        conn = self._checkpoint()
+        row = conn.execute(
+            "SELECT holder_pid, started_at FROM srct_remat_lock WHERE id = 1"
+        ).fetchone()
+        if row is not None:
+            started = datetime.fromisoformat(str(row["started_at"]))
+            age = (now - started).total_seconds()
+            if age <= stale_after_seconds:
+                return dict(row)
+        conn.execute(
+            """
+            INSERT INTO srct_remat_lock (id, holder_pid, started_at)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                holder_pid=excluded.holder_pid, started_at=excluded.started_at
+            """,
+            (os.getpid(), now.isoformat(timespec="seconds")),
+        )
+        conn.commit()
+        return None
+
+    def release_remat_lock(self) -> None:
+        """释放 remat 锁（幂等；调用方 finally 必达）。"""
+        conn = self._checkpoint()
+        conn.execute("DELETE FROM srct_remat_lock WHERE id = 1")
+        conn.commit()
+
+    def live_sid_partitions(self) -> dict[str, tuple[str, str]]:
+        """Live 锚定 sid → 末次发射分区（票 03 F2 迁出推导面）。"""
+        rows = (
+            self._checkpoint()
+            .execute("SELECT sid, season, competition FROM srct_live_sid_partitions")
+            .fetchall()
+        )
+        return {str(r["sid"]): (str(r["season"]), str(r["competition"])) for r in rows}
+
+    def upsert_live_sid_partitions(
+        self, partitions: dict[str, tuple[str, str]]
+    ) -> None:
+        """覆写 live 锚定 sid 的末次发射分区（成功轮后调用）。"""
+        conn = self._checkpoint()
+        conn.executemany(
+            """
+            INSERT INTO srct_live_sid_partitions (sid, season, competition, emitted_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(sid) DO UPDATE SET
+                season=excluded.season, competition=excluded.competition,
+                emitted_at=excluded.emitted_at
+            """,
+            [
+                (sid, season, competition, utc_now_iso())
+                for sid, (season, competition) in partitions.items()
+            ],
+        )
+        conn.commit()
         self._checkpoint().commit()
 
     def guardian_state(self) -> dict[str, object]:

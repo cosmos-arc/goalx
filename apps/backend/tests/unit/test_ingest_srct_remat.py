@@ -751,3 +751,108 @@ def test_day_page_takes_over_live_anchor_partition(tmp_path: Path) -> None:
         assert _tree_face_digests(store) == face
     finally:
         store.close()
+
+
+def test_remat_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
+    """F1 回归：互斥锁被占零动作早退；过期锁可夺。"""
+    from datetime import UTC, datetime, timedelta
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        routes = _routes_for("2025-10-01", "90001", "西甲")
+        _collect(store, settings, routes, "2025-10-01")
+        store._checkpoint().execute(
+            "INSERT INTO srct_remat_lock (id, holder_pid, started_at)"
+            " VALUES (1, 999999, ?)",
+            (datetime.now(UTC).isoformat(timespec="seconds"),),
+        )
+        store._checkpoint().commit()
+        report = srct_remat.run_remat(store)
+        assert report.busy.startswith("pid=999999")
+        assert report.mode == "skip"
+        assert not _odds_root(store).exists()  # 零动作
+        # 过期锁（>6h）→ 夺锁执行
+        stale = (datetime.now(UTC) - timedelta(hours=7)).isoformat(timespec="seconds")
+        store._checkpoint().execute(
+            "UPDATE srct_remat_lock SET started_at = ?", (stale,)
+        )
+        store._checkpoint().commit()
+        report2 = srct_remat.run_remat(store)
+        assert report2.busy == ""
+        assert report2.mode == "full"
+        store._checkpoint().execute(
+            "DELETE FROM srct_remat_lock"
+        )  # 清锁模拟整轮正常路径已释放
+        store._checkpoint().commit()
+    finally:
+        store.close()
+
+
+def test_live_anchor_drift_migrates_old_partition(tmp_path: Path) -> None:
+    """F2 回归：当期班行跨拍改档（league 空→德乙）旧分区成对清驻留。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        _seed_orphan_odds(store, "90013")
+        store.upsert_shift_match(
+            {
+                "sid": "90013",
+                "league": "",  # 开售拍未带档期面 → 兜底 "live"
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T02:00:00+00:00",
+            }
+        )
+        srct_remat.run_remat(store)
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "live")} == {"90013"}
+
+        # 次拍档期面补齐 + 新工件 → sidecar 差分并入旧 live 分区
+        store.upsert_shift_match(
+            {
+                "sid": "90013",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 2,
+                "last_beat_at": "2025-10-02T03:00:00+00:00",
+            }
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            "90013@2025-10-02@open",
+            _ODDS_JS_BEAT,
+            ext=".js",
+        )
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90013",
+                    "fetched_at": "2025-10-02T03:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "e" * 64,
+                    "payload": srct.parse_odds_page(_ODDS_JS_BEAT),
+                }
+            ],
+        )
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=2025-26/competition=live" in report.affected_partitions
+        assert "season=2025-26/competition=德乙" in report.affected_partitions
+        assert not (_odds_root(store) / "season=2025-26" / "competition=live").exists()
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "德乙")} == {"90013"}
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()
