@@ -12,7 +12,8 @@ server（PREFECT_API_URL=http://127.0.0.1:4200/api，scheduler 在其中运行�
 server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 
 节奏（Asia/Shanghai，协议 run-protocol-v1.md §3，启动后不改口径）：
-- daily-capture 10:00/19:00：竞彩→预测→范围内欧赔（2 credits/次）
+- daily-capture 10:00/19:00（竞彩→预测）+ 12:30/16:30 可购窗拍
+  （票 09）：开售后到停售前的 on_sale 观测，此前 L2 证据恒空
 - eu-odds-closing 每 30 分钟：无窗口场次时自动零成本跳过（票 47 起兼作
   双锚采样的兜底拍）
 - odds-anchor-dense 每 5 分钟（票 47）：停售决策锚 + 开球评估锚，零候选
@@ -165,8 +166,12 @@ def main(only: str | None = None) -> None:
 # 2026-09-25 恢复清单（用户裁决"相关采集任务一起调整"）：除两个判死面
 # （eu-odds-closing 欧赔聚合 / srcb-collect 源B，国际赔率全走源T）外全量。
 # 票 03 后全量推导：组合面手写 + 注册表 resume/dead 两推导，不再手抄行。
+# 覆盖不变量在 test_datasets_registry.test_resume_derivation：装配面必须
+# 恰归 RESUME ∪ DEAD（2026-10-31 daily-capture-window 漏进清单实证漏法——
+# CLI 缺省即本清单，漏登记=面从未上线）。
 RESUME_DEPLOYMENTS = (
     "daily-capture",
+    "daily-capture-window",
     "draw-results-sync",
     "draw-results-sweep",
     "weekly-refresh",

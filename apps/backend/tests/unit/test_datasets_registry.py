@@ -9,6 +9,12 @@ RESUME/DEAD 推导、checkpoint 表核对钉进字面量，任一漂移即红。
 resume=False）+ 手写 5 面（daily-capture、draw-results 双 cron、weekly、
 daily-wrap）；serve 清单金标 = 手写 wiring 时代末态（17 deployment，
 名与 cron 逐一相等）。
+
+2026-10-31 补强：票 09 的 daily-capture-window 加进了 build_deployments
+却漏进 RESUME_DEPLOYMENTS——CLI 缺省即恢复清单，窗口面从未上线
+（10-30 重启后 Prefect 注册 17 面实证）。test_resume_derivation 加
+覆盖不变量：build_deployments 的每一面必须恰归 RESUME ∪ DEAD——
+新增面漏登记清单时此处红，防同族再犯。
 """
 
 from __future__ import annotations
@@ -146,9 +152,14 @@ def test_derived_deployments_flow_names_match_records() -> None:
 
 
 def test_resume_derivation() -> None:
-    """RESUME = 组合面手写 5 + 注册表推导；判死面推导自注册表。"""
+    """RESUME = 组合面手写 6 + 注册表推导；判死面推导自注册表。
+
+    覆盖不变量：build_deployments 每面恰归 RESUME ∪ DEAD——手写面加进
+    装配漏进清单即红（2026-10-31 daily-capture-window 实证漏法）。
+    """
     assert set(schedules.RESUME_DEPLOYMENTS) == {
         "daily-capture",
+        "daily-capture-window",
         "draw-results-sync",
         "draw-results-sweep",
         "weekly-refresh",
@@ -158,6 +169,10 @@ def test_resume_derivation() -> None:
     assert set(datasets.resume_names()).isdisjoint(datasets.dead_names())
     assert datasets.dead_names() == schedules.DEAD_DEPLOYMENTS
     assert set(schedules.DEAD_DEPLOYMENTS).isdisjoint(schedules.RESUME_DEPLOYMENTS)
+    # CLI 缺省 = RESUME → 缺省服务面 = 全量 − 判死；任何面漏登记即红
+    assert set(schedules.build_deployments()) == (
+        set(schedules.RESUME_DEPLOYMENTS) | set(schedules.DEAD_DEPLOYMENTS)
+    )
 
 
 def test_cli_surface_parses_with_handwritten_defaults() -> None:
