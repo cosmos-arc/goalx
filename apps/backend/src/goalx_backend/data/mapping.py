@@ -421,8 +421,15 @@ def _record_linked(
     stats: MappingSyncStats,
     *,
     origin: str | None = None,
+    align_kickoff: bool = True,
 ) -> None:
-    """Linked 场落链：meta 变体路径 + kickoff 校准 + srct 别名对产出。"""
+    """
+    Linked 场落链：meta 变体路径 + kickoff 校准 + srct 别名对产出。
+
+    ``align_kickoff=False`` 用于 live 链（correctness F2）：在售场 JC 回灌
+    与源T 校准互写会致 kickoff 摆动不收敛——live 命中开球差已被 ±10min
+    硬门兜住，不校准；universe 次日锚定后按历史口径正常校准一次。
+    """
     fixture_id = int(row["fixture_id"])
     home_name = str(row["home_name"])
     away_name = str(row["away_name"])
@@ -438,12 +445,13 @@ def _record_linked(
         meta["away_variant"] = resolution.away_variant
     universe = index.row_for(sid)
     if universe is not None:
-        if _align_kickoff(
-            conn, fixture_id, universe.kickoff_bj, str(row["kickoff_utc"]), meta
-        ):
-            stats.kickoff_aligned += 1
-        if "kickoff_conflict_seconds" in meta or "kickoff_conflict_unique" in meta:
-            stats.kickoff_conflicts += 1
+        if align_kickoff:
+            if _align_kickoff(
+                conn, fixture_id, universe.kickoff_bj, str(row["kickoff_utc"]), meta
+            ):
+                stats.kickoff_aligned += 1
+            if "kickoff_conflict_seconds" in meta or "kickoff_conflict_unique" in meta:
+                stats.kickoff_conflicts += 1
         stats.srct_alias_pairs.append((int(row["home_team_id"]), universe.home))
         stats.srct_alias_pairs.append((int(row["away_team_id"]), universe.away))
     _upsert_link(
@@ -504,7 +512,15 @@ def _sync_live_fallback(
     ):
         stats.linked += 1
         stats.live_linked += 1
-        _record_linked(conn, live_index, row, live, stats, origin=ORIGIN_LIVE_SHIFT)
+        _record_linked(
+            conn,
+            live_index,
+            row,
+            live,
+            stats,
+            origin=ORIGIN_LIVE_SHIFT,
+            align_kickoff=False,
+        )
     elif live.sid is not None:
         stats.live_kickoff_rejected += 1
         stats.unmapped += 1
@@ -543,12 +559,57 @@ def _sync_manual_link(
         stats.kickoff_conflicts += 1
 
 
+def _sync_one_fixture(  # noqa: PLR0913 分发接缝集随 manual/universe/live 三层累加（同 run_shift 先例）
+    conn: sqlite3.Connection,
+    index: SidIndex,
+    live_index: SidIndex,
+    *,
+    live_unknown: bool,
+    live_window: frozenset[str],
+    row: sqlite3.Row,
+    home_variants: tuple[str, ...],
+    away_variants: tuple[str, ...],
+    stats: MappingSyncStats,
+) -> None:
+    """
+    单场解析分发：manual 优先 → universe 两步法 → 范围门内 live 兜底。
+
+    checkpoint 未知（空≠无）时窗口内场零动作不撤链；范围门外（历史
+    业务日/无竞彩码）当期班不兜底。
+    """
+    fixture_id = int(row["fixture_id"])
+    resolution = index.resolve_variants(
+        home_variants, away_variants, str(row["kickoff_utc"])
+    )
+    manual_sid = _manual_sid(conn, fixture_id)
+    if manual_sid is not None:
+        _sync_manual_link(conn, index, row, manual_sid, stats)
+    elif resolution.sid is not None:
+        stats.linked += 1
+        _record_linked(conn, index, row, resolution, stats)
+    elif resolution.candidates:
+        stats.ambiguous += 1
+        _record_ambiguous(conn, fixture_id, resolution.candidates)
+    elif row["business_date"] in live_window:
+        if live_unknown:
+            # checkpoint 未知（空≠无）：不做兜底也不撤现有 live 链（F1）
+            if stats.degraded is None:
+                stats.degraded = "live_rows unavailable"
+        else:
+            _sync_live_fallback(
+                conn, live_index, row, home_variants, away_variants, stats
+            )
+    else:
+        stats.unmapped += 1
+        _clear_non_manual(conn, fixture_id)
+
+
 def sync_fixture_links(
     conn: sqlite3.Connection,
     duck_con: DuckCon | None,
     *,
     team_aliases: MappingABC[int, set[str]] | None = None,
-    live_rows: Iterable[UniverseRow] = (),
+    live_rows: Iterable[UniverseRow] | None = (),
     live_business_dates: Collection[str] | None = None,
 ) -> MappingSyncStats:
     """
@@ -565,8 +626,11 @@ def sync_fixture_links(
     两步法，命中另加开球 ±10min 硬门，``meta.origin="live_shift"``。
     范围门：仅竞彩业务日 ∈ ``live_business_dates``（缺省=北京当期
     ±1 天）的场次走 live 兜底——当期班档案是累积表，不设门则历史
-    零命中场全量混入（票面「映射只做在售场」）。universe 歧义不交
-    live 消歧（同 sid 空间，历史面多候选按票 77 口径进人工队列）。
+    零命中场全量混入（票面「映射只做在售场」）。空≠无（correctness
+    F1）：``live_rows=None``=checkpoint 未知 → 窗口内场不做兜底也
+    **不撤现有 live 链**（``stats.degraded`` 记因）；``[]``=已知空 →
+    正常镜像真值撤链。universe 歧义不交 live 消歧（同 sid 空间，
+    历史面多候选按票 77 口径进人工队列）。
     """
     stats = MappingSyncStats()
     if duck_con is None:
@@ -584,11 +648,12 @@ def sync_fixture_links(
             (today + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)
         }
     live_window = frozenset(live_business_dates)
-    live_index = SidIndex.build(live_rows)
+    # 空≠无：None=checkpoint 未知（窗口内零动作不撤链）；[]/iterable=已知，正常兜底
+    live_unknown = live_rows is None
+    live_index = SidIndex.build(live_rows or ())
     aliases: MappingABC[int, set[str]] = team_aliases or {}
     for row in fx_store.fixtures_with_teams(conn):
         stats.fixtures += 1
-        fixture_id = int(row["fixture_id"])
         home_variants = (
             str(row["home_name"]),
             *sorted(aliases.get(int(row["home_team_id"]), ())),
@@ -597,26 +662,17 @@ def sync_fixture_links(
             str(row["away_name"]),
             *sorted(aliases.get(int(row["away_team_id"]), ())),
         )
-        resolution = index.resolve_variants(
-            home_variants, away_variants, str(row["kickoff_utc"])
+        _sync_one_fixture(
+            conn,
+            index,
+            live_index,
+            live_unknown=live_unknown,
+            live_window=live_window,
+            row=row,
+            home_variants=home_variants,
+            away_variants=away_variants,
+            stats=stats,
         )
-        manual_sid = _manual_sid(conn, fixture_id)
-        if manual_sid is not None:
-            _sync_manual_link(conn, index, row, manual_sid, stats)
-        elif resolution.sid is not None:
-            stats.linked += 1
-            _record_linked(conn, index, row, resolution, stats)
-        elif resolution.candidates:
-            stats.ambiguous += 1
-            _record_ambiguous(conn, fixture_id, resolution.candidates)
-        elif row["business_date"] in live_window:
-            _sync_live_fallback(
-                conn, live_index, row, home_variants, away_variants, stats
-            )
-        else:
-            # 范围门外（历史业务日/无竞彩码）：当期班不兜底
-            stats.unmapped += 1
-            _clear_non_manual(conn, fixture_id)
     conn.commit()
     return stats
 

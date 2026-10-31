@@ -536,14 +536,19 @@ def mapping_sync() -> dict[str, object]:
     }
 
 
-def _live_mapping_rows() -> list[mapping.UniverseRow]:
-    """当期班 srct_shift_matches → 映射 live 行（checkpoint 缺席降级空）。"""
+def _live_mapping_rows() -> list[mapping.UniverseRow] | None:
+    """
+    当期班 srct_shift_matches → 映射 live 行。
+
+    checkpoint 读失败返回 None（=未知，空≠无：同步侧不撤现有 live 链）；
+    正常返回投影行（含空表——已知空走镜像真值撤链）。
+    """
     store = CorpusStore(get_settings().corpus_root)
     try:
         rows = store.shift_matches()
     except (sqlite3.Error, OSError) as exc:
         logger.warning("live mapping rows unavailable, degraded: {}", exc)
-        return []
+        return None
     finally:
         store.close()
     return list(mapping.live_universe_rows(rows.values()))

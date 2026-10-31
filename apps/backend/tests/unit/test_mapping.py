@@ -676,3 +676,50 @@ def test_sync_live_scope_gated_by_business_date(db) -> None:
     assert stats.linked == 0
     assert stats.live_linked == 0
     assert mapping.srct_sid_for_fixture(db, fixture_id) is None
+
+
+def test_sync_live_checkpoint_unknown_keeps_links(db) -> None:
+    """空≠无（correctness F1）：live_rows=None（checkpoint 未知）不撤现有 live 链。"""
+    fixture_id = seed_fixture(db)
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3003932",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        )
+    ]
+    window = {"2026-09-12", "2026-09-13"}
+    mapping.sync_fixture_links(db, duck_con, live_rows=live, live_business_dates=window)
+    assert mapping.srct_sid_for_fixture(db, fixture_id) == "3003932"
+    unknown = mapping.sync_fixture_links(
+        db, duck_con, live_rows=None, live_business_dates=window
+    )
+    assert mapping.srct_sid_for_fixture(db, fixture_id) == "3003932"
+    assert unknown.degraded == "live_rows unavailable"
+    # 已知空 []：镜像真值撤链
+    mapping.sync_fixture_links(db, duck_con, live_rows=[], live_business_dates=window)
+    assert mapping.srct_sid_for_fixture(db, fixture_id) is None
+
+
+def test_sync_live_link_does_not_align_kickoff(db) -> None:
+    """live 链不校准 kickoff（correctness F2）：防与 JC 回灌互写摆动。"""
+    fixture_id = seed_fixture(db, kickoff="2026-09-12T19:05:00+00:00")  # 北京 03:05
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3003932",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),  # -5min，门内
+        )
+    ]
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
+    assert stats.live_linked == 1
+    assert stats.kickoff_aligned == 0
+    assert fx_store.get_fixture(db, fixture_id)["kickoff_utc"] == (
+        "2026-09-12T19:05:00+00:00"
+    )
