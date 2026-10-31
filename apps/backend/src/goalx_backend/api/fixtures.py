@@ -288,12 +288,10 @@ async def get_fixture_research(
     moment = as_of or datetime.now(UTC).isoformat(timespec="seconds")
     jc = fx_store.latest_odds_by_selection(db, fixture_id, "had", "sporttery")
     jc_odds = SelectionTriple(**{s: jc.get(s, (None,))[0] for s in SELECTIONS})
+    sid = mapping.srct_sid_for_fixture(db, fixture_id)
     with corpus_duckdb.reader() as duck_con:
         quotes = quote_evidence.eu_book_quotes(
-            db,
-            fixture_id,
-            duck_con=duck_con,
-            sid=mapping.srct_sid_for_fixture(db, fixture_id),
+            db, fixture_id, duck_con=duck_con, sid=sid
         )
     view = FixtureResearchView(
         fixture_id=fixture_id,

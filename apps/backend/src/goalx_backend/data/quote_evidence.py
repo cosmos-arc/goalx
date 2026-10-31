@@ -49,6 +49,14 @@ UNKNOWN = "unknown"
 # 记入票 02 歧义账）；sharp 主锚 cid177 永不因截断出局
 SRCT_EU_BOOK_CAP = 12
 SRCT_MARKET = "1x2"
+# 源T 1x2d 百家行主锚（bookmaker 字典 space=1x2；sharp 锚活路径，票75
+# 收盘锚同书）。原票 75 段内定义，票 02 上移至读侧常量区（消费在桥+锚）
+SRCT_PINNACLE_BOOK = "srct:1x2:177"
+# had 判定 EU 段新鲜度门（票 02 人裁决默认）：corpus 行 admitted = 本机
+# 观测年龄 ≤60min，替代 odds_api 快照新鲜度语义；pair-gap（300s 两源时差
+# 门）对 corpus 行不适用——srct 的 price-since（published_at）跨日不动，
+# 时差门结构性误杀，观察新鲜度已由本门兜住
+EU_AGE_MAX_SECONDS = 3600.0
 
 
 def parse_ts(value: str) -> datetime:
@@ -654,7 +662,15 @@ def _adjudicate_eu(
     duck_con: DuckCon | None = None,
     sid: str | None = None,
 ) -> None:
-    rows = _eu_rows_asof(conn, verdict.fixture_id, as_of, duck_con=duck_con, sid=sid)
+    corpus = duck_con is not None and sid is not None
+    rows = _eu_rows_asof(
+        conn,
+        verdict.fixture_id,
+        as_of,
+        duck_con=duck_con,
+        sid=sid,
+        max_age_seconds=EU_AGE_MAX_SECONDS if corpus else None,
+    )
     if not rows:
         verdict.mark_unknown("eu_no_quote")
         return
@@ -663,7 +679,11 @@ def _adjudicate_eu(
         verdict.mark_unknown("eu_observed_at_unknown")
         return
     valid_books = _collect_valid_books(
-        verdict, eligible, max_pair_gap_seconds=max_pair_gap_seconds
+        verdict,
+        eligible,
+        # corpus 行 pair-gap 不适用（见 EU_AGE_MAX_SECONDS 注释）——
+        # 300s 两源时差门是 odds_api 快照时代语义，对 30min 拍点结构性误杀
+        max_pair_gap_seconds=float("inf") if corpus else max_pair_gap_seconds,
     )
     if not valid_books:
         verdict.mark_unknown("eu_no_valid_books")
@@ -835,7 +855,7 @@ def stale_line_signal(
 
 # --- 源T 主锚收盘证据（票 75 CLV 收盘锚接管；corpus.duckdb 只读面） ---
 
-SRCT_PINNACLE_BOOK = "srct:1x2:177"  # 源T 1x2d 百家行主锚（bookmaker 字典 space=1x2）
+# SRCT_PINNACLE_BOOK 已上移至读侧常量区（票 02）
 
 
 def srct_pinnacle_closing_triplet(
