@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import duckdb
+import pytest
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence
@@ -358,12 +359,24 @@ def test_book_cap_degrades_when_dim_lags(db: sqlite3.Connection) -> None:
         db, fixture_id, AS_OF, duck_con=duck_con, sid="3001"
     )
     assert len(books) == quote_evidence.SRCT_EU_BOOK_CAP
-    # 并列 500 时 tiebreak=bookmaker_id DESC：100..110 号书 + 主锚（177>110）
+    # 并列 500 时 tiebreak=bookmaker_id 升序：100..110 号书 + 主锚（111 出局）
+    assert "srct:1x2:100" in books
     assert "srct:1x2:110" in books
-    assert "srct:1x2:100" not in books
-    # 维度空表（覆盖 0/21）→ 降级保全量
+    assert "srct:1x2:111" not in books
+    # 维度空表（覆盖 0/21）→ 降级保全量（先清 TTL 缓存模拟另一进程冷启）
+    quote_evidence._dim_cache.counts = {}
+    quote_evidence._dim_cache.at = 0.0
     empty_dim = seed_corpus(events, {})
     kept = quote_evidence.books_complete_asof(
         db, fixture_id, AS_OF, duck_con=empty_dim, sid="3001"
     )
     assert len(kept) == 21
+
+
+@pytest.fixture(autouse=True)
+def _reset_dim_cache() -> None:
+    """维度 TTL 缓存进程级——逐测清空防跨库污染（票 05）。"""
+    from goalx_backend.data.quote_evidence import _dim_cache
+
+    _dim_cache.counts = {}
+    _dim_cache.at = 0.0

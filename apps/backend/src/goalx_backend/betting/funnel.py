@@ -25,6 +25,7 @@ from statistics import fmean
 from typing import Any
 
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
     adjudicate_had_quote,
@@ -86,13 +87,24 @@ class FunnelDayReport:
 
 # 五级漏斗逐级早退，天然多出口
 def _classify_fixture(  # noqa: PLR0911
-    conn: sqlite3.Connection, fixture_id: int, as_of: str
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> FunnelFixtureRow:
     """一场的漏斗级判定（L2 起逐级，先失级即停）。"""
     fixture = fx_store.get_fixture(conn, fixture_id)
     kickoff_utc = str(fixture["kickoff_utc"]) if fixture else None
+    # EU 行源（odds-read-switch 票 05）：corpus 有链走源T，缺则 legacy
+    sid = mapping.srct_sid_for_fixture(conn, fixture_id)
     verdict = adjudicate_had_quote(
-        conn, fixture_id, as_of, freshness_seconds=FRESHNESS_WINDOW_SECONDS
+        conn,
+        fixture_id,
+        as_of,
+        freshness_seconds=FRESHNESS_WINDOW_SECONDS,
+        duck_con=duck_con,
+        sid=sid,
     )
     row = FunnelFixtureRow(
         fixture_id=fixture_id,
@@ -118,13 +130,18 @@ def _classify_fixture(  # noqa: PLR0911
         )
         row.loss_reason = f"l2_jc_{detail.removeprefix('jc_')}"
         return row
-    attached = sharp_probs_asof(conn, fixture_id, as_of)
+    attached = sharp_probs_asof(conn, fixture_id, as_of, duck_con=duck_con, sid=sid)
     if attached is None:
         row.loss_reason = "l2_anchor_absent"
         return row
     row.level_reached = L_MATCHED
     fresh = sharp_probs_asof(
-        conn, fixture_id, as_of, max_age_seconds=FRESHNESS_WINDOW_SECONDS
+        conn,
+        fixture_id,
+        as_of,
+        max_age_seconds=FRESHNESS_WINDOW_SECONDS,
+        duck_con=duck_con,
+        sid=sid,
     )
     if fresh is None:
         row.loss_reason = "l3_anchor_stale"
@@ -159,6 +176,7 @@ def record_funnel_day(
     *,
     as_of: str | None = None,
     business_date: str | None = None,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> FunnelDayReport:
     """
     记录一日漏斗（幂等：同业务日先删后插，事务内）。
@@ -187,7 +205,7 @@ def record_funnel_day(
     per_fixture_proxies: dict[int, dict[str, float]] = {}
     fixture_rows: list[FunnelFixtureRow] = []
     for fx in on_sale:
-        row = _classify_fixture(conn, int(fx["id"]), moment)
+        row = _classify_fixture(conn, int(fx["id"]), moment, duck_con=duck_con)
         fixture_rows.append(row)
         if row.level_reached >= L_MATCHED:
             report.n_quote_matched += 1

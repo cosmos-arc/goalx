@@ -98,15 +98,29 @@ def build_today_view(
     JC 段不受影响。
     """
     moment = as_of or utc_now_iso()
-    rows: list[TodayFixtureView] = []
-    for fixture in fx_store.fixtures_for_business_dates(
+    fixtures = fx_store.fixtures_for_business_dates(
         conn, business_dates_from(business_date, days)
-    ):
+    )
+    # 批量预取（票 05）：窗口内全部已链 sid 的 as-of 逐书行一次取齐，
+    # 共识/had 判定/陈盘 current 端复用——28 场×N 查收敛 1 批查
+    sid_by_fixture = {
+        int(f["id"]): mapping.srct_sid_for_fixture(conn, int(f["id"])) for f in fixtures
+    }
+    prefetched = (
+        quote_evidence.srct_snapshot_rows_bulk(
+            duck_con, sorted({s for s in sid_by_fixture.values() if s}), moment
+        )
+        if duck_con is not None
+        else {}
+    )
+    rows: list[TodayFixtureView] = []
+    for fixture in fixtures:
         fixture_id = int(fixture["id"])
         jc = fx_store.latest_odds_by_selection(conn, fixture_id, "had", "sporttery")
-        sid = mapping.srct_sid_for_fixture(conn, fixture_id)
+        sid = sid_by_fixture[fixture_id]
+        eu_rows = prefetched.get(sid) if sid is not None else None
         books = quote_evidence.eu_book_odds(
-            conn, fixture_id, duck_con=duck_con, sid=sid
+            conn, fixture_id, duck_con=duck_con, sid=sid, rows=eu_rows
         )
         jc_odds = SelectionTriple(**{s: jc.get(s, (None,))[0] for s in SELECTIONS})
         view = TodayFixtureView(
@@ -124,7 +138,7 @@ def build_today_view(
             jc_updated_at=max((at for _, at in jc.values()), default=None),
         )
         signal = quote_evidence.stale_line_signal(
-            conn, fixture_id, as_of=moment, duck_con=duck_con, sid=sid
+            conn, fixture_id, as_of=moment, duck_con=duck_con, sid=sid, rows=eu_rows
         )
         if signal is not None:
             view.stale_line = StaleLineView(
@@ -136,7 +150,7 @@ def build_today_view(
                 sharp_ref=signal.sharp_ref,
             )
         verdict = quote_evidence.adjudicate_had_quote(
-            conn, fixture_id, moment, duck_con=duck_con, sid=sid
+            conn, fixture_id, moment, duck_con=duck_con, sid=sid, rows=eu_rows
         )
         view.had_quote = HadQuoteStatus(
             as_of=moment,

@@ -607,9 +607,9 @@ def _cmd_market_lambda_report() -> None:
 
 
 def _cmd_calibrate_haircut() -> None:
-    """竞彩 vs 欧共识配对样本 → haircut 分布校准。"""
-    with task_conn() as conn:
-        for row in hc.calibrate_haircuts(conn):
+    """竞彩 vs 欧共识配对样本 → haircut 分布校准（票 05 分代：新场 corpus）。"""
+    with task_conn() as conn, corpus_duckdb.reader() as duck_con:
+        for row in hc.calibrate_haircuts(conn, duck_con=duck_con):
             logger.info("{}", row)
 
 

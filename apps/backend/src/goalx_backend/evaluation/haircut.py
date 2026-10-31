@@ -22,8 +22,10 @@ from dataclasses import dataclass
 from statistics import median_low, quantiles
 from typing import Any
 
+from loguru import logger
+
 from goalx_backend import odds_math as om
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import effective_observed_at, seconds_between
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
@@ -102,13 +104,27 @@ def _fair_odds_by_method(
     return tuple(1.0 / p for p in probs)
 
 
+# 分代切换键（odds-read-switch 票 05 人裁决默认）：≥ 该业务日的场次配对
+# 面走源T corpus（有 srct 链）；此前历史段钉死 odds_api 原口径不重算——
+# 两代口径在 calibration 日志中分段计数
+HAIRCUT_CORPUS_FROM = "2026-09-25"
+
+
 def build_haircut_samples(
     conn: sqlite3.Connection,
     *,
     market_code: str = "had",
     max_pair_gap_seconds: float = MAX_PAIR_GAP_SECONDS,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> list[HaircutSample]:
-    """全部 as-of 配对样本（确定性排序：fixture, selection）。"""
+    """
+    全部 as-of 配对样本（确定性排序：fixture, selection）。
+
+    EU 行源分代（票 05）：业务日 ≥ HAIRCUT_CORPUS_FROM 且有 srct 链的
+    场次，欧侧配对行取 corpus 源T as-of（pair_time 时点逐书最新，与
+    ``_books_asof`` 的"窗内逐书最新"语义同构）；此前历史段维持
+    odds_snapshots 原口径（钉死不重算）。
+    """
     rows = quote_evidence.market_rows_with_competition(conn, market_code=market_code)
     jc_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
     eu_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
@@ -122,14 +138,24 @@ def build_haircut_samples(
             eu_rows.setdefault(fixture_id, []).append(row)
 
     samples: list[HaircutSample] = []
+    corpus_sids: set[int] = set()  # corpus 段锚定过的场次（无论是否出样本）
     for fixture_id in sorted(jc_rows):
         jc_latest = quote_evidence.latest_per_selection(jc_rows[fixture_id])
         if set(jc_latest) != set(SELECTIONS):
             continue  # 竞彩三向不完整 → 无配对
         pair_time = max(str(r["captured_at"]) for r in jc_latest.values())
-        books = _books_asof(
-            eu_rows.get(fixture_id, []), pair_time, max_pair_gap_seconds
-        )
+        eu_candidate = eu_rows.get(fixture_id, [])
+        # 分代键=配对证据时刻（F2：改期/重挂场 MAX(business_date) 会跨代，
+        # 吞掉切换前的 odds_api 证据——按 pair_time 分代两边证据各归各代）
+        if duck_con is not None and _corpus_era(pair_time[:10]):
+            sid = mapping.srct_sid_for_fixture(conn, fixture_id)
+            if sid is not None:
+                # corpus 逐书 as-of 最新 ≤ pair_time（重放语义同 _books_asof）
+                eu_candidate = quote_evidence.srct_snapshot_rows_asof(
+                    duck_con, sid, pair_time
+                )
+                corpus_sids.add(fixture_id)
+        books = _books_asof(eu_candidate, pair_time, max_pair_gap_seconds)
         if not books:
             continue  # as-of 时刻无同窗欧共识
         for selection in SELECTIONS:
@@ -144,7 +170,21 @@ def build_haircut_samples(
                     eu_observed_at=pair_time,
                 )
             )
+    if duck_con is not None:
+        sampled = {s.fixture_id for s in samples}
+        logger.info(
+            "haircut 分代: corpus锚定={}场(出样本={}) legacy出样本={}场 切换键={}",
+            len(corpus_sids),
+            len(sampled & corpus_sids),
+            len(sampled - corpus_sids),
+            HAIRCUT_CORPUS_FROM,
+        )
     return samples
+
+
+def _corpus_era(business_date: str | None) -> bool:
+    """该场是否属 corpus 分代（业务日 ≥ 切换键；无码场视为历史段）。"""
+    return business_date is not None and business_date >= HAIRCUT_CORPUS_FROM
 
 
 def _books_asof(
@@ -217,10 +257,14 @@ def calibrate_haircuts(
     market_code: str = "had",
     min_samples: int = MIN_SAMPLES,
     max_pair_gap_seconds: float = MAX_PAIR_GAP_SECONDS,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> list[dict[str, Any]]:
     """按联赛 + overall 估计 haircut 分布并落库；返回写入的报告行。"""
     samples = build_haircut_samples(
-        conn, market_code=market_code, max_pair_gap_seconds=max_pair_gap_seconds
+        conn,
+        market_code=market_code,
+        max_pair_gap_seconds=max_pair_gap_seconds,
+        duck_con=duck_con,
     )
     by_scope: dict[str, list[HaircutSample]] = {"overall": samples}
     for sample in samples:

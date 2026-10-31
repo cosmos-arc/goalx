@@ -21,6 +21,7 @@ from goalx_backend.betting.bets import (
     validate_had_selections,
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
+from goalx_backend.data import corpus_duckdb
 from goalx_backend.db import atomic
 from goalx_backend.evaluation.bet_review import BetReviewView, review_views
 from goalx_backend.models import BetMode, LegInput
@@ -238,16 +239,18 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
         for leg in payload.legs
     ]
     try:
-        validate_had_selections(db, legs)
-        bet_id = create_bet_with_legs(
-            db,
-            BetDraft(
-                mode=payload.mode,
-                stake=payload.stake,
-                legs=legs,
-                strategy_version=payload.strategy_version,
-            ),
-        )
+        with corpus_duckdb.reader() as duck_con:
+            validate_had_selections(db, legs, duck_con=duck_con)
+            bet_id = create_bet_with_legs(
+                db,
+                BetDraft(
+                    mode=payload.mode,
+                    stake=payload.stake,
+                    legs=legs,
+                    strategy_version=payload.strategy_version,
+                ),
+                duck_con=duck_con,
+            )
     except BetEligibilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ValueError, sqlite3.IntegrityError) as exc:
@@ -309,20 +312,22 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
                 raise LookupError(f"bet {bet_id} 不存在")
             bets_by_id[bet_id] = row
         if all(str(row["mode"]) == "paper" for row in bets_by_id.values()):
-            for row in bets_by_id.values():
-                validate_had_selections(
-                    db,
-                    [
-                        LegInput(
-                            fixture_id=int(leg["fixture_id"]),
-                            market_code=str(leg["market_code"]),
-                            selection_code=str(leg["selection_code"]),
-                            locked_odds=float(leg["locked_odds"]),
-                            goal_line=leg["goal_line"],
-                        )
-                        for leg in json.loads(row["legs"])
-                    ],
-                )
+            with corpus_duckdb.reader() as duck_con:
+                for row in bets_by_id.values():
+                    validate_had_selections(
+                        db,
+                        [
+                            LegInput(
+                                fixture_id=int(leg["fixture_id"]),
+                                market_code=str(leg["market_code"]),
+                                selection_code=str(leg["selection_code"]),
+                                locked_odds=float(leg["locked_odds"]),
+                                goal_line=leg["goal_line"],
+                            )
+                            for leg in json.loads(row["legs"])
+                        ],
+                        duck_con=duck_con,
+                    )
         slip_id = record_purchase(
             db, payload.bet_ids, payload.placed_at, actuals=actuals
         )

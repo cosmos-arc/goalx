@@ -33,7 +33,7 @@ from goalx_backend.betting.funnel import (
 )
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, mapping, reconcile
+from goalx_backend.data import corpus_duckdb, mapping, quote_evidence, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
@@ -707,6 +707,7 @@ def _capture_track2_fixture(
     offset: timedelta,
     snap_type: str,
     decision: datetime,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> str:
     """
     单场拍点采集（票 05，逐场隔离单元）：'ok' | 'no_anchor'。
@@ -725,8 +726,9 @@ def _capture_track2_fixture(
         datetime.fromisoformat(str(row["kickoff_utc"])) - offset
     ).isoformat(timespec="seconds")
     decision_iso = decision.isoformat(timespec="seconds")
-    verdict = adjudicate_had_quote(conn, fid, decision_iso)
-    sharp = sharp_probs_asof(conn, fid, decision_iso)
+    sid = mapping.srct_sid_for_fixture(conn, fid)
+    verdict = adjudicate_had_quote(conn, fid, decision_iso, duck_con=duck_con, sid=sid)
+    sharp = sharp_probs_asof(conn, fid, decision_iso, duck_con=duck_con, sid=sid)
     if sharp is None:
         return "no_anchor"
     sale = fx_store.latest_sale_status_asof(conn, fid, "had", target_instant)
@@ -782,7 +784,11 @@ def track2_snapshots(
     settings = get_settings()
     anchor_pull = pull or _isolated_anchor_pull
     out: dict[str, object] = {}
-    with task_conn() as conn, polite_client() as client:
+    with (
+        task_conn() as conn,
+        polite_client() as client,
+        corpus_duckdb.reader() as duck_con,
+    ):
         moment = now or datetime.now(UTC)
         for offset_h, label in TRACK2_OFFSETS:
             offset = timedelta(hours=offset_h)
@@ -815,7 +821,12 @@ def track2_snapshots(
                     continue
                 try:
                     outcome = _capture_track2_fixture(
-                        conn, row, offset=offset, snap_type=label, decision=decision
+                        conn,
+                        row,
+                        offset=offset,
+                        snap_type=label,
+                        decision=decision,
+                        duck_con=duck_con,
                     )
                 except (ValueError, LookupError) as exc:
                     # 逐场隔离（锚腿先例）：单场毒数据不炸整拍，后续场照拍
@@ -841,8 +852,9 @@ def track2_snapshots(
 
 def funnel_day() -> dict[str, object]:
     """机会漏斗日拍（票 04+06）：五级分母+轨一估值+冻结决策。"""
-    with task_conn() as conn:
-        report = record_funnel_day(conn).as_dict()
+    # EU 行源（票 05）：漏斗判定的共识/锚读 corpus（日拍一次短连接）
+    with task_conn() as conn, corpus_duckdb.reader() as duck_con:
+        report = record_funnel_day(conn, duck_con=duck_con).as_dict()
         bdate = str(report["business_date"])
         report["frozen"] = frozen_mod.record_frozen_decisions(
             conn, business_date=bdate
