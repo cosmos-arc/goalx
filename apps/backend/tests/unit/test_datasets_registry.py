@@ -99,8 +99,8 @@ def test_registry_pinned_to_full_batch() -> None:
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：19 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 6 个在前、注册面 13 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：20 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 6 个在前、注册面 14 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
