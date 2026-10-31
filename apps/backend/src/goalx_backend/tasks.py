@@ -33,7 +33,7 @@ from goalx_backend.betting.funnel import (
 )
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, mapping, reconcile
+from goalx_backend.data import corpus_duckdb, mapping, quote_evidence, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
@@ -707,7 +707,7 @@ def _capture_track2_fixture(
     offset: timedelta,
     snap_type: str,
     decision: datetime,
-    duck_con: duckdb.DuckDBPyConnection | None = None,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> str:
     """
     单场拍点采集（票 05，逐场隔离单元）：'ok' | 'no_anchor'。

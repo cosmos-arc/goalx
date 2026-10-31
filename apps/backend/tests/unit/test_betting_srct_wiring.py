@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import duckdb
+import pytest
 
 from goalx_backend.betting import funnel as funnel_mod
 from goalx_backend.betting.bets import validate_had_selections
@@ -163,7 +164,8 @@ def test_haircut_corpus_era_and_legacy_pinned(db: sqlite3.Connection) -> None:
         jc_at="2026-09-12T15:02:00+00:00",
     )
     # 历史段 fixture 补 odds_api 欧赔行（legacy 口径原料）
-    for book, h, d, a in (("odds_api:pinnacle", 2.0, 3.5, 3.2),):
+    legacy_anchor = quote_evidence.SHARP_ANCHOR_SOURCE
+    for book, h, d, a in ((legacy_anchor, 2.0, 3.5, 3.2),):
         for sel, odds in (("h", h), ("d", d), ("a", a)):
             fx_store.insert_odds_snapshot(
                 db,
@@ -183,7 +185,16 @@ def test_haircut_corpus_era_and_legacy_pinned(db: sqlite3.Connection) -> None:
     assert new_fid in by_fid  # corpus 段出样本
     assert set(by_fid[new_fid].eu_books) == {ANCHOR, "srct:1x2:281"}
     assert old_fid in by_fid  # legacy 段样本仍在
-    assert set(by_fid[old_fid].eu_books) == {"odds_api:pinnacle"}  # 口径钉死
+    assert set(by_fid[old_fid].eu_books) == {legacy_anchor}  # 口径钉死
     # 无 duck_con：corpus 段场无欧行 → 不出样本（分代不混）
     samples_no_duck = hc.build_haircut_samples(db)
     assert new_fid not in {s.fixture_id for s in samples_no_duck}
+
+
+@pytest.fixture(autouse=True)
+def _reset_dim_cache() -> None:
+    """维度 TTL 缓存进程级——逐测清空防跨库污染（票 05）。"""
+    from goalx_backend.data.quote_evidence import _dim_cache
+
+    _dim_cache.counts = {}
+    _dim_cache.at = 0.0

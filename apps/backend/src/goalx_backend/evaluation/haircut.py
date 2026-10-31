@@ -140,7 +140,7 @@ def build_haircut_samples(
             eu_rows.setdefault(fixture_id, []).append(row)
 
     samples: list[HaircutSample] = []
-    corpus_era = 0
+    corpus_sids: set[int] = set()  # corpus 段锚定过的场次（无论是否出样本）
     for fixture_id in sorted(jc_rows):
         jc_latest = quote_evidence.latest_per_selection(jc_rows[fixture_id])
         if set(jc_latest) != set(SELECTIONS):
@@ -154,7 +154,7 @@ def build_haircut_samples(
                 eu_candidate = quote_evidence.srct_snapshot_rows_asof(
                     duck_con, sid, pair_time
                 )
-                corpus_era += 1
+                corpus_sids.add(fixture_id)
         books = _books_asof(eu_candidate, pair_time, max_pair_gap_seconds)
         if not books:
             continue  # as-of 时刻无同窗欧共识
@@ -171,10 +171,12 @@ def build_haircut_samples(
                 )
             )
     if duck_con is not None:
+        sampled = {s.fixture_id for s in samples}
         logger.info(
-            "haircut 分代：corpus 段 {} 场 / legacy 段 {} 场（切换键 {}）",
-            corpus_era,
-            (len(samples) and len({s.fixture_id for s in samples}) - corpus_era) or 0,
+            "haircut 分代: corpus锚定={}场(出样本={}) legacy出样本={}场 切换键={}",
+            len(corpus_sids),
+            len(sampled & corpus_sids),
+            len(sampled - corpus_sids),
             HAIRCUT_CORPUS_FROM,
         )
     return samples
