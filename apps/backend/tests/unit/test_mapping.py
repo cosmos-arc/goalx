@@ -483,3 +483,154 @@ def test_clv_fuzzy_fallback_unchanged_without_link(db) -> None:
     assert close[2] == "srct_pinnacle"
     no_match = clv.srct_closing_prob(duck_con, "主队英超", "客队英超", KICKOFF_UTC, "h")
     assert no_match is None
+
+
+# --- live 兜底（odds-read-switch 票 01）：当期班 srct_shift_matches 行 ---
+
+
+def test_live_universe_rows_projection() -> None:
+    """checkpoint 行投影：UTC ISO → 北京 naive；开球缺行跳过。"""
+    rows = list(
+        mapping.live_universe_rows(
+            [
+                {
+                    "sid": "3001",
+                    "home": "A队",
+                    "away": "B队",
+                    "kickoff_utc": "2026-10-31T12:30:00+00:00",
+                },
+                {"sid": "3002", "home": "C队", "away": "D队", "kickoff_utc": None},
+                {"sid": "3003", "home": "E队", "away": "F队", "kickoff_utc": ""},
+            ]
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0].kickoff_bj == datetime(2026, 10, 31, 20, 30)
+
+
+def test_sync_live_shift_links_on_sale_fixture(db) -> None:
+    """universe 零命中 → live 两步法兜底落链（origin=live_shift）；连跑幂等。"""
+    fixture_id = seed_fixture(db)
+    duck_con = seed_universe([])  # 在售场未锚定：universe 空
+    live = [
+        mapping.UniverseRow(
+            sid="3003932",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        )
+    ]
+    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    assert stats.linked == 1
+    assert stats.live_linked == 1
+    row = db.execute(
+        "SELECT * FROM source_match_links WHERE fixture_id = ?", (fixture_id,)
+    ).fetchone()
+    assert row["source_match_id"] == "3003932"
+    assert row["status"] == mapping.STATUS_LINKED
+    assert json.loads(row["meta"])["origin"] == mapping.ORIGIN_LIVE_SHIFT
+    stats2 = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    assert stats2.live_linked == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) FROM source_match_links WHERE fixture_id = ?",
+            (fixture_id,),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_sync_live_shift_kickoff_gate_rejects(db) -> None:
+    """live 命中但开球越界（>10min）→ 不入链（改期/错档），计拒数。"""
+    fixture_id = seed_fixture(db)  # 北京 09-13 03:00
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3003932",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 7, 0),  # +4h 越界
+        )
+    ]
+    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    assert stats.linked == 0
+    assert stats.live_kickoff_rejected == 1
+    assert mapping.srct_sid_for_fixture(db, fixture_id) is None
+
+
+def test_sync_live_shift_ambiguous_candidates(db) -> None:
+    """live 多候选 → ambiguous（origin=live_shift），候选进 meta 人工队列。"""
+    fixture_id = seed_fixture(db, kickoff="2026-09-13T10:00:00+00:00")  # 北京 18:00
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3001001",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        ),
+        mapping.UniverseRow(
+            sid="3001009",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 21, 0),
+        ),
+    ]
+    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    assert stats.ambiguous == 1
+    row = db.execute(
+        "SELECT status, meta FROM source_match_links WHERE fixture_id = ?",
+        (fixture_id,),
+    ).fetchone()
+    assert row["status"] == mapping.STATUS_AMBIGUOUS
+    meta = json.loads(row["meta"])
+    assert meta["candidates"] == ["3001001", "3001009"]
+    assert meta["origin"] == mapping.ORIGIN_LIVE_SHIFT
+
+
+def test_sync_universe_precedes_live(db) -> None:
+    """universe 命中优先：live 同名场不覆写（历史面 canonical）。"""
+    fixture_id = seed_fixture(db)
+    duck_con = seed_universe(
+        [("2790001", "主队英超", "客队英超", "2026-09-13 03:00:00")]
+    )
+    live = [
+        mapping.UniverseRow(
+            sid="3009999",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        )
+    ]
+    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    assert stats.live_linked == 0
+    assert mapping.srct_sid_for_fixture(db, fixture_id) == "2790001"
+
+
+def test_sync_live_variant_via_aliases(db) -> None:
+    """live 变体命中（RB莱比锡型）：注入别名组参与两步法，meta 记变体路径。"""
+    fixture_id = seed_fixture(db, home="莱比锡红牛")
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3018855",
+            home="RB莱比锡",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        )
+    ]
+    home_row = db.execute(
+        "SELECT home_team_id FROM fixtures WHERE id = ?", (fixture_id,)
+    ).fetchone()
+    aliases = {int(home_row["home_team_id"]): {"RB莱比锡"}}
+    stats = mapping.sync_fixture_links(
+        db, duck_con, team_aliases=aliases, live_rows=live
+    )
+    assert stats.live_linked == 1
+    row = db.execute(
+        "SELECT meta FROM source_match_links WHERE fixture_id = ?", (fixture_id,)
+    ).fetchone()
+    meta = json.loads(row["meta"])
+    assert meta["home_variant"] == "RB莱比锡"
+    assert meta["origin"] == mapping.ORIGIN_LIVE_SHIFT
+    assert {alias for _, alias in stats.srct_alias_pairs} == {"RB莱比锡", "客队英超"}

@@ -406,3 +406,23 @@ def test_live_won_bet_records_payout_event(db: sqlite3.Connection) -> None:
     )
     run_settlement(db)
     assert bt.bankroll_balance(db) == 4900.0 + 650.0  # payout 事件入账
+
+
+def test_build_today_view_joined_via_srct_link(db: sqlite3.Connection) -> None:
+    """odds-read-switch 票 01：无 odds_api_event_id 但有 srct 链 → joined 翻真。"""
+    seed(db)
+    second = build_today_view(db, "2026-09-12")[1]
+    assert second.joined is False
+    assert "not_joined" in second.flags
+    db.execute(
+        """
+        INSERT INTO source_match_links
+            (fixture_id, source, source_match_id, method, status, meta, mapped_at)
+        VALUES (?, 'srct', '3001234', 'primary_key', 'linked', '{}', ?)
+        """,
+        (second.fixture_id, utc_now_iso()),
+    )
+    db.commit()
+    view = build_today_view(db, "2026-09-12")[1]
+    assert view.joined is True
+    assert "not_joined" not in view.flags
