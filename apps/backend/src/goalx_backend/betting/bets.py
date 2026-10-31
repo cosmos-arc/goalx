@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.snapshot import build_ev_snapshot
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import adjudicate_had_quote
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import BetMode, LegInput, MarketKind
@@ -45,7 +46,12 @@ class ActualTerms(BaseModel):
     leg_odds: list[ActualLegOdds] = Field(default_factory=list)
 
 
-def create_bet_with_legs(conn: sqlite3.Connection, draft: BetDraft) -> int:
+def create_bet_with_legs(
+    conn: sqlite3.Connection,
+    draft: BetDraft,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
+) -> int:
     """
     建注（含校验：竞彩禁止同场串关）；返回 bet id。
 
@@ -58,7 +64,7 @@ def create_bet_with_legs(conn: sqlite3.Connection, draft: BetDraft) -> int:
             raise SameFixtureParlayError(f"fixture {leg.fixture_id} 重复出现在串关中")
         seen.add(leg.fixture_id)
     with atomic(conn):
-        snapshot = build_ev_snapshot(conn, draft.legs)
+        snapshot = build_ev_snapshot(conn, draft.legs, duck_con=duck_con)
         bet = bt_store.create_bet(
             conn,
             draft.mode,
@@ -77,6 +83,7 @@ def validate_had_selections(
     legs: list[LegInput],
     *,
     as_of: str | None = None,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> None:
     """
     Had 选择资格（票 36 选择入口/锁定再校验，消费票 35 判定）：
@@ -90,7 +97,13 @@ def validate_had_selections(
     had_legs = [leg for leg in legs if leg.market_code == "had"]
     problems: list[str] = []
     for leg in had_legs:
-        verdict = adjudicate_had_quote(conn, leg.fixture_id, moment)
+        verdict = adjudicate_had_quote(
+            conn,
+            leg.fixture_id,
+            moment,
+            duck_con=duck_con,
+            sid=mapping.srct_sid_for_fixture(conn, leg.fixture_id),
+        )
         if verdict.status == "rejected":
             problems.append(
                 f"fixture {leg.fixture_id} 不可投: {', '.join(verdict.reasons)}"

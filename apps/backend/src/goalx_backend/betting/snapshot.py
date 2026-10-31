@@ -17,7 +17,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
@@ -91,7 +91,11 @@ def _round(value: float | None) -> float | None:
 
 
 def build_ev_snapshot(
-    conn: sqlite3.Connection, legs: list[LegInput], *, as_of: str | None = None
+    conn: sqlite3.Connection,
+    legs: list[LegInput],
+    *,
+    as_of: str | None = None,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> BetEvSnapshot:
     """
     建注时点的注级 EV 快照（票 41，双存裁决）。
@@ -104,8 +108,15 @@ def build_ev_snapshot(
         return EMPTY_SNAPSHOT
     moment = as_of or utc_now_iso()
     fixture_ids = sorted({leg.fixture_id for leg in legs})
+    # EU 行源（票 05）：corpus 有链走源T；sid 逐场解析（少腿注单次开销可忽略）
     consensus_by_fixture = {
-        fixture_id: quote_evidence.eu_consensus_asof(conn, fixture_id, moment)
+        fixture_id: quote_evidence.eu_consensus_asof(
+            conn,
+            fixture_id,
+            moment,
+            duck_con=duck_con,
+            sid=mapping.srct_sid_for_fixture(conn, fixture_id),
+        )
         for fixture_id in fixture_ids
     }
     model_by_fixture = {

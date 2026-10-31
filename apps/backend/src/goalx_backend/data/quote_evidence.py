@@ -473,11 +473,15 @@ def market_rows_with_competition(
 
     haircut 批量配对用；按 captured_at,id 稳定排序。
     """
+    # business_date 列（odds-read-switch 票 05）：haircut 分代口径的切换键
     return conn.execute(
         """
         SELECT f.id AS fixture_id, c.name AS competition,
                s.id AS id, s.selection_code, s.source, s.odds, s.captured_at,
-               s.observed_at, s.source_updated_at
+               s.observed_at, s.source_updated_at,
+               (SELECT MAX(mc.business_date) FROM match_codes mc
+                WHERE mc.fixture_id = f.id AND mc.kind = 'jingcai'
+               ) AS business_date
         FROM odds_snapshots s
         JOIN fixtures f ON f.id = s.fixture_id
         JOIN competitions c ON c.id = f.competition_id
