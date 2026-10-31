@@ -70,6 +70,9 @@ OWNERS: dict[str, set[str]] = {
         # 票 11：增量物化状态（水位+计数护栏快照；DDL 在 corpus_store，
         # 消费方 data/ingest/srct_remat.py）
         "srct_remat_state",
+        # odds-read-switch 票 03：remat 互斥锁 + live 锚定分区 sidecar
+        "srct_remat_lock",
+        "srct_live_sid_partitions",
         # backtest-decade A4：行政判赛排除表（data/hygiene.py 单一取数口）
         "admin_match_exclusions",
         # backtest-decade B：gold 特征面（data/gold.py 物化，语料树 parquet）

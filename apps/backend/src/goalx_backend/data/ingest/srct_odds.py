@@ -1195,7 +1195,9 @@ def build_odds_change_events(
     """
     report = SilverOddsReport(built_at=utc_now_iso())
     if meta is None:
-        meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
+        # odds 元数据 = 日页 ∪ 当期班兜底（票 03：在售孤儿当日锚定；
+        # 增量侧同出处注入，两路径分区判定一致）
+        meta = {str(r["sid"]): r for r in srct_silver.fixture_rows_with_live(store)}
     ledgers = _resolve_ledgers(store, ledgers)
     root = store.silver_path(srct.SRCT_PROVIDER, ODDS_DATASET)
     out = StreamingPartitions(root, _ODDS_SCHEMA, chunk_rows)

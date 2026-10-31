@@ -598,3 +598,261 @@ def test_fixture_and_xg_gated_by_watermark(tmp_path: Path) -> None:
         assert xg_meta.read_text() != xg_built
     finally:
         store.close()
+
+
+# --- odds-read-switch 票 03：当期班兜底锚定（在售孤儿当日进真实分区） ---
+
+
+def _seed_orphan_odds(store: CorpusStore, sid: str) -> None:
+    """拍键直写 odds+bronze（无日页）：在售场当期班形态。"""
+    store.ingest_raw(
+        srct.SRCT_PROVIDER, srct.ODDS_DATASET, f"{sid}@open", _ODDS_JS, ext=".js"
+    )
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": srct.ODDS_DATASET,
+                "sid": sid,
+                "fetched_at": "2025-10-01T02:00:00+00:00",
+                "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                "raw_sha": "c" * 64,
+                "payload": srct.parse_odds_page(_ODDS_JS),
+            }
+        ],
+    )
+
+
+def test_shift_match_anchors_orphan_first_run(tmp_path: Path) -> None:
+    """当期班建档 sid 无日页：remat 直接落真实分区、kickoff 列非空。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        _seed_orphan_odds(store, "90010")
+        store.upsert_shift_match(
+            {
+                "sid": "90010",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-01T12:00:00+00:00",  # 北京 20:00
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-01T02:00:00+00:00",
+            }
+        )
+        report = srct_remat.run_remat(store)  # 首跑全量（无状态行）
+        assert report.odds["orphan_sids"] == 0  # 当期班兜底锚定生效
+        assert report.odds["partition_keys"] == ["2025-26/德乙"]
+        rows = _rows_of(store, "2025-26", "德乙")
+        assert {r["sid"] for r in rows} == {"90010"}
+        assert all(r["kickoff"] is not None for r in rows)
+        assert not (_odds_root(store) / "season=_unknown").exists()
+        # 全量重建（无 meta 注入）同出处 → 字节级一致
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()
+
+
+def test_shift_anchor_migration_rewrites_unknown_on_beat(tmp_path: Path) -> None:
+    """增量面：孤儿先落 _unknown，当期班建档后新拍触发成对迁出。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        routes = _routes_for("2025-10-01", "90001", "西甲")
+        _collect(store, settings, routes, "2025-10-01")
+        _seed_orphan_odds(store, "90011")
+        srct_remat.run_remat(store)  # 90011 无档 → _unknown
+        assert {r["sid"] for r in _rows_of(store, "_unknown", "_unknown")} == {"90011"}
+
+        # 当期班建档 + 新一拍 odds 工件 → 增量迁出（含 _unknown 清驻留）
+        store.upsert_shift_match(
+            {
+                "sid": "90011",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T03:00:00+00:00",
+            }
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            "90011@2025-10-02@open",  # 拍键含日+slot（daily_key 形态，键唯一）
+            _ODDS_JS_BEAT,
+            ext=".js",
+        )
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90011",
+                    "fetched_at": "2025-10-02T03:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "d" * 64,
+                    "payload": srct.parse_odds_page(_ODDS_JS_BEAT),
+                }
+            ],
+        )
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=_unknown/competition=_unknown" in report.affected_partitions
+        assert "season=2025-26/competition=德乙" in report.affected_partitions
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "德乙")} == {"90011"}
+        assert not (_odds_root(store) / "season=_unknown").exists()
+    finally:
+        store.close()
+
+
+def test_day_page_takes_over_live_anchor_partition(tmp_path: Path) -> None:
+    """live 锚→日页接管：日页联赛/开球面接管后 live 旧分区成对清驻留。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        # 当期班档期面：90012 挂德乙（开球 10-02 18:30Z）
+        _seed_orphan_odds(store, "90012")
+        store.upsert_shift_match(
+            {
+                "sid": "90012",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T02:00:00+00:00",
+            }
+        )
+        srct_remat.run_remat(store)  # live 锚定 → 2025-26/德乙
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "德乙")} == {"90012"}
+
+        # 次日日页到位（西甲面，票 03 接管语义）→ 增量迁出含 live 旧分区
+        routes = _routes_for("2025-10-02", "90012", "西甲")
+        _collect(store, settings, routes, "2025-10-02")
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=2025-26/competition=德乙" in report.affected_partitions
+        assert "season=2025-26/competition=西甲" in report.affected_partitions
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "西甲")} == {"90012"}
+        assert not (_odds_root(store) / "season=2025-26" / "competition=德乙").exists()
+        # 接管后全量等价（逐字节）
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()
+
+
+def test_remat_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
+    """F1 回归：互斥锁被占零动作早退；过期锁可夺。"""
+    from datetime import UTC, datetime, timedelta
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        routes = _routes_for("2025-10-01", "90001", "西甲")
+        _collect(store, settings, routes, "2025-10-01")
+        store._checkpoint().execute(
+            "INSERT INTO srct_remat_lock (id, holder_pid, started_at)"
+            " VALUES (1, 999999, ?)",
+            (datetime.now(UTC).isoformat(timespec="seconds"),),
+        )
+        store._checkpoint().commit()
+        report = srct_remat.run_remat(store)
+        assert report.busy.startswith("pid=999999")
+        assert report.mode == "skip"
+        assert not _odds_root(store).exists()  # 零动作
+        # 过期锁（>6h）→ 夺锁执行
+        stale = (datetime.now(UTC) - timedelta(hours=7)).isoformat(timespec="seconds")
+        store._checkpoint().execute(
+            "UPDATE srct_remat_lock SET started_at = ?", (stale,)
+        )
+        store._checkpoint().commit()
+        report2 = srct_remat.run_remat(store)
+        assert report2.busy == ""
+        assert report2.mode == "full"
+        store._checkpoint().execute(
+            "DELETE FROM srct_remat_lock"
+        )  # 清锁模拟整轮正常路径已释放
+        store._checkpoint().commit()
+    finally:
+        store.close()
+
+
+def test_live_anchor_drift_migrates_old_partition(tmp_path: Path) -> None:
+    """F2 回归：当期班行跨拍改档（league 空→德乙）旧分区成对清驻留。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        _seed_orphan_odds(store, "90013")
+        store.upsert_shift_match(
+            {
+                "sid": "90013",
+                "league": "",  # 开售拍未带档期面 → 兜底 "live"
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T02:00:00+00:00",
+            }
+        )
+        srct_remat.run_remat(store)
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "live")} == {"90013"}
+
+        # 次拍档期面补齐 + 新工件 → sidecar 差分并入旧 live 分区
+        store.upsert_shift_match(
+            {
+                "sid": "90013",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 2,
+                "last_beat_at": "2025-10-02T03:00:00+00:00",
+            }
+        )
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            "90013@2025-10-02@open",
+            _ODDS_JS_BEAT,
+            ext=".js",
+        )
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90013",
+                    "fetched_at": "2025-10-02T03:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "e" * 64,
+                    "payload": srct.parse_odds_page(_ODDS_JS_BEAT),
+                }
+            ],
+        )
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=2025-26/competition=live" in report.affected_partitions
+        assert "season=2025-26/competition=德乙" in report.affected_partitions
+        assert not (_odds_root(store) / "season=2025-26" / "competition=live").exists()
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "德乙")} == {"90013"}
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()

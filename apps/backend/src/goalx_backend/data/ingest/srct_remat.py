@@ -73,6 +73,10 @@ REMAT_DATASETS: tuple[str, ...] = (
     *srct.ODDS_FAMILY,
 )
 _UNKNOWN_PARTITION = ("_unknown", "_unknown")
+# remat 互斥锁过期窗（票 03 F1）：护栏全量实测 ~3h（安静盒 2h56m）；
+# 超窗视为持锁进程已死。ponytail: 全量超 6h 会被误夺锁——届时全量分段
+# 或锁内心跳再升级
+REMAT_LOCK_STALE_SECONDS = 6 * 3600
 
 
 @dataclass
@@ -94,6 +98,7 @@ class RematReport:
     odds: dict[str, object] = field(default_factory=dict)
     bookmaker: dict[str, object] = field(default_factory=dict)  # 仅全量路径
     degraded: list[str] = field(default_factory=list)  # 失败面留痕（不打断）
+    busy: str = ""  # 互斥锁被占（票 03 F1）：持锁行描述，本轮零动作
     built_at: str = ""
 
 
@@ -179,13 +184,29 @@ def _write_incremental_meta(
     )
 
 
+def _writeback_live_partitions(
+    store: CorpusStore,
+    meta: dict[str, dict[str, object]],
+    live_only: dict[str, dict[str, object]],
+) -> None:
+    """Sidecar 写回（票 03 F2）：live 锚定 sid 的现行发射分区（成功轮后）。"""
+    live_emit = {sid: _partition_of(sid, meta) for sid in live_only if sid in meta}
+    if live_emit:
+        store.upsert_live_sid_partitions(live_emit)
+
+
 def _run_incremental_odds(
     store: CorpusStore,
     report: RematReport,
     new_raw: dict[str, list[RawArtifact]],
     meta: dict[str, dict[str, object]],
+    *,
+    live_sids: set[str] | None = None,
+    shift_rows: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级）。"""
+    live_sids = live_sids if live_sids is not None else set()
+    shift_rows = shift_rows if shift_rows is not None else {}
     new_day_dates = {art.key for art in new_raw.get(srct.DAY_DATASET, [])}
     new_odds_sids = {
         art.key.split("@", 1)[0]
@@ -212,7 +233,24 @@ def _run_incremental_odds(
             )[0]
         }
         partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
+        # live 锚→日页接管（票 03）：旧分区在当期班侧而非旧日页——old_meta
+        # 无此 sid 行（此前无日页），漏触及=live 旧分区残留该 sid 行，树与
+        # 全量分叉。从当期班全量行推导（接管后 live_only 已不含该 sid）
+        partitions.update(
+            _partition_of(sid, shift_rows) for sid in day_sids if sid in shift_rows
+        )
+    if day_sids or (new_odds_sids & live_sids):
+        # _unknown 成对重写（票 11 F1 语义 + 票 03 扩充）：新日页解锁或
+        # 当期班兜底锚定的迁出同样要求 _unknown 清驻留——漏触及=旧分区
+        # 残留该 sid 行，树与全量分叉
         partitions.add(_UNKNOWN_PARTITION)
+    # live 锚漂移（票 03 F2）：当期班行跨拍改档（league/kickoff 修正）时
+    # 旧分区无从从现行数据推导——sidecar 记末次发射分区，差分并入触及
+    last_live = store.live_sid_partitions()
+    for sid in new_odds_sids:
+        previous = last_live.get(sid)
+        if previous is not None and previous != _partition_of(sid, meta):
+            partitions.add(previous)
     report.affected_partitions = sorted(
         f"season={season}/competition={competition}"
         for season, competition in partitions
@@ -323,6 +361,26 @@ def run_remat(
     缺省真实 psutil——护栏场景余量不足全量直接 deferred，见票 13）。
     """
     report = RematReport(built_at=utc_now_iso())
+    holder = store.try_acquire_remat_lock(stale_after_seconds=REMAT_LOCK_STALE_SECONDS)
+    if holder is not None:
+        # 拍后增量钩子与 08:10 全量并发（F1）：锁被占零动作早退——全量
+        # 整轮成功推水位后，下一拍自然回增量
+        report.busy = f"pid={holder['holder_pid']} since={holder['started_at']}"
+        logger.warning("srct-remat 锁被占，本轮跳过：{}", report.busy)
+        return report
+    try:
+        return _run_remat_locked(store, report, full=full, headroom_fn=headroom_fn)
+    finally:
+        store.release_remat_lock()
+
+
+def _run_remat_locked(
+    store: CorpusStore,
+    report: RematReport,
+    *,
+    full: bool,
+    headroom_fn: Callable[[], int] | None,
+) -> RematReport:
     state = store.remat_state()
     recorded: dict[str, dict[str, object]] = (
         json.loads(str(state["bronze_sid_counts"])) if state else {}
@@ -353,7 +411,13 @@ def run_remat(
         except Exception as exc:
             logger.warning("srct-remat fixture 降级：{}", exc)
             report.degraded.append(f"fixture: {type(exc).__name__}")
-    meta = {str(row["sid"]): row for row in srct_silver.fixture_rows(store)[0]}
+    # 合并元数据（票 03 单一出处）：日页 ∪ 当期班兜底；live_only 供增量侧
+    # 推导迁出分区（live 锚→日页接管时旧分区只在 live 侧）
+    meta, live_only = srct_silver.merged_odds_meta(store)
+    live_sids = set(live_only)
+    # 当期班全量行（接管判定用）：live 锚→日页接管后 live_only 已不含该
+    # sid（日页恒胜），但旧 live 分区仍需从当期班行推导
+    shift_rows_all = {str(r["sid"]): r for r in srct_silver.shift_live_rows(store)}
 
     # ---- xg（全量路径，门控：match_stats 有新工件） ----
     if stats_new or full:
@@ -374,7 +438,14 @@ def run_remat(
             report.degraded.append(f"odds_full: {type(exc).__name__}")
     elif odds_new or day_new:
         report.mode = "incremental"
-        _run_incremental_odds(store, report, new_raw, meta)
+        _run_incremental_odds(
+            store,
+            report,
+            new_raw,
+            meta,
+            live_sids=live_sids,
+            shift_rows=shift_rows_all,
+        )
 
     if report.degraded:
         logger.warning(
@@ -393,4 +464,5 @@ def run_remat(
     store.upsert_remat_state(
         report.watermark, report.last_rowid, json.dumps(counts, ensure_ascii=False)
     )
+    _writeback_live_partitions(store, meta, live_only)
     return report
