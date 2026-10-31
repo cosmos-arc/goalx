@@ -112,8 +112,7 @@ def build_today_view(
             away_team=str(fixture["away_team"]),
             kickoff_utc=str(fixture["kickoff_utc"]),
             is_single=bool(fixture["is_single"]),
-            joined=fixture["odds_api_event_id"] is not None
-            or mapping.srct_sid_for_fixture(conn, fixture_id) is not None,
+            joined=mapping.has_srct_link(conn, fixture_id),
             jc_odds=jc_odds,
             jc_updated_at=max((at for _, at in jc.values()), default=None),
         )

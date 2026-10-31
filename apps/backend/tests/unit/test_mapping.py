@@ -45,11 +45,19 @@ def seed_fixture(
     kickoff: str = KICKOFF_UTC,
     league: str = "英超",
     tier: Tier = Tier.TIER1,
+    business_date: str = "2026-09-12",
 ) -> int:
     competition = fx_store.upsert_competition(db, league, tier=tier)
     home_id = fx_store.upsert_team(db, home)
     away_id = fx_store.upsert_team(db, away)
-    return fx_store.upsert_fixture(db, competition, kickoff, home_id, away_id)
+    fixture_id = fx_store.upsert_fixture(db, competition, kickoff, home_id, away_id)
+    # live 兜底范围门读 match_codes.business_date（odds-read-switch 票 01）
+    db.execute(
+        "INSERT INTO match_codes (fixture_id, kind, business_date, code)"
+        " VALUES (?, 'jingcai', ?, ?)",
+        (fixture_id, business_date, f"周六{fixture_id:03d}"),
+    )
+    return fixture_id
 
 
 # --- 两步确定性键解析（SidIndex） ---
@@ -520,7 +528,9 @@ def test_sync_live_shift_links_on_sale_fixture(db) -> None:
             kickoff_bj=datetime(2026, 9, 13, 3, 0),
         )
     ]
-    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
     assert stats.linked == 1
     assert stats.live_linked == 1
     row = db.execute(
@@ -529,7 +539,9 @@ def test_sync_live_shift_links_on_sale_fixture(db) -> None:
     assert row["source_match_id"] == "3003932"
     assert row["status"] == mapping.STATUS_LINKED
     assert json.loads(row["meta"])["origin"] == mapping.ORIGIN_LIVE_SHIFT
-    stats2 = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    stats2 = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
     assert stats2.live_linked == 1
     assert (
         db.execute(
@@ -552,7 +564,9 @@ def test_sync_live_shift_kickoff_gate_rejects(db) -> None:
             kickoff_bj=datetime(2026, 9, 13, 7, 0),  # +4h 越界
         )
     ]
-    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
     assert stats.linked == 0
     assert stats.live_kickoff_rejected == 1
     assert mapping.srct_sid_for_fixture(db, fixture_id) is None
@@ -576,7 +590,9 @@ def test_sync_live_shift_ambiguous_candidates(db) -> None:
             kickoff_bj=datetime(2026, 9, 13, 21, 0),
         ),
     ]
-    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
     assert stats.ambiguous == 1
     row = db.execute(
         "SELECT status, meta FROM source_match_links WHERE fixture_id = ?",
@@ -602,7 +618,9 @@ def test_sync_universe_precedes_live(db) -> None:
             kickoff_bj=datetime(2026, 9, 13, 3, 0),
         )
     ]
-    stats = mapping.sync_fixture_links(db, duck_con, live_rows=live)
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
     assert stats.live_linked == 0
     assert mapping.srct_sid_for_fixture(db, fixture_id) == "2790001"
 
@@ -624,7 +642,11 @@ def test_sync_live_variant_via_aliases(db) -> None:
     ).fetchone()
     aliases = {int(home_row["home_team_id"]): {"RB莱比锡"}}
     stats = mapping.sync_fixture_links(
-        db, duck_con, team_aliases=aliases, live_rows=live
+        db,
+        duck_con,
+        team_aliases=aliases,
+        live_rows=live,
+        live_business_dates={"2026-09-12", "2026-09-13"},
     )
     assert stats.live_linked == 1
     row = db.execute(
@@ -634,3 +656,23 @@ def test_sync_live_variant_via_aliases(db) -> None:
     assert meta["home_variant"] == "RB莱比锡"
     assert meta["origin"] == mapping.ORIGIN_LIVE_SHIFT
     assert {alias for _, alias in stats.srct_alias_pairs} == {"RB莱比锡", "客队英超"}
+
+
+def test_sync_live_scope_gated_by_business_date(db) -> None:
+    """范围门：历史业务日（窗口外）不走 live 兜底——当期班档案是累积表。"""
+    fixture_id = seed_fixture(db, business_date="2026-09-01")
+    duck_con = seed_universe([])
+    live = [
+        mapping.UniverseRow(
+            sid="3003932",
+            home="主队英超",
+            away="客队英超",
+            kickoff_bj=datetime(2026, 9, 13, 3, 0),
+        )
+    ]
+    stats = mapping.sync_fixture_links(
+        db, duck_con, live_rows=live, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
+    assert stats.linked == 0
+    assert stats.live_linked == 0
+    assert mapping.srct_sid_for_fixture(db, fixture_id) is None

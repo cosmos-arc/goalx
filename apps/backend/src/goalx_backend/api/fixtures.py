@@ -293,8 +293,7 @@ async def get_fixture_research(
         away_team=str(detail["away_team"]),
         kickoff_utc=str(detail["kickoff_utc"]),
         is_single=bool(detail["is_single"]),
-        joined=detail["odds_api_event_id"] is not None
-        or mapping.srct_sid_for_fixture(db, fixture_id) is not None,
+        joined=mapping.has_srct_link(db, fixture_id),
         jc_odds=jc_odds,
         jc_updated_at=max((at for _, at in jc.values()), default=None),
     )
