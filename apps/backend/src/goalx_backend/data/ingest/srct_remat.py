@@ -184,8 +184,11 @@ def _run_incremental_odds(
     report: RematReport,
     new_raw: dict[str, list[RawArtifact]],
     meta: dict[str, dict[str, object]],
+    *,
+    live_sids: set[str] | None = None,
 ) -> None:
     """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级）。"""
+    live_sids = live_sids if live_sids is not None else set()
     new_day_dates = {art.key for art in new_raw.get(srct.DAY_DATASET, [])}
     new_odds_sids = {
         art.key.split("@", 1)[0]
@@ -212,6 +215,10 @@ def _run_incremental_odds(
             )[0]
         }
         partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
+    if day_sids or (new_odds_sids & live_sids):
+        # _unknown 成对重写（票 11 F1 语义 + 票 03 扩充）：新日页解锁或
+        # 当期班兜底锚定的迁出同样要求 _unknown 清驻留——漏触及=旧分区
+        # 残留该 sid 行，树与全量分叉
         partitions.add(_UNKNOWN_PARTITION)
     report.affected_partitions = sorted(
         f"season={season}/competition={competition}"
@@ -353,7 +360,11 @@ def run_remat(
         except Exception as exc:
             logger.warning("srct-remat fixture 降级：{}", exc)
             report.degraded.append(f"fixture: {type(exc).__name__}")
-    meta = {str(row["sid"]): row for row in srct_silver.fixture_rows(store)[0]}
+    # 合并元数据（票 03）：日页 fixture 行 ∪ 当期班兜底——增量/全量同出处
+    meta = {str(row["sid"]): row for row in srct_silver.fixture_rows_with_live(store)}
+    live_sids = {str(row["sid"]) for row in srct_silver.shift_live_rows(store)} - {
+        str(row["sid"]) for row in srct_silver.fixture_rows(store)[0]
+    }
 
     # ---- xg（全量路径，门控：match_stats 有新工件） ----
     if stats_new or full:
@@ -374,7 +385,7 @@ def run_remat(
             report.degraded.append(f"odds_full: {type(exc).__name__}")
     elif odds_new or day_new:
         report.mode = "incremental"
-        _run_incremental_odds(store, report, new_raw, meta)
+        _run_incremental_odds(store, report, new_raw, meta, live_sids=live_sids)
 
     if report.degraded:
         logger.warning(

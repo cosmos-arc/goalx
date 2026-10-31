@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -128,6 +128,54 @@ def fixture_rows(store: CorpusStore) -> tuple[list[dict[str, object]], int, int]
             srct.BRONZE_VERSIONS[srct.DAY_DATASET],
         )
     )
+
+
+_CST = timezone(timedelta(hours=8))  # 北京墙钟（与 fixtures/映射层同口径）
+
+
+def shift_live_rows(store: CorpusStore) -> list[dict[str, object]]:
+    """
+    当期班 ``srct_shift_matches`` → odds 元数据形态行（odds-read-switch 票 03）。
+
+    在售场 fixture_universe 锚定前的孤儿兜底：kickoff_utc（ISO UTC）→
+    北京 naive（fixture_rows 同口径）；league 用当期班档期面。只喂 odds
+    分区/开球列，**不进 fixture_universe**（赛果域真值仍是日页）。
+    """
+    out: list[dict[str, object]] = []
+    for sid, row in store.shift_matches().items():
+        kickoff_utc = row.get("kickoff_utc")
+        if not isinstance(kickoff_utc, str) or not kickoff_utc:
+            continue
+        try:
+            moment = datetime.fromisoformat(kickoff_utc)
+        except ValueError:
+            continue
+        naive = (
+            moment.astimezone(_CST).replace(tzinfo=None)
+            if moment.tzinfo is not None
+            else moment
+        )
+        out.append(
+            {
+                "sid": str(sid),
+                "league": str(row.get("league") or "live"),
+                "kickoff": naive,
+                "day": naive.date().isoformat(),
+            }
+        )
+    return out
+
+
+def fixture_rows_with_live(store: CorpusStore) -> list[dict[str, object]]:
+    """
+    Odds 元数据 = 日页 fixture 行 ∪ 当期班兜底行（日页同名 sid 恒胜）。
+
+    全量/增量共一出处：同一份合并元数据保证两路径分区判定一致（孤儿
+    迁移字节级对齐，票 03 不变量）。
+    """
+    rows = fixture_rows(store)[0]
+    seen = {str(row["sid"]) for row in rows}
+    return rows + [r for r in shift_live_rows(store) if str(r["sid"]) not in seen]
 
 
 def fixture_rows_from(
