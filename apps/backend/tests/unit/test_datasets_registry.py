@@ -9,6 +9,12 @@ RESUME/DEAD 推导、checkpoint 表核对钉进字面量，任一漂移即红。
 resume=False）+ 手写 5 面（daily-capture、draw-results 双 cron、weekly、
 daily-wrap）；serve 清单金标 = 手写 wiring 时代末态（17 deployment，
 名与 cron 逐一相等）。
+
+2026-10-31 补强：票 09 的 daily-capture-window 加进了 build_deployments
+却漏进 RESUME_DEPLOYMENTS——CLI 缺省即恢复清单，窗口面从未上线
+（10-30 重启后 Prefect 注册 17 面实证）。test_resume_derivation 加
+覆盖不变量：build_deployments 的每一面必须恰归 RESUME ∪ DEAD——
+新增面漏登记清单时此处红，防同族再犯。
 """
 
 from __future__ import annotations
@@ -93,8 +99,8 @@ def test_registry_pinned_to_full_batch() -> None:
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：19 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 6 个在前、注册面 13 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：20 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 6 个在前、注册面 14 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
@@ -146,9 +152,14 @@ def test_derived_deployments_flow_names_match_records() -> None:
 
 
 def test_resume_derivation() -> None:
-    """RESUME = 组合面手写 5 + 注册表推导；判死面推导自注册表。"""
+    """RESUME = 组合面手写 6 + 注册表推导；判死面推导自注册表。
+
+    覆盖不变量：build_deployments 每面恰归 RESUME ∪ DEAD——手写面加进
+    装配漏进清单即红（2026-10-31 daily-capture-window 实证漏法）。
+    """
     assert set(schedules.RESUME_DEPLOYMENTS) == {
         "daily-capture",
+        "daily-capture-window",
         "draw-results-sync",
         "draw-results-sweep",
         "weekly-refresh",
@@ -158,6 +169,52 @@ def test_resume_derivation() -> None:
     assert set(datasets.resume_names()).isdisjoint(datasets.dead_names())
     assert datasets.dead_names() == schedules.DEAD_DEPLOYMENTS
     assert set(schedules.DEAD_DEPLOYMENTS).isdisjoint(schedules.RESUME_DEPLOYMENTS)
+    # CLI 缺省 = RESUME → 缺省服务面 = 全量 − 判死；任何面漏登记即红
+    assert set(schedules.build_deployments()) == (
+        set(schedules.RESUME_DEPLOYMENTS) | set(schedules.DEAD_DEPLOYMENTS)
+    )
+
+
+def test_main_env_gate_with_default_only_serves_without_srct_night(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1：GOALX_SRCT_NIGHT_OFF 置位 + 缺省清单不再 SystemExit。
+
+    摘除发生在未知键校验前，而缺省 --only 含 srct-night——校验若取摘除后
+    键集即"置位=栈起不来"（2026-10-31 correctness 抓出，主路径修复前为红）。
+    """
+    served: list[str] = []
+    monkeypatch.setattr(
+        schedules, "serve", lambda *deps: served.extend(d.flow_name for d in deps)
+    )
+    monkeypatch.setenv("GOALX_SRCT_NIGHT_OFF", "1")
+    schedules.main(only=",".join(schedules.RESUME_DEPLOYMENTS))
+    assert "srct-night" not in served
+    assert len(served) == len(schedules.RESUME_DEPLOYMENTS) - 1
+
+
+def test_main_blank_only_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F2/F3：空串/纯分隔符拒绝——静默全量复活判死面、静默零面空转常驻。"""
+    called = False
+
+    def fail(*deps: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(schedules, "serve", fail)
+    with pytest.raises(SystemExit):
+        schedules.main(only="")
+    with pytest.raises(SystemExit):
+        schedules.main(only=" , , ")
+    assert not called
+
+
+def test_arg_parser_default_pins_resume_list() -> None:
+    """F4：CLI 缺省=恢复清单、all 翻译钉死——2026-10-31 漏登记的缺陷现场。"""
+    parser = schedules.build_arg_parser()
+    assert parser.parse_args([]).only == ",".join(schedules.RESUME_DEPLOYMENTS)
+    assert "daily-capture-window" in parser.parse_args([]).only.split(",")
+    assert parser.parse_args(["--only", "all"]).only == "all"
 
 
 def test_cli_surface_parses_with_handwritten_defaults() -> None:
