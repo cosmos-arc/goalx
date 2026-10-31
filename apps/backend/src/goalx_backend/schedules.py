@@ -139,9 +139,15 @@ def main(only: str | None = None) -> None:
     单进程服务协议 v1 的定时 deployment（随票累加）。
 
     only=逗号分隔 deployment 键——停采期只服务指定面（票 63：源T 夜班
-    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；缺省全量（原行为）。
+    先行恢复，竞彩/池侧复采另议后撤过滤恢复全量）；None=全量；空串/纯
+    分隔符拒绝（fail-loud——静默全量会复活判死面，静默零面则空转常驻，
+    2026-10-31 correctness F2/F3）。
     """
     deployments = build_deployments()
+    # 未知键校验取 gate 摘除前的全量键集：缺省 --only 含 srct-night，先摘
+    # 后校验会把缺省键判为未知——GOALX_SRCT_NIGHT_OFF 置位即崩、零面服务
+    # （2026-10-31 correctness F1；gate 胜出=该面静默不选，摘除日志已响）。
+    known = set(deployments)
     # 全程班模式闸门（2026-09-28）：手动连续窗期间摘除 srct-night 定拍触发，
     # 防双进程叠加；恢复=不带此环境变量重启栈。须在 selected 固化前摘除
     # （工作区原稿插在固化后属无效位，重建时修正）。
@@ -149,12 +155,14 @@ def main(only: str | None = None) -> None:
         deployments.pop("srct-night", None)
         logger.info("GOALX_SRCT_NIGHT_OFF 置位：摘除 srct-night（手动连续窗防叠加）")
     selected = tuple(deployments.values())
-    if only:
+    if only is not None:
         wanted = {name.strip() for name in only.split(",") if name.strip()}
-        unknown = wanted - set(deployments)
+        if not wanted:
+            raise SystemExit("--only 为空串或纯分隔符：要全量请显式传 all")
+        unknown = wanted - known
         if unknown:
-            known = sorted(deployments)
-            msg = f"--only 未知 deployment：{sorted(unknown)}（可用 {known}）"
+            known_names = sorted(known)
+            msg = f"--only 未知 deployment：{sorted(unknown)}（可用 {known_names}）"
             raise SystemExit(msg)
         selected = tuple(dep for key, dep in deployments.items() if key in wanted)
         logger.info("schedules --only：{}（其余停采面不注册）", sorted(wanted))
@@ -181,7 +189,8 @@ RESUME_DEPLOYMENTS = (
 DEAD_DEPLOYMENTS = datasets.dead_names()
 
 
-if __name__ == "__main__":
+def build_arg_parser() -> argparse.ArgumentParser:
+    """CLI 解析器（缺陷现场抽出口——2026-10-31 票 09 漏登记正是缺省值无人钉）。"""
     parser = argparse.ArgumentParser(
         description="Prefect 调度入口（--only 停采期过滤）"
     )
@@ -194,5 +203,9 @@ if __name__ == "__main__":
             "srcb-collect 不在恢复清单）"
         ),
     )
-    args = parser.parse_args()
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_arg_parser().parse_args()
     main(only=None if args.only == "all" else args.only)

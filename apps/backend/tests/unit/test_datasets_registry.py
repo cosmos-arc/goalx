@@ -175,6 +175,48 @@ def test_resume_derivation() -> None:
     )
 
 
+def test_main_env_gate_with_default_only_serves_without_srct_night(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1：GOALX_SRCT_NIGHT_OFF 置位 + 缺省清单不再 SystemExit。
+
+    摘除发生在未知键校验前，而缺省 --only 含 srct-night——校验若取摘除后
+    键集即"置位=栈起不来"（2026-10-31 correctness 抓出，主路径修复前为红）。
+    """
+    served: list[str] = []
+    monkeypatch.setattr(
+        schedules, "serve", lambda *deps: served.extend(d.flow_name for d in deps)
+    )
+    monkeypatch.setenv("GOALX_SRCT_NIGHT_OFF", "1")
+    schedules.main(only=",".join(schedules.RESUME_DEPLOYMENTS))
+    assert "srct-night" not in served
+    assert len(served) == len(schedules.RESUME_DEPLOYMENTS) - 1
+
+
+def test_main_blank_only_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F2/F3：空串/纯分隔符拒绝——静默全量复活判死面、静默零面空转常驻。"""
+    called = False
+
+    def fail(*deps: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(schedules, "serve", fail)
+    with pytest.raises(SystemExit):
+        schedules.main(only="")
+    with pytest.raises(SystemExit):
+        schedules.main(only=" , , ")
+    assert not called
+
+
+def test_arg_parser_default_pins_resume_list() -> None:
+    """F4：CLI 缺省=恢复清单、all 翻译钉死——2026-10-31 漏登记的缺陷现场。"""
+    parser = schedules.build_arg_parser()
+    assert parser.parse_args([]).only == ",".join(schedules.RESUME_DEPLOYMENTS)
+    assert "daily-capture-window" in parser.parse_args([]).only.split(",")
+    assert parser.parse_args(["--only", "all"]).only == "all"
+
+
 def test_cli_surface_parses_with_handwritten_defaults() -> None:
     """cli 子命令由注册表推导：参数默认值/形状与手写时代逐字一致。"""
     parser = cli.build_parser()
