@@ -18,6 +18,11 @@
 - ``source_match_links``（v23）：fixture_id ↔ source_match_id 物化，
   一源一行；``method`` 记录命中路径（provenance）；manual 行永不被
   自动同步覆写；同步不再解析的历史链撤除（镜像真值）。
+- 当期在售面（odds-read-switch 票 01）：universe 未锚定的在售场由
+  当期班 ``srct_shift_matches``（live 行）兜底解析——universe 优先、
+  live 只救零命中；live 命中另加开球硬门（±10min，越界不入链），
+  ``meta.origin="live_shift"`` 区分；universe 次日锚定后同链重解析，
+  origin 随之洗掉（链已获历史面独立复核，非 bug）。
 - kickoff canonical=源T：已链场次 ``fixtures.kickoff_utc`` 向
   fixture_universe 对齐——≤12h 漂移自动校准（meta 留前值档案），
   超限只标记不硬改（改期/错链进人工队列）。
@@ -33,10 +38,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import duckdb
@@ -51,9 +56,15 @@ METHOD_KICKOFF_EXACT = "kickoff_exact"
 METHOD_MANUAL = "manual"
 STATUS_LINKED = "linked"
 STATUS_AMBIGUOUS = "ambiguous"
+ORIGIN_LIVE_SHIFT = "live_shift"
 
 # kickoff canonical=源T 的自动校准上限：超过视为改期/错链，只标记不硬改
 KICKOFF_ALIGN_MAX_DRIFT_SECONDS = 12 * 3600
+
+# live（当期班）命中硬门：① 名+日不含开球，须另行开球校验；越界=改期/错档
+# 不入链（odds-read-switch 票 01 不变量；universe 链不受此门，两步法② 本就
+# 开球精确，① 历史面同名同日按票 77 口径信任）
+LIVE_KICKOFF_MAX_DRIFT_SECONDS = 600
 
 _BEIJING = timezone(timedelta(hours=8))
 
@@ -211,6 +222,30 @@ def _as_beijing_naive(value: object) -> datetime | None:
     return value.astimezone(_BEIJING).replace(tzinfo=None)
 
 
+def live_universe_rows(
+    rows: Iterable[MappingABC[str, object]],
+) -> Iterator[UniverseRow]:
+    """
+    当期班 ``srct_shift_matches`` 行（corpus_store 供给的 dict）→ 映射投影。
+
+    开球缺行（NULL/空串/不可解析）跳过——与 ``load_universe`` 同口径；
+    checkpoint 属 corpus_store（ADR-0008），本模块只消费编排层递入的行。
+    """
+    for row in rows:
+        kickoff = row.get("kickoff_utc")
+        if not isinstance(kickoff, str) or not kickoff:
+            continue
+        try:
+            yield UniverseRow(
+                sid=str(row["sid"]),
+                home=str(row["home"]),
+                away=str(row["away"]),
+                kickoff_bj=_beijing_naive(kickoff),
+            )
+        except (KeyError, ValueError):
+            continue
+
+
 @dataclass(frozen=True)
 class UniverseResultRow:
     """fixture_universe 赛果投影行（票 78 Elo/对账消费；比分可缺）。"""
@@ -261,6 +296,8 @@ class MappingSyncStats:
     unmapped: int = 0
     kickoff_aligned: int = 0
     kickoff_conflicts: int = 0
+    live_linked: int = 0
+    live_kickoff_rejected: int = 0
     srct_alias_pairs: list[tuple[int, str]] = field(default_factory=list)
     degraded: str | None = None
 
@@ -273,6 +310,8 @@ class MappingSyncStats:
             "unmapped": self.unmapped,
             "kickoff_aligned": self.kickoff_aligned,
             "kickoff_conflicts": self.kickoff_conflicts,
+            "live_linked": self.live_linked,
+            "live_kickoff_rejected": self.live_kickoff_rejected,
             "srct_alias_pairs": len(self.srct_alias_pairs),
             "degraded": self.degraded,
         }
@@ -380,8 +419,17 @@ def _record_linked(
     row: sqlite3.Row,
     resolution: Resolution,
     stats: MappingSyncStats,
+    *,
+    origin: str | None = None,
+    align_kickoff: bool = True,
 ) -> None:
-    """Linked 场落链：meta 变体路径 + kickoff 校准 + srct 别名对产出。"""
+    """
+    Linked 场落链：meta 变体路径 + kickoff 校准 + srct 别名对产出。
+
+    ``align_kickoff=False`` 用于 live 链（correctness F2）：在售场 JC 回灌
+    与源T 校准互写会致 kickoff 摆动不收敛——live 命中开球差已被 ±10min
+    硬门兜住，不校准；universe 次日锚定后按历史口径正常校准一次。
+    """
     fixture_id = int(row["fixture_id"])
     home_name = str(row["home_name"])
     away_name = str(row["away_name"])
@@ -389,18 +437,21 @@ def _record_linked(
     if sid is None:  # 调用方约定仅 linked 分支进入；防御不可达
         return
     meta: dict[str, Any] = {"method": resolution.method}
+    if origin is not None:
+        meta["origin"] = origin
     if resolution.home_variant not in (None, home_name):
         meta["home_variant"] = resolution.home_variant
     if resolution.away_variant not in (None, away_name):
         meta["away_variant"] = resolution.away_variant
     universe = index.row_for(sid)
     if universe is not None:
-        if _align_kickoff(
-            conn, fixture_id, universe.kickoff_bj, str(row["kickoff_utc"]), meta
-        ):
-            stats.kickoff_aligned += 1
-        if "kickoff_conflict_seconds" in meta or "kickoff_conflict_unique" in meta:
-            stats.kickoff_conflicts += 1
+        if align_kickoff:
+            if _align_kickoff(
+                conn, fixture_id, universe.kickoff_bj, str(row["kickoff_utc"]), meta
+            ):
+                stats.kickoff_aligned += 1
+            if "kickoff_conflict_seconds" in meta or "kickoff_conflict_unique" in meta:
+                stats.kickoff_conflicts += 1
         stats.srct_alias_pairs.append((int(row["home_team_id"]), universe.home))
         stats.srct_alias_pairs.append((int(row["away_team_id"]), universe.away))
     _upsert_link(
@@ -413,11 +464,153 @@ def _record_linked(
     )
 
 
+def _record_ambiguous(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    candidates: tuple[str, ...],
+    *,
+    origin: str | None = None,
+) -> None:
+    """歧义落 ambiguous 行（候选进 meta 人工队列；origin 可选溯源）。"""
+    meta: dict[str, Any] = {"candidates": list(candidates)}
+    if origin is not None:
+        meta["origin"] = origin
+    _upsert_link(
+        conn,
+        fixture_id,
+        source_match_id=None,
+        method=None,
+        status=STATUS_AMBIGUOUS,
+        meta=meta,
+    )
+
+
+def _sync_live_fallback(
+    conn: sqlite3.Connection,
+    live_index: SidIndex,
+    row: sqlite3.Row,
+    home_variants: tuple[str, ...],
+    away_variants: tuple[str, ...],
+    stats: MappingSyncStats,
+) -> None:
+    """
+    Live 兜底分支（odds-read-switch 票 01）：universe 零命中场走当期班两步法。
+
+    命中另加开球 ±10min 硬门（① 名+日不含开球，越界=改期/错档不入链）；
+    歧义落候选；零命中撤历史 non-manual 链。
+    """
+    fixture_id = int(row["fixture_id"])
+    kickoff_utc = str(row["kickoff_utc"])
+    live = live_index.resolve_variants(home_variants, away_variants, kickoff_utc)
+    live_row = live_index.row_for(live.sid) if live.sid else None
+    fixture_bj = _beijing_naive(kickoff_utc)
+    if (
+        live.sid is not None
+        and live_row is not None
+        and abs((live_row.kickoff_bj - fixture_bj).total_seconds())
+        <= LIVE_KICKOFF_MAX_DRIFT_SECONDS
+    ):
+        stats.linked += 1
+        stats.live_linked += 1
+        _record_linked(
+            conn,
+            live_index,
+            row,
+            live,
+            stats,
+            origin=ORIGIN_LIVE_SHIFT,
+            align_kickoff=False,
+        )
+    elif live.sid is not None:
+        stats.live_kickoff_rejected += 1
+        stats.unmapped += 1
+        _clear_non_manual(conn, fixture_id)
+    elif live.candidates:
+        stats.ambiguous += 1
+        _record_ambiguous(conn, fixture_id, live.candidates, origin=ORIGIN_LIVE_SHIFT)
+    else:
+        stats.unmapped += 1
+        _clear_non_manual(conn, fixture_id)
+
+
+def _sync_manual_link(
+    conn: sqlite3.Connection,
+    index: SidIndex,
+    row: sqlite3.Row,
+    manual_sid: str,
+    stats: MappingSyncStats,
+) -> None:
+    """
+    Manual 分支：人工链视为已映射，自动同步不覆写。
+
+    kickoff canonical=源T 不豁免（评审修正：人工裁决的是「这场=这个 sid」，
+    开球仍以源T 为准）。
+    """
+    stats.linked += 1
+    universe = index.row_for(manual_sid)
+    if universe is None:
+        return
+    meta: dict[str, Any] = {}
+    if _align_kickoff(
+        conn, int(row["fixture_id"]), universe.kickoff_bj, str(row["kickoff_utc"]), meta
+    ):
+        stats.kickoff_aligned += 1
+    if "kickoff_conflict_seconds" in meta or "kickoff_conflict_unique" in meta:
+        stats.kickoff_conflicts += 1
+
+
+def _sync_one_fixture(  # noqa: PLR0913 分发接缝集随 manual/universe/live 三层累加（同 run_shift 先例）
+    conn: sqlite3.Connection,
+    index: SidIndex,
+    live_index: SidIndex,
+    *,
+    live_unknown: bool,
+    live_window: frozenset[str],
+    row: sqlite3.Row,
+    home_variants: tuple[str, ...],
+    away_variants: tuple[str, ...],
+    stats: MappingSyncStats,
+) -> None:
+    """
+    单场解析分发：manual 优先 → universe 两步法 → 范围门内 live 兜底。
+
+    checkpoint 未知（空≠无）时窗口内场零动作不撤链；范围门外（历史
+    业务日/无竞彩码）当期班不兜底。
+    """
+    fixture_id = int(row["fixture_id"])
+    resolution = index.resolve_variants(
+        home_variants, away_variants, str(row["kickoff_utc"])
+    )
+    manual_sid = _manual_sid(conn, fixture_id)
+    if manual_sid is not None:
+        _sync_manual_link(conn, index, row, manual_sid, stats)
+    elif resolution.sid is not None:
+        stats.linked += 1
+        _record_linked(conn, index, row, resolution, stats)
+    elif resolution.candidates:
+        stats.ambiguous += 1
+        _record_ambiguous(conn, fixture_id, resolution.candidates)
+    elif row["business_date"] in live_window:
+        if live_unknown:
+            # checkpoint 未知（空≠无）：不做兜底也不撤现有 live 链（F1）
+            if stats.degraded is None:
+                stats.degraded = "live_rows unavailable"
+        else:
+            _sync_live_fallback(
+                conn, live_index, row, home_variants, away_variants, stats
+            )
+    else:
+        stats.unmapped += 1
+        _clear_non_manual(conn, fixture_id)
+
+
 def sync_fixture_links(
     conn: sqlite3.Connection,
     duck_con: DuckCon | None,
     *,
     team_aliases: MappingABC[int, set[str]] | None = None,
+    live_rows: Iterable[UniverseRow] | None = (),
+    live_business_dates: Collection[str] | None = None,
 ) -> MappingSyncStats:
     """
     全量同步 fixture ↔ 源T sid 链（幂等；语料桥缺席降级零动作）。
@@ -427,6 +620,17 @@ def sync_fixture_links(
     ``team_align.srct_alias_sets`` 取数注入，ADR-0008 属主红线）→
     linked 落链（``_record_linked``）+ ambiguous 落候选 + unmapped 撤
     历史 non-manual 链。srct 别名对由编排层交属主落库。
+
+    live 兜底（odds-read-switch 票 01）：universe 零命中时对当期班
+    ``srct_shift_matches`` 投影（``live_rows``，编排层注入）再走同款
+    两步法，命中另加开球 ±10min 硬门，``meta.origin="live_shift"``。
+    范围门：仅竞彩业务日 ∈ ``live_business_dates``（缺省=北京当期
+    ±1 天）的场次走 live 兜底——当期班档案是累积表，不设门则历史
+    零命中场全量混入（票面「映射只做在售场」）。空≠无（correctness
+    F1）：``live_rows=None``=checkpoint 未知 → 窗口内场不做兜底也
+    **不撤现有 live 链**（``stats.degraded`` 记因）；``[]``=已知空 →
+    正常镜像真值撤链。universe 歧义不交 live 消歧（同 sid 空间，
+    历史面多候选按票 77 口径进人工队列）。
     """
     stats = MappingSyncStats()
     if duck_con is None:
@@ -438,10 +642,18 @@ def sync_fixture_links(
         logger.warning("mapping sync degraded, fixture_universe unavailable: {}", exc)
         stats.degraded = str(exc)
         return stats
+    if live_business_dates is None:
+        today = date.fromisoformat(fx_store.beijing_business_date())
+        live_business_dates = {
+            (today + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)
+        }
+    live_window = frozenset(live_business_dates)
+    # 空≠无：None=checkpoint 未知（窗口内零动作不撤链）；[]/iterable=已知，正常兜底
+    live_unknown = live_rows is None
+    live_index = SidIndex.build(live_rows or ())
     aliases: MappingABC[int, set[str]] = team_aliases or {}
     for row in fx_store.fixtures_with_teams(conn):
         stats.fixtures += 1
-        fixture_id = int(row["fixture_id"])
         home_variants = (
             str(row["home_name"]),
             *sorted(aliases.get(int(row["home_team_id"]), ())),
@@ -450,41 +662,17 @@ def sync_fixture_links(
             str(row["away_name"]),
             *sorted(aliases.get(int(row["away_team_id"]), ())),
         )
-        resolution = index.resolve_variants(
-            home_variants, away_variants, str(row["kickoff_utc"])
+        _sync_one_fixture(
+            conn,
+            index,
+            live_index,
+            live_unknown=live_unknown,
+            live_window=live_window,
+            row=row,
+            home_variants=home_variants,
+            away_variants=away_variants,
+            stats=stats,
         )
-        manual_sid = _manual_sid(conn, fixture_id)
-        if manual_sid is not None:
-            # manual 链视为已映射，自动同步不覆写——但 kickoff canonical=源T
-            # 不豁免（评审修正：人工裁决的是「这场=这个 sid」，开球仍以源T 为准）
-            stats.linked += 1
-            universe = index.row_for(manual_sid)
-            if universe is not None:
-                meta: dict[str, Any] = {}
-                if _align_kickoff(
-                    conn, fixture_id, universe.kickoff_bj, str(row["kickoff_utc"]), meta
-                ):
-                    stats.kickoff_aligned += 1
-                if "kickoff_conflict_seconds" in meta or (
-                    "kickoff_conflict_unique" in meta
-                ):
-                    stats.kickoff_conflicts += 1
-        elif resolution.sid is not None:
-            stats.linked += 1
-            _record_linked(conn, index, row, resolution, stats)
-        elif resolution.candidates:
-            stats.ambiguous += 1
-            _upsert_link(
-                conn,
-                fixture_id,
-                source_match_id=None,
-                method=None,
-                status=STATUS_AMBIGUOUS,
-                meta={"candidates": list(resolution.candidates)},
-            )
-        else:
-            stats.unmapped += 1
-            _clear_non_manual(conn, fixture_id)
     conn.commit()
     return stats
 
@@ -499,6 +687,23 @@ def srct_sid_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> str | Non
         (fixture_id, SRCT_SOURCE, STATUS_LINKED),
     ).fetchone()
     return str(row["source_match_id"]) if row else None
+
+
+def has_srct_link(conn: sqlite3.Connection, fixture_id: int) -> bool:
+    """Joined 判定单一出处（odds-read-switch 票 01）：odds_api 历史行 ∪ srct 链。"""
+    row = conn.execute(
+        """
+        SELECT f.odds_api_event_id,
+               (SELECT 1 FROM source_match_links l
+                WHERE l.fixture_id = f.id AND l.source = ? AND l.status = ?
+               LIMIT 1) AS linked
+        FROM fixtures f WHERE f.id = ?
+        """,
+        (SRCT_SOURCE, STATUS_LINKED, fixture_id),
+    ).fetchone()
+    return row is not None and (
+        row["odds_api_event_id"] is not None or row["linked"] is not None
+    )
 
 
 def pending_srct_results(
@@ -696,6 +901,8 @@ __all__ = [
     "SidIndex",
     "UniverseRow",
     "audit_mapping",
+    "has_srct_link",
+    "live_universe_rows",
     "load_universe",
     "srct_kickoff_overrides",
     "srct_sid_for_fixture",

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -112,7 +112,7 @@ def build_today_view(
             away_team=str(fixture["away_team"]),
             kickoff_utc=str(fixture["kickoff_utc"]),
             is_single=bool(fixture["is_single"]),
-            joined=fixture["odds_api_event_id"] is not None,
+            joined=mapping.has_srct_link(conn, fixture_id),
             jc_odds=jc_odds,
             jc_updated_at=max((at for _, at in jc.values()), default=None),
         )

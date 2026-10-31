@@ -385,7 +385,15 @@ def srct_shift_run(
             )
     finally:
         store.close()
-    return srct_shift.stats_dict(stats)
+    payload = srct_shift.stats_dict(stats)
+    # 拍后映射同步（odds-read-switch 票 01）：当期链随拍保鲜；映射降级
+    # 不拖垮拍班本体（同 wrap 流降级哲学）
+    try:
+        payload["mapping_sync"] = mapping_sync()
+    except (sqlite3.Error, duckdb.Error, OSError) as exc:
+        logger.warning("post-beat mapping sync degraded: {}", exc)
+        payload["mapping_sync"] = {"degraded": str(exc)}
+    return payload
 
 
 def srct_remat_run(
@@ -507,10 +515,17 @@ def mapping_sync() -> dict[str, object]:
     物化 fixture↔源T sid 链、kickoff canonical 校准、srct/clubelo 别名
     补源。语料桥缺席（首夜 silver 落地前/库未建）降级零动作不抛错——
     与 CLV 收盘锚同款降级哲学。别名落库走属主（modelling/team_align）。
+
+    live 兜底（odds-read-switch 票 01）：当期班 srct_shift_matches 行
+    （checkpoint 缺席降级空表）参与在售场解析——universe 优先、开球
+    ±10min 硬门。
     """
     with task_conn() as conn, corpus_anchor() as duck_con:
         stats = mapping.sync_fixture_links(
-            conn, duck_con, team_aliases=team_align_srct_sets(conn)
+            conn,
+            duck_con,
+            team_aliases=team_align_srct_sets(conn),
+            live_rows=_live_mapping_rows(),
         )
         aliases = record_srct_aliases(conn, stats.srct_alias_pairs)
         clubelo_report = sync_clubelo_aliases(conn, clubelo.distinct_clubs(conn))
@@ -519,6 +534,24 @@ def mapping_sync() -> dict[str, object]:
         "srct_aliases_added": aliases,
         "clubelo": clubelo_report.as_dict(),
     }
+
+
+def _live_mapping_rows() -> list[mapping.UniverseRow] | None:
+    """
+    当期班 srct_shift_matches → 映射 live 行。
+
+    checkpoint 读失败返回 None（=未知，空≠无：同步侧不撤现有 live 链）；
+    正常返回投影行（含空表——已知空走镜像真值撤链）。
+    """
+    store = CorpusStore(get_settings().corpus_root)
+    try:
+        rows = store.shift_matches()
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("live mapping rows unavailable, degraded: {}", exc)
+        return None
+    finally:
+        store.close()
+    return list(mapping.live_universe_rows(rows.values()))
 
 
 def mapping_audit() -> dict[str, object]:

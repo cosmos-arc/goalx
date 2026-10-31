@@ -667,14 +667,22 @@ def fixture_id_for_match_code(conn: sqlite3.Connection, code: str) -> int | None
 
 
 def fixtures_with_teams(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """全部场次 + 主客队 id/名称 + 联赛（票 77 映射同步的左侧面）。"""
+    """
+    全部场次 + 主客队 id/名称 + 联赛（票 77 映射同步的左侧面）。
+
+    ``business_date`` = 最新竞彩业务日（无码场 NULL；多码取 MAX——改期
+    重挂以末次销售日为准）。live 映射范围门消费（odds-read-switch 票 01）。
+    """
     return conn.execute(
         """
         SELECT f.id AS fixture_id, f.kickoff_utc,
                f.home_team_id, f.away_team_id,
                th.canonical_name AS home_name,
                ta.canonical_name AS away_name,
-               c.name AS competition_name, c.tier AS competition_tier
+               c.name AS competition_name, c.tier AS competition_tier,
+               (SELECT MAX(mc.business_date) FROM match_codes mc
+                WHERE mc.fixture_id = f.id AND mc.kind = 'jingcai'
+               ) AS business_date
         FROM fixtures f
         JOIN teams th ON th.id = f.home_team_id
         JOIN teams ta ON ta.id = f.away_team_id

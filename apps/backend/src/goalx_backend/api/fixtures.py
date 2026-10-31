@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from goalx_backend import odds_math as om
 from goalx_backend.api.deps import get_db
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import mapping
 from goalx_backend.data.fixtures import beijing_business_date
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
@@ -292,7 +293,7 @@ async def get_fixture_research(
         away_team=str(detail["away_team"]),
         kickoff_utc=str(detail["kickoff_utc"]),
         is_single=bool(detail["is_single"]),
-        joined=detail["odds_api_event_id"] is not None,
+        joined=mapping.has_srct_link(db, fixture_id),
         jc_odds=jc_odds,
         jc_updated_at=max((at for _, at in jc.values()), default=None),
     )
