@@ -129,11 +129,9 @@ def build_haircut_samples(
     jc_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
     eu_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
     competitions: dict[int, str] = {}
-    bd_by_fixture: dict[int, str | None] = {}
     for row in rows:
         fixture_id = int(row["fixture_id"])
         competitions.setdefault(fixture_id, str(row["competition"]))
-        bd_by_fixture.setdefault(fixture_id, row["business_date"])
         if str(row["source"]) == "sporttery":
             jc_rows.setdefault(fixture_id, []).append(row)
         else:
@@ -147,7 +145,9 @@ def build_haircut_samples(
             continue  # 竞彩三向不完整 → 无配对
         pair_time = max(str(r["captured_at"]) for r in jc_latest.values())
         eu_candidate = eu_rows.get(fixture_id, [])
-        if duck_con is not None and _corpus_era(bd_by_fixture.get(fixture_id)):
+        # 分代键=配对证据时刻（F2：改期/重挂场 MAX(business_date) 会跨代，
+        # 吞掉切换前的 odds_api 证据——按 pair_time 分代两边证据各归各代）
+        if duck_con is not None and _corpus_era(pair_time[:10]):
             sid = mapping.srct_sid_for_fixture(conn, fixture_id)
             if sid is not None:
                 # corpus 逐书 as-of 最新 ≤ pair_time（重放语义同 _books_asof）

@@ -198,3 +198,67 @@ def _reset_dim_cache() -> None:
 
     _dim_cache.counts = {}
     _dim_cache.at = 0.0
+
+
+def test_prefetched_rows_respect_age_gate(db: sqlite3.Connection) -> None:
+    """F1 回归：bulk 预取行同样过 60min 观察龄门——今日页与下注闸门不分裂。"""
+    from datetime import timedelta
+
+    fixture_id = seed_on_sale_fixture(db)
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE odds_change_event (sid VARCHAR, bookmaker_id VARCHAR,"
+        " market VARCHAR, published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,"
+        " odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE, source_order INTEGER)"
+    )
+    con.execute("CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)")
+    stale_obs = OBSERVED - timedelta(hours=3)  # as_of 前 3h>60min
+    con.execute(
+        "INSERT INTO odds_change_event VALUES"
+        " ('3001', ?, '1x2', ?, ?, 2.0, 3.5, 3.2, 1)",
+        [ANCHOR, stale_obs - timedelta(hours=1), stale_obs],
+    )
+    con.execute("INSERT INTO bookmaker VALUES (?, 100)", [ANCHOR])
+    prefetched = quote_evidence.srct_snapshot_rows_bulk(con, ["3001"], AS_OF)
+    gated = quote_evidence.adjudicate_had_quote(
+        db, fixture_id, AS_OF, duck_con=con, sid="3001", rows=prefetched["3001"]
+    )
+    ungated = quote_evidence.adjudicate_had_quote(
+        db, fixture_id, AS_OF, duck_con=con, sid="3001"
+    )
+    assert gated.status == ungated.status == "unknown"
+    assert "eu_no_quote" in gated.reasons
+
+
+def test_haircut_postponed_fixture_keeps_legacy_evidence(
+    db: sqlite3.Connection,
+) -> None:
+    """F2 回归：改期场（bd 跨代）按配对证据时刻分代——切换前证据不被吞。"""
+    new_fid = seed_on_sale_fixture(
+        db, business_date="2026-09-27", jc_at="2026-09-24T15:02:00+00:00"
+    )
+    # 同场再挂 09-24 业务日码（改期重挂形态）——MAX(bd)=09-27 会误判 corpus 代
+    db.execute(
+        "INSERT INTO match_codes (fixture_id, kind, business_date, code)"
+        " VALUES (?, 'jingcai', '2026-09-24', '周三001')",
+        (new_fid,),
+    )
+    legacy_anchor = quote_evidence.SHARP_ANCHOR_SOURCE
+    for sel in ("h", "d", "a"):
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=new_fid,
+                market_code="had",
+                selection_code=sel,
+                source=legacy_anchor,
+                odds=2.0 if sel == "h" else 3.5,
+                captured_at="2026-09-24T15:00:00+00:00",
+                observed_at="2026-09-24T15:00:00+00:00",
+            ),
+        )
+    duck_con = seed_corpus_duck()  # corpus 只有 sid 3001（本场所链）当日无旧行
+    samples = hc.build_haircut_samples(db, duck_con=duck_con)
+    by_fid = {s.fixture_id: s for s in samples}
+    assert new_fid in by_fid  # 配对证据在 09-24 → legacy 段，odds_api 行生效
+    assert set(by_fid[new_fid].eu_books) == {legacy_anchor}

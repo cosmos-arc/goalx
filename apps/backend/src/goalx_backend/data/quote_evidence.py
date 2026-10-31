@@ -794,6 +794,15 @@ def _adjudicate_eu(
             max_age_seconds=EU_AGE_MAX_SECONDS if corpus else None,
         )
     )
+    if corpus:
+        # 60min 观察龄门对预取行同样生效（F1：bulk 不带 max_age，漏滤会
+        # 使今日页判定与逐查/下注闸门分裂——旧行 3h 照样 valid）
+        source_rows = [
+            r
+            for r in source_rows
+            if (obs := effective_observed_at(r)) is not None
+            and seconds_between(as_of, obs) <= EU_AGE_MAX_SECONDS
+        ]
     if not source_rows:
         verdict.mark_unknown("eu_no_quote")
         return
