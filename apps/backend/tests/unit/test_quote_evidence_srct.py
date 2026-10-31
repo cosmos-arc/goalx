@@ -30,14 +30,15 @@ def seed_corpus(
         CREATE TABLE odds_change_event (
             sid VARCHAR, bookmaker_id VARCHAR, market VARCHAR,
             published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,
-            odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE
+            odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE,
+            source_order INTEGER
         )
         """
     )
     con.execute("CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)")
     for sid, book, published, observed, h, d, a in events:
         con.execute(
-            "INSERT INTO odds_change_event VALUES (?, ?, '1x2', ?, ?, ?, ?, ?)",
+            "INSERT INTO odds_change_event VALUES (?, ?, '1x2', ?, ?, ?, ?, ?, 1)",
             [sid, book, published, observed, h, d, a],
         )
     for book, count in (book_counts or {}).items():
@@ -317,3 +318,52 @@ def test_today_view_survives_reader_absent(db: sqlite3.Connection) -> None:
     assert len(view) == 1
     assert view[0].joined is True
     assert view[0].books == 0  # EU 段空值不炸
+
+
+def test_same_minute_tiebreak_by_source_order() -> None:
+    """F2 回归：published/observed 并列时 source_order 大者胜（重放确定性）。"""
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE odds_change_event (sid VARCHAR, bookmaker_id VARCHAR,"
+        " market VARCHAR, published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,"
+        " odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE, source_order INTEGER)"
+    )
+    pub = datetime(2026, 10, 30, 20, 0, tzinfo=BEIJING)
+    for order, home in ((1, 2.10), (2, 2.05)):  # 同分钟两笔，order 2 是后价
+        con.execute(
+            "INSERT INTO odds_change_event VALUES"
+            " ('3001', 'srct:1x2:281', '1x2', ?, ?, ?, 3.5, 3.2, ?)",
+            [pub, OBSERVED, home, order],
+        )
+    rows = quote_evidence.srct_snapshot_rows_asof(con, "3001", AS_OF)
+    by_sel = {r["selection_code"]: r["odds"] for r in rows}
+    assert by_sel["h"] == 2.05  # source_order 决胜，取后价
+
+
+def test_book_cap_degrades_when_dim_lags(db: sqlite3.Connection) -> None:
+    """F3 回归：维度未覆盖候选 → 降级保全量不塌缩；tiebreak 定确书集。"""
+    fixture_id = seed_linked_fixture(db)
+    events = [
+        _event(ANCHOR, datetime(2026, 10, 30, 20, 0, tzinfo=BEIJING), 2.0, 3.5, 3.2)
+    ]
+    counts = {ANCHOR: 100}  # 维度全覆盖 → 截断生效
+    for i in range(20):
+        book = f"srct:1x2:{100 + i}"
+        events.append(
+            _event(book, datetime(2026, 10, 30, 20, 0, tzinfo=BEIJING), 2.0, 3.5, 3.2)
+        )
+        counts[book] = 500  # 全并列 match_count → tiebreak bookmaker_id 定序
+    duck_con = seed_corpus(events, counts)
+    books = quote_evidence.books_complete_asof(
+        db, fixture_id, AS_OF, duck_con=duck_con, sid="3001"
+    )
+    assert len(books) == quote_evidence.SRCT_EU_BOOK_CAP
+    # 并列 500 时 tiebreak=bookmaker_id DESC：100..110 号书 + 主锚（177>110）
+    assert "srct:1x2:110" in books
+    assert "srct:1x2:100" not in books
+    # 维度空表（覆盖 0/21）→ 降级保全量
+    empty_dim = seed_corpus(events, {})
+    kept = quote_evidence.books_complete_asof(
+        db, fixture_id, AS_OF, duck_con=empty_dim, sid="3001"
+    )
+    assert len(kept) == 21

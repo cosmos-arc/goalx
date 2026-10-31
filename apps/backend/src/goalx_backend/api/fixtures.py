@@ -293,6 +293,9 @@ async def get_fixture_research(
         quotes = quote_evidence.eu_book_quotes(
             db, fixture_id, duck_con=duck_con, sid=sid
         )
+        verdict = adjudicate_had_quote(
+            db, fixture_id, moment, duck_con=duck_con, sid=sid
+        )
     view = FixtureResearchView(
         fixture_id=fixture_id,
         match_code=str(detail["match_code"]),
@@ -307,8 +310,6 @@ async def get_fixture_research(
         jc_odds=jc_odds,
         jc_updated_at=max((at for _, at in jc.values()), default=None),
     )
-    with corpus_duckdb.reader() as duck_con:
-        verdict = adjudicate_had_quote(db, fixture_id, moment, duck_con=duck_con)
     view.had_quote = HadQuoteStatus(
         as_of=moment,
         status=verdict.status,

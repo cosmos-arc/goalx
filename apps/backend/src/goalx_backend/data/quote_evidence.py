@@ -216,11 +216,12 @@ def srct_snapshot_rows_asof(
                    published_at, observed_at
             FROM (
                 SELECT bookmaker_id, odds_home, odds_draw, odds_away,
-                       published_at, observed_at,
+                       published_at, observed_at, source_order,
                        ROW_NUMBER() OVER (
                            PARTITION BY bookmaker_id
                            ORDER BY published_at DESC NULLS LAST,
-                                    observed_at DESC NULLS LAST
+                                    observed_at DESC NULLS LAST,
+                                    source_order DESC NULLS LAST
                        ) AS rn
                 FROM odds_change_event
                 WHERE sid = ? AND market = ? AND observed_at {compare} ?
@@ -282,12 +283,21 @@ def _cap_srct_books(
             """
             SELECT bookmaker_id FROM bookmaker
             WHERE bookmaker_id IN (SELECT unnest(?))
-            ORDER BY match_count DESC
+            ORDER BY match_count DESC, bookmaker_id DESC
             """,
             [sorted(by_book)],
         ).fetchall()
     except duckdb.Error as exc:
         logger.warning("srct book cap degraded, keeping all: {}", exc)
+        return by_book
+    if len(ranked) < len(by_book):
+        # 维度滞后（08:10 全量重建 vs 当日增量 append）→ 候选未全覆盖，
+        # 按覆盖截断会把无维度书静默挤出局，共识塌缩——降级保全量
+        logger.warning(
+            "srct book cap: dim covers {}/{} candidates, keeping all",
+            len(ranked),
+            len(by_book),
+        )
         return by_book
     for (book,) in ranked:
         if len(keep) >= SRCT_EU_BOOK_CAP:
@@ -408,7 +418,6 @@ def eu_consensus_asof(
 def eu_book_odds(
     conn: sqlite3.Connection,
     fixture_id: int,
-    market_code: str = "had",
     *,
     duck_con: DuckCon | None = None,
     sid: str | None = None,
@@ -435,7 +444,6 @@ def eu_book_odds(
 def eu_book_quotes(
     conn: sqlite3.Connection,
     fixture_id: int,
-    market_code: str = "had",
     *,
     duck_con: DuckCon | None = None,
     sid: str | None = None,
