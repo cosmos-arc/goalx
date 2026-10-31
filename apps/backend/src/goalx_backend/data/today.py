@@ -86,12 +86,16 @@ def build_today_view(
     *,
     as_of: str | None = None,
     days: int = 1,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> list[TodayFixtureView]:
     """
     组装竞彩场次对照表（竞彩 vs 欧洲共识、EV、资格判定、books 数、调盘时点）。
 
     ``days>1`` 时覆盖 ``[business_date, business_date+days-1]`` 的业务日窗口
     （工作台 v2 票 01），行内 ``business_date`` 标记归属日供前端按日分组。
+    ``duck_con``（票 02）：请求域 corpus 只读连接 + 每场 srct 链 sid 由本层
+    解析注入（欧赔共识/had 判定/陈盘锚三面同源同连接）；缺席 → EU 段空值，
+    JC 段不受影响。
     """
     moment = as_of or utc_now_iso()
     rows: list[TodayFixtureView] = []
@@ -100,7 +104,10 @@ def build_today_view(
     ):
         fixture_id = int(fixture["id"])
         jc = fx_store.latest_odds_by_selection(conn, fixture_id, "had", "sporttery")
-        books = fx_store.eu_book_odds(conn, fixture_id)
+        sid = mapping.srct_sid_for_fixture(conn, fixture_id)
+        books = quote_evidence.eu_book_odds(
+            conn, fixture_id, duck_con=duck_con, sid=sid
+        )
         jc_odds = SelectionTriple(**{s: jc.get(s, (None,))[0] for s in SELECTIONS})
         view = TodayFixtureView(
             fixture_id=fixture_id,
@@ -116,7 +123,9 @@ def build_today_view(
             jc_odds=jc_odds,
             jc_updated_at=max((at for _, at in jc.values()), default=None),
         )
-        signal = quote_evidence.stale_line_signal(conn, fixture_id, as_of=moment)
+        signal = quote_evidence.stale_line_signal(
+            conn, fixture_id, as_of=moment, duck_con=duck_con, sid=sid
+        )
         if signal is not None:
             view.stale_line = StaleLineView(
                 as_of=signal.as_of,
@@ -126,7 +135,9 @@ def build_today_view(
                 drift_selection=signal.drift_selection,
                 sharp_ref=signal.sharp_ref,
             )
-        verdict = quote_evidence.adjudicate_had_quote(conn, fixture_id, moment)
+        verdict = quote_evidence.adjudicate_had_quote(
+            conn, fixture_id, moment, duck_con=duck_con, sid=sid
+        )
         view.had_quote = HadQuoteStatus(
             as_of=moment,
             status=verdict.status,

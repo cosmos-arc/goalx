@@ -37,7 +37,10 @@ import { pct, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 const BOOK_DEVIATION_PP = 5;
 
 function bookName(source: string): string {
-	return source.replace(/^odds_api:/, "");
+	// odds_api:<book> → <book>；srct:<space>:<cid> → <cid>（源T 书 id 展示，
+	// 掩码名映射待 bookmaker 维度暴露后接）
+	const parts = source.split(":");
+	return parts[parts.length - 1] || source;
 }
 
 /** 单书归一化隐含概率（去水位按等比例归一——只用于偏差方向判读，不做共识）。 */

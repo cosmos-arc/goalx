@@ -110,8 +110,8 @@ def build_haircut_samples(
 ) -> list[HaircutSample]:
     """全部 as-of 配对样本（确定性排序：fixture, selection）。"""
     rows = quote_evidence.market_rows_with_competition(conn, market_code=market_code)
-    jc_rows: dict[int, list[sqlite3.Row]] = {}
-    eu_rows: dict[int, list[sqlite3.Row]] = {}
+    jc_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
+    eu_rows: dict[int, list[quote_evidence.SnapshotRow]] = {}
     competitions: dict[int, str] = {}
     for row in rows:
         fixture_id = int(row["fixture_id"])
@@ -148,7 +148,9 @@ def build_haircut_samples(
 
 
 def _books_asof(
-    rows: list[sqlite3.Row], pair_time: str, max_pair_gap_seconds: float
+    rows: list[quote_evidence.SnapshotRow],
+    pair_time: str,
+    max_pair_gap_seconds: float,
 ) -> dict[str, dict[str, float]]:
     """
     as-of 时刻可配对的各 book 完整三向（观测晚于 as-of 的剔除）。
@@ -157,7 +159,7 @@ def _books_asof(
     各选项最新行的最大观测时间」判定（配对语义），不逐行截断——校准数字
     的历史口径保持不变。
     """
-    by_book: dict[str, list[sqlite3.Row]] = {}
+    by_book: dict[str, list[quote_evidence.SnapshotRow]] = {}
     for row in rows:
         observed = effective_observed_at(row)
         if observed is None or observed > pair_time:

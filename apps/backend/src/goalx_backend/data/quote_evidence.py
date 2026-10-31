@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import duckdb
@@ -25,7 +25,16 @@ from loguru import logger
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
+
+DuckCon = duckdb.DuckDBPyConnection
+
+
+# 快照行统一类型（odds-read-switch 票 02）：sqlite3.Row（legacy odds_api
+# 快照）与 corpus 伪行 dict 同走 str 键取列，消费逻辑共用不分源
+SnapshotRow = sqlite3.Row | dict[str, Any]
+
 
 DEFAULT_FRESHNESS_SECONDS = 300.0
 DEFAULT_PAIR_GAP_SECONDS = 300.0
@@ -33,6 +42,13 @@ DEFAULT_PAIR_GAP_SECONDS = 300.0
 VALID = "valid"
 REJECTED = "rejected"
 UNKNOWN = "unknown"
+
+# --- 源T 欧赔读侧（odds-read-switch 票 02） ---
+
+# corpus 共识书集上限：按 bookmaker 维度全局覆盖数取 top-N（克隆去重缓议，
+# 记入票 02 歧义账）；sharp 主锚 cid177 永不因截断出局
+SRCT_EU_BOOK_CAP = 12
+SRCT_MARKET = "1x2"
 
 
 def parse_ts(value: str) -> datetime:
@@ -68,7 +84,7 @@ def reference_identity_class(ref: str | None) -> str:
     return "other"
 
 
-def effective_observed_at(row: sqlite3.Row) -> str | None:
+def effective_observed_at(row: SnapshotRow) -> str | None:
     """本机观测时间；旧行按源解释（odds_api*=captured_at，sporttery=未知）。"""
     observed = row["observed_at"]
     if observed:
@@ -78,7 +94,7 @@ def effective_observed_at(row: sqlite3.Row) -> str | None:
     return None
 
 
-def effective_source_updated_at(row: sqlite3.Row) -> str | None:
+def effective_source_updated_at(row: SnapshotRow) -> str | None:
     """源自报更新时间；sporttery 的 captured_at 即调盘时间（源语义）。"""
     updated = row["source_updated_at"]
     if updated:
@@ -122,9 +138,9 @@ class HadQuoteVerdict:
         self.reasons.append(reason)
 
 
-def latest_per_selection(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
+def latest_per_selection(rows: list[SnapshotRow]) -> dict[str, SnapshotRow]:
     """按 captured_at 取每选项最新一行（并列时 id 大者胜）。"""
-    latest: dict[str, sqlite3.Row] = {}
+    latest: dict[str, SnapshotRow] = {}
     for row in rows:
         sel = str(row["selection_code"])
         current = latest.get(sel)
@@ -140,7 +156,7 @@ def had_snapshot_rows(
     *,
     market_code: str = "had",
     purpose: str | None = None,
-) -> list[sqlite3.Row]:
+) -> list[SnapshotRow]:
     """一场比赛某市场的欧赔快照行（odds_api 源，按 captured_at,id 稳定排序）。"""
     sql = """
         SELECT * FROM odds_snapshots
@@ -154,7 +170,157 @@ def had_snapshot_rows(
     return conn.execute(sql, params).fetchall()
 
 
-def books_complete_asof(
+def srct_snapshot_rows_asof(
+    duck_con: DuckCon,
+    sid: str,
+    as_of: str,
+    *,
+    max_age_seconds: float | None = None,
+    exclusive: bool = False,
+) -> list[SnapshotRow]:
+    """
+    源T 逐书 as-of 最新三向（odds-read-switch 票 02 读侧桥）。
+
+    逐书取 ``published_at`` 最新一行（并列按 observed_at 决胜），admission
+    = ``observed_at`` ≤ as_of（重放语义：本机未看到的不进 as-of 决策）；
+    ``max_age_seconds`` 同口径对 observed_at 施下界。任一价 NULL 的书剔除
+    （三向不完整）。共识书集按 bookmaker 维度全局覆盖 top-N 截断
+    （cid177 主锚豁免）。产出伪快照行（dict，键同 odds_snapshots 语义列：
+    source/selection_code/odds/captured_at/observed_at/source_updated_at），
+    时间统一 UTC iso 秒（与 as_of 字符串比较兼容）。corpus 异常降级空表
+    并告警（EU 段空值，不炸调用方——corpus_anchor 同款降级哲学）。
+
+    ponytail: sid 无索引、逐场单查百毫秒级——今日页 28 场 ≈ 秒级可接受；
+    页面变慢后按 sid 批量聚合一次拿全。
+    """
+    cutoff = parse_ts(as_of)
+    compare = "<" if exclusive else "<="
+    age_clause = ""
+    age_param: list[object] = []
+    if max_age_seconds is not None:
+        floor = cutoff - timedelta(seconds=max_age_seconds)
+        age_clause = "AND observed_at >= ?"
+        age_param = [floor]
+    try:
+        rows = duck_con.execute(
+            f"""
+            SELECT bookmaker_id, odds_home, odds_draw, odds_away,
+                   published_at, observed_at
+            FROM (
+                SELECT bookmaker_id, odds_home, odds_draw, odds_away,
+                       published_at, observed_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY bookmaker_id
+                           ORDER BY published_at DESC NULLS LAST,
+                                    observed_at DESC NULLS LAST
+                       ) AS rn
+                FROM odds_change_event
+                WHERE sid = ? AND market = ? AND observed_at {compare} ?
+                      {age_clause}
+            ) ranked
+            WHERE rn = 1
+            """,  # noqa: S608 compare/age_clause 为常量白名单插值（<,<=/固定子句）
+            [sid, SRCT_MARKET, cutoff, *age_param],
+        ).fetchall()
+    except duckdb.Error as exc:
+        logger.warning("srct eu rows degraded: {}", exc)
+        return []
+    by_book: dict[str, tuple[float, float, float, str, str]] = {}
+    for book, home, draw, away, published, observed in rows:
+        if home is None or draw is None or away is None or observed is None:
+            continue
+        pub_iso = (
+            published.astimezone(UTC).isoformat(timespec="seconds")
+            if published is not None
+            else None
+        )
+        obs_iso = observed.astimezone(UTC).isoformat(timespec="seconds")
+        by_book[str(book)] = (
+            float(home),
+            float(draw),
+            float(away),
+            pub_iso or obs_iso,
+            obs_iso,
+        )
+    books = _cap_srct_books(duck_con, by_book)
+    pseudo: list[SnapshotRow] = []
+    for seq, (book, (h, d, a, source_time, observed_iso)) in enumerate(
+        sorted(books.items())
+    ):
+        for sel, price in zip(SELECTIONS, (h, d, a), strict=True):
+            pseudo.append(
+                {
+                    "id": seq,
+                    "source": book,
+                    "selection_code": sel,
+                    "odds": price,
+                    "captured_at": source_time,
+                    "observed_at": observed_iso,
+                    "source_updated_at": source_time,
+                }
+            )
+    return pseudo
+
+
+def _cap_srct_books(
+    duck_con: DuckCon, by_book: dict[str, tuple[float, float, float, str, str]]
+) -> dict[str, tuple[float, float, float, str, str]]:
+    """书集截断：bookmaker 维度全局覆盖 top-N；cid177 主锚豁免不截。"""
+    if len(by_book) <= SRCT_EU_BOOK_CAP:
+        return by_book
+    keep: set[str] = {SRCT_PINNACLE_BOOK} & set(by_book)
+    try:
+        ranked = duck_con.execute(
+            """
+            SELECT bookmaker_id FROM bookmaker
+            WHERE bookmaker_id IN (SELECT unnest(?))
+            ORDER BY match_count DESC
+            """,
+            [sorted(by_book)],
+        ).fetchall()
+    except duckdb.Error as exc:
+        logger.warning("srct book cap degraded, keeping all: {}", exc)
+        return by_book
+    for (book,) in ranked:
+        if len(keep) >= SRCT_EU_BOOK_CAP:
+            break
+        keep.add(str(book))
+    return {book: by_book[book] for book in sorted(keep)}
+
+
+def _eu_rows_asof(  # noqa: PLR0913 行源接缝集随 as-of/源切换口径累加（同 books_complete_asof）
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    duck_con: DuckCon | None,
+    sid: str | None = None,
+    purpose: str | None = None,
+    exclusive: bool = False,
+    max_age_seconds: float | None = None,
+) -> list[SnapshotRow]:
+    """
+    EU 行源统一分发（odds-read-switch 票 02）。
+
+    ``duck_con``+``sid`` 双给 → corpus 桥（as-of 已过滤，**corpus 唯一
+    真值，空即空不回退**——防历史评测口径混源）；sid 由调用方经
+    ``mapping.srct_sid_for_fixture`` 解析后传入（票 75 先例：本模块不
+    依赖 mapping，分层契约钉死）。缺任一 → legacy odds_snapshots（单测/
+    演示/9-25 前历史行，行未过滤由调用方体过滤）。purpose 行（closing
+    等 odds_api 专用语义）不走 corpus。
+    """
+    if duck_con is not None and sid is not None and purpose is None:
+        return srct_snapshot_rows_asof(
+            duck_con,
+            sid,
+            as_of,
+            max_age_seconds=max_age_seconds,
+            exclusive=exclusive,
+        )
+    return had_snapshot_rows(conn, fixture_id, purpose=purpose)
+
+
+def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口径累加（同 run_shift 先例）
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -163,17 +329,29 @@ def books_complete_asof(
     purpose: str | None = None,
     exclusive: bool = False,
     max_age_seconds: float | None = None,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> dict[str, dict[str, float]]:
     """
     as_of 时点可用的各 book 完整三向最新报价（本包统一的报价读取口径）。
 
-    资格按行判定：观测时间（旧行按源解释）须不晚于 as_of（exclusive=True
-    时严格早于）；给 max_age_seconds 时还须不早于 as_of − 该窗。每 book 按
-    captured_at 取各选项最新行，三向不完整的 book 剔除。
+    行源（odds-read-switch 票 02）：``duck_con`` 给定且有 srct 链 →
+    corpus 源T 逐书 as-of；否则 legacy odds_snapshots（odds_api 历史/
+    单测/演示口径）。资格按行判定：观测时间（旧行按源解释）须不晚于
+    as_of（exclusive=True 时严格早于）；给 max_age_seconds 时还须不早于
+    as_of − 该窗。每 book 按 captured_at 取各选项最新行，三向不完整的
+    book 剔除。
     """
-    by_book: dict[str, list[sqlite3.Row]] = {}
-    for row in had_snapshot_rows(
-        conn, fixture_id, market_code=market_code, purpose=purpose
+    by_book: dict[str, list[SnapshotRow]] = {}
+    for row in _eu_rows_asof(
+        conn,
+        fixture_id,
+        as_of,
+        duck_con=duck_con,
+        sid=sid,
+        purpose=purpose,
+        exclusive=exclusive,
+        max_age_seconds=max_age_seconds,
     ):
         observed = effective_observed_at(row)
         if observed is None:
@@ -196,10 +374,18 @@ def books_complete_asof(
 
 
 def eu_consensus_asof(
-    conn: sqlite3.Connection, fixture_id: int, as_of: str, *, market_code: str = "had"
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    market_code: str = "had",
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> dict[str, float] | None:
     """as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。"""
-    books = books_complete_asof(conn, fixture_id, as_of, market_code=market_code)
+    books = books_complete_asof(
+        conn, fixture_id, as_of, market_code=market_code, duck_con=duck_con, sid=sid
+    )
     if not books:
         return None
     consensus = om.consensus_odds(
@@ -209,6 +395,58 @@ def eu_consensus_asof(
         return None
     probs = om.shin_implied(consensus)
     return dict(zip(SELECTIONS, probs, strict=True))
+
+
+def eu_book_odds(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str = "had",
+    *,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
+) -> dict[str, dict[str, float]]:
+    """
+    Latest per-book odds for a fixture: ``selection -> {book: odds}``.
+
+    自 fixtures.py 迁入（odds-read-switch 票 02：欧赔读 SQL 归本包单一
+    出处）。行源同 ``_eu_rows_asof``——corpus 有链走源T，否则 legacy
+    ``odds_api:%``（as_of 取当下，不限年龄=「最新已知」口径不变）。
+    """
+    rows = _eu_rows_asof(conn, fixture_id, utc_now_iso(), duck_con=duck_con, sid=sid)
+    latest: dict[str, dict[str, tuple[str, float]]] = {}
+    for row in rows:
+        sel = str(row["selection_code"])
+        book = str(row["source"])
+        latest.setdefault(sel, {})[book] = (str(row["captured_at"]), float(row["odds"]))
+    return {
+        sel: {book: captured[1] for book, captured in books.items()}
+        for sel, books in latest.items()
+    }
+
+
+def eu_book_quotes(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str = "had",
+    *,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
+) -> dict[str, dict[str, tuple[float, str]]]:
+    """
+    Latest per-book quotes with capture time: ``book -> {selection: (odds, at)}``.
+
+    工作台 v2 票 02（研究页逐书赔率明细）；行源/迁入同 :func:`eu_book_odds`，
+    ``(fixture, market, book, selection)`` 取最新一条。
+    """
+    rows = _eu_rows_asof(conn, fixture_id, utc_now_iso(), duck_con=duck_con, sid=sid)
+    latest: dict[str, dict[str, tuple[float, str]]] = {}
+    for row in rows:
+        book = str(row["source"])
+        latest.setdefault(book, {})[str(row["selection_code"])] = (
+            float(row["odds"]),
+            str(row["captured_at"]),
+        )
+    return latest
 
 
 def market_rows_with_competition(
@@ -242,6 +480,8 @@ def adjudicate_had_quote(
     *,
     freshness_seconds: float = DEFAULT_FRESHNESS_SECONDS,
     max_pair_gap_seconds: float = DEFAULT_PAIR_GAP_SECONDS,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> HadQuoteVerdict:
     """
     判定某时点 had 报价是否可作正式候选依据。
@@ -283,7 +523,14 @@ def adjudicate_had_quote(
     _adjudicate_jc(conn, verdict, as_of, freshness_seconds)
     if verdict.status == REJECTED:
         return verdict
-    _adjudicate_eu(conn, verdict, as_of, max_pair_gap_seconds=max_pair_gap_seconds)
+    _adjudicate_eu(
+        conn,
+        verdict,
+        as_of,
+        max_pair_gap_seconds=max_pair_gap_seconds,
+        duck_con=duck_con,
+        sid=sid,
+    )
     return verdict
 
 
@@ -331,7 +578,7 @@ def _adjudicate_jc(
 
 def _book_asof(
     book: str,
-    book_rows: list[sqlite3.Row],
+    book_rows: list[SnapshotRow],
     jc_source_updated_at: str | None,
     *,
     max_pair_gap_seconds: float,
@@ -363,12 +610,12 @@ def _book_asof(
 
 def _collect_valid_books(
     verdict: HadQuoteVerdict,
-    eligible: list[sqlite3.Row],
+    eligible: list[SnapshotRow],
     *,
     max_pair_gap_seconds: float,
 ) -> dict[str, dict[str, float]]:
     """按 book 校验并把通过者写入 verdict 的 notes/时差/源时间字段。"""
-    by_book: dict[str, list[sqlite3.Row]] = {}
+    by_book: dict[str, list[SnapshotRow]] = {}
     for row in eligible:
         by_book.setdefault(str(row["source"]), []).append(row)
     valid_books: dict[str, dict[str, float]] = {}
@@ -404,8 +651,10 @@ def _adjudicate_eu(
     as_of: str,
     *,
     max_pair_gap_seconds: float,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> None:
-    rows = had_snapshot_rows(conn, verdict.fixture_id)
+    rows = _eu_rows_asof(conn, verdict.fixture_id, as_of, duck_con=duck_con, sid=sid)
     if not rows:
         verdict.mark_unknown("eu_no_quote")
         return
@@ -439,6 +688,8 @@ def _adjudicate_eu(
 
 # 主锚书（票 40 语义：单书 Shin）。与 evaluation/clv.PINNACLE_SOURCE 同值
 # 复制——分层禁止 data 上行 import evaluation，改动须两处同步。
+# odds-read-switch 票 02：活路径主锚 = 源T cid177（SRCT_PINNACLE_BOOK，
+# 票 75 收盘锚同书）；odds_api 值保留给历史行/legacy 路径（9-25 摘除）。
 SHARP_ANCHOR_SOURCE = "odds_api:pinnacle"
 # 定格端参考新鲜度上界：p0 过旧会把竞彩已吸收的冻前移动混入漂移（夸大），
 # 宁缺毋滥。12h 覆盖隔夜采集间隔；票 47 停售锚落地后临场窗口天然新鲜。
@@ -483,6 +734,8 @@ def sharp_probs_asof(
     *,
     max_age_seconds: float | None = None,
     anchor_only: bool = False,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> tuple[dict[str, float], str] | None:
     """
     As_of 时点的 sharp 参考概率与取法身份（pinnacle 主锚优先）。
@@ -490,20 +743,32 @@ def sharp_probs_asof(
     身份串含共识书集（排序拼接）——双端按书集精确判等同法，避免同数
     不同书误判（评审修正）。anchor_only=True 只认 pinnacle 主锚（缺=
     None，不走共识兜底——同步报价账本的单锚口径，measure-07）。
+    行源随 books_complete_asof（票 02）：corpus 路径主锚 = cid177，
+    身份串用书 id（双端同源恒等）；legacy 路径身份 "pinnacle" 不变。
     """
     books = books_complete_asof(
-        conn, fixture_id, as_of, max_age_seconds=max_age_seconds
+        conn,
+        fixture_id,
+        as_of,
+        max_age_seconds=max_age_seconds,
+        duck_con=duck_con,
+        sid=sid,
     )
-    anchor = books.get(SHARP_ANCHOR_SOURCE)
-    if anchor is not None:
-        probs = dict(
-            zip(
-                SELECTIONS,
-                om.shin_implied(tuple(anchor[s] for s in SELECTIONS)),
-                strict=True,
+    # 身份串契约：legacy="pinnacle"（持久化值不动）；srct=书 id（双端同源恒等）
+    for anchor_id, identity in (
+        (SHARP_ANCHOR_SOURCE, "pinnacle"),
+        (SRCT_PINNACLE_BOOK, SRCT_PINNACLE_BOOK),
+    ):
+        anchor = books.get(anchor_id)
+        if anchor is not None:
+            probs = dict(
+                zip(
+                    SELECTIONS,
+                    om.shin_implied(tuple(anchor[s] for s in SELECTIONS)),
+                    strict=True,
+                )
             )
-        )
-        return probs, "pinnacle"
+            return probs, identity
     if anchor_only:
         return None
     consensus = _probs_from_books(books)
@@ -513,13 +778,19 @@ def sharp_probs_asof(
 
 
 def stale_line_signal(
-    conn: sqlite3.Connection, fixture_id: int, *, as_of: str
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    *,
+    as_of: str,
+    duck_con: DuckCon | None = None,
+    sid: str | None = None,
 ) -> StaleLineSignal | None:
     """
     陈盘信号（票 48）：距竞彩上次调盘的时长 + sharp 参考自定格起的漂移。
 
     无竞彩 had 快照 → None（无信号可言）。纯读 odds_snapshots（SQL 归
-    本包），同 as_of 重算恒同值（重放确定性，验收项）。
+    本包），同 as_of 重算恒同值（重放确定性，验收项）。sharp 端行源随
+    ``duck_con`` 切 corpus（票 02）；双端同源同法，漂移可比性不破。
     """
     # observed_at 门槛（评审修正）：本机未看到的调盘不进 as-of 决策（重放
     # 语义）；旧行无 observed_at 时按 captured_at 解释（源调盘时间，票 35 口径）
@@ -545,8 +816,10 @@ def stale_line_signal(
         fixture_id,
         jc_last_move,
         max_age_seconds=SHARP_FREEZE_MAX_AGE_SECONDS,
+        duck_con=duck_con,
+        sid=sid,
     )
-    current = sharp_probs_asof(conn, fixture_id, as_of)
+    current = sharp_probs_asof(conn, fixture_id, as_of, duck_con=duck_con, sid=sid)
     if frozen is None or current is None or frozen[1] != current[1]:
         # 双端取法不一致（主锚中途出现/消失）→ 漂移不可比，只报时长
         return signal

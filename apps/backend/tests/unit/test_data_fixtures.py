@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from goalx_backend.data import fixtures as fx
+from goalx_backend.data import quote_evidence
 from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
 
 
@@ -119,7 +120,7 @@ def test_eu_book_odds_latest_per_book(db: sqlite3.Connection) -> None:
             captured_at="2026-09-12T16:00:00+00:00",
         ),
     )
-    books = fx.eu_book_odds(db, fixture)
+    books = quote_evidence.eu_book_odds(db, fixture)
     assert books["a"] == {"odds_api:pinnacle": 1.80, "odds_api:bet365": 1.90}
 
 

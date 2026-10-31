@@ -15,12 +15,14 @@ corpus.duckdb 本体只读打开同样拒绝（消费侧任何写路径被拒）
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
 from loguru import logger
 
-from goalx_backend.config import Settings
+from goalx_backend.config import Settings, get_settings
 from goalx_backend.data.corpus_store import GOLD_DATASET, GOLD_PROVIDER, CorpusStore
 from goalx_backend.data.ingest import (
     archive538,
@@ -123,6 +125,29 @@ def connect(settings: Settings) -> duckdb.DuckDBPyConnection:
         AS {RUNNING_FACE_ALIAS} (TYPE sqlite, READ_ONLY)"""
     )
     return con
+
+
+@contextmanager
+def reader(
+    settings: Settings | None = None,
+) -> Generator[duckdb.DuckDBPyConnection | None]:
+    """
+    请求域只读连接（odds-read-switch 票 02）：缺席/被写方锁占降级 None。
+
+    短生命周期——持有期会挡住 remat 写方开库（duckdb 单写锁），跨请求
+    常驻连接会弄死 08:10 物化，故按请求开合，绝不缓存进程级连接。
+    """
+    con: duckdb.DuckDBPyConnection | None
+    try:
+        con = connect(settings or get_settings())
+    except (duckdb.Error, OSError) as exc:
+        logger.warning("corpus reader degraded: {}", exc)
+        con = None
+    try:
+        yield con
+    finally:
+        if con is not None:
+            con.close()
 
 
 def hist_matches_count(con: duckdb.DuckDBPyConnection) -> int | None:
