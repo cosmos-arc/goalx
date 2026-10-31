@@ -28,7 +28,7 @@
 | 估值带（multiline 约束可行性，B 线归档工具） | ✓ | ✓ | — | — | measure 票 10（[3396a3c](https://github.com/cosmos-arc/goalx/commit/3396a3c)）+ PR#181 票 04 certified/conflicts 分流；归档为估值带工具非运行面 |
 | 密集锚/轨二快照（track2_snapshots） | ✓ | — | **✗** | — | 票 47（PR#57）+ 轨二（PR#169 [2288297](https://github.com/cosmos-arc/goalx/commit/2288297)）；**主库 0 行——代码在册、零候选触发，运行验收不达成是本表第一价值行** |
 | 语料树（raw-first + checkpoint + silver/gold） | ✓ | ✓ | ✓ | — | PR#77 体系；12 个 raw 数据集、fixture_universe 48,952 行、_meta 新鲜（10-27T00:10Z） |
-| serve 栈 + 晨检（17 面注册 + 09:05 七项） | ✓ | — | ✓ | — | schedules.py；2026-10-28 七项全绿（见下节对账） |
+| serve 栈 + 晨检（18 面注册 + 09:05 七项） | ✓ | — | ✓ | — | schedules.py；PR#186（[0f60040](https://github.com/cosmos-arc/goalx/commit/0f60040)）daily-capture-window 补进恢复清单，2026-10-31 12:36 重启注册 18 面（protocol-v1-window 在列，--only 日志行可证）；2026-10-28 七项全绿（见下节对账） |
 
 ## 与 09:05 晨检七项对账（2026-10-28，建表时手跑）
 
