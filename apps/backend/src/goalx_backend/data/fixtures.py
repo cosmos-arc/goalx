@@ -427,35 +427,6 @@ ORDER
     ).fetchall()
 
 
-def eu_book_odds(
-    conn: sqlite3.Connection, fixture_id: int, market_code: str = "had"
-) -> dict[str, dict[str, float]]:
-    """
-    Latest per-book odds for a fixture: ``selection -> {book: odds}``.
-
-    Only ``odds_api:*`` sources are considered (欧洲多 bookmaker 共识输入)。
-    """
-    rows = conn.execute(
-        """
-            SELECT selection_code, source, odds, captured_at FROM odds_snapshots
-WHERE
-            fixture_id = ? AND market_code = ? AND source LIKE 'odds_api:%'
-ORDER BY
-            captured_at, odds
-        """,
-        (fixture_id, market_code),
-    ).fetchall()
-    latest: dict[str, dict[str, tuple[str, float]]] = {}
-    for row in rows:
-        sel = str(row["selection_code"])
-        book = str(row["source"])
-        latest.setdefault(sel, {})[book] = (str(row["captured_at"]), float(row["odds"]))
-    return {
-        sel: {book: captured[1] for book, captured in books.items()}
-        for sel, books in latest.items()
-    }
-
-
 def fixtures_for_business_date(
     conn: sqlite3.Connection, business_date: str
 ) -> list[sqlite3.Row]:
@@ -490,36 +461,6 @@ LIMIT 1
         """,
         (fixture_id,),
     ).fetchone()
-
-
-def eu_book_quotes(
-    conn: sqlite3.Connection, fixture_id: int, market_code: str = "had"
-) -> dict[str, dict[str, tuple[float, str]]]:
-    """
-    Latest per-book quotes with capture time.
-
-    ``book -> {selection: (odds, captured_at)}``。工作台 v2 票 02（研究页
-    逐书赔率明细）；口径与 :func:`eu_book_odds` 一致，仅 ``odds_api:*`` 源
-    参与， ``(fixture, market, book, selection)`` 取最新一条。
-    """
-    rows = conn.execute(
-        """
-            SELECT selection_code, source, odds, captured_at FROM odds_snapshots
-WHERE
-            fixture_id = ? AND market_code = ? AND source LIKE 'odds_api:%'
-ORDER BY
-            captured_at, odds
-        """,
-        (fixture_id, market_code),
-    ).fetchall()
-    latest: dict[str, dict[str, tuple[float, str]]] = {}
-    for row in rows:
-        book = str(row["source"])
-        latest.setdefault(book, {})[str(row["selection_code"])] = (
-            float(row["odds"]),
-            str(row["captured_at"]),
-        )
-    return latest
 
 
 def fixtures_for_business_dates(

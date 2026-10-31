@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
 from goalx_backend.api.deps import get_db
+from goalx_backend.data import corpus_duckdb, mapping, quote_evidence
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import mapping
 from goalx_backend.data.fixtures import beijing_business_date
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
@@ -60,7 +60,10 @@ async def get_today_fixtures(
     ``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内
     ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
     """
-    return build_today_view(db, date or beijing_business_date(), days=days)
+    with corpus_duckdb.reader() as duck_con:
+        return build_today_view(
+            db, date or beijing_business_date(), days=days, duck_con=duck_con
+        )
 
 
 class OddsSnapshotView(BaseModel):
@@ -172,13 +175,16 @@ async def get_had_quote_verdict(
     """按 as-of 取 had 报价证据，返回 有效/未知/拒绝、原因、age 与两源时差。"""
     if fx_store.get_fixture(db, fixture_id) is None:
         raise HTTPException(status_code=404, detail="fixture not found")
-    verdict = adjudicate_had_quote(
-        db,
-        fixture_id,
-        as_of or datetime.now(UTC).isoformat(timespec="seconds"),
-        freshness_seconds=freshness_seconds,
-        max_pair_gap_seconds=max_pair_gap_seconds,
-    )
+    with corpus_duckdb.reader() as duck_con:
+        verdict = adjudicate_had_quote(
+            db,
+            fixture_id,
+            as_of or datetime.now(UTC).isoformat(timespec="seconds"),
+            freshness_seconds=freshness_seconds,
+            max_pair_gap_seconds=max_pair_gap_seconds,
+            duck_con=duck_con,
+            sid=mapping.srct_sid_for_fixture(db, fixture_id),
+        )
     return HadQuoteVerdictView(
         fixture_id=verdict.fixture_id,
         as_of=verdict.as_of,
@@ -282,7 +288,14 @@ async def get_fixture_research(
     moment = as_of or datetime.now(UTC).isoformat(timespec="seconds")
     jc = fx_store.latest_odds_by_selection(db, fixture_id, "had", "sporttery")
     jc_odds = SelectionTriple(**{s: jc.get(s, (None,))[0] for s in SELECTIONS})
-    quotes = fx_store.eu_book_quotes(db, fixture_id)
+    sid = mapping.srct_sid_for_fixture(db, fixture_id)
+    with corpus_duckdb.reader() as duck_con:
+        quotes = quote_evidence.eu_book_quotes(
+            db, fixture_id, duck_con=duck_con, sid=sid
+        )
+        verdict = adjudicate_had_quote(
+            db, fixture_id, moment, duck_con=duck_con, sid=sid
+        )
     view = FixtureResearchView(
         fixture_id=fixture_id,
         match_code=str(detail["match_code"]),
@@ -297,7 +310,6 @@ async def get_fixture_research(
         jc_odds=jc_odds,
         jc_updated_at=max((at for _, at in jc.values()), default=None),
     )
-    verdict = adjudicate_had_quote(db, fixture_id, moment)
     view.had_quote = HadQuoteStatus(
         as_of=moment,
         status=verdict.status,
