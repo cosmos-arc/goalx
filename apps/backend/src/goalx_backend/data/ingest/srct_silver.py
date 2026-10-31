@@ -150,11 +150,9 @@ def shift_live_rows(store: CorpusStore) -> list[dict[str, object]]:
             moment = datetime.fromisoformat(kickoff_utc)
         except ValueError:
             continue
-        naive = (
-            moment.astimezone(_CST).replace(tzinfo=None)
-            if moment.tzinfo is not None
-            else moment
-        )
+        if moment.tzinfo is None:  # 列名即 UTC；naive 视为畸形跳行
+            continue
+        naive = moment.astimezone(_CST).replace(tzinfo=None)
         out.append(
             {
                 "sid": str(sid),
@@ -166,16 +164,31 @@ def shift_live_rows(store: CorpusStore) -> list[dict[str, object]]:
     return out
 
 
-def fixture_rows_with_live(store: CorpusStore) -> list[dict[str, object]]:
+def merged_odds_meta(
+    store: CorpusStore,
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
     """
-    Odds 元数据 = 日页 fixture 行 ∪ 当期班兜底行（日页同名 sid 恒胜）。
+    Odds 合并元数据（票 03 单一出处）→ ``(meta, live_only)``。
 
-    全量/增量共一出处：同一份合并元数据保证两路径分区判定一致（孤儿
-    迁移字节级对齐，票 03 不变量）。
+    ``meta`` = 日页 fixture 行 ∪ 当期班兜底行（日页同名 sid 恒胜）；
+    ``live_only`` = 仅由当期班兜底的行（迁出分区推导要——live 锚→日页
+    接管时旧分区在 ``live_only`` 里，不在日页 ``old_meta`` 里）。全量/
+    增量同出处，分区判定一致（孤儿迁移字节级对齐不变量）。
     """
-    rows = fixture_rows(store)[0]
-    seen = {str(row["sid"]) for row in rows}
-    return rows + [r for r in shift_live_rows(store) if str(r["sid"]) not in seen]
+    meta = {str(row["sid"]): row for row in fixture_rows(store)[0]}
+    live_only: dict[str, dict[str, object]] = {}
+    for row in shift_live_rows(store):
+        sid = str(row["sid"])
+        if sid not in meta:
+            meta[sid] = row
+            live_only[sid] = row
+    return meta, live_only
+
+
+def fixture_rows_with_live(store: CorpusStore) -> list[dict[str, object]]:
+    """合并元数据行集（srct_odds 全量默认路径接缝；增量侧走 merged_odds_meta）。"""
+    meta, _ = merged_odds_meta(store)
+    return list(meta.values())
 
 
 def fixture_rows_from(

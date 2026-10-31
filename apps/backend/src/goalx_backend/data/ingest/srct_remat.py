@@ -186,9 +186,11 @@ def _run_incremental_odds(
     meta: dict[str, dict[str, object]],
     *,
     live_sids: set[str] | None = None,
+    shift_rows: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """触及集推导 + 过滤账本 + 分区重写（字节级=全量切片；异常记降级）。"""
     live_sids = live_sids if live_sids is not None else set()
+    shift_rows = shift_rows if shift_rows is not None else {}
     new_day_dates = {art.key for art in new_raw.get(srct.DAY_DATASET, [])}
     new_odds_sids = {
         art.key.split("@", 1)[0]
@@ -215,6 +217,12 @@ def _run_incremental_odds(
             )[0]
         }
         partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
+        # live 锚→日页接管（票 03）：旧分区在当期班侧而非旧日页——old_meta
+        # 无此 sid 行（此前无日页），漏触及=live 旧分区残留该 sid 行，树与
+        # 全量分叉。从当期班全量行推导（接管后 live_only 已不含该 sid）
+        partitions.update(
+            _partition_of(sid, shift_rows) for sid in day_sids if sid in shift_rows
+        )
     if day_sids or (new_odds_sids & live_sids):
         # _unknown 成对重写（票 11 F1 语义 + 票 03 扩充）：新日页解锁或
         # 当期班兜底锚定的迁出同样要求 _unknown 清驻留——漏触及=旧分区
@@ -360,11 +368,13 @@ def run_remat(
         except Exception as exc:
             logger.warning("srct-remat fixture 降级：{}", exc)
             report.degraded.append(f"fixture: {type(exc).__name__}")
-    # 合并元数据（票 03）：日页 fixture 行 ∪ 当期班兜底——增量/全量同出处
-    meta = {str(row["sid"]): row for row in srct_silver.fixture_rows_with_live(store)}
-    live_sids = {str(row["sid"]) for row in srct_silver.shift_live_rows(store)} - {
-        str(row["sid"]) for row in srct_silver.fixture_rows(store)[0]
-    }
+    # 合并元数据（票 03 单一出处）：日页 ∪ 当期班兜底；live_only 供增量侧
+    # 推导迁出分区（live 锚→日页接管时旧分区只在 live 侧）
+    meta, live_only = srct_silver.merged_odds_meta(store)
+    live_sids = set(live_only)
+    # 当期班全量行（接管判定用）：live 锚→日页接管后 live_only 已不含该
+    # sid（日页恒胜），但旧 live 分区仍需从当期班行推导
+    shift_rows_all = {str(r["sid"]): r for r in srct_silver.shift_live_rows(store)}
 
     # ---- xg（全量路径，门控：match_stats 有新工件） ----
     if stats_new or full:
@@ -385,7 +395,14 @@ def run_remat(
             report.degraded.append(f"odds_full: {type(exc).__name__}")
     elif odds_new or day_new:
         report.mode = "incremental"
-        _run_incremental_odds(store, report, new_raw, meta, live_sids=live_sids)
+        _run_incremental_odds(
+            store,
+            report,
+            new_raw,
+            meta,
+            live_sids=live_sids,
+            shift_rows=shift_rows_all,
+        )
 
     if report.degraded:
         logger.warning(

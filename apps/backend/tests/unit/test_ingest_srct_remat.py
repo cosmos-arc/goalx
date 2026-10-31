@@ -712,3 +712,42 @@ def test_shift_anchor_migration_rewrites_unknown_on_beat(tmp_path: Path) -> None
         assert not (_odds_root(store) / "season=_unknown").exists()
     finally:
         store.close()
+
+
+def test_day_page_takes_over_live_anchor_partition(tmp_path: Path) -> None:
+    """live 锚→日页接管：日页联赛/开球面接管后 live 旧分区成对清驻留。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        # 当期班档期面：90012 挂德乙（开球 10-02 18:30Z）
+        _seed_orphan_odds(store, "90012")
+        store.upsert_shift_match(
+            {
+                "sid": "90012",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T02:00:00+00:00",
+            }
+        )
+        srct_remat.run_remat(store)  # live 锚定 → 2025-26/德乙
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "德乙")} == {"90012"}
+
+        # 次日日页到位（西甲面，票 03 接管语义）→ 增量迁出含 live 旧分区
+        routes = _routes_for("2025-10-02", "90012", "西甲")
+        _collect(store, settings, routes, "2025-10-02")
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert "season=2025-26/competition=德乙" in report.affected_partitions
+        assert "season=2025-26/competition=西甲" in report.affected_partitions
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "西甲")} == {"90012"}
+        assert not (_odds_root(store) / "season=2025-26" / "competition=德乙").exists()
+        # 接管后全量等价（逐字节）
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()
