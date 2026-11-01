@@ -924,6 +924,15 @@ class CorpusStore:
         )
         return None if row is None else dict(row)
 
+    def latest_raw_fetched_at(self) -> str | None:
+        """语料树最新工件抓取时刻（晨检 36h 新鲜面；空树 None）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT MAX(fetched_at) FROM raw_artifacts")
+            .fetchone()
+        )
+        return str(row[0]) if row and row[0] else None
+
     def upsert_remat_state(
         self, watermark: str, last_rowid: int, bronze_sid_counts: str
     ) -> None:

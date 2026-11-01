@@ -319,6 +319,14 @@ def funnel_liveness(conn: sqlite3.Connection) -> str | None:
     return str(row[0]) if row and row[0] else None
 
 
+def latest_funnel_created_at(conn: sqlite3.Connection) -> str | None:
+    """最新漏斗行落库时刻（晨检 wrap 新鲜面；空表 None）。"""
+    row = conn.execute(
+        "SELECT created_at FROM funnel_days ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def funnel_day_row(conn: sqlite3.Connection, business_date: str) -> sqlite3.Row | None:
     """读一日汇总（日终报告/接口共用读口）。"""
     return conn.execute(

@@ -188,3 +188,32 @@ def build_today_view(
             view.flags.append(LOW_CONFIDENCE_FLAG)
         rows.append(view)
     return rows
+
+
+def board_coverage(conn: sqlite3.Connection, business_date: str) -> tuple[int, int]:
+    """
+    今日板覆盖（晨检第 8 项）：(总场数, 已链场数)。
+
+    已链 = 有 srct 链（欧赔输入面与今日页 joined 同口径）。
+    """
+    total = conn.execute(
+        """
+            SELECT COUNT(DISTINCT f.id) FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id
+              AND mc.kind = 'jingcai' AND mc.business_date = ?
+        """,
+        (business_date,),
+    ).fetchone()[0]
+    joined = conn.execute(
+        """
+            SELECT COUNT(DISTINCT f.id) FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id
+              AND mc.kind = 'jingcai' AND mc.business_date = ?
+            WHERE EXISTS (
+                SELECT 1 FROM source_match_links l
+                WHERE l.fixture_id = f.id AND l.source = 'srct'
+            )
+        """,
+        (business_date,),
+    ).fetchone()[0]
+    return int(total), int(joined)
