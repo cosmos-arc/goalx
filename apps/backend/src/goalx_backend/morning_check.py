@@ -196,14 +196,17 @@ def check_jc_waiting(
     项 11 JC 在售等源T（票 05 补缺面的兜底可见性）。
 
     视界内（补缺同源 36h）竞彩业务日在售场无 srct 链 = 等源T（黄）；
-    开球 ≤2h 仍未链 = 临界（红——补缺面失效的示警面，正常应被当期班
-    补缺清零）。票面原"范围外"桶被补缺设计取代：韩职类场现在也走编号
-    直连补链（测试钉死），残差未链=真异常该红，不再按联赛豁免。
+    红面两类（correctness F1：深夜场临界窗 23:00-03:00 无观察点，晨检
+    09:05 只能看到"已开球仍未链"）——①开球 ≤2h 未链（前瞻）②近 36h
+    内已开球未链（昨夜残差，晨检最强信号）。票面原"范围外"桶被补缺
+    设计取代：韩职类场现在也走编号直连补链（测试钉死），残差未链=真
+    异常该红，不再按联赛豁免。等的是源T live 轨迹：odds_api 历史链
+    单独在场不豁免（判据=srct linked，偏离 joined 广义口径有注记）。
     """
     rows = fx_store.jc_board_rows_in_horizon(
         conn,
         business_dates=business_dates,
-        kickoff_from_iso=now.isoformat(timespec="seconds"),
+        kickoff_from_iso=(now - GAP_HORIZON).isoformat(timespec="seconds"),
         kickoff_to_iso=(now + GAP_HORIZON).isoformat(timespec="seconds"),
     )
     linked = mapping.srct_sids_for_fixtures(conn, [int(r["fid"]) for r in rows])
@@ -219,16 +222,19 @@ def check_jc_waiting(
         status = DEGRADED
     else:
         status = OK
+    played = [r for r in critical if datetime.fromisoformat(str(r["kickoff"])) <= now]
+    upcoming = [r for r in critical if r not in played]
     names = [
-        f"{r['code']} {r['home']}vs{r['away']}" for r in critical[:_CRITICAL_NAME_CAP]
+        f"{r['code']} {r['home']}vs{r['away']}" + ("（已开球）" if r in played else "")
+        for r in critical[:_CRITICAL_NAME_CAP]
     ]
     detail = (
-        f"等源T {len(waiting)} 场（≤2h 临界 {len(critical)} 场："
+        f"等源T {len(waiting)} 场（昨夜残差 {len(played)}，≤2h 临界 {len(upcoming)}："
         + "；".join(names)
         + ("…" if len(critical) > _CRITICAL_NAME_CAP else "")
         + "）"
         if waiting
-        else f"视界内 {len(rows)} 场全链"
+        else f"窗内 {len(rows)} 场全链"
     )
     return CheckItem("jc_waiting", status, detail)
 
@@ -316,7 +322,11 @@ def run_morning_check(
                         fx_store.beijing_business_date(
                             resolved_now + timedelta(days=off)
                         )
-                        for off in (0, 1)
+                        for off in (
+                            -1,
+                            0,
+                            1,
+                        )  # 含昨日业务日：昨夜深夜场残差（correctness F1）
                     ),
                 ),
             )

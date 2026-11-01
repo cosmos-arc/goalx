@@ -91,7 +91,8 @@ class ShiftStats:
     close_beats: int = 0
     out_scope: int = 0  # 非 CorpusScope 建档数（本轮新见）
     missing_kickoff: int = 0  # MatchTime 不可解建档数（无拍可调度留痕）
-    # 发现面补缺（票 05）：JC 在售等源T 数 / bfdata 编号直连补到的 sid 数
+    # 发现面补缺（票 05）：视界内 JC 在售数（corpus 侧近似，未减已链）/
+    # bfdata 编号直连补到的 sid 数（真差集口径的补侧面）
     gap_waiting: int = 0
     gap_filled: int = 0
     requests: int = 0
@@ -146,15 +147,21 @@ class JcWaitingRow:
 
 @dataclass(frozen=True)
 class BfGapRow:
-    """bfdata 行的补缺投影：竞彩编号 → (sid, 开球北京 HH:MM)。"""
+    """
+    bfdata 行的补缺投影：竞彩编号 → (sid, 候选开球北京时刻集)。
+
+    行内同形 JS 参数串不止开球一种（已完赛行混更新时刻，correctness
+    F3 实测）——收集全部同形字段，完整日期门任一相等即过，防钟面撞车
+    与更新时刻先中。
+    """
 
     sid: str
-    hhmm: str
+    kickoffs: tuple[datetime, ...]
 
 
-def parse_bfdata(body: bytes) -> dict[str, BfGapRow]:
-    """bfdata_ut.js → 竞彩编号 → 行投影（纯函数；无编号行跳过，同码保首）。"""
-    out: dict[str, BfGapRow] = {}
+def parse_bfdata(body: bytes) -> dict[str, list[BfGapRow]]:
+    """bfdata_ut.js → 竞彩编号 → 候选行集（纯函数；无编号行跳过，同码全收）。"""
+    out: dict[str, list[BfGapRow]] = {}
     for match in re.finditer(
         r'[ABC]\[\d+\]="([^"]*)"', body.decode("utf-8", "replace")
     ):
@@ -162,16 +169,23 @@ def parse_bfdata(body: bytes) -> dict[str, BfGapRow]:
         if len(parts) < _BF_MIN_FIELDS or not parts[0].isdigit():
             continue
         code = next((f for f in parts if _JC_CODE_RE.match(f)), None)
-        date_raw = next((f for f in parts if _JS_DATE_RE.match(f)), None)
-        if code is None or date_raw is None or code in out:
+        if code is None:
             continue
-        g = _JS_DATE_RE.match(date_raw)
-        if g is None:  # pragma: no cover - date_raw 已由同正则筛过
-            continue
-        out[code] = BfGapRow(
-            sid=parts[0],
-            hhmm=f"{int(g.group(4)):02d}:{int(g.group(5)):02d}",
+        # JS Date 参数串月 0-based（parse_match_time 同规）；全收防更新时刻先中
+        kickoffs = tuple(
+            datetime(
+                int(g.group(1)),
+                int(g.group(2)) + 1,
+                int(g.group(3)),
+                int(g.group(4)),
+                int(g.group(5)),
+                tzinfo=BEIJING,
+            )
+            for g in (_JS_DATE_RE.match(f) for f in parts)
+            if g is not None
         )
+        if kickoffs:
+            out.setdefault(code, []).append(BfGapRow(sid=parts[0], kickoffs=kickoffs))
     return out
 
 
@@ -245,30 +259,44 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
     )
     response.raise_for_status()
     coded = parse_bfdata(response.content)
+    if not coded:
+        # 面级缺账（票 03 惯例对偶，correctness F2）：有等待场而响应零编码行
+        # ——200 伪体（缺 Referer/防爬变形）不得静默归零
+        stats.failed["gap_fill"] = "bfdata 有响应但零编码行（面级缺账）"
+        logger.warning(
+            "srct shift 补缺 bfdata 零编码行（响应 {} 字节）", len(response.content)
+        )
+        return []
     out: list[str] = []
     for wait in waiting:
-        bf = coded.get(wait.code)
-        if bf is None:
-            continue  # 当日文件无此编号：明日场等它的"当日"到（视界内自愈）
-        beijing_hhmm = wait.kickoff.astimezone(BEIJING).strftime("%H:%M")
-        if bf.hhmm != beijing_hhmm:
-            # 编号回收/改期残行防线：编号相同开球不齐不补（宁缺勿错）
-            logger.warning(
-                "srct shift 补缺 {} 开球不齐（JC={} bf={}），跳过",
-                wait.code,
-                beijing_hhmm,
-                bf.hhmm,
-            )
-            continue
-        if bf.sid in sids or bf.sid in known:
+        candidates = coded.get(wait.code) or []
+        # 完整日期门（correctness F3）：候选行任一开球时刻与 JC 开球相等
+        # 才补——同码残行/更新时刻串/钟面撞车全被此门挡下（宁缺勿错）
+        matched = next(
+            (
+                row
+                for row in candidates
+                if wait.kickoff.astimezone(BEIJING) in row.kickoffs
+            ),
+            None,
+        )
+        if matched is None:
+            if candidates:
+                logger.warning(
+                    "srct shift 补缺 {} 开球不齐（JC={}），跳过",
+                    wait.code,
+                    wait.kickoff.astimezone(BEIJING).isoformat(timespec="minutes"),
+                )
+            continue  # 无候选=明日场等它的"当日"到（视界内自愈）
+        if matched.sid in sids or matched.sid in known:
             continue  # Ba_Soccer 已有/已建档
-        out.append(bf.sid)
+        out.append(matched.sid)
         logger.info(
             "srct shift 补缺：{} {} vs {} → sid {}（Ba_Soccer 缺）",
             wait.code,
             wait.home,
             wait.away,
-            bf.sid,
+            matched.sid,
         )
     stats.gap_filled = len(out)
     return out

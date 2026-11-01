@@ -330,9 +330,35 @@ BFDATA_JS = (
 
 def test_parse_bfdata_code_join_projection() -> None:
     coded = srct_shift.parse_bfdata(BFDATA_JS)
-    # 编号直连：code → (sid, 北京 HH:MM)；JS 日期参数月 0-based（08=9月）
-    assert coded["周六105"] == srct_shift.BfGapRow(sid="4004444", hhmm="20:00")
-    assert coded["周六106"] == srct_shift.BfGapRow(sid="4005555", hhmm="21:00")
+    # 编号直连：code → 候选行集；JS 日期参数月 0-based（08=9月）+ 北京墙钟
+    assert coded["周六105"] == [
+        srct_shift.BfGapRow(
+            sid="4004444",
+            kickoffs=(datetime(2026, 9, 26, 20, 0, tzinfo=srct_shift.BEIJING),),
+        )
+    ]
+    assert coded["周六106"][0].sid == "4005555"
+
+
+def test_parse_bfdata_full_date_gate_beats_update_stamp() -> None:
+    """correctness F3：更新时刻串先中/同码残行——全候选集+完整日期门防错补。"""
+    # 行内混两个同形参数串：真开球 20:00 前先出现当日 15:30 更新时刻
+    body = (
+        'var A=Array(1);A[1]="4006666^x^\u8377\u7532^x^^\u4e3b^x^^\u5ba2^x^^'
+        '20:00^2026,8,26,15,30,00^2026,8,26,20,00,00^\u5468\u516d107^x^0"'
+    ).encode()
+    coded = srct_shift.parse_bfdata(body)
+    kickoffs = coded["周六107"][0].kickoffs
+    assert datetime(2026, 9, 26, 20, 0, tzinfo=srct_shift.BEIJING) in kickoffs
+    assert datetime(2026, 9, 26, 15, 30, tzinfo=srct_shift.BEIJING) in kickoffs
+    # 同码双行（改期残行）：全收，门取开球齐的那行
+    body2 = (
+        "var A=Array(2);"
+        'A[1]="4007777^x^\u8377\u7532^x^^\u4e3b^x^^\u5ba2^x^^18:00^2026,8,26,18,00,00^\u5468\u516d108^x^0";'
+        'A[2]="4008888^x^\u8377\u7532^x^^\u4e3b^x^^\u5ba2^x^^20:00^2026,8,26,20,00,00^\u5468\u516d108^x^0"'
+    ).encode()
+    coded2 = srct_shift.parse_bfdata(body2)
+    assert len(coded2["周六108"]) == 2  # 残行不丢，交门裁决
 
 
 def _seed_jc_row(store: CorpusStore, *, code: str, kickoff_utc: str) -> None:
@@ -437,6 +463,35 @@ def test_gap_fill_no_waiting_no_fetch(tmp_path: Path) -> None:
     )
     assert stats.gap_waiting == 0
     assert "/bfdata_ut.js" not in fetched
+
+
+def test_gap_fill_bfdata_face_miss_accounted(tmp_path: Path) -> None:
+    """correctness F2：有等待场而 bfdata 200 伪体（零编码行）——面级缺账
+    进 failed，不静默归零（票 03 惯例对偶）。"""
+    settings = _settings(tmp_path).model_copy(
+        update={"srct_bfdata_url": "https://srct.test/bfdata_ut.js"}
+    )
+    store = CorpusStore(settings.corpus_root)
+    _seed_jc_row(store, code="周六105", kickoff_utc="2026-09-26T12:00:00+00:00")
+    store.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/basid/BaSID.js":
+            return httpx.Response(200, content=SAMPLE_BASID)
+        if request.url.path == "/bfdata_ut.js":
+            return httpx.Response(200, content=b"<html>blocked</html>")
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, _ = _run(
+        tmp_path,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        now_utc,
+        settings=settings,
+    )
+    assert stats.gap_waiting == 1
+    assert "零编码行" in stats.failed["gap_fill"]
+    assert stats.gap_filled == 0
 
 
 def test_jc_code_column_migration(tmp_path: Path) -> None:

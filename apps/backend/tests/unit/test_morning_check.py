@@ -295,3 +295,28 @@ def test_check_jc_waiting_buckets(db: sqlite3.Connection) -> None:
     db.commit()
     item = check_jc_waiting(db, now=NOW, business_dates=(bd, bd_next))
     assert item.status == OK  # 全链绿
+
+
+def test_check_jc_waiting_overnight_residual_is_red(db: sqlite3.Connection) -> None:
+    """correctness F1：深夜场临界窗（23:00-03:00）无观察点——晨检 09:05 的
+    最强信号=近 36h 内已开球仍未链（昨夜残差），必须红。"""
+    from goalx_backend.morning_check import check_jc_waiting
+
+    bd = fx_store.beijing_business_date(NOW)
+    bd_prev = fx_store.beijing_business_date(NOW - timedelta(days=1))
+    comp = fx_store.upsert_competition(db, "荷甲", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "格罗宁根")
+    away = fx_store.upsert_team(db, "鹿特丹斯巴达")
+    # 昨日业务日的深夜场：北京今晨 01:00 已开球 8h、未链
+    fixture = fx_store.upsert_fixture(db, comp, "2026-10-31T17:00:00+00:00", home, away)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture, kind="jingcai", business_date=bd_prev, code="周六015"
+        ),
+    )
+    db.commit()
+    item = check_jc_waiting(db, now=NOW, business_dates=(bd_prev, bd))
+    assert item.status == FAIL
+    assert "昨夜残差 1" in item.detail
+    assert "周六015" in item.detail
