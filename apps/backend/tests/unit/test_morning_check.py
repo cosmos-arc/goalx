@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from goalx_backend import morning_check as mc
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
@@ -213,3 +214,39 @@ def test_check_pool_drift_detects_goals4_outage(db: sqlite3.Connection) -> None:
     # 官方 jqc 面空（过渡态）且库旧 → 仍红（断供复发形态）
     empty_face = check_pool_drift(db, settings, _pool_client(jqc=None))
     assert empty_face.status == FAIL
+
+
+def test_check_stack_timeout_is_red_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """correctness F1：connect_ex 超时抛 TimeoutError → 红/黄不炸。"""
+
+    class DeadSocket:
+        def settimeout(self, _: float) -> None: ...
+
+        def connect_ex(self, _: tuple[str, int]) -> int:
+            raise TimeoutError("timed out")
+
+        def close(self) -> None: ...
+
+    monkeypatch.setattr(mc, "socket", type("s", (), {"socket": DeadSocket}))
+    item = mc.check_stack()
+    assert item.status == FAIL
+    assert item.detail.count("down") >= 1
+
+
+def test_check_pool_drift_bad_body_degrades(db: sqlite3.Connection) -> None:
+    """correctness F2：200+HTML 体（WAF 页）→ 黄不崩。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>denied</html>")
+
+    item = check_pool_drift(
+        db, Settings(), httpx.Client(transport=httpx.MockTransport(handler)), now=NOW
+    )
+    assert item.status == DEGRADED
+
+
+def test_check_serve_log_prefect_crashed_marker(tmp_path: Path) -> None:
+    """correctness F3：Prefect 实际拼写 Crashed（title case）必须命中。"""
+    log = tmp_path / "serve.log"
+    log.write_text("x\nFinished in state Crashed('Flow run process was terminated')\n")
+    assert check_serve_log(log).status == DEGRADED

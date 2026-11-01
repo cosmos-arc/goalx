@@ -43,7 +43,7 @@ _LEDGER_DEGRADED_HOURS = 48
 _CORPUS_FRESH_HOURS = 36
 _GOALS4_STALE_DAYS = 7
 _SERVE_LOG_TAIL_BYTES = 200_000
-_SERVE_LOG_MARKERS = ("CRASHED", "Traceback")
+_SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,11 @@ def check_stack(*, api_port: int = 8000, prefect_port: int = 4200) -> CheckItem:
         probe = socket.socket()
         probe.settimeout(2.0)
         try:
+            # connect_ex 只覆盖立即失败（RST）；超时路径抛 TimeoutError
+            # （correctness F1：栈僵死形态必须落红绿面不得炸整检）
             reachable = probe.connect_ex(("127.0.0.1", port)) == 0
+        except OSError:
+            reachable = False
         finally:
             probe.close()
         (up if reachable else down).append(label)
@@ -197,8 +201,19 @@ def check_pool_drift(
     resolved_now = now or datetime.now(UTC)
     try:
         value = zucai_official.fetch_current(client, settings)
-    except (httpx.HTTPError, RuntimeError) as exc:
-        return CheckItem("pool_drift", DEGRADED, f"官方当期端点不可达: {exc}")
+    except (
+        # HTTP/网错、success=false、200+非 JSON 体（JSONDecodeError⊂ValueError）、
+        # 响应形状漂移（AttributeError）、非数字期号（int() ValueError）
+        # ——correctness F2：探测器不得因端点形态漂移而崩，一律黄
+        httpx.HTTPError,
+        RuntimeError,
+        ValueError,
+        AttributeError,
+        KeyError,
+    ) as exc:
+        return CheckItem(
+            "pool_drift", DEGRADED, f"官方当期端点异常: {type(exc).__name__} {exc}"
+        )
     problems: list[str] = []
     for market, face_key in (("ttt14", "sfcMatch"), ("goals4", "jqcMatch")):
         face = cast("dict[str, Any]", value.get(face_key) or {})
