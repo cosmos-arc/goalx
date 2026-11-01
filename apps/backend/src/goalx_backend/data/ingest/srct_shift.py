@@ -27,7 +27,7 @@ raw 键加拍后缀（``{sid}@open`` / ``@daily-{date}{slot}`` / ``@close``）�
 latest-per-sid 语义天然收敛到收口行（在售期为最新拍，收口后为终版页）。
 sid 建档表 srct_shift_matches（corpus_store）；拍去重=checkpoint has()。
 
-防封与夜班共用口径：25/min 滑窗硬顶、2.4s±0.8s 抖动、请求预算（当次运行
+防封与夜班共用口径：30/min 滑窗硬顶、2.4s±0.8s 抖动、请求预算（当次运行
 上限，缺省 600）；01:00-08:00 家宽夜窗让位夜班不跑。拍失败不重试本轮
 （无 raw 键即下轮自动重试——拍天然幂等自愈）。
 """
@@ -290,7 +290,7 @@ def _bump_beats(
     return row
 
 
-def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累加（同 collect_day 先例）
+def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四类拍/缺账面累加（同 collect_day 先例）
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -359,6 +359,13 @@ def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累�
         srct.SRCT_PROVIDER, SHIFT_ENTRY_DATASET, entry_key, body, ext=".js"
     )
     sids = parse_basid(body)
+    if not sids and b"Ba_Soccer" not in body:
+        # 面级缺账（票 03）：200 有体但清单变量消失（反爬变形候选）。
+        # 合法零在售（var Ba_Soccer=""）不算缺账——correctness F2 判据=
+        # 变量名在场与否；ponytail: 改版只搅内容不删变量名时本探针失明，
+        # 升级路径=discovered 长期 0 与日历先验交叉。
+        stats.failed["_entry"] = "BaSID 有响应但无清单变量（0 sid）"
+        logger.warning("srct shift BaSID 无清单变量（响应 {} 字节）", len(body))
     stats.discovered = len(sids)
     stats.known = sum(1 for sid in sids if sid in known)
     for sid in sids:

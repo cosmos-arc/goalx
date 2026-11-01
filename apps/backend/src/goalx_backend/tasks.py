@@ -43,6 +43,7 @@ from goalx_backend.data.ingest import (
     guardian,
     oddsapi,
     openfootball,
+    propline,
     sporttery,
     srcb,
     srct,
@@ -108,6 +109,20 @@ def eu_odds_snapshot() -> oddsapi.OddsIngestStats:
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
         return oddsapi.fetch_and_store_odds(
+            conn, settings, client, raw_root=settings.observations_dir
+        )
+
+
+def propline_capture() -> propline.ProplineRunStats:
+    """
+    PropLine 手动快照（2026-11-01 票 06 裁决：留库 + manual CLI 入口）。
+
+    三源停采后无调度入口——本入口保住备用重启能力（美洲/日职覆盖），
+    日限额护栏由 provider 侧 429 fail-closed 保证。
+    """
+    settings = get_settings()
+    with task_conn() as conn, polite_client() as client:
+        return propline.fetch_and_store_odds(
             conn, settings, client, raw_root=settings.observations_dir
         )
 

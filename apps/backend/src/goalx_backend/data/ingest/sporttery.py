@@ -191,6 +191,9 @@ class IngestStats:
     snapshots: int = 0
     duplicate_snapshots: int = 0
     observation_id: int | None = None
+    # 缺账（票 03，防整面静默空）：场次零玩法块 / 玩法块全场缺席
+    no_market_matches: int = 0
+    empty_markets: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -406,6 +409,20 @@ def _append_sale_status_once(conn: sqlite3.Connection, status: SaleStatusInput) 
     return True
 
 
+def _account_empty_faces(matches: list[ParsedMatch], stats: IngestStats) -> None:
+    """
+    票 03 缺账：玩法块缺席/无有效报价的静默缩面留痕。
+
+    场级（零玩法块的场次）与面级（全 payload 缺席的玩法）都计数。
+    """
+    for match in matches:
+        if not match.markets:
+            stats.no_market_matches += 1
+    if matches:
+        present = {quote.market_code for m in matches for quote in m.markets}
+        stats.empty_markets = [code for code in POOL_CODES if code not in present]
+
+
 def store_matches(
     conn: sqlite3.Connection,
     matches: list[ParsedMatch],
@@ -415,6 +432,7 @@ def store_matches(
 ) -> IngestStats:
     """把解析结果幂等入库（fixtures/match_codes/odds_snapshots/sale_statuses）。"""
     stats = IngestStats(observation_id=observation_id)
+    _account_empty_faces(matches, stats)
     observed = observed_at or utc_now_iso()
     for match in matches:
         sport_key, tier = LEAGUE_MAP.get(match.league, (None, Tier.TIER2))

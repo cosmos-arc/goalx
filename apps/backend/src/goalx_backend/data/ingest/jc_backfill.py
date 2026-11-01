@@ -40,29 +40,40 @@ class JcBackfillStats:
     days_attempted: int = 0
     days_done: int = 0  # 该日全部 mid 裸键已齐（零请求跳过计入）
     mids_seen: int = 0
+    rows_without_matchid: int = 0  # uniform 行缺 matchId 被滤掉的行数（票 03 缺账）
     matches_collected: int = 0  # bronze 非空场
     empty: int = 0  # oddsHistory={} 合法空
     stopped: str | None = None  # budget；None=区间跑完
     failed_days: dict[str, str] = field(default_factory=dict)
 
 
-def enumerate_day_mids(client: httpx.Client, settings: Settings, day: str) -> list[str]:
-    """一日 uniform 赛果 → matchId 清单（升序去重）。"""
+def enumerate_day_mids(
+    client: httpx.Client, settings: Settings, day: str
+) -> tuple[list[str], int]:
+    """
+    一日 uniform 赛果 → (matchId 清单升序去重, 缺 matchId 行数)。
+
+    缺口留痕（票 03）：行存在但 matchId 缺（形状漂移候选）不再零痕迹。
+    """
     rows = uniform.fetch_uniform_results(client, settings, day, day)
-    return sorted({str(row["matchId"]) for row in rows if row.get("matchId")})
+    dropped = sum(1 for row in rows if not row.get("matchId"))
+    return (
+        sorted({str(row["matchId"]) for row in rows if row.get("matchId")}),
+        dropped,
+    )
 
 
 def day_missing_mids(
     store: CorpusStore, client: httpx.Client, settings: Settings, day: str
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int]:
     """
-    一日待采 mid 清单（裸键缺的）＋该日总数。
+    一日待采 mid 清单（裸键缺的）＋该日总数＋缺 matchId 行数。
 
-    返回 (missing, total)；total 用于 done 判据记账。
+    返回 (missing, total, dropped)；total 用于 done 判据记账。
     """
-    mids = enumerate_day_mids(client, settings, day)
+    mids, dropped = enumerate_day_mids(client, settings, day)
     missing = [m for m in mids if not store.has(jc.JC_PROVIDER, jc.SP_DATASET, m)]
-    return missing, len(mids)
+    return missing, len(mids), dropped
 
 
 def backfill_range(  # noqa: C901, PLR0912, PLR0913, PLR0915 日循环+日账+预算分支随护栏累加
@@ -96,7 +107,7 @@ def backfill_range(  # noqa: C901, PLR0912, PLR0913, PLR0915 日循环+日账+�
             continue
         try:
             budget.charge(1)  # 枚举（uniform 按日）也是线上请求
-            missing, total = day_missing_mids(store, client, settings, day)
+            missing, total, dropped = day_missing_mids(store, client, settings, day)
         except srct.NightStop as stop:
             stats.stopped = stop.reason
             return stats
@@ -108,6 +119,7 @@ def backfill_range(  # noqa: C901, PLR0912, PLR0913, PLR0915 日循环+日账+�
             current -= timedelta(days=1)
             continue
         stats.mids_seen += total
+        stats.rows_without_matchid += dropped
         if not missing:
             stats.days_done += 1
             store.set_jc_backfill_day(day)  # 该日 mid 全采齐 → 入日账

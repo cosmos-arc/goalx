@@ -336,3 +336,34 @@ def test_fetch_and_store_end_to_end(db) -> None:
     ).fetchone()
     assert snap["captured_at"] == "2026-09-21T05:22:18+00:00"
     assert snap["source_updated_at"] == "2026-09-21T05:22:18+00:00"
+
+
+# —— 票 03 缺账：事件零完整书被静默丢（API 改版候选）+ 票 06 manual 入口 ——
+def test_skipped_no_books_counted(db) -> None:
+    """三向解析全失败 → 事件静默消失必须留计数（goals4 断供同族）。"""
+    seed_jingcai(db)
+    # 两个事件：一个健康（EVENTS 样本），一个 books 全不可解析（价格键改版）
+    from copy import deepcopy
+
+    broken = deepcopy(EVENTS[0])
+    for book in broken["bookmakers"]:
+        for market in book["markets"]:
+            market["outcomes"] = []  # 无 outcome → 零完整书
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=[broken, *EVENTS], headers={"X-Daily-Remaining": "900"}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    stats = propline.fetch_and_store_odds(db, Settings(propline_api_key="k"), client)
+    assert stats.skipped_no_books == 1  # 坏事件计数
+    assert stats.ingest.events == 1  # 好事件照入库（行为不变）
+
+
+def test_propline_capture_cli_registered() -> None:
+    """票 06 裁决：备用源留库 + manual CLI 入口可点火（子命令注册钉住）。"""
+    from goalx_backend.cli import build_parser
+
+    subcommands = build_parser().parse_known_args(["propline-capture"])[0].command
+    assert subcommands == "propline-capture"

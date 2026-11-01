@@ -31,16 +31,28 @@ from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 
 
 @flow(name="jingcai-snapshot", log_prints=True)
-def jingcai_snapshot_flow() -> dict[str, int]:
+def jingcai_snapshot_flow() -> dict[str, object]:
     """拉取竞彩官方全玩法报价：原始证据落盘 + append-only 入库（票 35）。"""
     stats = tasks.jingcai_snapshot()
+    if stats.no_market_matches or stats.empty_markets:
+        # 缺账面（票 03）：玩法块缩面/缺席——官方改版候选，不得静默
+        logger.warning(
+            "jingcai 缺账：{} 场零玩法块，缺席玩法 {}",
+            stats.no_market_matches,
+            stats.empty_markets,
+        )
     logger.info(
         "jingcai snapshot: {} matches, {} snapshots ({} dup)",
         stats.matches,
         stats.snapshots,
         stats.duplicate_snapshots,
     )
-    return {"matches": stats.matches, "snapshots": stats.snapshots}
+    return {
+        "matches": stats.matches,
+        "snapshots": stats.snapshots,
+        "no_market_matches": stats.no_market_matches,
+        "empty_markets": stats.empty_markets,
+    }
 
 
 @flow(name="fd-history-import", log_prints=True)
