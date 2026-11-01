@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -154,27 +155,30 @@ def test_check_serve_log(tmp_path: Path) -> None:
 def _pool_client(
     *, sfc: str = "26155", jqc: str | None = "26225", fail: bool = False
 ) -> httpx.Client:
+    """官方当期端点 mock：兼容单请求（90,0 带两面）与按 game 双请求两形态。"""
+
+    def _face(draw: str | None) -> dict[str, Any]:
+        return {"lotteryDrawNum": draw, "matchList": [{"matchNum": 1}]} if draw else {}
+
     def handler(request: httpx.Request) -> httpx.Response:
         if fail:
             return httpx.Response(500, text="boom")
         param = str(request.url.params["param"])
         if param.startswith("94,"):
-            face = (
-                {"jqcMatch": {"lotteryDrawNum": jqc, "matchList": [{"matchNum": 1}]}}
-                if jqc
-                else {"jqcMatch": {}}
-            )
-            return httpx.Response(200, json={"success": True, "value": face})
-        face = {
-            "sfcMatch": {"lotteryDrawNum": sfc, "matchList": [{"matchNum": 1}]},
-        }
-        return httpx.Response(200, json={"success": True, "value": face})
+            value = {"jqcMatch": _face(jqc)}
+        else:
+            value = {
+                "sfcMatch": _face(sfc),
+                # 90,0 的 jqc 面在 2026-07 后恒空（官方改按 game 下发）
+                "jqcMatch": {},
+            }
+        return httpx.Response(200, json={"success": True, "value": value})
 
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
 def test_check_pool_drift(db: sqlite3.Connection) -> None:
-    """当期在库=绿；库内落后=红（goals4 探测器）；面空+库旧=红；端点挂=黄。"""
+    """当期在库=绿；端点挂=黄。"""
     settings = Settings()
     pool_store.upsert_pool_period(db, "ttt14", "26155", _iso(-10))
     pool_store.upsert_pool_period(db, "goals4", "26225", _iso(-10))
@@ -182,6 +186,19 @@ def test_check_pool_drift(db: sqlite3.Connection) -> None:
     assert check_pool_drift(db, settings, _pool_client()).status == OK
     degraded = check_pool_drift(db, settings, _pool_client(fail=True))
     assert degraded.status == DEGRADED
+
+
+def test_check_pool_drift_detects_lag(db: sqlite3.Connection) -> None:
+    """差集分支（票面验收"库内期号落后官方在售→红"）：sfc 库止 26150、
+    官方在售 26155 → 红。goals4 的活面差集要待 zucai 双请求修复（票 02）
+    合入后才可达，其断供形态在单请求版由 7 天陈旧分支兜住（见下用例）。"""
+    settings = Settings()
+    pool_store.upsert_pool_period(db, "ttt14", "26150", _iso(-10))
+    pool_store.upsert_pool_period(db, "goals4", "26225", _iso(-10))
+    db.commit()
+    item = check_pool_drift(db, settings, _pool_client(), now=NOW)
+    assert item.status == FAIL
+    assert "官方在售 26155 > 库内 26150" in item.detail
 
 
 def test_check_pool_drift_detects_goals4_outage(db: sqlite3.Connection) -> None:

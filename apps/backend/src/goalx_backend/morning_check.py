@@ -2,8 +2,8 @@
 09:05 晨检代码化（ingest-orchestration 票 01）：9+1 项只读红绿面。
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
-晨检防缺数据。本模块只读不修（repair 各归其主）；网络项仅第 10 项发
-2 个官方当期请求（漂移对账）。CLI `goalx morning-check` 输出逐项
+晨检防缺数据。本模块只读不修（repair 各归其主）；网络面仅第 10 项
+漂移对账走官方当期端点（≤2 请求）。CLI `goalx morning-check` 输出逐项
 [ok|degraded|fail] + 退出码（任何 fail → 1；degraded 不红）。
 
 阈值（票 01 人裁决项写死）：
@@ -29,7 +29,7 @@ from goalx_backend.betting import funnel
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import price_ledger, today
+from goalx_backend.data import pool, price_ledger, today
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
@@ -182,7 +182,11 @@ def check_bets(conn: sqlite3.Connection) -> CheckItem:
 
 
 def check_pool_drift(
-    conn: sqlite3.Connection, settings: Settings, client: httpx.Client
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: httpx.Client,
+    *,
+    now: datetime | None = None,
 ) -> CheckItem:
     """
     项 10 传足当期漂移（goals4 断供探测器）。
@@ -190,6 +194,7 @@ def check_pool_drift(
     官方当期在售期号 vs 库内最新期号差集 → fail；官方面空但库内最新
     截止超 7 天 → fail（断供复发形态）；端点失败 → degraded。
     """
+    resolved_now = now or datetime.now(UTC)
     try:
         value = zucai_official.fetch_current(client, settings)
     except (httpx.HTTPError, RuntimeError) as exc:
@@ -198,23 +203,14 @@ def check_pool_drift(
     for market, face_key in (("ttt14", "sfcMatch"), ("goals4", "jqcMatch")):
         face = cast("dict[str, Any]", value.get(face_key) or {})
         official = str(face.get("lotteryDrawNum") or "")
-        db_row = conn.execute(
-            (
-                "SELECT MAX(period_no) AS p, MAX(sales_deadline) AS d"
-                " FROM pool_periods WHERE market_code = ?"
-            ),
-            (market,),
-        ).fetchone()
-        db_max = str(db_row["p"]) if db_row and db_row["p"] else ""
+        db_max, db_deadline = pool.latest_period_and_deadline(conn, market)
         if official:
             if not db_max or int(db_max) < int(official):
                 problems.append(
                     f"{market}: 官方在售 {official} > 库内 {db_max or '无'}"
                 )
         else:
-            stale_days = _age_hours(
-                str(db_row["d"]) if db_row else None, datetime.now(UTC)
-            )
+            stale_days = _age_hours(db_deadline, resolved_now)
             if not db_max or stale_days is None or stale_days > _GOALS4_STALE_DAYS * 24:
                 problems.append(
                     f"{market}: 官方面空且库内无近期期（最新 {db_max or '无'}）"
@@ -229,10 +225,12 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 10 项（只读；第 10 项发 2 个官方请求）。"""
+    """跑全部 10 项（只读；网络面仅第 10 项官方当期端点）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack()]
+    # 只读红线注记：CorpusStore 冷启动会幂等自建 checkpoint 表（mkdir+DDL），
+    # 语料根缺失时晨检不因此炸——接受（表结构幂等，无数据写入）
     store = CorpusStore(settings.corpus_root)
     conn = db_mod.connect(settings.db_path, readonly=True)
     try:
