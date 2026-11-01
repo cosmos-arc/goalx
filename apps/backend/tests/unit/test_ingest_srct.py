@@ -1555,16 +1555,35 @@ def test_ingest_raw_race_tolerant(tmp_path, monkeypatch) -> None:
 _SHAPE_BROKEN_ROW = _ROW_EPL.replace(
     "<font color=blue>0</font>-<font color=red>3</font>", "改版残行"
 )
+# 合法非完赛行（correctness F1）：推迟场——完赛标记不在，不计数不告警
+_POSTPONED_ROW = _ROW_EPL.replace(
+    "<td class=style1>完</td>", "<td class=style1>推</td>"
+)
 
 
 def test_parse_over_page_shape_skips_counter() -> None:
-    html = f"<html><table>{_ROW_EPL}{_SHAPE_BROKEN_ROW}</table></html>"
+    html = f"<html><table>{_ROW_EPL}{_SHAPE_BROKEN_ROW}{_POSTPONED_ROW}</table></html>"
     skips: list[int] = []
     matches = srct.parse_over_page(html, shape_skips=skips)
     assert [m.sid for m in matches] == ["2789205"]  # 好行照解析
-    assert len(skips) == 1  # 坏行计数 ≥1 且不炸
+    # 只计完赛标记在的真漂移行；推迟行（合法非完赛）不计数
+    assert len(skips) == 1
     # 不传计数口行为不变（既有调用面）
     assert [m.sid for m in srct.parse_over_page(html)] == ["2789205"]
+
+
+def test_collect_day_all_postponed_not_false_face(tmp_path: Path) -> None:
+    """correctness F1 反例钉死：整日全推迟 → 无 shape 告警、无 parse_failed。"""
+    postponed_page = (
+        "<html><head><meta charset='gb2312'></head><body><table>"
+        f"{_POSTPONED_ROW * 3}</table></body></html>"
+    ).encode("gb18030")
+    seen, routes = _transport_spy()
+    routes["day"] = httpx.Response(200, content=postponed_page)
+    stats, _store = _collect(tmp_path, seen, routes)
+    assert stats.day_page_shape_skips == 0
+    assert stats.parse_failed == {}
+    assert stats.scope_sids == []
 
 
 def test_collect_day_day_page_shape_broken_face_accounted(tmp_path: Path) -> None:

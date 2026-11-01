@@ -359,10 +359,11 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
         srct.SRCT_PROVIDER, SHIFT_ENTRY_DATASET, entry_key, body, ext=".js"
     )
     sids = parse_basid(body)
-    if not sids:
-        # 面级缺账（票 03）：200 有体但清单变量消失（反爬变形候选）——
-        # discovered=0 只是隐含可见，缺账进 failed 对齐 zucai 断供惯例；
-        # 不改行为：空清单照常走完（JC 拍相位不受牵连）
+    if not sids and b"Ba_Soccer" not in body:
+        # 面级缺账（票 03）：200 有体但清单变量消失（反爬变形候选）。
+        # 合法零在售（var Ba_Soccer=""）不算缺账——correctness F2 判据=
+        # 变量名在场与否；ponytail: 改版只搅内容不删变量名时本探针失明，
+        # 升级路径=discovered 长期 0 与日历先验交叉。
         stats.failed["_entry"] = "BaSID 有响应但无清单变量（0 sid）"
         logger.warning("srct shift BaSID 无清单变量（响应 {} 字节）", len(body))
     stats.discovered = len(sids)

@@ -296,3 +296,19 @@ def test_basid_body_without_soccer_var_face_accounted(tmp_path: Path) -> None:
     assert stats.discovered == 0
     assert "BaSID 有响应但无清单变量" in stats.failed["_entry"]
     assert stats.stopped is None  # 不早退：照常走完
+
+
+def test_basid_legal_empty_on_sale_not_face_miss(tmp_path: Path) -> None:
+    """correctness F2：var Ba_Soccer="" 合法零在售——不算缺账（无 failed）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/basid/BaSID.js":
+            return httpx.Response(200, content=b'var Ba_Soccer="";var Ba_Basket="999";')
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, _store = _run(
+        tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), now_utc
+    )
+    assert stats.discovered == 0
+    assert "_entry" not in stats.failed  # 合法零在售不算缺账（JC 相位 mock 噪声另计）

@@ -325,9 +325,12 @@ def parse_over_page(
     """
     Over 日页 → 完赛场次行（无副作用；非完赛/无 sid 行跳过）。
 
-    shape_skips（缺账惯例，ingest-orchestration 票 03）：可选出参计数，
-    sid 行存在但行形状（字段/队名）解析失败时追加——日页改版致全行
-    不匹配时，调用方面级缺账可见，不再零痕迹（zucai 断供 4 个月同族）。
+    shape_skips（缺账惯例，ingest-orchestration 票 03）：可选出参计数。
+    只计"完赛标记在（联赛/时间/完 齐）而队名/比分形状解析失败"的行——
+    这是页改版/数据残缺的真漂移面；完赛标记不在的行（推迟/腰斩/取消，
+    Over 页常驻合法非完赛行）照旧静默跳过。
+    ponytail: 若改版恰好只吃"完"标记本身，本计数失明——该形态十年未
+    见，升级路径=全页 sid 行零解析且零计数时按面级疑点告警。
     """
     matches: list[DayMatch] = []
     for chunk in re.split(r"<tr", html):
@@ -340,8 +343,8 @@ def parse_over_page(
         fields = _ROW_FIELDS_RE.match(text)
         teams = _TEAMS_RE.search(text)
         if fields is None or teams is None:
-            if shape_skips is not None:
-                shape_skips.append(1)
+            if fields is not None and shape_skips is not None:
+                shape_skips.append(1)  # 完赛标记在 → 真形状漂移
             continue
         matches.append(
             DayMatch(
@@ -1613,11 +1616,13 @@ def _account_day_page_shape(
         return
     stats.day_page_shape_skips = len(shape_skips)  # collect_day 每日单次调用
     logger.warning(
-        "srct {} 日页 {} 行形状解析失败（页改版候选）", date, len(shape_skips)
+        "srct {} 日页 {} 完赛行队名/比分形状解析失败（页改版候选）",
+        date,
+        len(shape_skips),
     )
     if not parsed:
         stats.parse_failed[f"{date}:day_page"] = (
-            f"shape_broken: {len(shape_skips)} sid rows, 0 parsed"
+            f"shape_broken: {len(shape_skips)} final rows, 0 parsed"
         )
 
 
