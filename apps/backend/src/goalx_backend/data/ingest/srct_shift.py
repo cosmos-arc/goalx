@@ -130,6 +130,18 @@ _JS_DATE_RE = re.compile(r"^(\d{4}),(\d{1,2}),(\d{1,2}),(\d{2}),(\d{2}),(\d{2})$
 # 等源T 视界：只对临开球 ≤36h 的 JC 在售场做补缺——当日 bfdata 覆盖
 # 当晚+次日凌晨场，更远的场等它的"当日"到了自然可见（文件只出当日）
 GAP_HORIZON = timedelta(hours=36)
+# live 主机同站防爬的缓存参数（缺则 200 空体/伪 404，票 65 实测）
+_CACHE_BUSTER = "007"
+
+
+@dataclass(frozen=True)
+class JcWaitingRow:
+    """JC 当期拍行的等源T 投影（编号/开球/队名）。"""
+
+    code: str
+    kickoff: datetime
+    home: str
+    away: str
 
 
 @dataclass(frozen=True)
@@ -163,11 +175,9 @@ def parse_bfdata(body: bytes) -> dict[str, BfGapRow]:
     return out
 
 
-def _jc_waiting_rows(
-    store: CorpusStore, now: datetime
-) -> list[tuple[str, datetime, str, str]]:
-    """JC 当期拍行 → 视界内等源T 列表 [(编号, 开球, 主, 客)]。"""
-    waiting: list[tuple[str, datetime, str, str]] = []
+def _jc_waiting_rows(store: CorpusStore, now: datetime) -> list[JcWaitingRow]:
+    """JC 当期拍行 → 视界内等源T 列表。"""
+    waiting: list[JcWaitingRow] = []
     for row in store.jc_shift_matches().values():
         if row.get("finalized"):
             continue
@@ -181,7 +191,12 @@ def _jc_waiting_rows(
             continue
         if now < moment <= now + GAP_HORIZON:
             waiting.append(
-                (str(code), moment, str(row.get("home")), str(row.get("away")))
+                JcWaitingRow(
+                    code=str(code),
+                    kickoff=moment,
+                    home=str(row.get("home")),
+                    away=str(row.get("away")),
+                )
             )
     return waiting
 
@@ -221,7 +236,7 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
     stats.requests += 1
     response = client.get(
         settings.srct_bfdata_url,
-        params={"r": "007"},
+        params={"r": _CACHE_BUSTER},
         headers={
             "User-Agent": DESKTOP_UA,
             **({"Referer": live_root.group(0) + "/"} if live_root else {}),
@@ -231,16 +246,16 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
     response.raise_for_status()
     coded = parse_bfdata(response.content)
     out: list[str] = []
-    for code, kickoff, home, away in waiting:
-        bf = coded.get(code)
+    for wait in waiting:
+        bf = coded.get(wait.code)
         if bf is None:
             continue  # 当日文件无此编号：明日场等它的"当日"到（视界内自愈）
-        beijing_hhmm = kickoff.astimezone(BEIJING).strftime("%H:%M")
+        beijing_hhmm = wait.kickoff.astimezone(BEIJING).strftime("%H:%M")
         if bf.hhmm != beijing_hhmm:
             # 编号回收/改期残行防线：编号相同开球不齐不补（宁缺勿错）
             logger.warning(
                 "srct shift 补缺 {} 开球不齐（JC={} bf={}），跳过",
-                code,
+                wait.code,
                 beijing_hhmm,
                 bf.hhmm,
             )
@@ -250,9 +265,9 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
         out.append(bf.sid)
         logger.info(
             "srct shift 补缺：{} {} vs {} → sid {}（Ba_Soccer 缺）",
-            code,
-            home,
-            away,
+            wait.code,
+            wait.home,
+            wait.away,
             bf.sid,
         )
     stats.gap_filled = len(out)
@@ -478,7 +493,7 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
         stats.requests += 1
         response = client.get(
             settings.srct_basid_url,
-            params={"r": "007"},
+            params={"r": _CACHE_BUSTER},
             headers={
                 "User-Agent": DESKTOP_UA,
                 **({"Referer": live_root.group(0) + "/"} if live_root else {}),

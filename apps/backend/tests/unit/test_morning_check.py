@@ -284,6 +284,7 @@ def test_check_jc_waiting_buckets(db: sqlite3.Connection) -> None:
     item = check_jc_waiting(db, now=NOW, business_dates=(bd, bd_next))
     assert item.status == FAIL  # 开球 +1h：临界红
     assert "临界 1" in item.detail
+    assert "周日102" in item.detail  # 名单单列（票面验收措辞）
     for fid in (far, critical):
         db.execute(
             "INSERT INTO source_match_links (fixture_id, source, source_match_id,"

@@ -33,6 +33,7 @@ from goalx_backend.data import mapping, pool, price_ledger, today
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
+from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
 
 OK = "ok"
 DEGRADED = "degraded"
@@ -44,9 +45,9 @@ _CORPUS_FRESH_HOURS = 36
 _GOALS4_STALE_DAYS = 7
 _SERVE_LOG_TAIL_BYTES = 200_000
 _SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
-# 票 05 等源T 视界：与补缺 GAP_HORIZON 同口径（36h）；临界=开球 ≤2h 仍未链
-_JC_WAITING_HOURS = 36
+# 票 05 等源T：临界=开球 ≤2h 仍未链（视界=补缺 GAP_HORIZON 同源）
 _JC_WAITING_CRITICAL = timedelta(hours=2)
+_CRITICAL_NAME_CAP = 3  # 名单单列上限（多则省略号）
 
 
 @dataclass(frozen=True)
@@ -194,40 +195,39 @@ def check_jc_waiting(
     """
     项 11 JC 在售等源T（票 05 补缺面的兜底可见性）。
 
-    视界内（≤36h 开球）竞彩业务日在售场无 srct 链 = 等源T；开球 ≤2h
-    仍未链 = 临界（红——补缺面失效的示警面，正常应被当期班补缺清零）。
+    视界内（补缺同源 36h）竞彩业务日在售场无 srct 链 = 等源T（黄）；
+    开球 ≤2h 仍未链 = 临界（红——补缺面失效的示警面，正常应被当期班
+    补缺清零）。票面原"范围外"桶被补缺设计取代：韩职类场现在也走编号
+    直连补链（测试钉死），残差未链=真异常该红，不再按联赛豁免。
     """
-    marks = ",".join("?" for _ in business_dates)
-    rows = conn.execute(
-        f"""
-            SELECT DISTINCT f.id AS fid, f.kickoff_utc AS kickoff
-            FROM fixtures f
-            JOIN match_codes mc ON mc.fixture_id = f.id
-              AND mc.kind = 'jingcai' AND mc.business_date IN ({marks})
-            WHERE f.kickoff_utc > ? AND f.kickoff_utc <= ?
-        """,  # noqa: S608 — 占位符由 business_dates 定宽构造，非用户输入
-        (
-            *business_dates,
-            now.isoformat(timespec="seconds"),
-            (now + timedelta(hours=_JC_WAITING_HOURS)).isoformat(timespec="seconds"),
-        ),
-    ).fetchall()
+    rows = fx_store.jc_board_rows_in_horizon(
+        conn,
+        business_dates=business_dates,
+        kickoff_from_iso=now.isoformat(timespec="seconds"),
+        kickoff_to_iso=(now + GAP_HORIZON).isoformat(timespec="seconds"),
+    )
     linked = mapping.srct_sids_for_fixtures(conn, [int(r["fid"]) for r in rows])
-    waiting_kickoffs = [str(r["kickoff"]) for r in rows if int(r["fid"]) not in linked]
+    waiting = [r for r in rows if int(r["fid"]) not in linked]
     critical = [
-        k
-        for k in waiting_kickoffs
-        if datetime.fromisoformat(k) <= now + _JC_WAITING_CRITICAL
+        r
+        for r in waiting
+        if datetime.fromisoformat(str(r["kickoff"])) <= now + _JC_WAITING_CRITICAL
     ]
     if critical:
         status = FAIL
-    elif waiting_kickoffs:
+    elif waiting:
         status = DEGRADED
     else:
         status = OK
+    names = [
+        f"{r['code']} {r['home']}vs{r['away']}" for r in critical[:_CRITICAL_NAME_CAP]
+    ]
     detail = (
-        f"等源T {len(waiting_kickoffs)} 场（≤2h 临界 {len(critical)} 场）"
-        if waiting_kickoffs
+        f"等源T {len(waiting)} 场（≤2h 临界 {len(critical)} 场："
+        + "；".join(names)
+        + ("…" if len(critical) > _CRITICAL_NAME_CAP else "")
+        + "）"
+        if waiting
         else f"视界内 {len(rows)} 场全链"
     )
     return CheckItem("jc_waiting", status, detail)

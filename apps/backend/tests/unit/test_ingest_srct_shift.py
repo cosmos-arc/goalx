@@ -466,3 +466,48 @@ def test_jc_code_column_migration(tmp_path: Path) -> None:
     rows = reopened.jc_shift_matches()
     assert rows["2041105"]["code"] == "周六105"  # type: ignore[index]
     reopened.close()
+
+
+def test_gap_fill_out_of_scope_league_still_fills(tmp_path: Path) -> None:
+    """票 05 验收语义更新钉死：原"范围外"桶被补缺取代——韩职类 JC 场
+    同样走编号直连补链（建档 in_scope=0 与 Ba_Soccer 范围外场同待遇），
+    不再按联赛豁免。"""
+    settings = _settings(tmp_path).model_copy(
+        update={"srct_bfdata_url": "https://srct.test/bfdata_ut.js"}
+    )
+    store = CorpusStore(settings.corpus_root)
+    store.upsert_jc_shift_match(
+        {
+            "match_id": "2041999",
+            "league": "韩K",
+            "home": "蔚山",
+            "away": "全北",
+            "kickoff_utc": "2026-09-26T12:00:00+00:00",
+            "beats": 0,
+            "finalized": 0,
+            "code": "周六105",
+        }
+    )
+    store.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/basid/BaSID.js":
+            return httpx.Response(200, content=SAMPLE_BASID)
+        if path == "/bfdata_ut.js":
+            return httpx.Response(200, content=BFDATA_JS)
+        if path.startswith("/odds/4004444"):
+            return httpx.Response(
+                200, content=_odds_js("4004444", "韩K联", "2026,8,26,12,00,00")
+            )
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, store = _run(
+        tmp_path,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        now_utc,
+        settings=settings,
+    )
+    assert stats.gap_filled == 1
+    assert "4004444" in store.shift_matches()
