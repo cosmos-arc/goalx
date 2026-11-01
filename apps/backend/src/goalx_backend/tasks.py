@@ -206,15 +206,22 @@ def odds_anchor_dense() -> dict[str, object]:
     评估锚：开球前 5 分钟桶内的已 join 场次定向拉取（meta anchor=kickoff，
     CLV 收盘基准收紧）；决策锚：停售探测检出 on_sale→stopped 迁移后立即
     拉取（meta anchor=sale_stop，决策时点公允线，票 48 陈盘信号的数据
-    供给）。两锚零候选零请求；失败不重试（30 分钟 closing 循环兜底）。
+    供给）。两锚零候选零请求（开售轮询带内 probe 补拍除外，票 04）；
+    失败不重试、无兜底拍（closing 循环为判死面）——kickoff 桶跨桶不
+    重火，故探测腿异常降级留痕、绝不牵连同拍 kickoff 桶（票 04 F1）。
     """
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
         now = datetime.now(UTC)
-        # 探测先行（零 credit）：kickoff 锚腿异常不阻断停售检测与状态时间线
-        probe = sporttery.probe_sale_stops(
-            conn, settings, client, raw_root=settings.observations_dir
-        )
+        # 探测先行（零 credit）；开售轮询带内可能发请求 → 异常须降级：
+        # kickoff 桶只属一拍（跨桶不重火），probe 炸整拍=该桶锚永久缺失
+        try:
+            probe = sporttery.probe_sale_stops(
+                conn, settings, client, raw_root=settings.observations_dir
+            )
+        except (httpx.HTTPError, ValueError, sqlite3.Error) as exc:
+            logger.warning("sale probe degraded（{}）：本拍停售检测/开售轮询让位", exc)
+            probe = sporttery.SaleStopProbe()
         bucket_start, bucket_end = oddsapi.kickoff_bucket_bounds(now)
         kickoff_targets = [
             (str(row["odds_api_event_id"]), str(row["odds_api_sport_key"]))

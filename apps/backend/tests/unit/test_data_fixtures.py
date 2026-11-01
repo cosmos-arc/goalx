@@ -233,10 +233,12 @@ def test_sale_window_phase_cross_day_anchor_ignored() -> None:
 
 
 def test_sale_window_anchor_observation_cadence_blind_band() -> None:
-    """钉住盲带语义（correctness W1）：普通日锚=首观测（19:00 北京），
-    正午 not_on_sale 的相位归 pre_open→窗外——观测节奏限制下按已知信息
-    保守归因；改观测节奏或收紧语义时本测试是警示灯。"""
-    anchor = "2026-10-22T11:00:00+00:00"  # 普通日 19:00 北京首拍 on_sale
+    """钉住盲带语义（correctness W1；票 04 观测加密后语义更新）：锚=首观测
+    非真开售时刻，[缺省开, 锚) 带内 not_on_sale 保守归窗外。观测密度
+    =10:00/12:30/16:30/19:00 定拍 + probe 开售轮询（北京 [11:00,12:30)
+    5 分钟一拍至翻转）→ 销售日盲带 ≈轮询拍距；改观测节奏或收紧语义时
+    本测试是警示灯。"""
+    anchor = "2026-10-22T11:00:00+00:00"  # 首拍 on_sale（19:00 北京定拍日形态）
     assert (
         fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor) == "pre_open"
     )
@@ -245,4 +247,11 @@ def test_sale_window_anchor_observation_cadence_blind_band() -> None:
             fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor)
         )
         == "sale_window_closed"
+    )
+    # 票 04 形态：probe 轮询翻转（11:35 北京）→ 锚=翻转拍点，带内仅剩
+    # [真开售, 翻转拍) ≤5 分钟
+    polled_anchor = "2026-10-22T03:35:00+00:00"
+    assert (
+        fx.sale_window_phase("2026-10-22T03:40:00+00:00", anchor=polled_anchor)
+        == "in_window"
     )

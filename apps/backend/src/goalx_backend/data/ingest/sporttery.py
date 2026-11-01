@@ -36,6 +36,8 @@ import sqlite3
 import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from datetime import date as d_date
+from datetime import time as dtime
 from pathlib import Path
 from typing import Any
 
@@ -583,6 +585,30 @@ _PROBE_SOON_MINUTES = 180  # 开球前 3h 内恒探测
 _PROBE_EVENING_HOUR = 19  # 北京 ≥19 点起，探测次日内（凌晨场）停售迁移
 _PROBE_HORIZON_MINUTES = 16 * 60  # 粗筛上限（北京 19 点覆盖到次日上午开球）
 
+# 开售锚轮询带（ingest-orchestration 票 04）：起点由属主的缺省开售界
+# 推导（前移 30min 防早开），终点让位 12:30 可购窗拍（调度耦合字面量）。
+# 带内零候选也拍——开售翻转即锚，精度=拍距 5 分钟，盲带收窄至拍距。
+# ponytail: 唤醒风暴下积压拍并发全落带内时请求 burst 至积压拍数（锚由
+# MIN(observed_at) 吸收正确性无损）；锁败率实测超阈值再加跨拍互斥。
+_SALE_OPEN_POLL_START = (
+    datetime.combine(d_date.min, fx_store.SALE_WINDOW_DEFAULT_OPEN)
+    - timedelta(minutes=30)
+).time()
+_SALE_OPEN_POLL_END = dtime(12, 30)
+
+
+def _sale_open_poll_due(conn: sqlite3.Connection, moment: datetime) -> bool:
+    """开售锚轮询到期：带内且当日尚无 on_sale 锚（有锚即停，幂等省请求）。"""
+    wall = moment.astimezone(CST).time()
+    if not (_SALE_OPEN_POLL_START <= wall < _SALE_OPEN_POLL_END):
+        return False
+    return (
+        fx_store.sale_window_anchor(
+            conn, fx_store.beijing_day(moment.isoformat(timespec="seconds"))
+        )
+        is None
+    )
+
 
 @dataclass
 class SaleStopProbe:
@@ -603,7 +629,7 @@ def probe_sale_stops(
     now: datetime | None = None,
 ) -> SaleStopProbe:
     """
-    停售加密探测（票 47 双锚之决策锚）。
+    停售加密探测（票 47 双锚之决策锚）+ 开售锚轮询（票 04）。
 
     候选 = 已 join、未 stopped、「开球 ≤3h 或 北京 ≥19 点的 16h 内场次」。
 
@@ -614,6 +640,10 @@ def probe_sale_stops(
     构成停售证据，消失是唯一停售信号；已落 stopped（本函数前轮写入）
     的候选行确认为已检出。返回检出停售的候选行（含
     odds_api_event_id/sport_key，供决策锚定向拉取）。
+
+    票 04 开售锚轮询：零候选但处于北京 [11:00,12:30) 开售带且当日尚无
+    on_sale 锚时也拍一次——开售翻转即锚（5 分钟精度），当日盲带收窄至拍距；
+    有锚即停（翻转前每 5 分钟 1 请求，正常日 ≈6-7 请求）。
     """
     moment = now or datetime.now(UTC)
     now_iso = moment.isoformat(timespec="seconds")
@@ -632,7 +662,7 @@ def probe_sale_stops(
         )
     ]
     probe = SaleStopProbe(candidates=len(candidates))
-    if not candidates:
+    if not candidates and not _sale_open_poll_due(conn, moment):
         return probe
     stats, matches, observation_id = _capture_pipeline(
         conn, settings, client, raw_root=raw_root, now=moment

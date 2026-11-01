@@ -215,7 +215,7 @@ _ODDS_ANCHOR = DatasetSpec(
     cron="*/5 * * * *",
     task=tasks.odds_anchor_dense,
     cli_help="双锚临场采样(票 47)",
-    flow_help="双锚临场采样（票 47）：*/5 拍，零候选零请求；30 分钟 closing 循环兜底。",
+    flow_help="双锚临场采样（票 47/04）：*/5 零候选零请求（开售轮询带除外）。",
     cli=False,  # 纯 schedule 面，无 cli 命令
 )
 
