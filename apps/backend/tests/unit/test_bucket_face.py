@@ -202,7 +202,10 @@ _CORPUS_DUCK = Path.home() / "goalx-data" / "duckdb" / "corpus.duckdb"
 )
 def test_real_gold_view_bucketing_smoke() -> None:
     """真 gold 视图冒烟：近 30 天已完赛场 3 上线面各至少命中一次。"""
-    con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
+    try:
+        con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
+    except duckdb.IOException:
+        pytest.skip("本机语料桥不可开（CI 挂载形态），真树跑")
     from goalx_backend.data import gold_reader
 
     rows = gold_reader.fetch_signal_rows_by_sids(
@@ -249,7 +252,10 @@ def test_live_faces_reproduce_report() -> None:
     db.row_factory = sq.Row
     pred_rows = db.execute(sa._PREDICTIONS_SQL, (5,)).fetchall()
     db.close()
-    duck = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
+    try:
+        duck = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
+    except duckdb.IOException:
+        pytest.skip("本机语料桥不可开（CI 挂载形态），真树跑")
     sids = [str(r["match_key"]) for r in pred_rows if r["ftr"] is not None]
     gold = gold_reader.fetch_signal_rows_by_sids(duck, sids)
     samples, _ = sa._collect_samples(pred_rows, gold)
