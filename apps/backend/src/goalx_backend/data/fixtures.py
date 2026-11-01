@@ -200,6 +200,35 @@ WHERE
     ).fetchone()
 
 
+def jc_board_rows_in_horizon(
+    conn: sqlite3.Connection,
+    *,
+    business_dates: tuple[str, ...],
+    kickoff_from_iso: str,
+    kickoff_to_iso: str,
+) -> list[sqlite3.Row]:
+    """
+    竞彩业务日 × [from, to] 开球窗内的板上场次（票 05 等源T 面）。
+
+    fid/编号/开球/队名；窗含已开球场（from 可早于 now——晨检看昨夜
+    深夜场残差）。fixtures/match_codes 属主查询（ADR-0008）。
+    """
+    marks = ",".join("?" for _ in business_dates)
+    return conn.execute(
+        f"""
+            SELECT DISTINCT f.id AS fid, f.kickoff_utc AS kickoff,
+                   mc.code AS code, ht.canonical_name AS home, at.canonical_name AS away
+            FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id
+              AND mc.kind = 'jingcai' AND mc.business_date IN ({marks})
+            JOIN teams ht ON ht.id = f.home_team_id
+            JOIN teams at ON at.id = f.away_team_id
+            WHERE f.kickoff_utc >= ? AND f.kickoff_utc <= ?
+        """,  # noqa: S608 — 占位符由 business_dates 定宽构造，非用户输入
+        (*business_dates, kickoff_from_iso, kickoff_to_iso),
+    ).fetchall()
+
+
 def upsert_match_code(conn: sqlite3.Connection, code: MatchCodeInput) -> int:
     """Insert or refresh an official sales code for a fixture; return its id."""
     conn.execute(
