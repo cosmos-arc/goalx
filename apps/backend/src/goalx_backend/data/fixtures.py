@@ -328,7 +328,16 @@ def beijing_day(ts: str) -> str:
 
 
 def sale_window_anchor(conn: sqlite3.Connection, beijing_day: str) -> str | None:
-    """该北京日首个 on_sale 观测时刻（ISO UTC）；当日未观测到开售则 None。"""
+    """
+    该北京日首个 on_sale 观测时刻（ISO UTC）；当日未观测到开售则 None。
+
+    前提（correctness W1/I1/I3，2026-11-01 审）：锚是首**观测**非真开售
+    时刻——[缺省开, 锚) 盲带内的窗外归因偏保守（普通日仅 10:00/19:00
+    两拍时，正午未开售行会归窗外）；单条异常早观测会前移当日锚；区间
+    比较按字典序，仅限 observed_at 全库 UTC 归一秒精度格式（现役写入
+    方恒如此）；不钳位 at 之后的行——回溯归因取当日终锚是设计，live
+    前视由写入侧 observed_at≤墙钟保证。
+    """
     start = beijing_naive_to_utc(f"{beijing_day} 00:00")
     if start is None:
         return None

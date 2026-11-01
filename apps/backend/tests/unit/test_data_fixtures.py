@@ -230,3 +230,19 @@ def test_sale_window_phase_cross_day_anchor_ignored() -> None:
         fx.sale_window_phase("2026-11-01T03:31:00+00:00", anchor=stale_anchor)
         == "in_window"
     )
+
+
+def test_sale_window_anchor_observation_cadence_blind_band() -> None:
+    """钉住盲带语义（correctness W1）：普通日锚=首观测（19:00 北京），
+    正午 not_on_sale 的相位归 pre_open→窗外——观测节奏限制下按已知信息
+    保守归因；改观测节奏或收紧语义时本测试是警示灯。"""
+    anchor = "2026-10-22T11:00:00+00:00"  # 普通日 19:00 北京首拍 on_sale
+    assert (
+        fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor) == "pre_open"
+    )
+    assert (
+        fx.not_on_sale_reject_reason(
+            fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor)
+        )
+        == "sale_window_closed"
+    )
