@@ -698,13 +698,83 @@ def _probe_client(payload: dict, calls: list[str]):
 
 
 def test_probe_no_candidates_makes_no_request(db, tmp_path) -> None:
+    # 显式时刻=开售轮询带外（北京 23:00），钉住"零候选零请求"主路径
     calls: list[str] = []
     probe = sporttery.probe_sale_stops(
-        db, Settings(), _probe_client(SAMPLE, calls), raw_root=tmp_path
+        db,
+        Settings(),
+        _probe_client(SAMPLE, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 15, 0, tzinfo=UTC),
     )
     assert probe.candidates == 0
     assert probe.stopped == []
     assert calls == []
+
+
+# —— 票 04：开售锚轮询（零候选带内补拍，翻转即锚，5 分钟精度） ——
+def test_probe_polls_for_sale_open_in_window_until_flip(db, tmp_path) -> None:
+    """带内（北京 11:05）零候选且当日无锚 → 补拍；sellStatus=1 落 on_sale
+    行=锚钉住；下一拍有锚即停（零请求）。"""
+    calls: list[str] = []
+    selling = json.loads(json.dumps(SAMPLE))
+    selling["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "1"
+    probe = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(selling, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 3, 5, tzinfo=UTC),  # 北京 11:05
+    )
+    assert probe.candidates == 0
+    assert calls  # 带内补拍发生
+    assert probe.captured is not None
+    assert probe.captured.matches == 1
+    anchor = fx_store.sale_window_anchor(db, "2026-09-12")
+    assert anchor == "2026-09-12T03:05:00+00:00"  # 翻转即锚
+    # 有锚即停：下一拍零请求
+    calls2: list[str] = []
+    sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(selling, calls2),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 3, 10, tzinfo=UTC),
+    )
+    assert calls2 == []
+
+
+def test_probe_poll_before_open_keeps_polling_no_anchor(db, tmp_path) -> None:
+    """翻转前（全未开售）：拍了不产锚，下一拍继续（直到翻转或带末让位）。"""
+    closed = json.loads(json.dumps(SAMPLE))
+    closed["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "0"
+    calls: list[str] = []
+    sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(closed, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 3, 5, tzinfo=UTC),
+    )
+    assert calls  # 无锚 → 带内继续拍
+    assert fx_store.sale_window_anchor(db, "2026-09-12") is None
+
+
+def test_probe_poll_outside_window_no_request(db, tmp_path) -> None:
+    """带外（北京 09:30 / 12:40）零候选零请求——轮询不空耗。"""
+    for moment in (
+        datetime(2026, 9, 12, 1, 30, tzinfo=UTC),
+        datetime(2026, 9, 12, 4, 40, tzinfo=UTC),
+    ):
+        calls: list[str] = []
+        sporttery.probe_sale_stops(
+            db,
+            Settings(),
+            _probe_client(SAMPLE, calls),
+            raw_root=tmp_path,
+            now=moment,
+        )
+        assert calls == []
 
 
 def test_probe_disappearance_marks_stopped_once(db, tmp_path) -> None:
