@@ -65,9 +65,12 @@ async def get_today_fixtures(
         rows = build_today_view(
             db, date or beijing_business_date(), days=days, duck_con=duck_con
         )
-        # 错价桶复盘标注（misprice 票 02 增量 1）：已开球行按 gold 桶判据
-        # 追加只读 flags；未开球判据未齐不标，gold 缺席降级零动作
-        bucket_face.attach_review_faces(db, duck_con, rows, now=datetime.now(tz=UTC))
+        # 错价桶只读标注（misprice 票 02 裁决①=c 双件，同一 now 判面归属）：
+        # 已开球行=复盘面（gold 收盘判据），未开球行=临场态投影（as-of now
+        # 判据逐步变齐，锚未到该面不标）；gold/查询缺席均降级零动作
+        moment = datetime.now(tz=UTC)
+        bucket_face.attach_review_faces(db, duck_con, rows, now=moment)
+        bucket_face.attach_live_faces(db, duck_con, rows, now=moment)
         return rows
 
 

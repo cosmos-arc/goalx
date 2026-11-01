@@ -6,7 +6,7 @@ cli 子命令、Prefect flow、serve deployment、恢复/判死清单（resume_n
 dead_names）、（语料数据集的）checkpoint 表核对全部由声明推导。任务实现
 唯一住所仍是 tasks（ADR-0005）：本模块持引用不持实现。
 
-票 03 后注册面 = 全部单 cron 定拍数据集（12 条，含两个判死面 resume=False）；
+票 03 后注册面 = 全部单 cron 定拍数据集（15 条，含两个判死面 resume=False）；
 留在 flows.py 手写的非同构形状：组合面（daily-capture/weekly-refresh/
 daily-wrap 多 flow 编排）与 draw-results-sync（单 flow 双 deployment 双 cron）。
 cli=False 的记录不派生 cli（official-reconcile 的手写 handler 带 pending_manual
@@ -313,6 +313,20 @@ _SRCT_REMAT = DatasetSpec(
     checkpoint_tables=("srct_remat_state",),
 )
 
+_GOLD_REBUILD = DatasetSpec(
+    name="gold-rebuild",
+    cron="40 8 * * *",
+    task=tasks.gold_rebuild,
+    cli_help="gold日频重算(misprice票03;market_quote保鲜+gold全量,晨检面兜底)",
+    flow_help=(
+        "gold 日频重算（misprice 票 03①）：market_quote 保鲜 + gold 全量。\n\n"
+        "remat 08:10 只物化 odds/fixture/xg——market_quote 曾停摆月余无红面"
+        "（ou_line_drift 对 10 月全缺，票 03④）。银段先重物化 market_quote"
+        "再重建 gold，08:40 定拍赶在 09:05 晨检 gold 新鲜度面前。"
+    ),
+    cli=False,  # 手动路径走既有 gold-build/srct-market 命令（分步可控）
+)
+
 #: 注册面（票 03 全量）：全部单 cron 定拍数据集；组合面/双 cron 面另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
@@ -329,6 +343,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _SCOUT,
     _SRCT_SHIFT,
     _SRCT_REMAT,
+    _GOLD_REBUILD,
 )
 
 

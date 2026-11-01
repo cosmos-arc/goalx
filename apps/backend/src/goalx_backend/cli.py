@@ -57,7 +57,6 @@ from goalx_backend.data import (
     corpus_duckdb,
     corpus_gate,
     delay_survival,
-    gold,
     mapping,
     reconcile,
 )
@@ -1105,37 +1104,20 @@ def _cmd_gold_build(
     """
     Gold 特征面全量重算（backtest-decade B 相，幂等零请求）。
 
-    输入=silver 视图（先跑 srct-silver/srct-odds/srct-market/elo-build）+
-    运行面只读（hist/understat/admin 排除表）；产出语料树
-    gold/goalx/match_features（era 分层/PIT 断言/卫生接线），并刷新
-    corpus.duckdb（含 gold 视图）。settings 注入口只服务测试接缝。
+    委派 tasks.gold_rebuild（ADR-0005 单一实现，misprice 票 03① 起定拍
+    08:40 同源）：银段先重物化 market_quote（remat 不覆盖，曾停摆月余），
+    再 gold 全量重算 + corpus.duckdb 刷新。settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
-    if not resolved.db_path.exists():
-        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
-    store = CorpusStore(resolved.corpus_root)
     try:
-        face = connect(resolved.db_path)
-        try:
-            migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
-            try:
-                duck_con = corpus_duckdb.connect(resolved)
-            except (duckdb.Error, OSError) as exc:
-                message = "corpus.duckdb unavailable（先跑 srct-silver/"
-                sys.stderr.write(
-                    message + "srct-odds/srct-market）: " + str(exc) + "\n"
-                )
-                raise SystemExit(2) from exc
-            try:
-                report = gold.build_match_features(store, face, duck_con)
-            finally:
-                duck_con.close()
-        finally:
-            face.close()
-        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
-    finally:
-        store.close()
-    payload = {**asdict(report), "duckdb": str(duckdb_path)}
+        payload = tasks.gold_rebuild(settings=resolved)
+    except FileNotFoundError:
+        # 运行面库缺失（任务体首查）：原样 fail-loud，不并入桥断线文案
+        raise
+    except (duckdb.Error, OSError) as exc:
+        message = "corpus.duckdb unavailable（先跑 srct-silver/"
+        sys.stderr.write(message + "srct-odds/srct-market）: " + str(exc) + "\n")
+        raise SystemExit(2) from exc
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -1677,7 +1659,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "gold-build",
-        help="gold特征面全量重算(B相;era分层+PIT断言+卫生接线,幂等,先备齐silver)",
+        help="gold特征面全量重算(票03起=market_quote保鲜+gold重建同一实现,幂等)",
     )
     sub.add_parser(
         "srct-silver",

@@ -280,8 +280,9 @@ export function FixturesPage() {
 															</TableCell>
 															<TableCell className="whitespace-nowrap">
 																{fixture.match_code}
-																{/* 只读标注（票 01/02）：词族 flag 全量行可见（低置信另有 */}
-																{/* books 显示位不重复）；价段 title 明示非信号 */}
+																{/* 只读标注（票 01/02 复盘+临场投影双件）：词族 flag */}
+																{/* 全量行可见（低置信另有 books 显示位不重复）； */}
+																{/* 价段 title 明示非信号 */}
 																{(fixture.flags ?? [])
 																	.filter((flag) => Object.hasOwn(FLAG_GLOSSARY, flag) && flag !== "low_confidence")
 																	.map((flag) => (

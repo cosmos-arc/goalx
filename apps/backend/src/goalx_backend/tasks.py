@@ -33,7 +33,7 @@ from goalx_backend.betting.funnel import (
 )
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, mapping, quote_evidence, reconcile
+from goalx_backend.data import corpus_duckdb, gold, mapping, quote_evidence, reconcile
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
@@ -47,6 +47,7 @@ from goalx_backend.data.ingest import (
     sporttery,
     srcb,
     srct,
+    srct_market,
     srct_night,
     srct_remat,
     srct_results,
@@ -447,6 +448,41 @@ def settlement_sweep() -> dict[str, int]:
     """结算批跑（配合开奖导入；paper/live 统一引擎）。"""
     with task_conn() as conn:
         return run_settlement(conn)
+
+
+def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
+    """
+    Gold 日频重算（misprice 票 03①）：market_quote 保鲜 + gold 全量重建。
+
+    remat 08:10 只物化 odds/fixture/xg——market_quote（gold 收盘族输入）
+    曾停摆月余无任何红面（2026-10-07 后 ou_line_drift 对当月全缺，票 03④
+    根因坐实）。本任务银段先重物化 market_quote（asian_odds+over_down
+    bronze 幂等全量）再 gold 全量重算，08:40 定拍赶在 09:05 晨检 gold
+    新鲜度面前。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        market_report = srct_market.build_market_quotes(store)
+        face = connect(resolved.db_path)
+        try:
+            migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
+            duck_con = corpus_duckdb.connect(resolved)
+            try:
+                report = gold.build_match_features(store, face, duck_con)
+            finally:
+                duck_con.close()
+        finally:
+            face.close()
+        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    finally:
+        store.close()
+    return {
+        "market": asdict(market_report),
+        "gold": {**asdict(report), "duckdb": str(duckdb_path)},
+    }
 
 
 def draw_results_sync() -> dict[str, object]:

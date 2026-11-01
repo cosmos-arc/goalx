@@ -1,5 +1,5 @@
 """
-09:05 晨检代码化（ingest-orchestration 票 01）：9+1 项只读红绿面。
+09:05 晨检代码化（ingest-orchestration 票 01）：12 项只读红绿面。
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面仅第 10 项
@@ -29,7 +29,7 @@ from goalx_backend.betting import funnel
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import mapping, pool, price_ledger, today
+from goalx_backend.data import gold_reader, mapping, pool, price_ledger, today
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
@@ -42,6 +42,9 @@ FAIL = "fail"
 _FRESH_HOURS = 26
 _LEDGER_DEGRADED_HOURS = 48
 _CORPUS_FRESH_HOURS = 36
+# gold 日频（08:40 gold-rebuild 定拍）：>36h 黄；错过两个晨检日仍无重建才红
+_GOLD_FRESH_HOURS = 36
+_GOLD_STALE_HOURS = 60
 _GOALS4_STALE_DAYS = 7
 _SERVE_LOG_TAIL_BYTES = 200_000
 _SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
@@ -157,6 +160,23 @@ def check_corpus(store: CorpusStore, *, now: datetime) -> CheckItem:
     age = _age_hours(latest, now)
     return CheckItem(
         "corpus", _verdict(age, green=_CORPUS_FRESH_HOURS), f"最新工件={latest}"
+    )
+
+
+def check_gold_freshness(store: CorpusStore, *, now: datetime) -> CheckItem:
+    """
+    项 12 gold 新鲜度（misprice 票 03①）：gold _meta built_at 36h 绿/60h 红。
+
+    market_quote 停摆月余零红面的教训（票 03④ 根因）——复盘面读 gold 视图，
+    gold 断build即复盘面静默退化为"全不在桶"；本面把断线晒到晨检。
+    meta 缺席/坏串 = 红无built_at（不冒充新鲜）。
+    """
+    meta = gold_reader.read_gold_meta(store)
+    age = _age_hours(meta.get("built_at"), now)
+    return CheckItem(
+        "gold",
+        _verdict(age, green=_GOLD_FRESH_HOURS, yellow=_GOLD_STALE_HOURS),
+        f"built_at={meta.get('built_at')}",
     )
 
 
@@ -294,7 +314,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 11 项（只读；网络面仅第 10 项官方当期端点）。"""
+    """跑全部 12 项（只读；网络面仅第 10 项官方当期端点）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack()]
@@ -310,6 +330,7 @@ def run_morning_check(
                 check_wrap(conn, now=resolved_now),
                 check_ledger(conn, now=resolved_now),
                 check_corpus(store, now=resolved_now),
+                check_gold_freshness(store, now=resolved_now),
                 check_serve_log(log_path),
                 check_today_eu(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)

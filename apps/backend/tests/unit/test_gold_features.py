@@ -667,7 +667,7 @@ def test_empty_corpus_degrades(tmp_path: Path) -> None:
 
 
 def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI gold-build：migrate→gold 重建→duckdb 桥刷新（gold 视图可见）。"""
+    """CLI gold-build（=tasks.gold_rebuild 单一实现）：market 保鲜→gold→桥刷新。"""
     import argparse
 
     from goalx_backend.cli import _cmd_gold_build
@@ -676,9 +676,11 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     store.close()
     _cmd_gold_build(argparse.Namespace(), settings=settings)
     payload = json.loads(capsys.readouterr().out)
-    assert payload["gold_version"] == gold.GOLD_VERSION
-    assert payload["rows"] == 4
-    assert payload["degraded"] is None
+    # 票 03① 起 market_quote 保鲜内联（remat 不覆盖，曾停摆月余）
+    assert payload["market"]["quotes_ah"] >= 1
+    assert payload["gold"]["gold_version"] == gold.GOLD_VERSION
+    assert payload["gold"]["rows"] == 4
+    assert payload["gold"]["degraded"] is None
     con = corpus_duckdb.connect(settings)
     try:
         (n,) = con.execute("SELECT count(*) FROM match_features").fetchone()

@@ -14,7 +14,7 @@ from goalx_backend import morning_check as mc
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
-from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.corpus_store import GOLD_DATASET, GOLD_PROVIDER, CorpusStore
 from goalx_backend.models import MatchCodeInput, Tier
 from goalx_backend.morning_check import (
     DEGRADED,
@@ -22,6 +22,7 @@ from goalx_backend.morning_check import (
     OK,
     check_bets,
     check_corpus,
+    check_gold_freshness,
     check_ledger,
     check_night,
     check_pool_drift,
@@ -88,6 +89,27 @@ def test_check_remat_and_corpus(store: CorpusStore) -> None:
     # ingest_raw 落 fetched_at=now（真实钟），对 NOW(2026-11-01) 而言必新鲜
     item = check_corpus(store, now=datetime.now(UTC))
     assert item.status == OK
+
+
+def test_check_gold_freshness_states(store: CorpusStore) -> None:
+    """gold _meta built_at：36h 绿/60h 黄/更旧红；meta 缺席=红不冒充新鲜。"""
+    assert check_gold_freshness(store, now=NOW).status == FAIL  # 无 meta
+    meta_dir = store.gold_path(GOLD_PROVIDER, GOLD_DATASET)
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = meta_dir / "_meta.json"
+
+    def _meta(hours_ago: float | str) -> str:
+        value = hours_ago if isinstance(hours_ago, str) else _iso(hours_ago)
+        return f'{{"built_at": "{value}"}}'
+
+    meta_path.write_text(_meta(20), encoding="utf-8")
+    assert check_gold_freshness(store, now=NOW).status == OK
+    meta_path.write_text(_meta(48), encoding="utf-8")
+    assert check_gold_freshness(store, now=NOW).status == DEGRADED
+    meta_path.write_text(_meta(80), encoding="utf-8")
+    assert check_gold_freshness(store, now=NOW).status == FAIL
+    meta_path.write_text(_meta("not-a-date"), encoding="utf-8")
+    assert check_gold_freshness(store, now=NOW).status == FAIL
 
 
 def test_check_wrap_and_ledger(db: sqlite3.Connection) -> None:
