@@ -325,6 +325,48 @@ def test_live_degrades(db: sqlite3.Connection) -> None:
     assert row.flags == []
 
 
+def test_live_shared_sid_divergent_kickoff_windows(
+    db: sqlite3.Connection,
+) -> None:
+    """correctness F1：两行共享链 sid 但开球时刻不同（改期/坏链形态）——
+    锚窗跟本行 kickoff 逐行各窗，先入行不得替后行定窗（首行 18:00 开球
+    的 1h 锚 17:00 晚于次行 12:30 开球的锚 11:30；12:00 的价对次行是
+    锚后现价、对首行还在锚前=不可入锚位）。"""
+    late_ko = NOW + timedelta(hours=6)  # 18:00Z
+    soon_ko = NOW + timedelta(minutes=30)  # 12:30Z
+    first = _Row(
+        fixture_id=_seed_linked_fixture(db, late_ko.isoformat()),
+        kickoff_utc=late_ko.isoformat(),
+    )
+    second = _Row(
+        fixture_id=_seed_linked_fixture(db, soon_ko.isoformat()),
+        kickoff_utc=soon_ko.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(NOW - timedelta(hours=1), (2.4, 3.4, 3.2)),  # ≤ 两行的 1h 锚
+            _Quote(NOW - timedelta(minutes=15), (2.0, 3.5, 4.0)),  # > 12:30 行锚 11:30
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [first, second], now=NOW)
+    finally:
+        duck.close()
+    # 次行 1h 锚已过（11:30）且主热：q1h=11:00 价 vs 现价=11:45 价 → pos
+    assert second.flags == ["late_move_h:pos"]
+    # 首行 1h 锚（17:00）未到 → pending；24h 锚无更早价 → 不标
+    assert first.flags == []
+
+
+def test_live_anchor_book_pinned_to_gold_anchor() -> None:
+    """correctness F2：临场读口锚书与 gold 轨迹锚（corpus_gate.ANCHOR_BOOK
+    单一真相源，gold.E1X2_ANCHOR 同源）恒等——两字面量无 import 关联，
+    分叉即红（临场面会静默读错书且无红面）。"""
+    from goalx_backend.data import corpus_gate, quote_evidence
+
+    assert quote_evidence.SRCT_PINNACLE_BOOK == corpus_gate.ANCHOR_BOOK
+
+
 def test_live_ignores_past_rows(db: sqlite3.Connection) -> None:
     """面归属互斥：已开球行归复盘面，临场面不重复标注。"""
     row = _Row(

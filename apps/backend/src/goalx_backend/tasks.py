@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
@@ -476,12 +477,24 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
                 duck_con.close()
         finally:
             face.close()
-        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+        # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
+        # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
+        # 短重试后仍占则记账跳过（明日自愈），不让日频面假红
+        duckdb_note = "view_refresh_skipped:duck-lock"
+        for attempt in range(3):
+            try:
+                duckdb_note = str(corpus_duckdb.build_corpus_duckdb(store))
+                break
+            except duckdb.Error as exc:
+                logger.warning(
+                    "corpus.duckdb 视图刷新锁占（第 {} 次）：{}", attempt + 1, exc
+                )
+                time.sleep(10)
     finally:
         store.close()
     return {
         "market": asdict(market_report),
-        "gold": {**asdict(report), "duckdb": str(duckdb_path)},
+        "gold": {**asdict(report), "duckdb": duckdb_note},
     }
 
 

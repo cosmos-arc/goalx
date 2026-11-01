@@ -164,34 +164,32 @@ def attach_live_faces(
             live[int(row.fixture_id)] = (sid, kickoff)
     if not live or duck_con is None:
         return
-    kickoff_by_sid: dict[str, datetime] = {}
-    for sid, kickoff in live.values():
-        kickoff_by_sid.setdefault(sid, kickoff)
-    # 切点序=(kickoff-1h, kickoff-24h, now)——返回列表按同序对齐
-    triplets = quote_evidence.srct_anchor_triplets_at_cutoffs(
+    # 逐行各窗（correctness F1）：共享链不同开球时刻的行不合并——锚窗跟
+    # 本行 kickoff；切点序=(kickoff-1h, kickoff-24h, now)，返回按序对齐
+    order = list(live.items())
+    results = quote_evidence.srct_anchor_triplets_at_cutoffs(
         duck_con,
-        {
-            sid: (kickoff - _1H, kickoff - _24H, now)
-            for sid, kickoff in kickoff_by_sid.items()
-        },
+        [(sid, (kickoff - _1H, kickoff - _24H, now)) for _fid, (sid, kickoff) in order],
     )
+    by_fid = {fid: results[i] for i, (fid, _bound) in enumerate(order)}
     hit = 0
     for row in rows:
-        bound = live.get(int(row.fixture_id))
-        if bound is None:
+        tri = by_fid.get(int(row.fixture_id))
+        if tri is None:
             continue
-        synthetic = _synthetic_gold_row(triplets.get(bound[0], []), bound[1], now)
+        synthetic = _synthetic_gold_row(tri, live[int(row.fixture_id)][1], now)
         if synthetic is None:
             continue
         flags = faces_for_gold_row(synthetic)
         if flags:
             row.flags.extend(flags)
             hit += 1
-    # 临场面观测（空≠无）：与复盘面同款计数进 serve 日志
+    # 临场面观测（空≠无）：与复盘面同款计数进 serve 日志（now 位有价=在价）
+    priced = sum(1 for r in results if len(r) == _LIVE_CUT_COUNT and r[2] is not None)
     logger.debug(
-        "错价桶临场：rows={} 未开球已链={} 锚书有价={} 亮标={}",
+        "错价桶临场：rows={} 未开球已链={} 锚书在价={} 亮标={}",
         len(rows),
         len(live),
-        len(triplets),
+        priced,
         hit,
     )

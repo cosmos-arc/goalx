@@ -110,6 +110,9 @@ def test_check_gold_freshness_states(store: CorpusStore) -> None:
     assert check_gold_freshness(store, now=NOW).status == FAIL
     meta_path.write_text(_meta("not-a-date"), encoding="utf-8")
     assert check_gold_freshness(store, now=NOW).status == FAIL
+    # correctness F4：合法 JSON 非对象体（手工损坏形态）不炸晨检整跑
+    meta_path.write_text('["not", "an", "object"]', encoding="utf-8")
+    assert check_gold_freshness(store, now=NOW).status == FAIL
 
 
 def test_check_wrap_and_ledger(db: sqlite3.Connection) -> None:

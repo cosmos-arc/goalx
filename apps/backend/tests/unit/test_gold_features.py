@@ -689,6 +689,57 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     assert n == 4
 
 
+def test_gold_rebuild_view_refresh_lock_degrades(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """correctness F3：视图刷新被 API 只读锁占 → 三次短重试后记账跳过，
+    不让日频面假红（gold/meta 已落盘，视图路径绑定明日自愈）。"""
+    import duckdb as duckdb_mod
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    calls = {"n": 0}
+
+    def boom(_store: object) -> Path:
+        calls["n"] += 1
+        raise duckdb_mod.IOException("Could not set lock on file")
+
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "build_corpus_duckdb", boom)
+    monkeypatch.setattr(tasks_mod.time, "sleep", lambda _s: None)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert calls["n"] == 3
+    assert payload["gold"]["duckdb"] == "view_refresh_skipped:duck-lock"
+    assert payload["gold"]["rows"] == 4  # gold 本体不受视图刷新锁影响
+
+
+def test_gold_rebuild_view_refresh_retry_recovers(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3 配对：瞬时锁占一次即释 → 重试拿到真路径（正常记账）。"""
+    import duckdb as duckdb_mod
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    real = tasks_mod.corpus_duckdb.build_corpus_duckdb
+    calls = {"n": 0}
+
+    def flaky(target: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise duckdb_mod.IOException("Could not set lock on file")
+        return real(target)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "build_corpus_duckdb", flaky)
+    monkeypatch.setattr(tasks_mod.time, "sleep", lambda _s: None)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert calls["n"] == 2
+    assert payload["gold"]["duckdb"].endswith("corpus.duckdb")
+
+
 def test_srct_xg_unknown_partition_excluded(built: Built) -> None:
     """F1 回归：xg 孤儿行落 _unknown 分区不得过季门（'_' 字典序 > '2024-25'）。"""
     import pyarrow.compute as pc

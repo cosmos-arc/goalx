@@ -258,26 +258,27 @@ def srct_snapshot_rows_asof(
 
 def srct_anchor_triplets_at_cutoffs(
     duck_con: DuckCon,
-    cutoffs_by_sid: dict[str, tuple[datetime, ...]],
-) -> dict[str, list[tuple[float, float, float] | None]]:
+    requests: list[tuple[str, tuple[datetime, ...]]],
+) -> list[list[tuple[float, float, float] | None]]:
     """
     源T 1x2 锚书三向多切点批查（misprice 票 03 临场态投影读口）。
 
-    逐 sid×切点取 ``published_at`` ≤ 切点的锚书（cid177）末价三向（并列按
-    source_order 决胜，与 gold ``_anchor_slices`` 同语义——决策侧复用判据
-    的单一出处）；返回按传入切点序对齐的三向列表，无价切点 None。
-    查询异常降级空 dict（调用面让位，主表不受影响）。
+    逐请求条目 (sid, 切点元组) 取 ``published_at`` ≤ 各切点的锚书（cid177）
+    末价三向（并列按 source_order 决胜，与 gold ``_anchor_slices`` 同语义
+    ——决策侧复用判据的单一出处）；返回按请求序对齐的三向列表，无价切点
+    None。同 sid 多条（共享链不同开球时刻——correctness F1）逐条各窗，
+    不合并。查询异常降级为逐请求空列表（调用面让位，序对齐不变）。
 
-    ponytail: 切点元数逐调用统一（混合元数 ValueError——调用方 bug
+    ponytail: 切点元数逐请求统一（混合元数 ValueError——调用方 bug
     fail-loud）；sid 无索引全扫，今日页量级批查秒内（单查先例同）。
     """
-    if not cutoffs_by_sid:
-        return {}
-    arity = len(next(iter(cutoffs_by_sid.values())))
-    if any(len(cuts) != arity for cuts in cutoffs_by_sid.values()):
-        raise ValueError("切点元数不齐：逐 sid 须传同形切点元组")
+    if not requests:
+        return []
+    arity = len(requests[0][1])
+    if any(len(cuts) != arity for _sid, cuts in requests):
+        raise ValueError("切点元数不齐：逐请求须传同形切点元组")
     cols = ", ".join(f"c{i}" for i in range(arity))
-    values = ", ".join(["(?, " + ", ".join(["?"] * arity) + ")"] * len(cutoffs_by_sid))
+    values = ", ".join(["(?, ?" + ", ?" * arity + ")"] * len(requests))
     arg_max_expr = (
         "arg_max(struct_pack(h := e.odds_home, d := e.odds_draw, a := e.odds_away),"
         " struct_pack(t := epoch_ms(e.published_at), o := e.source_order))"
@@ -287,26 +288,27 @@ def srct_anchor_triplets_at_cutoffs(
         for i in range(arity)
     )
     params: list[object] = []
-    for sid, cuts in cutoffs_by_sid.items():
+    for rid, (sid, cuts) in enumerate(requests):
+        params.append(rid)
         params.append(sid)
         params.extend(int(cut.timestamp() * 1000) for cut in cuts)
     params.extend((SRCT_MARKET, SRCT_PINNACLE_BOOK))
     try:
         rows = duck_con.execute(
             f"""
-            WITH bounds(sid, {cols}) AS (VALUES {values})
-            SELECT b.sid, {selects}
+            WITH bounds(rid, sid, {cols}) AS (VALUES {values})
+            SELECT b.rid, {selects}
             FROM odds_change_event e
             JOIN bounds b ON b.sid = e.sid
             WHERE e.market = ? AND e.bookmaker_id = ?
-            GROUP BY b.sid
+            GROUP BY b.rid
             """,  # noqa: S608 列名/占位=行集形状推导，值全参数绑定
             params,
         ).fetchall()
     except duckdb.Error as exc:
         logger.warning("srct 锚书切片批查降级: {}", exc)
-        return {}
-    out: dict[str, list[tuple[float, float, float] | None]] = {}
+        return [[] for _ in requests]
+    by_rid: dict[int, list[tuple[float, float, float] | None]] = {}
     for row in rows:
         triplets: list[tuple[float, float, float] | None] = []
         for i in range(arity):
@@ -316,8 +318,8 @@ def srct_anchor_triplets_at_cutoffs(
                 if q is None or q["h"] is None or q["d"] is None or q["a"] is None
                 else (float(q["h"]), float(q["d"]), float(q["a"]))
             )
-        out[str(row[0])] = triplets
-    return out
+        by_rid[int(row[0])] = triplets
+    return [by_rid.get(rid, [None] * arity) for rid in range(len(requests))]
 
 
 def srct_snapshot_rows_bulk(
