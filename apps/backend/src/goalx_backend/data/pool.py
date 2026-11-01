@@ -83,6 +83,8 @@ class PoolSyncStats:
     share_rows: int = 0
     missing_shares: int = 0
     parse_version: str = ""
+    # 预期当期面空的缺账（ingest-orchestration 票 02；防断供 4 个月重演）
+    empty_markets: list[str] = field(default_factory=list)
 
 
 # --- 写路径（ingest / AI 代采） ---
@@ -242,8 +244,8 @@ def record_pool_sync_run(conn: sqlite3.Connection, stats: PoolSyncStats) -> int:
         """
         INSERT INTO pool_sync_runs
         (source, observed_at, period_nos, pages, matches, share_rows,
-         missing_shares, parse_version, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         missing_shares, parse_version, empty_markets, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             stats.source,
@@ -254,6 +256,7 @@ def record_pool_sync_run(conn: sqlite3.Connection, stats: PoolSyncStats) -> int:
             stats.share_rows,
             stats.missing_shares,
             stats.parse_version,
+            json.dumps(stats.empty_markets),
             utc_now_iso(),
         ),
     )

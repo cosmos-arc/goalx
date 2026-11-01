@@ -4,10 +4,12 @@
 替代判死的源B zucai（2026-09-25 深夜用户裁决：全转官方含彩果；源B 判死
 弃用留档）。端点实测（2026-09-26 凌晨，票 68 落地前复查）：
 
-- **当期** ``getFootBallMatchV1.qry``（``param=90,0&sellStatus=0&termLimits=10``；
-  Referer=传足计算器页）——一响应含 sfc/bqc/jqc 三玩法在售对阵
-  （``{game}Match.matchList``）+ 上期彩果 ``lastPoolDraw``/``lastPoolDrawRj``
-  （任9）。**lotteryDrawNum 参数实测被端点忽略**（三种组合同响应）——
+- **当期** ``getFootBallMatchV1.qry``（``param={game},0&sellStatus=0&termLimits=10``；
+  Referer=传足计算器页）——按玩法各一请求：90,0 独供 sfc 在售对阵 + 上期彩果
+  ``lastPoolDraw``/``lastPoolDrawRj``（任9）；94,0 独供 jqc（4场进球）当期
+  （2026-07 起官方改按 game 下发，90,0 的 jqcFace 恒空——2026-11-01 断供
+  修复，曾致 goals4 静默断供 4 个月）。
+  **lotteryDrawNum 参数实测被端点忽略**（三种组合同响应）——
   历史回填不在此端点。
 - **历史** ``getFootBallDrawInfoByDrawNumV2.qry``（``isVerify=1&lotteryGameNum={g}``
   ``&lotteryDrawNum={n}``；Referer=开奖公告页 + **Origin 头必须**——CORS 闸）
@@ -61,6 +63,7 @@ MARKET_SFC = "ttt14"
 MARKET_JQC = "goals4"
 GAME_SFC = "90"
 GAME_JQC = "94"
+GAME_MARKET = {GAME_SFC: MARKET_SFC, GAME_JQC: MARKET_JQC}
 # 历史回填请求间距=20/min 等效（spec 69 story 12：官方采集同 20/min 护栏）
 BACKFILL_SLEEP_SECONDS = 3.2
 
@@ -77,12 +80,46 @@ def _headers(referer: str) -> dict[str, str]:
     }
 
 
-def fetch_current(client: httpx.Client, settings: Settings) -> dict[str, Any]:
-    """当期响应（在售对阵 + 上期彩果）；success=false 抛 RuntimeError。"""
+def fetch_current(
+    client: httpx.Client, settings: Settings, *, stats: PoolSyncStats | None = None
+) -> dict[str, Any]:
+    """
+    当期响应（在售对阵 + 上期彩果）；success=false 抛 RuntimeError。
+
+    两玩法各一请求后合并（2026-11-01 断供修复）：官方自 ~2026-07 起
+    ``param=90,0`` 不再下发 jqcMatch（4场进球 断供 4 个月根因），实测
+    ``param=94,0`` 独供其当期；sfc 仍 90,0 独供——按面择非空合并。
+    传入 stats 时逐面计 pages（调用点不再各自数请求）。
+
+    逐面隔离（correctness F1）：jqc 面硬失败（HTTP/网错/success=false）
+    降级为缺面继续合并 sfc——官方对 94 再做静默改版时 sfc 同步不陪葬，
+    缺账由消费侧 empty_markets 落；sfc 面失败维持硬失败（fail-loud）。
+    """
+    value_sfc = _fetch_current_face(client, settings, GAME_SFC, stats=stats)
+    try:
+        value_jqc = _fetch_current_face(client, settings, GAME_JQC, stats=stats)
+    except (httpx.HTTPError, RuntimeError) as exc:
+        logger.warning("zucai official 当期 jqc 面拉取失败，本拍按缺面合并: {}", exc)
+        value_jqc = {}
+    merged = dict(value_sfc)
+    jqc = cast("dict[str, Any]", value_jqc.get("jqcMatch") or {})
+    if jqc.get("matchList"):
+        merged["jqcMatch"] = jqc
+    return merged
+
+
+def _fetch_current_face(
+    client: httpx.Client,
+    settings: Settings,
+    game_num: str,
+    *,
+    stats: PoolSyncStats | None = None,
+) -> dict[str, Any]:
+    """单玩法当期响应（param={game},0）。"""
     response = client.get(
         settings.zucai_official_current_url or CURRENT_URL,
         params={
-            "param": "90,0",
+            "param": f"{game_num},0",
             "lotteryDrawNum": "",
             "sellStatus": "0",
             "termLimits": "10",
@@ -91,9 +128,11 @@ def fetch_current(client: httpx.Client, settings: Settings) -> dict[str, Any]:
         timeout=25.0,
     )
     response.raise_for_status()
+    if stats is not None:
+        stats.pages += 1
     payload = cast("dict[str, Any]", response.json())
     if not payload.get("success"):
-        msg = f"足彩当期端点返回失败: {payload.get('errorMessage')}"
+        msg = f"足彩当期端点返回失败({game_num}): {payload.get('errorMessage')}"
         raise RuntimeError(msg)
     return cast("dict[str, Any]", payload.get("value") or {})
 
@@ -359,12 +398,48 @@ def sync_current(
 ) -> PoolSyncStats:
     """当期同步：在售对阵刷新 + 上期彩果落 state（幂等；三拍调度入口）。"""
     stats = PoolSyncStats(observed_at=datetime.now(UTC).isoformat(timespec="seconds"))
-    value = fetch_current(client, settings)
-    stats.pages += 1
+    value = fetch_current(client, settings, stats=stats)
+    # 缺账（防断供 4 个月重演）：预期当期面空时留痕，晨检漂移项消费
+    for market, face_key in (("sfc", "sfcMatch"), ("jqc", "jqcMatch")):
+        face = cast("dict[str, Any]", value.get(face_key) or {})
+        if not face.get("matchList"):
+            stats.empty_markets.append(market)
     for period in parse_current(value):
         _ingest_period(conn, period, stats)
     pool_store.record_pool_sync_run(conn, stats)
     return stats
+
+
+def _backfill_starts(
+    client: httpx.Client,
+    settings: Settings,
+    games: tuple[str, ...],
+    start: str | None,
+    stats: PoolSyncStats,
+) -> dict[str, str]:
+    """回填起点：显式 start 两玩法同序；否则各取自家当期号（缺者跳过）。"""
+    if start is not None:
+        return dict.fromkeys(games, start)
+    value = fetch_current(client, settings, stats=stats)
+    starts = {
+        game: str(
+            (
+                cast(
+                    "dict[str, Any]",
+                    value.get("sfcMatch" if game == GAME_SFC else "jqcMatch") or {},
+                )
+            ).get("lotteryDrawNum")
+            or ""
+        )
+        for game in games
+    }
+    if not starts.get(GAME_SFC):
+        msg = "当期响应无 sfc 期号，回填起点未知"
+        raise RuntimeError(msg)
+    missing = [GAME_MARKET.get(g, g) for g in games if not starts[g]]
+    if missing:
+        logger.warning("zucai official 回填：{} 当期无期号，本轮跳过该玩法", missing)
+    return starts
 
 
 def backfill_draws(
@@ -378,31 +453,23 @@ def backfill_draws(
     sleeper: float = BACKFILL_SLEEP_SECONDS,
 ) -> PoolSyncStats:
     """
-    历史彩果回填：从当期期号（或 start）逐期倒查 V2，落官方 state。
+    历史彩果回填：从各玩法当期期号（或 start）逐期倒查 V2，落官方 state。
 
-    已有官方 prize_tiers 的期跳过（幂等重跑零请求耗在已落期）；jqc 大多数
-    期无数据（空响应跳过留痕于计数）。一次坐十年 ≈1000 期 ×2 玩法 ≈2000
-    请求，官方域低频礼貌推进。
+    期号序列按玩法独立（2026-11-01 断供修复：sfc/goals4 各走各的当期号，
+    实测 26155/26225 并行——旧行为拿 sfc 号回填 jqc 会系统性错位）。已有
+    官方 prize_tiers 的期跳过（幂等重跑零请求耗在已落期）；jqc 大多数期
+    无数据（空响应跳过留痕于计数）。一次坐十年 ≈1000 期 ×2 玩法 ≈2000
+    请求，官方域低频礼貌推进。显式 start 时两玩法同序回填（兼容旧用法）。
     """
     stats = PoolSyncStats(observed_at=datetime.now(UTC).isoformat(timespec="seconds"))
-    start_no = start
-    if start_no is None:
-        value = fetch_current(client, settings)
-        stats.pages += 1
-        start_no = str(
-            (cast("dict[str, Any]", value.get("sfcMatch") or {})).get("lotteryDrawNum")
-            or ""
-        )
-        if not start_no:
-            msg = "当期响应无期号，回填起点未知"
-            raise RuntimeError(msg)
-    market_of = {GAME_SFC: MARKET_SFC, GAME_JQC: MARKET_JQC}
+    starts = _backfill_starts(client, settings, games, start, stats)
+    active_games = tuple(g for g in games if starts.get(g))
     empty_periods = 0
     for offset in range(periods):
-        period_no = f"{int(start_no) - offset:05d}"
         got_any = False
-        for game in games:
-            market = market_of[game]
+        for game in active_games:
+            market = GAME_MARKET[game]
+            period_no = f"{int(starts[game]) - offset:05d}"
             if _has_official_state(conn, market, period_no):
                 continue
             value = fetch_draw_info(client, settings, game, period_no)
@@ -432,4 +499,5 @@ def stats_dict(stats: PoolSyncStats) -> dict[str, Any]:
         "matches": stats.matches,
         "share_rows": stats.share_rows,
         "missing_shares": stats.missing_shares,
+        "empty_markets": stats.empty_markets,
     }

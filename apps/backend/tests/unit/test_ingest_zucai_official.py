@@ -123,9 +123,10 @@ def _mock_client(
         "90|26129": _DRAW_VALUE | {"lotteryDrawNum": "26129"},
     }
     current = json.loads(json.dumps(_CURRENT_VALUE))  # 深拷贝防串改
+    jqc_current: dict[str, Any] = {}
     if jqc_on_sale:
-        current["jqcMatch"] = {
-            "lotteryDrawNum": "26133",
+        jqc_face = {
+            "lotteryDrawNum": "26233",
             "lotteryGameName": "4场进球",
             "lotterySaleEndtime": "2026-09-26 20:30:00",
             "matchList": [
@@ -139,10 +140,15 @@ def _mock_client(
                 }
             ],
         }
+        # 官方 2026-07 起按 game 下发：90,0 的 jqcFace 恒空，94,0 独供
+        jqc_current = {"jqcMatch": jqc_face}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path.endswith("getFootBallMatchV1.qry"):
+            param = str(request.url.params["param"])
+            if param.startswith("94,"):
+                return httpx.Response(200, json={"success": True, "value": jqc_current})
             return httpx.Response(200, json={"success": True, "value": current})
         if path.endswith("getFootBallDrawInfoByDrawNumV2.qry"):
             game = str(request.url.params["lotteryGameNum"])
@@ -214,6 +220,9 @@ def test_sync_current_persists_and_keeps_deadline(db) -> None:
     stats = zucai_official.sync_current(db, Settings(), _mock_client())
     assert set(stats.period_nos) == {"26133", "26131"}
     assert stats.matches == 2
+    # 断供修复（票 ingest-orchestration/02）：双请求 + jqc 面空留缺账
+    assert stats.pages == 2
+    assert stats.empty_markets == ["jqc"]
     # 在售期：期次+对阵+截止
     pid = pool_store.pool_period_id(db, "ttt14", "26133")
     assert pid is not None
@@ -233,10 +242,34 @@ def test_sync_current_persists_and_keeps_deadline(db) -> None:
 
 
 def test_sync_current_discovers_jqc_on_sale(db) -> None:
-    zucai_official.sync_current(db, Settings(), _mock_client(jqc_on_sale=True))
-    pid = pool_store.pool_period_id(db, "goals4", "26133")
+    stats = zucai_official.sync_current(db, Settings(), _mock_client(jqc_on_sale=True))
+    pid = pool_store.pool_period_id(db, "goals4", "26233")
     assert pid is not None
     assert len(pool_store.pool_matches_for_period(db, pid)) == 1
+    assert stats.empty_markets == []
+    assert stats.pages == 2
+
+
+def test_backfill_per_game_period_sequences(db) -> None:
+    """期号按玩法独立（票 02）：jqc 从自己的当期号倒查，不吃 sfc 序列。"""
+    draws = {
+        "90|26132": _DRAW_VALUE | {"lotteryDrawNum": "26132"},
+        "94|26232": _DRAW_VALUE
+        | {"lotteryDrawNum": "26232", "lotteryGameName": "4场进球"},
+    }
+    stats = zucai_official.backfill_draws(
+        db,
+        Settings(),
+        _mock_client(jqc_on_sale=True, draw_values=draws),
+        periods=2,
+        sleeper=0,
+    )
+    assert pool_store.pool_period_id(db, "ttt14", "26132") is not None
+    assert pool_store.pool_period_id(db, "goals4", "26232") is not None
+    # sfc 序列不会给 goals4 落期
+    assert pool_store.pool_period_id(db, "goals4", "26132") is None
+    # 2 起 V1（双玩法当期）+ 2×2 期 V2
+    assert stats.pages == 6
 
 
 def test_backfill_draws_lands_official_state_and_skips(db) -> None:
@@ -295,3 +328,22 @@ def test_backfill_requires_referer_and_origin(db) -> None:
     for request in draw_requests:
         assert request.headers["Origin"] == "https://www.sporttery.cn"
         assert "kjgg" in request.headers["Referer"]
+
+
+def test_sync_current_jqc_hard_failure_degrades_not_kills(db) -> None:
+    """correctness F1：jqc 面 500 时 sfc 面照常落库 + 缺账 + run 行存在。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url.path).endswith("getFootBallMatchV1.qry"):
+            if str(request.url.params["param"]).startswith("94,"):
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, json={"success": True, "value": _CURRENT_VALUE})
+        return httpx.Response(200, json={"success": True, "value": {}})
+
+    stats = zucai_official.sync_current(
+        db, Settings(), httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert pool_store.pool_period_id(db, "ttt14", "26133") is not None
+    assert stats.empty_markets == ["jqc"]
+    row = db.execute("SELECT empty_markets FROM pool_sync_runs").fetchone()
+    assert json.loads(row["empty_markets"]) == ["jqc"]
