@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     srct_stats_url: str = ""
     # 当期班在售清单（票 65 实测票 d）：live 主机当日场次 ID 表（var Ba_Soccer）
     srct_basid_url: str = ""
+    # 当日全量场次数据文件（票 05 发现面补缺）：行内嵌竞彩编号 → sid 直连
+    srct_bfdata_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")

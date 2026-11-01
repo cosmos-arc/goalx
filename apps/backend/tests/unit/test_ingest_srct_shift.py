@@ -128,7 +128,7 @@ def _run(
     kwargs.setdefault("sleeper", lambda _s: None)
     kwargs.setdefault("jitter", None)
     kwargs.setdefault("rate_limiter", default_limiter())
-    settings = _settings(tmp_path)
+    settings = kwargs.pop("settings", None) or _settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     stats = srct_shift.run_shift(
         store, settings, client, now_fn=lambda: now_utc, **kwargs
@@ -312,3 +312,157 @@ def test_basid_legal_empty_on_sale_not_face_miss(tmp_path: Path) -> None:
     )
     assert stats.discovered == 0
     assert "_entry" not in stats.failed  # 合法零在售不算缺账（JC 相位 mock 噪声另计）
+
+
+# —— 票 05 发现面补缺：bfdata 编号直连 ——
+# bfdata 行实测形态裁剪（字段位随行漂移，编号/开球参数串正则非位提取）
+BFDATA_JS = (
+    'var A=Array(2);var matchdate="09\u670826\u65e5";'
+    'A[1]="4004444^#FF6699^\u8377\u7532^\u8377\u7532^^\u683c\u7f57\u5b81\u6839^\u9ad8\u5be7\u6839^^'
+    "\u9e7f\u7279\u4e39\u65af\u5df4\u8fbe^\u9e7f\u7279\u4e39\u65af\u5df4\u9054^^20:00^2026,8,26,20,00,00^"
+    "0^0^0^^^0^0^0^0^8^14^1^2^^^True^0.75^^^^^^^^^09-26^236^273^^8^0^^2026^1^16^3.25^^"
+    '\u5468\u516d105^295^0^0^1^1^1^^^^0";'
+    'A[2]="4005555^#006665^\u8461\u8d85^\u8461\u8d85^^\u7ef4\u585e\u4e4c^\u7ef4\u585e\u70cf^^'
+    "\u91cc\u5965\u963f\u7ef4^\u91cc\u5965\u963f\u7ef4^^21:00^2026,8,26,21,00,00^"
+    '0^0^0^^^^0^0^^^True^0.5^^^^^^^09-26^1805^476^^6^0^^2026^1^23^\u5468\u516d106^14^322^0^0^1^1^0^^^^0"'
+).encode()
+
+
+def test_parse_bfdata_code_join_projection() -> None:
+    coded = srct_shift.parse_bfdata(BFDATA_JS)
+    # 编号直连：code → (sid, 北京 HH:MM)；JS 日期参数月 0-based（08=9月）
+    assert coded["周六105"] == srct_shift.BfGapRow(sid="4004444", hhmm="20:00")
+    assert coded["周六106"] == srct_shift.BfGapRow(sid="4005555", hhmm="21:00")
+
+
+def _seed_jc_row(store: CorpusStore, *, code: str, kickoff_utc: str) -> None:
+    store.upsert_jc_shift_match(
+        {
+            "match_id": "2041" + code[-3:],
+            "league": "荷甲",
+            "home": "格罗宁根",
+            "away": "鹿特丹斯巴达",
+            "kickoff_utc": kickoff_utc,
+            "beats": 0,
+            "finalized": 0,
+            "code": code,
+        }
+    )
+
+
+def test_gap_fill_discovers_sid_not_in_basid(tmp_path: Path) -> None:
+    """JC 在售等源T → bfdata 编号直连补 sid → 并入主班建档（开球 HH:MM 门）。"""
+    settings = _settings(tmp_path).model_copy(
+        update={"srct_bfdata_url": "https://srct.test/bfdata_ut.js"}
+    )
+    store = CorpusStore(settings.corpus_root)
+    _seed_jc_row(
+        store, code="周六105", kickoff_utc="2026-09-26T12:00:00+00:00"
+    )  # 北京 20:00
+    store.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/basid/BaSID.js":
+            return httpx.Response(200, content=SAMPLE_BASID)
+        if path == "/bfdata_ut.js":
+            return httpx.Response(200, content=BFDATA_JS)
+        if path.startswith("/odds/"):
+            sid = path.removeprefix("/odds/").removesuffix(".js")
+            if sid == "4004444":
+                return httpx.Response(
+                    200, content=_odds_js("4004444", "荷甲", "2026,8,26,12,00,00")
+                )
+            return httpx.Response(200, content=_ODDS_ROUTES.get(sid, b""))
+        if path.startswith(("/asian/", "/overdown/")):
+            return httpx.Response(200, content=_multi_book_page("指数页"))
+        return httpx.Response(500, text="no-route")
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, store = _run(
+        tmp_path,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        now_utc,
+        settings=settings,
+    )
+    assert stats.gap_waiting == 1
+    assert stats.gap_filled == 1
+    assert "4004444" in store.shift_matches()  # 建档落表（复用主班链路）
+
+
+def test_gap_fill_time_mismatch_skips(tmp_path: Path) -> None:
+    """编号相同开球不齐（改期/回收残行）：宁缺勿错不补。"""
+    settings = _settings(tmp_path).model_copy(
+        update={"srct_bfdata_url": "https://srct.test/bfdata_ut.js"}
+    )
+    store = CorpusStore(settings.corpus_root)
+    _seed_jc_row(
+        store, code="周六105", kickoff_utc="2026-09-26T13:00:00+00:00"
+    )  # 北京 21:00 ≠ bf 20:00
+    store.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/basid/BaSID.js":
+            return httpx.Response(200, content=SAMPLE_BASID)
+        if request.url.path == "/bfdata_ut.js":
+            return httpx.Response(200, content=BFDATA_JS)
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, _ = _run(
+        tmp_path,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        now_utc,
+        settings=settings,
+    )
+    assert stats.gap_filled == 0
+
+
+def test_gap_fill_no_waiting_no_fetch(tmp_path: Path) -> None:
+    """无等源T 场：bfdata 零请求（与 _entry 同口径的空耗纪律）。"""
+    fetched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        fetched.append(path)
+        if path == "/basid/BaSID.js":
+            return httpx.Response(200, content=SAMPLE_BASID)
+        if path == "/bfdata_ut.js":
+            return httpx.Response(200, content=BFDATA_JS)
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, _ = _run(
+        tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), now_utc
+    )
+    assert stats.gap_waiting == 0
+    assert "/bfdata_ut.js" not in fetched
+
+
+def test_jc_code_column_migration(tmp_path: Path) -> None:
+    """票 05 迁移幂等：老 checkpoint 库（jc 表无 code 列）重开自补列。"""
+    import sqlite3
+
+    root = tmp_path / "corpus"
+    store = CorpusStore(root)
+    store.ensure_tree()  # 建库（checkpoint 表惰性建，先显式落树）
+    store.close()
+    conn = sqlite3.connect(root / "checkpoint.db")
+    conn.execute("DROP TABLE jc_shift_matches")
+    conn.execute(
+        """
+        CREATE TABLE jc_shift_matches (
+            match_id TEXT PRIMARY KEY, league TEXT NOT NULL DEFAULT '',
+            home TEXT NOT NULL DEFAULT '', away TEXT NOT NULL DEFAULT '',
+            kickoff_utc TEXT, first_seen_at TEXT NOT NULL, last_seen_at TEXT,
+            beats INTEGER NOT NULL DEFAULT 0, finalized INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+    reopened = CorpusStore(root)  # 重开：_create_checkpoint_tables 幂等补列
+    _seed_jc_row(reopened, code="周六105", kickoff_utc="2026-09-26T12:00:00+00:00")
+    rows = reopened.jc_shift_matches()
+    assert rows["2041105"]["code"] == "周六105"  # type: ignore[index]
+    reopened.close()

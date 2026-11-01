@@ -250,3 +250,47 @@ def test_check_serve_log_prefect_crashed_marker(tmp_path: Path) -> None:
     log = tmp_path / "serve.log"
     log.write_text("x\nFinished in state Crashed('Flow run process was terminated')\n")
     assert check_serve_log(log).status == DEGRADED
+
+
+def test_check_jc_waiting_buckets(db: sqlite3.Connection) -> None:
+    """票 05 兜底可见性：全链=绿；视界内等=黄；≤2h 临界=红。"""
+    from goalx_backend.morning_check import check_jc_waiting
+
+    bd = fx_store.beijing_business_date(NOW)
+    bd_next = fx_store.beijing_business_date(NOW + timedelta(days=1))
+    comp = fx_store.upsert_competition(db, "英超", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "阿森纳")
+    away = fx_store.upsert_team(db, "切尔西")
+    far = fx_store.upsert_fixture(db, comp, "2026-11-01T21:00:00+00:00", home, away)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=far, kind="jingcai", business_date=bd, code="周日101"
+        ),
+    )
+    db.commit()
+    item = check_jc_waiting(db, now=NOW, business_dates=(bd, bd_next))
+    assert item.status == DEGRADED  # 开球 +20h：等源T 黄
+    critical = fx_store.upsert_fixture(
+        db, comp, "2026-11-01T02:05:00+00:00", home, away
+    )
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=critical, kind="jingcai", business_date=bd, code="周日102"
+        ),
+    )
+    db.commit()
+    item = check_jc_waiting(db, now=NOW, business_dates=(bd, bd_next))
+    assert item.status == FAIL  # 开球 +1h：临界红
+    assert "临界 1" in item.detail
+    for fid in (far, critical):
+        db.execute(
+            "INSERT INTO source_match_links (fixture_id, source, source_match_id,"
+            " method, status, mapped_at) VALUES (?, 'srct', '123', 'primary_key',"
+            " 'linked', ?)",
+            (fid, _iso(1)),
+        )
+    db.commit()
+    item = check_jc_waiting(db, now=NOW, business_dates=(bd, bd_next))
+    assert item.status == OK  # 全链绿

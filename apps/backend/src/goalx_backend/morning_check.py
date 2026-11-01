@@ -18,7 +18,7 @@ from __future__ import annotations
 import socket
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,7 +29,7 @@ from goalx_backend.betting import funnel
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import pool, price_ledger, today
+from goalx_backend.data import mapping, pool, price_ledger, today
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
@@ -44,6 +44,9 @@ _CORPUS_FRESH_HOURS = 36
 _GOALS4_STALE_DAYS = 7
 _SERVE_LOG_TAIL_BYTES = 200_000
 _SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
+# 票 05 等源T 视界：与补缺 GAP_HORIZON 同口径（36h）；临界=开球 ≤2h 仍未链
+_JC_WAITING_HOURS = 36
+_JC_WAITING_CRITICAL = timedelta(hours=2)
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,51 @@ def check_bets(conn: sqlite3.Connection) -> CheckItem:
     return CheckItem("bets", OK, f"累计 {bets_store.bets_total(conn)} 注")
 
 
+def check_jc_waiting(
+    conn: sqlite3.Connection, *, now: datetime, business_dates: tuple[str, ...]
+) -> CheckItem:
+    """
+    项 11 JC 在售等源T（票 05 补缺面的兜底可见性）。
+
+    视界内（≤36h 开球）竞彩业务日在售场无 srct 链 = 等源T；开球 ≤2h
+    仍未链 = 临界（红——补缺面失效的示警面，正常应被当期班补缺清零）。
+    """
+    marks = ",".join("?" for _ in business_dates)
+    rows = conn.execute(
+        f"""
+            SELECT DISTINCT f.id AS fid, f.kickoff_utc AS kickoff
+            FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id
+              AND mc.kind = 'jingcai' AND mc.business_date IN ({marks})
+            WHERE f.kickoff_utc > ? AND f.kickoff_utc <= ?
+        """,  # noqa: S608 — 占位符由 business_dates 定宽构造，非用户输入
+        (
+            *business_dates,
+            now.isoformat(timespec="seconds"),
+            (now + timedelta(hours=_JC_WAITING_HOURS)).isoformat(timespec="seconds"),
+        ),
+    ).fetchall()
+    linked = mapping.srct_sids_for_fixtures(conn, [int(r["fid"]) for r in rows])
+    waiting_kickoffs = [str(r["kickoff"]) for r in rows if int(r["fid"]) not in linked]
+    critical = [
+        k
+        for k in waiting_kickoffs
+        if datetime.fromisoformat(k) <= now + _JC_WAITING_CRITICAL
+    ]
+    if critical:
+        status = FAIL
+    elif waiting_kickoffs:
+        status = DEGRADED
+    else:
+        status = OK
+    detail = (
+        f"等源T {len(waiting_kickoffs)} 场（≤2h 临界 {len(critical)} 场）"
+        if waiting_kickoffs
+        else f"视界内 {len(rows)} 场全链"
+    )
+    return CheckItem("jc_waiting", status, detail)
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -240,7 +288,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 10 项（只读；网络面仅第 10 项官方当期端点）。"""
+    """跑全部 11 项（只读；网络面仅第 10 项官方当期端点）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack()]
@@ -261,6 +309,16 @@ def run_morning_check(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
                 check_bets(conn),
+                check_jc_waiting(
+                    conn,
+                    now=resolved_now,
+                    business_dates=tuple(
+                        fx_store.beijing_business_date(
+                            resolved_now + timedelta(days=off)
+                        )
+                        for off in (0, 1)
+                    ),
+                ),
             )
         )
         with httpx.Client(verify=browser_ssl_context()) as client:

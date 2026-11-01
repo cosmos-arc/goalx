@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS jc_shift_matches (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT,
     beats INTEGER NOT NULL DEFAULT 0,
-    finalized INTEGER NOT NULL DEFAULT 0
+    finalized INTEGER NOT NULL DEFAULT 0,
+    code TEXT
 )
 """
 # 票 67 JC 回填日账（done 日不重枚举——十年一轮后真零请求心跳的前提）
@@ -161,6 +162,9 @@ CREATE TABLE IF NOT EXISTS guardian_sync_state (
 _GUARDIAN_BOUNDARY_ALTER_SQL = (
     "ALTER TABLE guardian_sync_state ADD COLUMN boundary TEXT"
 )
+# 2026-11-01 追加列（票 05 发现面补缺）：JC 当期拍行带竞彩编号——bfdata
+# 编号直连的本地侧键（编号是 JC 侧身份，matchId 是 calculator 内部 id）
+_JC_CODE_ALTER_SQL = "ALTER TABLE jc_shift_matches ADD COLUMN code TEXT"
 
 
 def _ensure_boundary_column(conn: sqlite3.Connection) -> None:
@@ -168,6 +172,13 @@ def _ensure_boundary_column(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(guardian_sync_state)")}
     if "boundary" not in cols:
         conn.execute(_GUARDIAN_BOUNDARY_ALTER_SQL)
+
+
+def _ensure_jc_code_column(conn: sqlite3.Connection) -> None:
+    """幂等补齐 jc_shift_matches.code 列（票 05；老 checkpoint 库升级）。"""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(jc_shift_matches)")}
+    if "code" not in cols:
+        conn.execute(_JC_CODE_ALTER_SQL)
 
 
 _GUARDIAN_REQUEST_DAYS_SQL = """
@@ -276,6 +287,7 @@ def _create_checkpoint_tables(conn: sqlite3.Connection) -> None:
     for ddl in _CHECKPOINT_TABLE_SQL:
         conn.execute(ddl)
     _ensure_boundary_column(conn)
+    _ensure_jc_code_column(conn)
     conn.commit()
 
 
@@ -784,6 +796,7 @@ class CorpusStore:
             "beats",
             "last_seen_at",
             "finalized",
+            "code",
         )
         values = tuple(row.get(c) for c in columns)
         updates = ",".join(f"{c}=excluded.{c}" for c in columns if c != "match_id")

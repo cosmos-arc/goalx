@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import random
 import re
+import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -90,6 +91,9 @@ class ShiftStats:
     close_beats: int = 0
     out_scope: int = 0  # 非 CorpusScope 建档数（本轮新见）
     missing_kickoff: int = 0  # MatchTime 不可解建档数（无拍可调度留痕）
+    # 发现面补缺（票 05）：JC 在售等源T 数 / bfdata 编号直连补到的 sid 数
+    gap_waiting: int = 0
+    gap_filled: int = 0
     requests: int = 0
     raw_new: int = 0
     parsed_ok: int = 0
@@ -113,6 +117,146 @@ def parse_basid(body: bytes) -> list[str]:
         if raw.strip():
             seen.setdefault(raw.strip(), None)
     return list(seen)
+
+
+# —— 发现面补缺（票 05）——————————————————————————————————————
+# bfdata_ut.js（live 页核心数据文件）：当日全量场次（~750 行），行内嵌
+# 竞彩编号（如"周日015"）→ 编号直连 JC 在售行，无需名字模糊匹配。
+# 行字段位随行漂移（实测 A[1] 与其余行布局不同）→ 编号/开球 JS 参数串
+# 一律正则非位提取，不做位置假设。
+_JC_CODE_RE = re.compile(r"^周[一二三四五六日]\d{3}$")
+_BF_MIN_FIELDS = 8  # 行最小字段数（sid/色彩/联赛/队名/时间骨架）
+_JS_DATE_RE = re.compile(r"^(\d{4}),(\d{1,2}),(\d{1,2}),(\d{2}),(\d{2}),(\d{2})$")
+# 等源T 视界：只对临开球 ≤36h 的 JC 在售场做补缺——当日 bfdata 覆盖
+# 当晚+次日凌晨场，更远的场等它的"当日"到了自然可见（文件只出当日）
+GAP_HORIZON = timedelta(hours=36)
+
+
+@dataclass(frozen=True)
+class BfGapRow:
+    """bfdata 行的补缺投影：竞彩编号 → (sid, 开球北京 HH:MM)。"""
+
+    sid: str
+    hhmm: str
+
+
+def parse_bfdata(body: bytes) -> dict[str, BfGapRow]:
+    """bfdata_ut.js → 竞彩编号 → 行投影（纯函数；无编号行跳过，同码保首）。"""
+    out: dict[str, BfGapRow] = {}
+    for match in re.finditer(
+        r'[ABC]\[\d+\]="([^"]*)"', body.decode("utf-8", "replace")
+    ):
+        parts = match.group(1).split("^")
+        if len(parts) < _BF_MIN_FIELDS or not parts[0].isdigit():
+            continue
+        code = next((f for f in parts if _JC_CODE_RE.match(f)), None)
+        date_raw = next((f for f in parts if _JS_DATE_RE.match(f)), None)
+        if code is None or date_raw is None or code in out:
+            continue
+        g = _JS_DATE_RE.match(date_raw)
+        if g is None:  # pragma: no cover - date_raw 已由同正则筛过
+            continue
+        out[code] = BfGapRow(
+            sid=parts[0],
+            hhmm=f"{int(g.group(4)):02d}:{int(g.group(5)):02d}",
+        )
+    return out
+
+
+def _jc_waiting_rows(
+    store: CorpusStore, now: datetime
+) -> list[tuple[str, datetime, str, str]]:
+    """JC 当期拍行 → 视界内等源T 列表 [(编号, 开球, 主, 客)]。"""
+    waiting: list[tuple[str, datetime, str, str]] = []
+    for row in store.jc_shift_matches().values():
+        if row.get("finalized"):
+            continue
+        code = row.get("code")
+        kickoff = row.get("kickoff_utc")
+        if not code or not isinstance(kickoff, str) or not kickoff:
+            continue
+        try:
+            moment = datetime.fromisoformat(kickoff)
+        except ValueError:
+            continue
+        if now < moment <= now + GAP_HORIZON:
+            waiting.append(
+                (str(code), moment, str(row.get("home")), str(row.get("away")))
+            )
+    return waiting
+
+
+def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统计一路传参）
+    store: CorpusStore,
+    settings: Settings,
+    client: httpx.Client,
+    sids: list[str],
+    known: dict[str, dict[str, object]],
+    now: datetime,
+    stats: ShiftStats,
+    limiter: MovingWindowRateLimiter,
+    sleeper: Callable[[float], None],
+    budget: srct.NightBudget,
+) -> list[str]:
+    """
+    JC 在售等源T 差集 → bfdata 编号直连补 sid（票 05）。
+
+    等源T 判据（corpus 侧近似）：jc_shift_matches 临开球 ≤36h 带编号的行，
+    其编号连到的 sid 不在 Ba_Soccer 当班清单也不在已建档集。补到的 sid
+    并入主循环走 _advance_sid（建档/四类拍/mapping live 兜底全复用）；
+    差集可见性由 stats.gap_waiting/gap_filled + 晨检项留痕。
+    """
+    waiting = _jc_waiting_rows(store, now)
+    stats.gap_waiting = len(waiting)
+    if not waiting:
+        return []
+    if not settings.srct_bfdata_url:
+        logger.info(
+            "srct shift 补缺待命：{} 场等源T（bfdata_url 未配置）", len(waiting)
+        )
+        return []
+    live_root = re.match(r"https?://[^/]+", settings.srct_detail_url or "")
+    throttle(limiter, srct.REQUEST_WINDOW, sleeper)
+    budget.charge(1)  # 与 _entry 同口径：1 请求入闸入账
+    stats.requests += 1
+    response = client.get(
+        settings.srct_bfdata_url,
+        params={"r": "007"},
+        headers={
+            "User-Agent": DESKTOP_UA,
+            **({"Referer": live_root.group(0) + "/"} if live_root else {}),
+        },
+        timeout=25.0,
+    )
+    response.raise_for_status()
+    coded = parse_bfdata(response.content)
+    out: list[str] = []
+    for code, kickoff, home, away in waiting:
+        bf = coded.get(code)
+        if bf is None:
+            continue  # 当日文件无此编号：明日场等它的"当日"到（视界内自愈）
+        beijing_hhmm = kickoff.astimezone(BEIJING).strftime("%H:%M")
+        if bf.hhmm != beijing_hhmm:
+            # 编号回收/改期残行防线：编号相同开球不齐不补（宁缺勿错）
+            logger.warning(
+                "srct shift 补缺 {} 开球不齐（JC={} bf={}），跳过",
+                code,
+                beijing_hhmm,
+                bf.hhmm,
+            )
+            continue
+        if bf.sid in sids or bf.sid in known:
+            continue  # Ba_Soccer 已有/已建档
+        out.append(bf.sid)
+        logger.info(
+            "srct shift 补缺：{} {} vs {} → sid {}（Ba_Soccer 缺）",
+            code,
+            home,
+            away,
+            bf.sid,
+        )
+    stats.gap_filled = len(out)
+    return out
 
 
 def parse_match_time(raw: object) -> datetime | None:
@@ -368,7 +512,20 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
         logger.warning("srct shift BaSID 无清单变量（响应 {} 字节）", len(body))
     stats.discovered = len(sids)
     stats.known = sum(1 for sid in sids if sid in known)
-    for sid in sids:
+    # 发现面补缺（票 05）：JC 在售等源T 场走 bfdata 编号直连——挂出即自愈
+    # 的差集在这里提前到"当日可见"。降级不拖垮主班（补缺失败下轮重试）。
+    try:
+        gap_sids = _fill_gap_sids(
+            store, settings, client, sids, known, now, stats, limiter, sleeper, budget
+        )
+    except srct.NightStop as stop:
+        stats.stopped = stop.reason
+        return stats
+    except (httpx.HTTPError, sqlite3.Error, OSError) as exc:
+        stats.failed["gap_fill"] = f"{type(exc).__name__}: {exc}"[:120]
+        logger.warning("srct shift 发现面补缺降级（{}）", exc)
+        gap_sids = []
+    for sid in [*sids, *gap_sids]:
         row = known.get(sid)
         try:
             row = _advance_sid(

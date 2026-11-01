@@ -68,6 +68,7 @@ class JcOnSaleMatch:
     league: str
     home: str
     away: str
+    code: str = ""  # 竞彩编号（周日015；票 05 bfdata 编号直连键）
 
 
 def parse_on_sale_matches(payload: dict[str, Any]) -> dict[str, JcOnSaleMatch]:
@@ -92,6 +93,7 @@ def parse_on_sale_matches(payload: dict[str, Any]) -> dict[str, JcOnSaleMatch]:
                 league=str(row.get("leagueAbbName") or ""),
                 home=str(row.get("homeTeamAbbName") or ""),
                 away=str(row.get("awayTeamAbbName") or ""),
+                code=str(row.get("matchNumStr") or ""),
             )
     return out
 
@@ -185,9 +187,11 @@ def run_jc_beats(  # noqa: C901, PLR0912, PLR0915 拍决策分支随四类拍累
             "kickoff_utc": row_on_sale.kickoff_utc,
             "beats": 0,
             "finalized": 0,
+            "code": row_on_sale.code,
         }
         row["league"] = row_on_sale.league
         row["kickoff_utc"] = row_on_sale.kickoff_utc
+        row["code"] = row_on_sale.code  # 票 05：编号直连键随行刷新
         row["last_seen_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         store.upsert_jc_shift_match(row)
         if not store.has(jc.JC_PROVIDER, jc.SP_DATASET, open_key(match_id)):
