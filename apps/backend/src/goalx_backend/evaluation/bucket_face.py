@@ -24,7 +24,7 @@ import duckdb
 from loguru import logger
 
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import gold_reader, mapping
+from goalx_backend.data import gold_reader, mapping, quote_evidence
 from goalx_backend.evaluation.signal_attribution import bucket_of, features_of
 
 # 上线面=判据严格平移的符号类（devig 概率位移，无量纲）。书数族
@@ -43,10 +43,8 @@ SIGNIFICANT_FACES: tuple[tuple[str, str, str, str], ...] = (
 # 临场锚窗（与 gold._anchor_slices 同语义：开球前 1h/24h 末价切点）
 _1H = timedelta(hours=1)
 _24H = timedelta(hours=24)
-# 1x2 锚书（gold E1X2_ANCHOR 同书：corpus_gate.ANCHOR_BOOK 单一真相源；
-# quote_evidence.SRCT_PINNACLE_BOOK 复制——分层禁止 data 上行 import
-# evaluation，改动须两处同步）
-_LIVE_ANCHOR_BOOK = "srct:1x2:177"
+# 切点序=(kickoff-1h, kickoff-24h, now)——读口返回按同序对齐的三向列表
+_LIVE_CUT_COUNT = 3
 
 
 def faces_for_gold_row(gold_row: dict[str, Any]) -> list[str]:
@@ -116,82 +114,27 @@ def attach_review_faces(
     )
 
 
-def _anchor_triplets_asof(
-    duck_con: duckdb.DuckDBPyConnection,
-    kickoff_by_sid: dict[str, datetime],
-    now_ms: int,
-) -> dict[str, tuple[Any, Any, Any]]:
-    """
-    锚书 1x2 三向 as-of 末价批查。
-
-    逐 sid 取 (now 现价, kickoff-1h 末价, kickoff-24h 末价)。查询异常降级
-    空 dict（临场面让位，主表不受影响）。
-    """
-    values = ", ".join(["(?, ?, ?)"] * len(kickoff_by_sid))
-    params: list[object] = []
-    for sid, kickoff in kickoff_by_sid.items():
-        k1h_ms = int((kickoff - _1H).timestamp() * 1000)
-        k24h_ms = int((kickoff - _24H).timestamp() * 1000)
-        params.extend((sid, k1h_ms, k24h_ms))
-    params.append(now_ms)
-    params.append(_LIVE_ANCHOR_BOOK)
-    try:
-        rows = duck_con.execute(
-            f"""
-            WITH bounds(sid, k1h_ms, k24h_ms) AS (VALUES {values}),
-            agg AS (
-                SELECT b.sid,
-                       arg_max(struct_pack(h := e.odds_home, d := e.odds_draw,
-                                           a := e.odds_away),
-                               struct_pack(t := epoch_ms(e.published_at),
-                                           o := e.source_order))
-                           FILTER (WHERE epoch_ms(e.published_at) <= ?) AS now_q,
-                       arg_max(struct_pack(h := e.odds_home, d := e.odds_draw,
-                                           a := e.odds_away),
-                               struct_pack(t := epoch_ms(e.published_at),
-                                           o := e.source_order))
-                           FILTER (WHERE epoch_ms(e.published_at) <= b.k1h_ms) AS q1h,
-                       arg_max(struct_pack(h := e.odds_home, d := e.odds_draw,
-                                           a := e.odds_away),
-                               struct_pack(t := epoch_ms(e.published_at),
-                                           o := e.source_order))
-                           FILTER (WHERE epoch_ms(e.published_at) <= b.k24h_ms) AS q24h
-                FROM odds_change_event e
-                JOIN bounds b ON b.sid = e.sid
-                WHERE e.market = '1x2' AND e.bookmaker_id = ?
-                GROUP BY b.sid
-            )
-            SELECT sid, now_q, q1h, q24h FROM agg
-            """,  # noqa: S608 VALUES 占位数=行集形状，值全参数绑定
-            params,
-        ).fetchall()
-    except duckdb.Error as exc:
-        logger.warning("错价桶临场锚查询降级: {}", exc)
-        return {}
-    # now_q None（锚书对该场 as-of 无任何价）的 sid 整场让位：无现价可言
-    return {str(r[0]): (r[1], r[2], r[3]) for r in rows if r[1] is not None}
-
-
 def _synthetic_gold_row(
-    tri: tuple[Any, Any, Any], kickoff: datetime, now: datetime
-) -> dict[str, Any]:
+    tri: list[tuple[float, float, float] | None], kickoff: datetime, now: datetime
+) -> dict[str, Any] | None:
     """
-    (now 现价, q1h 末价, q24h 末价) → gold 行同形（features_of 单一判据口）。
+    切点三向（q1h 位/q24h 位/now 位，读口按传入切点序对齐）→ gold 行同形。
 
-    锚窗未过的档不进合成行（该面判据未齐）；锚数据缺席同缺列（空≠无）。
+    锚窗未过的档不进合成行（该面判据未齐）；锚数据缺席同缺列（空≠无）；
+    now 位无价 → None（无现价可言，整场让位）。
     """
-    now_q, q1h, q24h = tri
+    q1h, q24h, now_q = tri if len(tri) == _LIVE_CUT_COUNT else (None, None, None)
+    if now_q is None:
+        return None
     row: dict[str, Any] = {
-        "close1x2_h": now_q["h"],
-        "close1x2_d": now_q["d"],
-        "close1x2_a": now_q["a"],
+        "close1x2_h": now_q[0],
+        "close1x2_d": now_q[1],
+        "close1x2_a": now_q[2],
     }
     if q1h is not None and now >= kickoff - _1H:
-        row.update({"q1h1x2_h": q1h["h"], "q1h1x2_d": q1h["d"], "q1h1x2_a": q1h["a"]})
+        row.update({"q1h1x2_h": q1h[0], "q1h1x2_d": q1h[1], "q1h1x2_a": q1h[2]})
     if q24h is not None and now >= kickoff - _24H:
-        row.update(
-            {"q24h1x2_h": q24h["h"], "q24h1x2_d": q24h["d"], "q24h1x2_a": q24h["a"]}
-        )
+        row.update({"q24h1x2_h": q24h[0], "q24h1x2_d": q24h[1], "q24h1x2_a": q24h[2]})
     return row
 
 
@@ -207,8 +150,9 @@ def attach_live_faces(
 
     只对未开球且已链源T 的行计算：锚书三向按 as-of now（close1x2 位）与
     锚窗末价（q1h/q24h 位）合成 gold 行同形，经同一 features_of 判据亮
-    "当前在桶"。锚未到=该面判据未齐不标（PIT：锚窗末价在锚时刻前仍在
-    变）；duck 连接/查询缺席降级零动作。
+    "当前在桶"（读口=quote_evidence.srct_anchor_triplets_at_cutoffs，
+    ADR-0008 SQL 归 data 属主）。锚未到=该面判据未齐不标（PIT：锚窗末价
+    在锚时刻前仍在变）；duck 连接/查询缺席降级零动作。
     """
     live: dict[int, tuple[str, datetime]] = {}
     for row in rows:
@@ -223,19 +167,23 @@ def attach_live_faces(
     kickoff_by_sid: dict[str, datetime] = {}
     for sid, kickoff in live.values():
         kickoff_by_sid.setdefault(sid, kickoff)
-    triplets = _anchor_triplets_asof(
-        duck_con, kickoff_by_sid, int(now.timestamp() * 1000)
+    # 切点序=(kickoff-1h, kickoff-24h, now)——返回列表按同序对齐
+    triplets = quote_evidence.srct_anchor_triplets_at_cutoffs(
+        duck_con,
+        {
+            sid: (kickoff - _1H, kickoff - _24H, now)
+            for sid, kickoff in kickoff_by_sid.items()
+        },
     )
     hit = 0
     for row in rows:
         bound = live.get(int(row.fixture_id))
         if bound is None:
             continue
-        sid, kickoff = bound
-        tri = triplets.get(sid)
-        if tri is None:
+        synthetic = _synthetic_gold_row(triplets.get(bound[0], []), bound[1], now)
+        if synthetic is None:
             continue
-        flags = faces_for_gold_row(_synthetic_gold_row(tri, kickoff, now))
+        flags = faces_for_gold_row(synthetic)
         if flags:
             row.flags.extend(flags)
             hit += 1

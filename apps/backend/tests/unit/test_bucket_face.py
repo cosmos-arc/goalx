@@ -210,6 +210,8 @@ class _Quote:
 
 def _live_duck(quotes: list[_Quote]) -> duckdb.DuckDBPyConnection:
     """带 odds_change_event 锚书行的内存 duck（sid 固定=测试链 sid）。"""
+    from goalx_backend.data import quote_evidence
+
     con = duckdb.connect()
     con.execute(
         """
@@ -223,7 +225,7 @@ def _live_duck(quotes: list[_Quote]) -> duckdb.DuckDBPyConnection:
     for order, q in enumerate(quotes):
         con.execute(
             "INSERT INTO odds_change_event VALUES (?, '1x2', ?, ?, ?, ?, ?, ?)",
-            ("1234567", bf._LIVE_ANCHOR_BOOK, q.at, order, *q.triplet),
+            ("1234567", quote_evidence.SRCT_PINNACLE_BOOK, q.at, order, *q.triplet),
         )
     return con
 
