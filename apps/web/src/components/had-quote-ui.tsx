@@ -23,7 +23,8 @@ export const FLAG_LABELS: Record<string, string> = {
 	not_joined: "未 join 欧赔",
 	// 只读标注（misprice-bucket-display 票 01）：文案走词典（含"非投注信号"声明）
 	price_band_2_0_2_6: "价段 2.0–2.6",
-	// 真错价桶复盘标注（票 02 增量 1，已开球行）：词族见 misprice-buckets 词条
+	// 真错价桶标注（票 02 裁决①=c 双件）：已开球=复盘面，未开球=临场投影
+	// （as-of 现价，锚窗过后该档才判）；词族见 misprice-buckets 词条
 	"late_move_h:pos": "临场1h主热",
 	"late_move24_h:pos": "24h主热",
 	"late_move24_h:neg": "24h主冷",

@@ -1,4 +1,4 @@
-"""错价桶复盘面测试（misprice-bucket-display 票 02 增量 1）。"""
+"""错价桶展示面测试（misprice-bucket-display 票 02：复盘面 + 临场态投影）。"""
 
 from __future__ import annotations
 
@@ -195,6 +195,216 @@ def test_attach_gold_absent_row_stays_unflagged(
 
 
 _CORPUS_DUCK = Path.home() / "goalx-data" / "duckdb" / "corpus.duckdb"
+
+
+# --- 临场态投影（票 03 增量 2）---
+
+
+@dataclass(frozen=True)
+class _Quote:
+    """锚书 1x2 一拍（临场测试夹具行）。"""
+
+    at: datetime
+    triplet: tuple[float, float, float]
+
+
+def _live_duck(quotes: list[_Quote]) -> duckdb.DuckDBPyConnection:
+    """带 odds_change_event 锚书行的内存 duck（sid 固定=测试链 sid）。"""
+    from goalx_backend.data import quote_evidence
+
+    con = duckdb.connect()
+    con.execute(
+        """
+        CREATE TABLE odds_change_event (
+            sid VARCHAR, market VARCHAR, bookmaker_id VARCHAR,
+            published_at TIMESTAMPTZ, source_order INTEGER,
+            odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE
+        )
+        """
+    )
+    for order, q in enumerate(quotes):
+        con.execute(
+            "INSERT INTO odds_change_event VALUES (?, '1x2', ?, ?, ?, ?, ?, ?)",
+            ("1234567", quote_evidence.SRCT_PINNACLE_BOOK, q.at, order, *q.triplet),
+        )
+    return con
+
+
+def test_live_anchor_not_reached_stays_pending(db: sqlite3.Connection) -> None:
+    """三态①锚未过：now < kickoff-1h（连 24h 锚也未到）→ 有价也不标。"""
+    kickoff = NOW + timedelta(hours=3)
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, kickoff.isoformat()),
+        kickoff_utc=kickoff.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(NOW - timedelta(hours=1), (2.0, 3.5, 4.0)),
+            _Quote(NOW - timedelta(hours=2), (2.4, 3.4, 3.2)),
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == []
+
+
+def test_live_anchor_passed_in_bucket(db: sqlite3.Connection) -> None:
+    """三态③已过且中桶：now ≥ kickoff-1h（双锚齐）→ 主热位移亮两 pos 面；
+    PIT：now 之后的报价（kickoff-10min）不进 as-of 现价。"""
+    kickoff = NOW + timedelta(minutes=30)
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, kickoff.isoformat()),
+        kickoff_utc=kickoff.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(kickoff - timedelta(hours=25), (2.4, 3.4, 3.3)),  # q24h 锚
+            _Quote(kickoff - timedelta(minutes=90), (2.4, 3.4, 3.2)),  # q1h 锚
+            _Quote(kickoff - timedelta(minutes=40), (2.0, 3.5, 4.0)),  # as-of 现价
+            _Quote(kickoff - timedelta(minutes=10), (5.0, 5.0, 5.0)),  # now 后：不可见
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == ["late_move_h:pos", "late_move24_h:pos"]
+
+
+def test_live_24h_only_tier(db: sqlite3.Connection) -> None:
+    """判据逐步变齐：kickoff-24h ≤ now < kickoff-1h → 仅 24h 面可判。"""
+    kickoff = NOW + timedelta(minutes=90)
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, kickoff.isoformat()),
+        kickoff_utc=kickoff.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(kickoff - timedelta(hours=25), (2.6, 3.4, 2.9)),  # q24h 锚
+            _Quote(NOW - timedelta(minutes=10), (2.0, 3.5, 4.0)),  # 现价≤kickoff-1h
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == ["late_move24_h:pos"]
+
+
+def test_live_anchor_passed_not_in_bucket(db: sqlite3.Connection) -> None:
+    """三态②已过未中：锚后无位移（现价=锚价）→ 零 flag（空≠无，观测走日志）。"""
+    kickoff = NOW + timedelta(minutes=30)
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, kickoff.isoformat()),
+        kickoff_utc=kickoff.isoformat(),
+    )
+    duck = _live_duck(
+        [_Quote(kickoff - timedelta(hours=25), (2.0, 3.5, 4.0))]  # 唯一一拍：三态同值
+    )
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == []
+
+
+def test_live_degrades(db: sqlite3.Connection) -> None:
+    """降级面：duck 缺席零动作；odds_change_event 视图缺席（异常）不炸。"""
+    future_kick = (NOW + timedelta(hours=2)).isoformat()
+    fid = _seed_linked_fixture(db, future_kick)
+    row = _Row(fixture_id=fid, kickoff_utc=future_kick)
+    bf.attach_live_faces(db, None, [row], now=NOW)
+    assert row.flags == []
+    empty = duckdb.connect()  # 无表：查询 CatalogException → 静默让位
+    try:
+        bf.attach_live_faces(db, empty, [row], now=NOW)
+    finally:
+        empty.close()
+    assert row.flags == []
+
+
+def test_live_shared_sid_divergent_kickoff_windows(
+    db: sqlite3.Connection,
+) -> None:
+    """correctness F1：两行共享链 sid 但开球时刻不同（改期/坏链形态）——
+    锚窗跟本行 kickoff 逐行各窗，先入行不得替后行定窗（首行 18:00 开球
+    的 1h 锚 17:00 晚于次行 12:30 开球的锚 11:30；12:00 的价对次行是
+    锚后现价、对首行还在锚前=不可入锚位）。"""
+    late_ko = NOW + timedelta(hours=6)  # 18:00Z
+    soon_ko = NOW + timedelta(minutes=30)  # 12:30Z
+    first = _Row(
+        fixture_id=_seed_linked_fixture(db, late_ko.isoformat()),
+        kickoff_utc=late_ko.isoformat(),
+    )
+    second = _Row(
+        fixture_id=_seed_linked_fixture(db, soon_ko.isoformat()),
+        kickoff_utc=soon_ko.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(NOW - timedelta(hours=1), (2.4, 3.4, 3.2)),  # ≤ 两行的 1h 锚
+            _Quote(NOW - timedelta(minutes=15), (2.0, 3.5, 4.0)),  # > 12:30 行锚 11:30
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [first, second], now=NOW)
+    finally:
+        duck.close()
+    # 次行 1h 锚已过（11:30）且主热：q1h=11:00 价 vs 现价=11:45 价 → pos
+    assert second.flags == ["late_move_h:pos"]
+    # 首行 1h 锚（17:00）未到 → pending；24h 锚无更早价 → 不标
+    assert first.flags == []
+
+
+def test_live_anchor_book_pinned_to_gold_anchor() -> None:
+    """correctness F2：临场读口锚书与 gold 轨迹锚（corpus_gate.ANCHOR_BOOK
+    单一真相源，gold.E1X2_ANCHOR 同源）恒等——两字面量无 import 关联，
+    分叉即红（临场面会静默读错书且无红面）。"""
+    from goalx_backend.data import corpus_gate, quote_evidence
+
+    assert quote_evidence.SRCT_PINNACLE_BOOK == corpus_gate.ANCHOR_BOOK
+
+
+def test_live_ignores_past_rows(db: sqlite3.Connection) -> None:
+    """面归属互斥：已开球行归复盘面，临场面不重复标注。"""
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, "2026-11-01T10:00:00+00:00"),
+        kickoff_utc="2026-11-01T10:00:00+00:00",
+    )
+    duck = _live_duck([_Quote(NOW - timedelta(hours=3), (2.0, 3.5, 4.0))])
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == []
+
+
+def test_live_naive_and_garbage_kickoff_skip(
+    db: sqlite3.Connection,
+) -> None:
+    """kickoff 口径单一真相源：legacy naive 串按北京墙钟转换（转对了
+    24h 锚已过=可判且中桶；若误按 UTC 读则锚未到零标——本断言即钉死
+    转换方向）；垃圾串跳过不炸（复盘面 F1 同族防线）。"""
+    naive_future = _Row(
+        fixture_id=_seed_linked_fixture(db, "2026-11-02 19:30:00"),
+        kickoff_utc="2026-11-02 19:30:00",  # 北京墙钟 = NOW(11-01 12:00Z) 后 23.5h
+    )
+    garbage = _Row(fixture_id=99999, kickoff_utc="not-a-date")
+    duck = _live_duck(
+        [
+            _Quote(NOW - timedelta(hours=2), (2.6, 3.4, 2.9)),
+            _Quote(NOW - timedelta(minutes=10), (2.0, 3.5, 4.0)),
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [naive_future, garbage], now=NOW)
+    finally:
+        duck.close()
+    # 1h 锚（开球前 1h）未到 → late_move_h pending；24h 锚已过且主热 → 唯一面
+    assert naive_future.flags == ["late_move24_h:pos"]
+    assert garbage.flags == []
 
 
 @pytest.mark.skipif(

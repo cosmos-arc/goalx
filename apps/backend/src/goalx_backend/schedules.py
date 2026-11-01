@@ -31,6 +31,9 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 - srct-remat 08:10（票 11）：夜班收口后 silver 增量物化——odds 水位增量
   （触及分区重写，A 线参考链保鲜）、fixture/xg 门控全量；护栏命中自动
   全量兜底；零新工件秒级返回
+- gold-rebuild 08:40（misprice 票 03）：market_quote 保鲜 + gold 全量
+  重算——remat 不覆盖 market_quote（曾停摆月余无红面，ou_line_drift 对
+  10 月全缺），复盘面/晨检 gold 新鲜度面的日频输入
 - understat-sync 09:20：xG 特征同步（票 45）——1 首页 + 5 联赛 = 6 请求/日
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - clubelo-sync 09:10：Elo 评级日拍（票 74）——单请求全量快照，赶在
@@ -64,7 +67,7 @@ from goalx_backend.flows import (
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（14 面）=20 面。
+    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（15 面）=21 面。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
@@ -129,7 +132,7 @@ def build_deployments() -> dict[str, RunnerDeployment]:
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
     }
-    # 注册表面（票 03 全量 12 面：单 cron 定拍数据集，含两判死面）
+    # 注册表面（票 03 全量：单 cron 定拍数据集，含两判死面）
     deployments.update(datasets.build_deployments())
     return deployments
 

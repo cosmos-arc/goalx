@@ -667,7 +667,7 @@ def test_empty_corpus_degrades(tmp_path: Path) -> None:
 
 
 def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI gold-build：migrate→gold 重建→duckdb 桥刷新（gold 视图可见）。"""
+    """CLI gold-build（=tasks.gold_rebuild 单一实现）：market 保鲜→gold→桥刷新。"""
     import argparse
 
     from goalx_backend.cli import _cmd_gold_build
@@ -676,15 +676,68 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     store.close()
     _cmd_gold_build(argparse.Namespace(), settings=settings)
     payload = json.loads(capsys.readouterr().out)
-    assert payload["gold_version"] == gold.GOLD_VERSION
-    assert payload["rows"] == 4
-    assert payload["degraded"] is None
+    # 票 03① 起 market_quote 保鲜内联（remat 不覆盖，曾停摆月余）
+    assert payload["market"]["quotes_ah"] >= 1
+    assert payload["gold"]["gold_version"] == gold.GOLD_VERSION
+    assert payload["gold"]["rows"] == 4
+    assert payload["gold"]["degraded"] is None
     con = corpus_duckdb.connect(settings)
     try:
         (n,) = con.execute("SELECT count(*) FROM match_features").fetchone()
     finally:
         con.close()
     assert n == 4
+
+
+def test_gold_rebuild_view_refresh_lock_degrades(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """correctness F3：视图刷新被 API 只读锁占 → 三次短重试后记账跳过，
+    不让日频面假红（gold/meta 已落盘，视图路径绑定明日自愈）。"""
+    import duckdb as duckdb_mod
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    calls = {"n": 0}
+
+    def boom(_store: object) -> Path:
+        calls["n"] += 1
+        raise duckdb_mod.IOException("Could not set lock on file")
+
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "build_corpus_duckdb", boom)
+    monkeypatch.setattr(tasks_mod.time, "sleep", lambda _s: None)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert calls["n"] == 3
+    assert payload["gold"]["duckdb"] == "view_refresh_skipped:duck-lock"
+    assert payload["gold"]["rows"] == 4  # gold 本体不受视图刷新锁影响
+
+
+def test_gold_rebuild_view_refresh_retry_recovers(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3 配对：瞬时锁占一次即释 → 重试拿到真路径（正常记账）。"""
+    import duckdb as duckdb_mod
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    real = tasks_mod.corpus_duckdb.build_corpus_duckdb
+    calls = {"n": 0}
+
+    def flaky(target: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise duckdb_mod.IOException("Could not set lock on file")
+        return real(target)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "build_corpus_duckdb", flaky)
+    monkeypatch.setattr(tasks_mod.time, "sleep", lambda _s: None)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert calls["n"] == 2
+    assert payload["gold"]["duckdb"].endswith("corpus.duckdb")
 
 
 def test_srct_xg_unknown_partition_excluded(built: Built) -> None:

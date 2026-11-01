@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 from loguru import logger
@@ -60,13 +60,14 @@ _DECADE_SQL = """
 
 
 def read_gold_meta(store: CorpusStore) -> dict[str, Any]:
-    """Gold `_meta.json`（版本/构建戳/输入 digest；缺席=空 dict 如实入档）。"""
+    """Gold `_meta.json`（版本/构建戳/输入 digest；缺席/坏体=空 dict 如实入档）。"""
     path = store.gold_path(GOLD_PROVIDER, GOLD_DATASET) / "_meta.json"
     try:
         meta: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return dict(meta)  # type: ignore[arg-type]
+    # correctness F4：合法 JSON 非对象体（手工损坏形态）不炸晨检整跑
+    return cast("dict[str, Any]", meta) if isinstance(meta, dict) else {}
 
 
 def fetch_decade_rows(

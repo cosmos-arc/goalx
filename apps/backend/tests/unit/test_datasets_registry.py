@@ -42,11 +42,12 @@ _RECORD_NAMES = (
     "scout-line",
     "srct-shift",
     "srct-remat",
+    "gold-rebuild",
 )
 
 
 def test_registry_pinned_to_full_batch() -> None:
-    """全量 14 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
+    """全量 15 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
     by_name = {spec.name: spec for spec in datasets.DATASETS}
     assert tuple(by_name) == _RECORD_NAMES
     # dispatch 与定拍命中同一 tasks 函数（一份实现，两个 adapter）
@@ -63,6 +64,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["scout-line"].task is tasks.scout_line
     assert by_name["srct-shift"].task is tasks.srct_shift_run
     assert by_name["srct-remat"].task is tasks.srct_remat_run
+    assert by_name["gold-rebuild"].task is tasks.gold_rebuild
     assert by_name["official-reconcile"].cron == "30 8 * * *"
     assert by_name["understat-sync"].cron == "20 9 * * *"
     assert by_name["clubelo-sync"].cron == "10 9 * * *"
@@ -73,8 +75,9 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["scout-line"].cron == "50 10,22 * * *"
     assert by_name["srct-shift"].cron == "*/30 8-23,0 * * *"
     assert by_name["srct-remat"].cron == "10 8 * * *"
+    assert by_name["gold-rebuild"].cron == "40 8 * * *"
     # cli 面：命令名逐字保留（pool/closing 历史上命令名 ≠ deployment 键）；
-    # cli=False 五面不派生 cli（official-reconcile 手写 handler 保留）
+    # cli=False 六面不派生 cli（official-reconcile 手写 handler 保留）
     assert [spec.command for spec in datasets.DATASETS if spec.cli] == [
         "guardian-sync",
         "pool-sync",
@@ -93,14 +96,15 @@ def test_registry_pinned_to_full_batch() -> None:
         "srcb-collect",
         "intel-collect",
         "scout-line",
+        "gold-rebuild",
     }
     # 判死面 resume=False，其余 True
     assert datasets.dead_names() == ("srcb-collect", "eu-odds-closing")
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：20 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 6 个在前、注册面 14 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：21 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 6 个在前、注册面 15 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
@@ -134,6 +138,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "srct-night": "0 1 * * *",
         "srct-shift": "*/30 8-23,0 * * *",
         "srct-remat": "10 8 * * *",
+        "gold-rebuild": "40 8 * * *",
         "weekly-refresh": "10 6 * * 1",
         "daily-wrap": "30 23 * * *",
         "pool-snapshot": "20 10,16,22 * * *",
