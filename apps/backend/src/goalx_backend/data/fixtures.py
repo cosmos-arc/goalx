@@ -6,6 +6,7 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
+from datetime import time as dtime
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
@@ -313,6 +314,73 @@ def sale_status_row_exists(conn: sqlite3.Connection, status: SaleStatusInput) ->
         ),
     ).fetchone()
     return row is not None
+
+
+#: 竞彩每日销售窗缺省界（北京时；票09 考据 ~11:30–22:00）。开售侧由当日
+#: 首个 on_sale 观测锚覆写（开售是全局事件；开得晚的日子缺省界自愈）。
+SALE_WINDOW_DEFAULT_OPEN = dtime(11, 30)
+SALE_WINDOW_DEFAULT_CLOSE = dtime(22, 0)
+
+
+def beijing_day(ts: str) -> str:
+    """ISO 时刻 → 北京日历日（销售窗锚的日键）。"""
+    return beijing_naive(ts).strftime("%Y-%m-%d")
+
+
+def sale_window_anchor(conn: sqlite3.Connection, beijing_day: str) -> str | None:
+    """
+    该北京日首个 on_sale 观测时刻（ISO UTC）；当日未观测到开售则 None。
+
+    前提（correctness W1/I1/I3，2026-11-01 审）：锚是首**观测**非真开售
+    时刻——[缺省开, 锚) 盲带内的窗外归因偏保守（普通日仅 10:00/19:00
+    两拍时，正午未开售行会归窗外）；单条异常早观测会前移当日锚；区间
+    比较按字典序，仅限 observed_at 全库 UTC 归一秒精度格式（现役写入
+    方恒如此）；不钳位 at 之后的行——回溯归因取当日终锚是设计，live
+    前视由写入侧 observed_at≤墙钟保证。
+    """
+    start = beijing_naive_to_utc(f"{beijing_day} 00:00")
+    if start is None:
+        return None
+    end = start + timedelta(hours=24)
+    row = conn.execute(
+        """
+            SELECT MIN(observed_at) FROM sale_statuses
+            WHERE sale_state = 'on_sale'
+              AND observed_at >= ? AND observed_at < ?
+        """,
+        (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")),
+    ).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def sale_window_anchor_for(conn: sqlite3.Connection, at: str) -> str | None:
+    """At 时刻所属北京日的开售锚（had-quote 单点判定用）。"""
+    return sale_window_anchor(conn, beijing_day(at))
+
+
+def sale_window_phase(at: str, *, anchor: str | None = None) -> str:
+    """
+    时刻的每日销售窗相位：``pre_open | in_window | post_close``。
+
+    锚存在用锚的开售墙钟（跨北京日的锚弃用——相位按当日窗解释），
+    否则缺省 11:30；收市恒缺省 22:00。区间半开 [open, close)。
+    sellStatus 窗外=未开售是相位事实，消费方据此归因
+    （sale-window-derivation 票 01）。
+    """
+    wall = beijing_naive(at).time()
+    open_wall = SALE_WINDOW_DEFAULT_OPEN
+    if anchor and beijing_day(anchor) == beijing_day(at):
+        open_wall = beijing_naive(anchor).time()
+    if wall >= SALE_WINDOW_DEFAULT_CLOSE:
+        return "post_close"
+    if wall >= open_wall:
+        return "in_window"
+    return "pre_open"
+
+
+def not_on_sale_reject_reason(phase: str) -> str:
+    """未开售拒绝理由（两消费方单一出处）：窗内=场次级，窗外=相位事实。"""
+    return "sale_not_on_sale" if phase == "in_window" else "sale_window_closed"
 
 
 def latest_sale_status_asof(

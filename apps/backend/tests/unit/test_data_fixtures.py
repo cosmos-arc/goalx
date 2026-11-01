@@ -7,7 +7,7 @@ from typing import Any
 
 from goalx_backend.data import fixtures as fx
 from goalx_backend.data import quote_evidence
-from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
+from goalx_backend.models import MatchCodeInput, SaleStatusInput, SnapshotInput, Tier
 
 
 def seed_fixture(
@@ -177,3 +177,72 @@ def test_pending_jingcai_fixtures(db: sqlite3.Connection) -> None:
     pending = fx.pending_jingcai_fixtures(db, "2026-09-13T12:00:00+00:00")
     assert [row["id"] for row in pending] == [fixture]
     assert fx.pending_jingcai_fixtures(db, "2026-09-13T09:00:00+00:00") == []
+
+
+def test_sale_window_phase_default_boundaries() -> None:
+    """缺省窗 [11:30, 22:00) 北京时：开端含、收端不含。"""
+    assert fx.sale_window_phase("2026-11-01T03:29:59+00:00") == "pre_open"
+    assert fx.sale_window_phase("2026-11-01T03:30:00+00:00") == "in_window"
+    assert fx.sale_window_phase("2026-11-01T13:59:59+00:00") == "in_window"
+    assert fx.sale_window_phase("2026-11-01T14:00:00+00:00") == "post_close"
+
+
+def test_sale_window_phase_anchor_overrides_open() -> None:
+    """当日锚（13:00 北京）覆写缺省开时刻：锚前窗外、锚点含开端。"""
+    anchor = "2026-11-01T05:00:00+00:00"
+    assert (
+        fx.sale_window_phase("2026-11-01T03:31:00+00:00", anchor=anchor) == "pre_open"
+    )
+    assert (
+        fx.sale_window_phase("2026-11-01T05:00:00+00:00", anchor=anchor) == "in_window"
+    )
+
+
+def test_sale_window_anchor_first_on_sale_of_beijing_day(
+    db: sqlite3.Connection,
+) -> None:
+    """当日锚=该北京日首个 on_sale 观测；北京日界把 UTC 16:00 归次日。"""
+    fixture = seed_fixture(db)
+    for observed, state in (
+        ("2026-10-21T01:00:00+00:00", "on_sale"),  # 北京 10-21 09:00
+        ("2026-10-21T06:00:00+00:00", "on_sale"),  # 北京 10-21 14:00
+        ("2026-10-20T16:00:00+00:00", "on_sale"),  # 北京 10-21 00:00（界上）
+        ("2026-10-20T15:59:00+00:00", "on_sale"),  # 北京 10-20 23:59（界外）
+    ):
+        fx.append_sale_status(
+            db,
+            SaleStatusInput(
+                fixture_id=fixture,
+                market_code="had",
+                sale_state=state,
+                observed_at=observed,
+            ),
+        )
+    db.commit()
+    assert fx.sale_window_anchor(db, "2026-10-21") == "2026-10-20T16:00:00+00:00"
+    assert fx.sale_window_anchor(db, "2026-11-01") is None
+
+
+def test_sale_window_phase_cross_day_anchor_ignored() -> None:
+    """跨北京日的锚弃用回缺省界（相位按当日窗解释）。"""
+    stale_anchor = "2026-10-31T18:00:00+00:00"  # 10-31 日锚，非 11-01
+    assert (
+        fx.sale_window_phase("2026-11-01T03:31:00+00:00", anchor=stale_anchor)
+        == "in_window"
+    )
+
+
+def test_sale_window_anchor_observation_cadence_blind_band() -> None:
+    """钉住盲带语义（correctness W1）：普通日锚=首观测（19:00 北京），
+    正午 not_on_sale 的相位归 pre_open→窗外——观测节奏限制下按已知信息
+    保守归因；改观测节奏或收紧语义时本测试是警示灯。"""
+    anchor = "2026-10-22T11:00:00+00:00"  # 普通日 19:00 北京首拍 on_sale
+    assert (
+        fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor) == "pre_open"
+    )
+    assert (
+        fx.not_on_sale_reject_reason(
+            fx.sale_window_phase("2026-10-22T04:00:00+00:00", anchor=anchor)
+        )
+        == "sale_window_closed"
+    )
