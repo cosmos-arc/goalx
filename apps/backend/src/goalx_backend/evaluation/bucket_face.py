@@ -1,13 +1,12 @@
 """
-8 特征错价桶只读复盘面（misprice-bucket-display 票 02 增量 1，裁决①=c）。
+错价桶只读复盘面（misprice-bucket-display 票 02 增量 1，裁决①=c）。
 
 十年回测的真错价桶（signal-attribution run5，|t|≥2 且 n≥100 过探索纪律
-后 7 个桶面/8 个显著向）：本模块把桶判据投到**已完赛场次**的 gold 行上，
+后 7 桶面）：本模块把其中判据可平移的面投到**已完赛场次**的 gold 行上，
 追加只读 flags——不进 had 闸门/EV/候选/bets 任何决策路径（同票 01 纪律）。
 
 口径（裁决②）：桶判据与特征计算平移自 signal_attribution 单一出处
-（features_of），**效应量/t 值不可搬**——live 文案只写"十年聚合发现"；
-dist 切点用 run5 样本重放冻结（重放 n/t 与报告逐位一致，2026-11-01 验）。
+（features_of），**效应量/t 值不可搬**——live 文案只写"十年聚合发现"。
 
 增量 2（今日页临场态 as-of 投影）另票跟进：本面只做复盘（开球已过），
 判据天然齐（gold 列全为收盘时态）。
@@ -24,19 +23,12 @@ import duckdb
 from goalx_backend.data import gold_reader, mapping
 from goalx_backend.evaluation.signal_attribution import bucket_of, features_of
 
-# dist 桶冻结切点（run5 n=33883 样本重放的 q33/q67；drift 桶按符号无需切点）
-FROZEN_CUTS: dict[str, tuple[float, float]] = {
-    "ah_phase_pre": (461.0, 693.0),
-    "ah_phase_inplay": (142.0, 214.0),
-}
-
-# 7 个显著桶面：(flag 值, 特征键, 桶型, 桶名)；late_move_h:pos 双向显著
-# （h −0.0188 / d +0.0164）仍是一个桶一面。
+# 上线面=判据严格平移的符号类（devig 概率位移，无量纲）。书数族
+# （ah_phase_pre:low/mid、ah_phase_inplay:high）因采集密度量纲漂移撤下
+# （十月 ah_n_inplay q67=1437 vs 十年冻结 214——切点对今日失真，复盘冒烟
+# 实证）；ou_line_drift 近期场全缺（over_down 轨迹→gold 漂移计算对十月
+# 0 产出，数据面缺口）。三面待增量 2 重校（滚动分位/密度归一）后另裁。
 SIGNIFICANT_FACES: tuple[tuple[str, str, str, str], ...] = (
-    ("ah_phase_pre:low", "ah_phase_pre", "dist", "low"),
-    ("ah_phase_pre:mid", "ah_phase_pre", "dist", "mid"),
-    ("ah_phase_inplay:high", "ah_phase_inplay", "dist", "high"),
-    ("ou_line_drift:pos", "ou_line_drift", "drift", "pos"),
     ("late_move_h:pos", "late_move_h", "drift", "pos"),
     ("late_move24_h:pos", "late_move24_h", "drift", "pos"),
     ("late_move24_h:neg", "late_move24_h", "drift", "neg"),
@@ -51,8 +43,7 @@ def faces_for_gold_row(gold_row: dict[str, Any]) -> list[str]:
         value = features.get(key)
         if value is None:
             continue
-        cuts = FROZEN_CUTS.get(key, (0.0, 0.0))
-        if bucket_of(value, kind, cuts) == bucket:
+        if bucket_of(value, kind, (0.0, 0.0)) == bucket:
             out.append(flag)
     return out
 

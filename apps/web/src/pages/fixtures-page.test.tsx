@@ -111,9 +111,9 @@ test("renders eligible cards on top, the full compact table, and the semantic en
 	);
 	expect(screen.queryByTestId("row-flag-price_band_2_0_2_6-1")).not.toBeInTheDocument();
 	// 错价桶复盘标注（票 02）：复盘场=已完赛=非可投 → 紧凑表行徽章（词族通用）
-	expect(screen.getByTestId("row-flag-ah_phase_inplay:high-3")).toHaveTextContent("亚盘赛中厚");
+	expect(screen.getByTestId("row-flag-late_move_h:pos-3")).toHaveTextContent("临场1h主热");
 	expect(screen.getByTestId("row-flag-late_move24_h:pos-3")).toHaveTextContent("24h主热");
-	expect(screen.queryByTestId("row-flag-ah_phase_inplay:high-1")).not.toBeInTheDocument();
+	expect(screen.queryByTestId("row-flag-late_move_h:pos-1")).not.toBeInTheDocument();
 
 	// 页头全局数据健康 + 配色图例
 	expect(screen.getByTestId("fixtures-data-health")).toHaveTextContent(/竞彩报价 \d+分钟前/);

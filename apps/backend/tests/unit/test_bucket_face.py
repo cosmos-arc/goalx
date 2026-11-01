@@ -5,9 +5,11 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import duckdb
+import pytest
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation import bucket_face as bf
@@ -23,22 +25,16 @@ def _gold_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
-def test_faces_dist_cut_boundaries() -> None:
-    """dist 桶按冻结切点（run5 q33/q67）：low/mid/high 边界与显著面命中。"""
-    # ah_n_pre 冻结切点 (461, 693)：300→low（显著）、500→mid（显著）、
-    # 700→high（非显著面）
-    assert bf.faces_for_gold_row(_gold_row(ah_n_pre=300)) == ["ah_phase_pre:low"]
-    assert bf.faces_for_gold_row(_gold_row(ah_n_pre=500)) == ["ah_phase_pre:mid"]
-    assert bf.faces_for_gold_row(_gold_row(ah_n_pre=700)) == []
-    # ah_n_inplay 冻结切点 (142, 214)：300→high（显著）、100→low（非显著面）
-    assert bf.faces_for_gold_row(_gold_row(ah_n_inplay=300)) == ["ah_phase_inplay:high"]
-    assert bf.faces_for_gold_row(_gold_row(ah_n_inplay=100)) == []
+def test_faces_volume_family_not_live() -> None:
+    """书数族/大小线族撤下面（量纲漂移/数据缺口，增量 2 重校）：即使
+    gold 行带这些特征值也不得打面（防回潮）。"""
+    row = _gold_row(ah_n_pre=300, ah_n_inplay=300, ou_line_drift=0.25)
+    assert bf.faces_for_gold_row(row) == []
 
 
 def test_faces_drift_signs_and_missing() -> None:
     """drift 桶按符号；特征缺列不判（空≠无）。"""
-    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=0.25)) == ["ou_line_drift:pos"]
-    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=-0.25)) == []
+    # 唯一上线的 drift 族=late_move（devig 派生）；符号语义见下
     # late_move 族走 devig 派生：close 主概率高于 q1h 锚 → pos
     late_up = _gold_row(
         close1x2_h=2.0,
@@ -91,6 +87,7 @@ def _seed_linked_fixture(db: sqlite3.Connection, kickoff: str) -> int:
     return fid
 
 
+@dataclass
 class _FakeDuck:
     """fetch_signal_rows_by_sids 的替身载体（monkeypatch 消费）。"""
 
@@ -111,10 +108,22 @@ def test_attach_only_past_and_linked(db: sqlite3.Connection, monkeypatch) -> Non
         kickoff_utc=(NOW + timedelta(hours=3)).isoformat(),
     )
     fake = _FakeDuck()
-    fake.rows = {"1234567": _gold_row(ah_n_pre=300)}
+    fake.rows = {
+        "1234567": _gold_row(
+            close1x2_h=2.0,
+            close1x2_d=3.5,
+            close1x2_a=4.0,
+            q1h1x2_h=2.4,
+            q1h1x2_d=3.4,
+            q1h1x2_a=3.2,
+            q24h1x2_h=2.4,
+            q24h1x2_d=3.4,
+            q24h1x2_a=3.3,
+        )
+    }
     monkeypatch.setattr(bf.gold_reader, "fetch_signal_rows_by_sids", fake.fetch)
     bf.attach_review_faces(db, object(), [past, future], now=NOW)
-    assert past.flags == ["ah_phase_pre:low"]  # 已开球+已链+命中桶
+    assert past.flags == ["late_move_h:pos", "late_move24_h:pos"]  # 已开球+已链+命中桶
     assert future.flags == []  # 未开球：判据未齐不标
 
 
@@ -140,9 +149,15 @@ def test_attach_noop_without_duck(db: sqlite3.Connection) -> None:
     assert past.flags == []
 
 
+_CORPUS_DUCK = Path.home() / "goalx-data" / "duckdb" / "corpus.duckdb"
+
+
+@pytest.mark.skipif(
+    not _CORPUS_DUCK.exists(), reason="本机语料桥缺席（CI 跳过，真树跑）"
+)
 def test_real_gold_view_bucketing_smoke() -> None:
-    """真 gold 视图冒烟：近 30 天已完赛场有非空桶面分布（7 面可命中）。"""
-    con = duckdb.connect("/Users/chevy/goalx-data/duckdb/corpus.duckdb", read_only=True)
+    """真 gold 视图冒烟：近 30 天已完赛场 7 桶面各至少命中一次。"""
+    con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
     from goalx_backend.data import gold_reader
 
     rows = gold_reader.fetch_signal_rows_by_sids(
@@ -160,11 +175,48 @@ def test_real_gold_view_bucketing_smoke() -> None:
     for row in rows.values():
         for flag in bf.faces_for_gold_row(row):
             faces[flag] = faces.get(flag, 0) + 1
-    assert faces, "近 30 天样本零桶面命中（判据或视图漂移）"
-    assert all(flag in {f[0] for f in bf.SIGNIFICANT_FACES} for flag in faces)
+    significant = {f[0] for f in bf.SIGNIFICANT_FACES}
+    missing = significant - set(faces)
+    assert not missing, f"近 30 天样本缺桶面 {missing}（判据或视图漂移）"
+    assert set(faces) <= significant
 
 
-def test_frozen_cuts_reproduce_report(monkeypatch) -> None:
-    """冻结契约钉死：切点/run5 溯源常量不被手改漂移（重放脚本对齐票面）。"""
-    assert bf.FROZEN_CUTS["ah_phase_pre"] == (461.0, 693.0)
-    assert bf.FROZEN_CUTS["ah_phase_inplay"] == (142.0, 214.0)
+@pytest.mark.skipif(
+    not (
+        _CORPUS_DUCK.exists()
+        and (
+            Path.home() / "goalx-data" / "reports" / "signal-attribution.json"
+        ).exists()
+    ),
+    reason="本机 run5 报告/语料桥缺席（CI 跳过）",
+)
+def test_frozen_cuts_reproduce_report() -> None:
+    """冻结契约验收（票 02 验收①）：run5 样本重放 → dist 切点=冻结值、
+    7 面 n 与 signal-attribution 报告逐位一致。"""
+    import json
+    import sqlite3 as sq
+
+    from goalx_backend.data import gold_reader
+    from goalx_backend.evaluation import signal_attribution as sa
+
+    db = sq.connect("data/goalx.db")
+    db.row_factory = sq.Row
+    pred_rows = db.execute(sa._PREDICTIONS_SQL, (5,)).fetchall()
+    db.close()
+    duck = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
+    sids = [str(r["match_key"]) for r in pred_rows if r["ftr"] is not None]
+    gold = gold_reader.fetch_signal_rows_by_sids(duck, sids)
+    samples, _ = sa._collect_samples(pred_rows, gold)
+    report = json.loads(
+        (Path.home() / "goalx-data" / "reports" / "signal-attribution.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    for flag, feat, kind, bucket in bf.SIGNIFICANT_FACES:
+        n_hits = sum(
+            1
+            for s in samples
+            if feat in s.features
+            and sa.bucket_of(s.features[feat], kind, (0.0, 0.0)) == bucket
+        )
+        assert n_hits == report["faces"][feat][bucket]["n"], flag
