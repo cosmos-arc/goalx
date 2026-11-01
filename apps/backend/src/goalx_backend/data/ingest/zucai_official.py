@@ -90,9 +90,17 @@ def fetch_current(
     ``param=90,0`` 不再下发 jqcMatch（4场进球 断供 4 个月根因），实测
     ``param=94,0`` 独供其当期；sfc 仍 90,0 独供——按面择非空合并。
     传入 stats 时逐面计 pages（调用点不再各自数请求）。
+
+    逐面隔离（correctness F1）：jqc 面硬失败（HTTP/网错/success=false）
+    降级为缺面继续合并 sfc——官方对 94 再做静默改版时 sfc 同步不陪葬，
+    缺账由消费侧 empty_markets 落；sfc 面失败维持硬失败（fail-loud）。
     """
     value_sfc = _fetch_current_face(client, settings, GAME_SFC, stats=stats)
-    value_jqc = _fetch_current_face(client, settings, GAME_JQC, stats=stats)
+    try:
+        value_jqc = _fetch_current_face(client, settings, GAME_JQC, stats=stats)
+    except (httpx.HTTPError, RuntimeError) as exc:
+        logger.warning("zucai official 当期 jqc 面拉取失败，本拍按缺面合并: {}", exc)
+        value_jqc = {}
     merged = dict(value_sfc)
     jqc = cast("dict[str, Any]", value_jqc.get("jqcMatch") or {})
     if jqc.get("matchList"):

@@ -328,3 +328,22 @@ def test_backfill_requires_referer_and_origin(db) -> None:
     for request in draw_requests:
         assert request.headers["Origin"] == "https://www.sporttery.cn"
         assert "kjgg" in request.headers["Referer"]
+
+
+def test_sync_current_jqc_hard_failure_degrades_not_kills(db) -> None:
+    """correctness F1：jqc 面 500 时 sfc 面照常落库 + 缺账 + run 行存在。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url.path).endswith("getFootBallMatchV1.qry"):
+            if str(request.url.params["param"]).startswith("94,"):
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, json={"success": True, "value": _CURRENT_VALUE})
+        return httpx.Response(200, json={"success": True, "value": {}})
+
+    stats = zucai_official.sync_current(
+        db, Settings(), httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert pool_store.pool_period_id(db, "ttt14", "26133") is not None
+    assert stats.empty_markets == ["jqc"]
+    row = db.execute("SELECT empty_markets FROM pool_sync_runs").fetchone()
+    assert json.loads(row["empty_markets"]) == ["jqc"]

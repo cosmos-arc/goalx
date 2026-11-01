@@ -483,3 +483,17 @@ def test_v33_survives_orphan_temp_table_from_crash_window() -> None:
         == 0
     )
     conn.close()
+
+
+def test_v34_reentrant_after_interrupted_migration() -> None:
+    """v34 幂等守卫（correctness F2）：DDL 已落而版本戳未提交的崩溃窗后
+    重跑 migrate 不得 duplicate column 卡死；empty_markets 列在位。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    assert db.migrate(conn) == 34
+    conn.execute("DELETE FROM schema_migrations WHERE version = 34")
+    conn.commit()
+    assert db.migrate(conn) == 34  # 重入不抛，列存在守卫短路 ALTER
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(pool_sync_runs)")}
+    assert "empty_markets" in cols
+    conn.close()
