@@ -266,6 +266,23 @@ def record_pool_sync_run(conn: sqlite3.Connection, stats: PoolSyncStats) -> int:
     return int(cur.lastrowid)
 
 
+def latest_period_and_deadline(
+    conn: sqlite3.Connection, market_code: str
+) -> tuple[str | None, str | None]:
+    """库内某市场最新期号与最新截止时刻（晨检漂移面；无期 (None, None)）。"""
+    row = conn.execute(
+        """
+            SELECT MAX(period_no) AS p, MAX(sales_deadline) AS d
+            FROM pool_periods WHERE market_code = ?
+        """,
+        (market_code,),
+    ).fetchone()
+    return (
+        str(row["p"]) if row and row["p"] else None,
+        str(row["d"]) if row and row["d"] else None,
+    )
+
+
 def latest_pool_sync_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     """最近一次彩池同步元信息（无同步史返回 None）。"""
     return conn.execute(

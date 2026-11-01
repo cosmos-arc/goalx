@@ -108,6 +108,7 @@ from goalx_backend.modelling.calibration import CALIBRATION_KINDS
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.modelling.fusion import FUSION_MODES
 from goalx_backend.modelling.residual_layer import RESIDUAL_MODES
+from goalx_backend.morning_check import run_morning_check
 from goalx_backend.tasks import (
     clubelo_elo_for_team,
     corpus_anchor,
@@ -817,6 +818,19 @@ def _cmd_srct_gate(
     reports = store.root / corpus_gate.REPORTS_DIR
     payload = {**report, "md_path": str(reports / f"{corpus_gate.REPORT_BASENAME}.md")}
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_morning_check() -> None:
+    """09:05 晨检代码化（ingest-orchestration 票 01）：10 项只读红绿面。"""
+    items = run_morning_check(get_settings())
+    for item in items:
+        sys.stdout.write(f"[{item.status}] {item.name}: {item.detail}\n")
+    fails = sum(1 for item in items if item.is_fail)
+    degraded = sum(1 for item in items if item.status == "degraded")
+    ok = len(items) - fails - degraded
+    sys.stdout.write(f"共 {len(items)} 项：fail={fails} degraded={degraded} ok={ok}\n")
+    if fails:
+        raise SystemExit(1)
 
 
 def _cmd_delay_audit(
@@ -1678,6 +1692,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="跳过收盘面(无语料环境口径冒烟;主指标收盘列如实置空)",
     )
+    sub.add_parser(
+        "morning-check",
+        help="09:05晨检代码化(ingest-orchestration票01;10项只读红绿面,任何fail退出1)",
+    )
     repair_parser = sub.add_parser(
         "repair-sale-status",
         help="历史销售态语义修正(票09;旧映射在售误记停售,dry-run默认)",
@@ -1792,6 +1810,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
         "delay-audit": lambda: _cmd_delay_audit(args),
+        "morning-check": _cmd_morning_check,
         "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),

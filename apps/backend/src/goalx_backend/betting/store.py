@@ -129,6 +129,11 @@ def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
     return sorted(bets, key=lambda b: (b.settled_at or "", b.bet_id))
 
 
+def bets_total(conn: sqlite3.Connection) -> int:
+    """累计注数（晨检观察项）。"""
+    return int(conn.execute("SELECT COUNT(*) FROM bets").fetchone()[0])
+
+
 def count_unpurchased_open(conn: sqlite3.Connection) -> int:
     """未回录且未结算的固定注数（验证页「待回录」计数）。"""
     return int(

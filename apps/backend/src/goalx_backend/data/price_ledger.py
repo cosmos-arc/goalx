@@ -175,6 +175,14 @@ def _reference_asof(
     return sharp[0], sharp[1]
 
 
+def latest_observed_at(conn: sqlite3.Connection) -> str | None:
+    """账本最新观测时刻（晨检新鲜面；空账本 None）。"""
+    row = conn.execute(
+        "SELECT observed_at FROM price_deviation_ledger ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def ledger_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     """账本面汇总（日终报告/判活用）。"""
     row = conn.execute(
