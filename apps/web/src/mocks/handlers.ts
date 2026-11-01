@@ -107,7 +107,7 @@ export const todayFixture = [
 		books: 3,
 		eu_prob: { h: 0.32, d: 0.29, a: 0.39 },
 		ev: { h: -0.01, d: -0.135, a: -0.171 },
-		flags: ["low_confidence"],
+		flags: ["low_confidence", "price_band_2_0_2_6"],
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "valid",

@@ -16,6 +16,12 @@ from goalx_backend.markets import SELECTIONS
 EV_FLAG_THRESHOLD = 0.05  # 今日页 EV 偏差标记阈值（票 08 report 口径）
 MIN_BOOKS_FOR_CONSENSUS = 3  # books 少于该数标记样本不足
 LOW_CONFIDENCE_FLAG = "low_confidence"  # 共识分母 <4 的低置信标记（票 39）
+# 错价桶只读标注（misprice-bucket-display 票 01，2026-11-01 用户裁决）：
+# 十年回测发现 JC 主胜/客胜价 ∈[2.0,2.6] 段有 1-2pp 聚合优势——只做展示
+# 不进决策面；前向读数攒够后再裁是否升级。口径=主胜价或客胜价任一落段
+# （平局价不计，十年口径）。
+PRICE_BAND = (2.0, 2.6)
+PRICE_BAND_FLAG = "price_band_2_0_2_6"
 
 
 class SelectionTriple(BaseModel):
@@ -123,6 +129,10 @@ def build_today_view(
             conn, fixture_id, duck_con=duck_con, sid=sid, rows=eu_rows
         )
         jc_odds = SelectionTriple(**{s: jc.get(s, (None,))[0] for s in SELECTIONS})
+        in_price_band = any(
+            price is not None and PRICE_BAND[0] <= price <= PRICE_BAND[1]
+            for price in (jc_odds.h, jc_odds.a)
+        )
         view = TodayFixtureView(
             fixture_id=fixture_id,
             match_code=str(fixture["match_code"]),
@@ -178,6 +188,8 @@ def build_today_view(
             ev_values = [v for v in (view.ev.h, view.ev.d, view.ev.a) if v is not None]
             if ev_values and max(abs(v) for v in ev_values) >= EV_FLAG_THRESHOLD:
                 view.flags.append("ev_deviation")
+        if in_price_band:
+            view.flags.append(PRICE_BAND_FLAG)
         if not view.joined:
             view.flags.append("not_joined")
         if view.books and view.books < MIN_BOOKS_FOR_CONSENSUS:

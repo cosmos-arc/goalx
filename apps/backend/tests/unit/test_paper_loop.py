@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -426,3 +427,48 @@ def test_build_today_view_joined_via_srct_link(db: sqlite3.Connection) -> None:
     view = build_today_view(db, "2026-09-12")[1]
     assert view.joined is True
     assert "not_joined" not in view.flags
+
+
+def test_today_view_price_band_flag_readonly(db: sqlite3.Connection) -> None:
+    """错价桶只读标注（misprice-bucket-display 票 01）：主胜/客胜任一价
+    ∈[2.0,2.6]（含界）即标；平局价不计；界外不标。"""
+    from goalx_backend.data.today import PRICE_BAND_FLAG, build_today_view
+
+    seed(db)
+    view = build_today_view(db, "2026-09-12")
+    # 种子两场：周六001 主 6.50/客 1.30（界外）；周六002 主 3.00/客 2.20（段内）
+    assert PRICE_BAND_FLAG not in view[0].flags
+    assert PRICE_BAND_FLAG in view[1].flags
+
+    # 边界与平局口径：自定义载荷三场（含界 2.0 / 含界 2.6 / 仅平局在段）
+    def _reseed(
+        h0: str, d0: str, a0: str, h1: str, d1: str, a1: str, tick: str
+    ) -> None:
+        """改价重放：调盘时点必须前移（快照唯一键含 captured_at，同刻幂等吸收）。"""
+        payload = json.loads(json.dumps(JINGCAI_PAYLOAD))
+        rows = payload["value"]["matchInfoList"][0]["subMatchList"]
+        rows[0]["had"] = {
+            "h": h0,
+            "d": d0,
+            "a": a0,
+            "updateDate": "2026-09-12",
+            "updateTime": tick,
+        }
+        rows[1]["had"] = {
+            "h": h1,
+            "d": d1,
+            "a": a1,
+            "updateDate": "2026-09-12",
+            "updateTime": tick,
+        }
+        sporttery.store_matches(db, sporttery.parse_matches(payload))
+
+    _reseed("2.00", "3.10", "3.40", "2.60", "3.10", "2.70", "22:00:00")
+    view = build_today_view(db, "2026-09-12")
+    assert PRICE_BAND_FLAG in view[0].flags  # 2.0 含界
+    assert PRICE_BAND_FLAG in view[1].flags  # 2.6 含界
+    _reseed("1.90", "2.50", "5.00", "1.95", "2.60", "4.80", "23:00:00")
+    view = build_today_view(db, "2026-09-12")
+    # 仅平局价在段（十年口径不计平局）且两侧 <2.0 → 不标
+    assert PRICE_BAND_FLAG not in view[0].flags
+    assert PRICE_BAND_FLAG not in view[1].flags

@@ -21,6 +21,8 @@ export const FLAG_LABELS: Record<string, string> = {
 	few_books: "样本少",
 	low_confidence: "共识低置信",
 	not_joined: "未 join 欧赔",
+	// 只读标注（misprice-bucket-display 票 01）：文案走词典（含"非投注信号"声明）
+	price_band_2_0_2_6: "价段 2.0–2.6",
 };
 
 export const REASON_LABELS: Record<string, string> = {
@@ -298,7 +300,13 @@ export function EligibleCard({
 							data-testid={`flag-${flag}`}
 							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
 						>
-							{flag === "low_confidence" ? <GlossaryTerm id="low-confidence" /> : FLAG_LABELS[flag]}
+							{flag === "low_confidence" ? (
+								<GlossaryTerm id="low-confidence" />
+							) : flag === "price_band_2_0_2_6" ? (
+								<GlossaryTerm id="price-band" />
+							) : (
+								FLAG_LABELS[flag]
+							)}
 						</span>
 					))}
 				{best ? (
