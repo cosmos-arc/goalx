@@ -102,7 +102,7 @@ class _RowAudit:
     value_proxy: float | None
     identity_gate: str | None  # None=可比；identity_unknown/identity_mismatch
     close_positive: bool | None  # None=收盘未算（身份/数据缺）
-    window_phase: str | None = None  # 销售窗相位（sale-window 票 01；None=未算）
+    window_phase: str  # 销售窗相位（sale-window 票 01，装配时恒算）
 
     @property
     def l2(self) -> bool:
@@ -156,9 +156,7 @@ def _terminal_reason(row: _RowAudit, *, tier_s: float) -> str:
     if row.sale_state == "not_on_sale":
         # 票 09 独立值：未开售≠停售≠未知；sale-window 票 01 再拆：
         # 窗外拍点的未开售=全场相位事实，窗内才是场次级归因
-        if row.window_phase is not None and row.window_phase != "in_window":
-            return "sale_window_closed"
-        return "sale_not_on_sale"
+        return fx_store.not_on_sale_reject_reason(row.window_phase)
     if row.sale_state != "on_sale":
         return "sale_unknown"
     if row.single_eligible != 1:
@@ -720,7 +718,7 @@ def _assemble_report(
     rows: list[_RowAudit] = []
     for raw in _fetch_rows(conn, date_from, date_to):
         observed = str(raw["observed_at"])
-        day = fx_store.beijing_naive(observed).strftime("%Y-%m-%d")
+        day = fx_store.beijing_day(observed)
         if day not in anchors:
             anchors[day] = fx_store.sale_window_anchor(conn, day)
         rows.append(_build_row_audit(raw, close_provider, window_anchor=anchors[day]))

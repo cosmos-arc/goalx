@@ -520,3 +520,25 @@ def test_window_anchor_selfheals_open_time(db: sqlite3.Connection) -> None:
     )
     assert report["overall"]["reasons"]["sale_window_closed"] == 1
     assert "sale_not_on_sale" not in report["overall"]["reasons"]
+
+
+def test_window_anchor_in_window_keeps_fixture_reason(db: sqlite3.Connection) -> None:
+    """锚日窗内（13:00 锚后 14:00 北京拍点）未开售仍归场次级 sale_not_on_sale。"""
+    _, fixture = _seed_fixture(db, 1)
+    fx_store.append_sale_status(
+        db,
+        SaleStatusInput(
+            fixture_id=fixture,
+            market_code="had",
+            sale_state="on_sale",
+            single_eligible=1,
+            observed_at="2026-10-20T05:00:00+00:00",
+        ),
+    )
+    db.commit()
+    _ledger_row(db, sale="not_on_sale", observed="2026-10-20T06:00:00+00:00")
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20"
+    )
+    assert report["overall"]["reasons"]["sale_not_on_sale"] == 1
+    assert "sale_window_closed" not in report["overall"]["reasons"]

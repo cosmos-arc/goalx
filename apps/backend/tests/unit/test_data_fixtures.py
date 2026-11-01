@@ -221,3 +221,12 @@ def test_sale_window_anchor_first_on_sale_of_beijing_day(
     db.commit()
     assert fx.sale_window_anchor(db, "2026-10-21") == "2026-10-20T16:00:00+00:00"
     assert fx.sale_window_anchor(db, "2026-11-01") is None
+
+
+def test_sale_window_phase_cross_day_anchor_ignored() -> None:
+    """跨北京日的锚弃用回缺省界（相位按当日窗解释）。"""
+    stale_anchor = "2026-10-31T18:00:00+00:00"  # 10-31 日锚，非 11-01
+    assert (
+        fx.sale_window_phase("2026-11-01T03:31:00+00:00", anchor=stale_anchor)
+        == "in_window"
+    )

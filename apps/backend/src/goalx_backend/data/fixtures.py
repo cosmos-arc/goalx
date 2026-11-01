@@ -322,6 +322,11 @@ SALE_WINDOW_DEFAULT_OPEN = dtime(11, 30)
 SALE_WINDOW_DEFAULT_CLOSE = dtime(22, 0)
 
 
+def beijing_day(ts: str) -> str:
+    """ISO 时刻 → 北京日历日（销售窗锚的日键）。"""
+    return beijing_naive(ts).strftime("%Y-%m-%d")
+
+
 def sale_window_anchor(conn: sqlite3.Connection, beijing_day: str) -> str | None:
     """该北京日首个 on_sale 观测时刻（ISO UTC）；当日未观测到开售则 None。"""
     start = beijing_naive_to_utc(f"{beijing_day} 00:00")
@@ -341,24 +346,32 @@ def sale_window_anchor(conn: sqlite3.Connection, beijing_day: str) -> str | None
 
 def sale_window_anchor_for(conn: sqlite3.Connection, at: str) -> str | None:
     """At 时刻所属北京日的开售锚（had-quote 单点判定用）。"""
-    return sale_window_anchor(conn, beijing_naive(at).strftime("%Y-%m-%d"))
+    return sale_window_anchor(conn, beijing_day(at))
 
 
 def sale_window_phase(at: str, *, anchor: str | None = None) -> str:
     """
     时刻的每日销售窗相位：``pre_open | in_window | post_close``。
 
-    锚存在用锚的开售墙钟，否则缺省 11:30；收市恒缺省 22:00。区间半开
-    [open, close)。sellStatus 窗外=未开售是相位事实，消费方据此归因
+    锚存在用锚的开售墙钟（跨北京日的锚弃用——相位按当日窗解释），
+    否则缺省 11:30；收市恒缺省 22:00。区间半开 [open, close)。
+    sellStatus 窗外=未开售是相位事实，消费方据此归因
     （sale-window-derivation 票 01）。
     """
     wall = beijing_naive(at).time()
-    open_wall = beijing_naive(anchor).time() if anchor else SALE_WINDOW_DEFAULT_OPEN
+    open_wall = SALE_WINDOW_DEFAULT_OPEN
+    if anchor and beijing_day(anchor) == beijing_day(at):
+        open_wall = beijing_naive(anchor).time()
     if wall >= SALE_WINDOW_DEFAULT_CLOSE:
         return "post_close"
     if wall >= open_wall:
         return "in_window"
     return "pre_open"
+
+
+def not_on_sale_reject_reason(phase: str) -> str:
+    """未开售拒绝理由（两消费方单一出处）：窗内=场次级，窗外=相位事实。"""
+    return "sale_not_on_sale" if phase == "in_window" else "sale_window_closed"
 
 
 def latest_sale_status_asof(
