@@ -25,6 +25,15 @@ export const FLAG_LABELS: Record<string, string> = {
 	price_band_2_0_2_6: "价段 2.0–2.6",
 };
 
+/** 词典化 flag → 词条 id（渲染优先走词条；其余落 FLAG_LABELS 纯文本）。 */
+export const FLAG_GLOSSARY: Record<string, string> = {
+	low_confidence: "low-confidence",
+	price_band_2_0_2_6: "price-band",
+};
+
+/** 只读标注的免责 title（票 01 文案明示要求——悬停即可见，不待词典页）。 */
+export const PRICE_BAND_DISCLAIMER = "聚合统计发现，未经前向验证，非投注信号";
+
 export const REASON_LABELS: Record<string, string> = {
 	sale_stopped: "已停售",
 	sale_not_on_sale: "未开售",
@@ -299,14 +308,9 @@ export function EligibleCard({
 							key={flag}
 							data-testid={`flag-${flag}`}
 							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+							title={flag === "price_band_2_0_2_6" ? PRICE_BAND_DISCLAIMER : undefined}
 						>
-							{flag === "low_confidence" ? (
-								<GlossaryTerm id="low-confidence" />
-							) : flag === "price_band_2_0_2_6" ? (
-								<GlossaryTerm id="price-band" />
-							) : (
-								FLAG_LABELS[flag]
-							)}
+							{Object.hasOwn(FLAG_GLOSSARY, flag) ? <GlossaryTerm id={FLAG_GLOSSARY[flag] ?? ""} /> : FLAG_LABELS[flag]}
 						</span>
 					))}
 				{best ? (
