@@ -773,13 +773,15 @@ def track2_snapshots(
     """
     轨二拍点采样（caliber-loop 票 05）：开球前 24h/12h 整点两源快照。
 
+    候选面=广义 joined（odds_api 历史链 ∪ srct 链，票 01 单一出处语义；
+    odds-read-switch 小账：原 odds_api 单一过滤 9-25 后结构性零候选）。
     窗口=拍点已过且在 6h 迟到视界内（kickoff ∈ [now+offset−6h, now+offset]）；
-    锚书=拍点定向拉取（复用 odds_anchor_dense 通道，零候选零请求）；
-    竞彩=拍点时点最新 as-of 读（调盘面，龄如实记）；停售边界
-    purchasable=拍点时点（target_instant）停售状态；迟到补拍 late_flag。
-    now/pull/decision_at 注入点供测试（缺省=当前时刻/真锚拉取/拉取后取
-    当前时刻）——判定 as-of 用 decision_at（拉取后），任务时刻只管窗口
-    （measure-04：本拍新抓报价不再被任务时刻滤掉）。
+    锚书=拍点定向拉取（仅 odds_api 链场；corpus 链场证据直读源T 免拉取，
+    零候选零请求）；竞彩=拍点时点最新 as-of 读（调盘面，龄如实记）；停售
+    边界 purchasable=拍点时点（target_instant）停售状态；迟到补拍
+    late_flag。now/pull/decision_at 注入点供测试（缺省=当前时刻/真锚拉取/
+    拉取后取当前时刻）——判定 as-of 用 decision_at（拉取后），任务时刻只管
+    窗口（measure-04：本拍新抓报价不再被任务时刻滤掉）。
     """
     settings = get_settings()
     anchor_pull = pull or _isolated_anchor_pull
@@ -795,7 +797,9 @@ def track2_snapshots(
             horizon = timedelta(hours=TRACK2_CATCHUP_HOURS)
             start = (moment + offset - horizon).isoformat(timespec="seconds")
             end = (moment + offset).isoformat(timespec="seconds")
-            targets = fx_store.joined_fixtures_in_window(conn, start, end)
+            in_window = fx_store.fixtures_in_window(conn, start, end)
+            joined = mapping.joined_fixture_ids(conn, [int(r["id"]) for r in in_window])
+            targets = [row for row in in_window if int(row["id"]) in joined]
             fresh: list[int] = []
             for row in targets:
                 fid = int(row["id"])
@@ -807,7 +811,7 @@ def track2_snapshots(
                     str(row["odds_api_sport_key"]),
                 )
                 for row in targets
-                if int(row["id"]) in fresh
+                if int(row["id"]) in fresh and row["odds_api_event_id"] is not None
             ]
             if pulls:
                 anchor_pull(

@@ -34,7 +34,10 @@ from goalx_backend.evaluation.backtest import era_fair_probs
 from goalx_backend.evaluation.haircut import (
     DEFAULT_HAIRCUT,
     MIN_SAMPLES,
+    SOURCE_ERA_JC_SP,
+    CalibrationWrite,
     quartiles_of,
+    upsert_calibration,
 )
 from goalx_backend.markets import SELECTIONS
 
@@ -191,28 +194,18 @@ def calibrate_decade(
         else:
             haircut, source = DEFAULT_HAIRCUT, "default"  # 与票 30 同回落
         n_fixtures = len({p.fixture_id for p in group})
-        conn.execute(
-            """
-            INSERT INTO haircut_calibrations
-            (scope, market_code, haircut, n_samples, n_fixtures, method_version,
-             quartiles, source, computed_at)
-            VALUES (?, 'had', ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope, market_code) DO UPDATE SET
-                haircut=excluded.haircut, n_samples=excluded.n_samples,
-                n_fixtures=excluded.n_fixtures,
-                method_version=excluded.method_version,
-                quartiles=excluded.quartiles, source=excluded.source,
-                computed_at=excluded.computed_at
-            """,
-            (
-                scope,
-                haircut,
-                len(values),
-                n_fixtures,
-                HAIRCUT_SP_METHOD_VERSION,
-                json.dumps([round(q, 6) for q in quartiles]),
-                source,
-                utc_now_iso(),  # 与票 30 行同口径（correctness F3）
+        upsert_calibration(
+            conn,
+            CalibrationWrite(
+                scope=scope,
+                market_code="had",
+                source_era=SOURCE_ERA_JC_SP,
+                haircut=haircut,
+                n_samples=len(values),
+                n_fixtures=n_fixtures,
+                method_version=HAIRCUT_SP_METHOD_VERSION,
+                quartiles=quartiles,
+                source=source,
             ),
         )
         written.append(
