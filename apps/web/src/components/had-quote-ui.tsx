@@ -23,12 +23,27 @@ export const FLAG_LABELS: Record<string, string> = {
 	not_joined: "未 join 欧赔",
 	// 只读标注（misprice-bucket-display 票 01）：文案走词典（含"非投注信号"声明）
 	price_band_2_0_2_6: "价段 2.0–2.6",
+	// 真错价桶复盘标注（票 02 增量 1，已开球行）：词族见 misprice-buckets 词条
+	"ah_phase_pre:low": "亚盘赛前薄",
+	"ah_phase_pre:mid": "亚盘赛前中",
+	"ah_phase_inplay:high": "亚盘赛中厚",
+	"ou_line_drift:pos": "大小线升",
+	"late_move_h:pos": "临场1h主热",
+	"late_move24_h:pos": "24h主热",
+	"late_move24_h:neg": "24h主冷",
 };
 
 /** 词典化 flag → 词条 id（渲染优先走词条；其余落 FLAG_LABELS 纯文本）。 */
 export const FLAG_GLOSSARY: Record<string, string> = {
 	low_confidence: "low-confidence",
 	price_band_2_0_2_6: "price-band",
+	"ah_phase_pre:low": "misprice-buckets",
+	"ah_phase_pre:mid": "misprice-buckets",
+	"ah_phase_inplay:high": "misprice-buckets",
+	"ou_line_drift:pos": "misprice-buckets",
+	"late_move_h:pos": "misprice-buckets",
+	"late_move24_h:pos": "misprice-buckets",
+	"late_move24_h:neg": "misprice-buckets",
 };
 
 /** 只读标注的免责 title（票 01 文案明示要求——悬停即可见，不待词典页）。 */
@@ -310,7 +325,11 @@ export function EligibleCard({
 							className="rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
 							title={flag === "price_band_2_0_2_6" ? PRICE_BAND_DISCLAIMER : undefined}
 						>
-							{Object.hasOwn(FLAG_GLOSSARY, flag) ? <GlossaryTerm id={FLAG_GLOSSARY[flag] ?? ""} /> : FLAG_LABELS[flag]}
+							{Object.hasOwn(FLAG_GLOSSARY, flag) ? (
+								<GlossaryTerm id={FLAG_GLOSSARY[flag] ?? ""}>{FLAG_LABELS[flag]}</GlossaryTerm>
+							) : (
+								FLAG_LABELS[flag]
+							)}
 						</span>
 					))}
 				{best ? (

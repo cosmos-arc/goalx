@@ -11,6 +11,8 @@ import {
 	EligibleCard,
 	evClass,
 	evText,
+	FLAG_GLOSSARY,
+	FLAG_LABELS,
 	isPickable,
 	kickoffInfo,
 	localTime,
@@ -278,16 +280,20 @@ export function FixturesPage() {
 															</TableCell>
 															<TableCell className="whitespace-nowrap">
 																{fixture.match_code}
-																{fixture.flags?.includes("price_band_2_0_2_6") ? (
-																	// 错价桶只读标注（票 01）：全量行可见，title 明示非信号
-																	<span
-																		className="ml-1 rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
-																		data-testid={`row-flag-price_band_2_0_2_6-${fixture.fixture_id}`}
-																		title={PRICE_BAND_DISCLAIMER}
-																	>
-																		<GlossaryTerm id="price-band" />
-																	</span>
-																) : null}
+																{/* 只读标注（票 01/02）：词族 flag 全量行可见（低置信另有 */}
+																{/* books 显示位不重复）；价段 title 明示非信号 */}
+																{(fixture.flags ?? [])
+																	.filter((flag) => Object.hasOwn(FLAG_GLOSSARY, flag) && flag !== "low_confidence")
+																	.map((flag) => (
+																		<span
+																			key={flag}
+																			className="ml-1 rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+																			data-testid={`row-flag-${flag}-${fixture.fixture_id}`}
+																			title={flag === "price_band_2_0_2_6" ? PRICE_BAND_DISCLAIMER : undefined}
+																		>
+																			<GlossaryTerm id={FLAG_GLOSSARY[flag] ?? ""}>{FLAG_LABELS[flag]}</GlossaryTerm>
+																		</span>
+																	))}
 															</TableCell>
 															<TableCell className="whitespace-nowrap font-medium">
 																<Link
