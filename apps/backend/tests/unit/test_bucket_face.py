@@ -149,6 +149,51 @@ def test_attach_noop_without_duck(db: sqlite3.Connection) -> None:
     assert past.flags == []
 
 
+def test_attach_legacy_naive_kickoff_never_500s(
+    db: sqlite3.Connection, monkeypatch
+) -> None:
+    """correctness F1：v1 legacy 北京墙钟 naive 串（"2026-10-01 19:30:00"）
+    由属主转换判开球（CST→UTC），不炸端点；垃圾串静默跳过。"""
+    naive_past = _Row(
+        fixture_id=_seed_linked_fixture(db, "2026-10-01 19:30:00"),
+        kickoff_utc="2026-10-01 19:30:00",  # 北京墙钟=NOW 前 31 天
+    )
+    garbage = _Row(fixture_id=99999, kickoff_utc="not-a-date")
+    fake = _FakeDuck()
+    fake.rows = {
+        "1234567": _gold_row(
+            close1x2_h=2.0,
+            close1x2_d=3.5,
+            close1x2_a=4.0,
+            q1h1x2_h=2.4,
+            q1h1x2_d=3.4,
+            q1h1x2_a=3.2,
+            q24h1x2_h=2.4,
+            q24h1x2_d=3.4,
+            q24h1x2_a=3.3,
+        )
+    }
+    monkeypatch.setattr(bf.gold_reader, "fetch_signal_rows_by_sids", fake.fetch)
+    bf.attach_review_faces(db, object(), [naive_past, garbage], now=NOW)
+    assert naive_past.flags == ["late_move_h:pos", "late_move24_h:pos"]
+    assert garbage.flags == []
+
+
+def test_attach_gold_absent_row_stays_unflagged(
+    db: sqlite3.Connection, monkeypatch
+) -> None:
+    """空≠无钉死（F2）：已开球已链但 gold 无该 sid（重建断线形态）→
+    零 flag 且不炸——与"不在桶"同形，观测走 serve 日志计数。"""
+    past = _Row(
+        fixture_id=_seed_linked_fixture(db, "2026-11-01T10:00:00+00:00"),
+        kickoff_utc="2026-11-01T10:00:00+00:00",
+    )
+    fake = _FakeDuck()  # 空 rows：gold 全缺
+    monkeypatch.setattr(bf.gold_reader, "fetch_signal_rows_by_sids", fake.fetch)
+    bf.attach_review_faces(db, object(), [past], now=NOW)
+    assert past.flags == []
+
+
 _CORPUS_DUCK = Path.home() / "goalx-data" / "duckdb" / "corpus.duckdb"
 
 
@@ -156,7 +201,7 @@ _CORPUS_DUCK = Path.home() / "goalx-data" / "duckdb" / "corpus.duckdb"
     not _CORPUS_DUCK.exists(), reason="本机语料桥缺席（CI 跳过，真树跑）"
 )
 def test_real_gold_view_bucketing_smoke() -> None:
-    """真 gold 视图冒烟：近 30 天已完赛场 7 桶面各至少命中一次。"""
+    """真 gold 视图冒烟：近 30 天已完赛场 3 上线面各至少命中一次。"""
     con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
     from goalx_backend.data import gold_reader
 
@@ -190,16 +235,17 @@ def test_real_gold_view_bucketing_smoke() -> None:
     ),
     reason="本机 run5 报告/语料桥缺席（CI 跳过）",
 )
-def test_frozen_cuts_reproduce_report() -> None:
-    """冻结契约验收（票 02 验收①）：run5 样本重放 → dist 切点=冻结值、
-    7 面 n 与 signal-attribution 报告逐位一致。"""
+def test_live_faces_reproduce_report() -> None:
+    """上线面契约验收（票 02 验收①）：run5 样本重放 → 3 drift 面 n 与
+    signal-attribution 报告逐位一致（历史归属复算对上）。"""
     import json
     import sqlite3 as sq
 
     from goalx_backend.data import gold_reader
     from goalx_backend.evaluation import signal_attribution as sa
 
-    db = sq.connect("data/goalx.db")
+    repo_db = Path(__file__).resolve().parents[4] / "data" / "goalx.db"
+    db = sq.connect(f"file:{repo_db}?mode=ro", uri=True)
     db.row_factory = sq.Row
     pred_rows = db.execute(sa._PREDICTIONS_SQL, (5,)).fetchall()
     db.close()

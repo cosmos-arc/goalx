@@ -19,7 +19,9 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
+from loguru import logger
 
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import gold_reader, mapping
 from goalx_backend.evaluation.signal_attribution import bucket_of, features_of
 
@@ -40,6 +42,10 @@ def faces_for_gold_row(gold_row: dict[str, Any]) -> list[str]:
     features = features_of(gold_row)
     out: list[str] = []
     for flag, key, kind, bucket in SIGNIFICANT_FACES:
+        if kind != "drift":
+            # 防回潮守卫：dist 面须随增量 2 的重校切点一起回归（滚动分位/
+            # 密度归一），裸加元组会按 (0,0) 静默错分桶（量纲 bug 复发形态）
+            raise ValueError(f"面 {flag} 非符号类，缺重校切点（增量 2 义务）")
         value = features.get(key)
         if value is None:
             continue
@@ -63,11 +69,10 @@ def attach_review_faces(
     """
     past_sids: dict[int, str] = {}
     for row in rows:
-        try:
-            kickoff = datetime.fromisoformat(str(row.kickoff_utc))
-        except ValueError:
-            continue
-        if kickoff > now:
+        # kickoff 口径单一真相源（caliber-loop 票 01）：v1 legacy 北京墙钟
+        # naive 串由属主转换，坏串 None 跳过——不手搓第二份解析
+        kickoff = fx_store.kickoff_to_utc(str(row.kickoff_utc))
+        if kickoff is None or kickoff > now:
             continue
         sid = mapping.srct_sid_for_fixture(conn, int(row.fixture_id))
         if sid is not None:
@@ -80,6 +85,7 @@ def attach_review_faces(
         )
     except RuntimeError:
         return  # gold 视图缺席（未建桥）：复盘面静默降级，主表不受影响
+    hit = 0
     for row in rows:
         sid = past_sids.get(int(row.fixture_id))
         if sid is None:
@@ -87,3 +93,12 @@ def attach_review_faces(
         gold_row = gold.get(sid)
         if gold_row is not None:
             row.flags.extend(faces_for_gold_row(gold_row))
+            hit += 1
+    # 复盘面观测（空≠无 F2）：gold 缺席行与"不在桶"零 flag 同形——计数
+    # 进 serve 日志供晨检 grep，长期 gold-miss=past_sids 全量即重建断线
+    logger.debug(
+        "错价桶复盘：rows={} 已开球已链={} gold命中={}",
+        len(rows),
+        len(past_sids),
+        hit,
+    )
