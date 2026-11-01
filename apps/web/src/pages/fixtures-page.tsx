@@ -16,6 +16,7 @@ import {
 	localTime,
 	minutesAgo,
 	OddsButton,
+	PRICE_BAND_DISCLAIMER,
 	SELECTIONS,
 } from "../components/had-quote-ui";
 import { StatusToast } from "../components/status-toast";
@@ -275,7 +276,19 @@ export function FixturesPage() {
 																	)}
 																</span>
 															</TableCell>
-															<TableCell className="whitespace-nowrap">{fixture.match_code}</TableCell>
+															<TableCell className="whitespace-nowrap">
+																{fixture.match_code}
+																{fixture.flags?.includes("price_band_2_0_2_6") ? (
+																	// 错价桶只读标注（票 01）：全量行可见，title 明示非信号
+																	<span
+																		className="ml-1 rounded bg-warning/10 px-1.5 py-0.5 text-foreground"
+																		data-testid={`row-flag-price_band_2_0_2_6-${fixture.fixture_id}`}
+																		title={PRICE_BAND_DISCLAIMER}
+																	>
+																		<GlossaryTerm id="price-band" />
+																	</span>
+																) : null}
+															</TableCell>
 															<TableCell className="whitespace-nowrap font-medium">
 																<Link
 																	to="/fixtures/$id"

@@ -8,10 +8,11 @@ import { filterGlossary, GLOSSARY, glossaryEntry } from "./glossary";
  * 票 wb-05 增补进球类矩阵推导词条（13 条），票 wb-06 增补 Kelly/建议仓位
  * 两词条（15 条），票 39 增补共识低置信词条（16 条），票 40 增补 CLV
  * 基准分层词条（17 条），票 41 增补注级 EV 快照词条（18 条），票 43 增补彩池 EV 词条（19 条），
- * 票 pool-v2/01 增补搏冷价值词条（20 条）。
+ * 票 pool-v2/01 增补搏冷价值词条（20 条），misprice-bucket-display/01
+ * 增补价段 2.0–2.6 词条（21 条）。
  */
 test("all agreed entries are present with unique ids", () => {
-	expect(GLOSSARY).toHaveLength(20);
+	expect(GLOSSARY).toHaveLength(21);
 	expect(GLOSSARY.map((entry) => entry.id)).toEqual([
 		"ev",
 		"eu-consensus",
@@ -19,6 +20,7 @@ test("all agreed entries are present with unique ids", () => {
 		"single",
 		"books",
 		"low-confidence",
+		"price-band",
 		"paper-vs-live",
 		"pnl-roi",
 		"forward-inclusion",
@@ -66,8 +68,8 @@ test("glossaryEntry resolves by id and misses cleanly", () => {
 
 test("filterGlossary matches term, alias and definition, case-insensitively", () => {
 	// 空查询 = 全部（保持原顺序）
-	expect(filterGlossary("")).toHaveLength(20);
-	expect(filterGlossary("   ")).toHaveLength(20);
+	expect(filterGlossary("")).toHaveLength(21);
+	expect(filterGlossary("   ")).toHaveLength(21);
 	// term 命中
 	expect(filterGlossary("单固").map((entry) => entry.id)).toEqual(["single"]);
 	// 别名命中（大小写不敏感）

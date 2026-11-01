@@ -98,6 +98,18 @@ test("renders eligible cards on top, the full compact table, and the semantic en
 	expect(within(card).getByText(/小时后$/)).toBeInTheDocument(); // 倒计时（kickoff +2h）
 	// 仅串关标记：非单固可投场
 	expect(within(screen.getByTestId("fixtures-card-2")).getByText("仅串关")).toBeInTheDocument();
+	// 错价桶只读标注（票 01）：段内行（客 2.2）标价段；卡 1（主 1.92 界外）不标
+	expect(within(screen.getByTestId("fixtures-card-2")).getByTestId("flag-price_band_2_0_2_6")).toHaveTextContent(
+		"价段 2.0–2.6",
+	);
+	expect(within(card).queryByTestId("flag-price_band_2_0_2_6")).not.toBeInTheDocument();
+	// 全量紧凑表行同样标注（非仅候选卡），title 明示非信号
+	expect(screen.getByTestId("row-flag-price_band_2_0_2_6-2")).toHaveTextContent("价段 2.0–2.6");
+	expect(screen.getByTestId("row-flag-price_band_2_0_2_6-2")).toHaveAttribute(
+		"title",
+		"聚合统计发现，未经前向验证，非投注信号",
+	);
+	expect(screen.queryByTestId("row-flag-price_band_2_0_2_6-1")).not.toBeInTheDocument();
 
 	// 页头全局数据健康 + 配色图例
 	expect(screen.getByTestId("fixtures-data-health")).toHaveTextContent(/竞彩报价 \d+分钟前/);

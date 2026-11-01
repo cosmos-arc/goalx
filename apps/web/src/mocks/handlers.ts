@@ -107,7 +107,7 @@ export const todayFixture = [
 		books: 3,
 		eu_prob: { h: 0.32, d: 0.29, a: 0.39 },
 		ev: { h: -0.01, d: -0.135, a: -0.171 },
-		flags: ["low_confidence"],
+		flags: ["low_confidence", "price_band_2_0_2_6"],
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "valid",
@@ -134,7 +134,7 @@ export const todayFixture = [
 		books: 0,
 		eu_prob: null,
 		ev: null,
-		flags: [],
+		flags: ["price_band_2_0_2_6"], // 主胜 2.1 段内（对齐真后端口径）
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "rejected",
@@ -161,7 +161,7 @@ export const todayFixture = [
 		books: 5,
 		eu_prob: { h: 0.4, d: 0.27, a: 0.33 },
 		ev: { h: -0.04, d: -0.109, a: -0.076 },
-		flags: [],
+		flags: ["price_band_2_0_2_6"], // 主胜 2.4 段内（对齐真后端口径）
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "valid",
