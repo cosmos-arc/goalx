@@ -431,3 +431,55 @@ def test_v33_haircut_calibrations_era_rebuild() -> None:
         == 3
     )
     conn.close()
+
+
+def test_v33_survives_orphan_temp_table_from_crash_window() -> None:
+    """v33 崩溃窗（correctness F1 同 v32 族）：DDL 已落盘而拷行未提交的
+    孤儿 haircut_calibrations_v33 不卡死重跑 migrate（残迹被清扫）。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    assert db.migrate(conn) == 33
+    # 退回旧形态表 + 在册行（模拟 v32 生产库）
+    conn.execute("DROP TABLE haircut_calibrations")
+    conn.execute(
+        """
+        CREATE TABLE haircut_calibrations (
+            id INTEGER PRIMARY KEY,
+            scope TEXT NOT NULL,
+            market_code TEXT NOT NULL,
+            haircut REAL NOT NULL,
+            n_samples INTEGER NOT NULL,
+            n_fixtures INTEGER NOT NULL DEFAULT 0,
+            method_version TEXT NOT NULL DEFAULT 'shin_mean_v0',
+            quartiles TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('calibrated', 'default')),
+            computed_at TEXT NOT NULL,
+            UNIQUE (scope, market_code)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO haircut_calibrations
+        (scope, market_code, haircut, n_samples, quartiles, source, computed_at)
+        VALUES ('overall', 'had', 0.08, 33, '[]', 'calibrated', 't')
+        """
+    )
+    # 模拟崩溃窗：33 戳未落 + 孤儿临时表已落盘（legacy 模式 DDL 即时持久）
+    conn.execute("DELETE FROM schema_migrations WHERE version = 33")
+    conn.execute("CREATE TABLE haircut_calibrations_v33 (junk INTEGER)")
+    conn.commit()
+    assert db.migrate(conn) == 33  # 残迹被清扫，不抛 already exists
+    row = conn.execute(
+        "SELECT haircut, source_era FROM haircut_calibrations WHERE scope='overall'"
+    ).fetchone()
+    assert row["haircut"] == 0.08
+    assert row["source_era"] == "odds_api"
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM sqlite_master WHERE name ="
+            " 'haircut_calibrations_v33'"
+        ).fetchone()["n"]
+        == 0
+    )
+    conn.close()
