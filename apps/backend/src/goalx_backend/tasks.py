@@ -206,7 +206,8 @@ def odds_anchor_dense() -> dict[str, object]:
     评估锚：开球前 5 分钟桶内的已 join 场次定向拉取（meta anchor=kickoff，
     CLV 收盘基准收紧）；决策锚：停售探测检出 on_sale→stopped 迁移后立即
     拉取（meta anchor=sale_stop，决策时点公允线，票 48 陈盘信号的数据
-    供给）。两锚零候选零请求；失败不重试（30 分钟 closing 循环兜底）。
+    供给）。两锚零候选零请求（开售轮询带内 probe 补拍除外，票 04）；
+    失败不重试（closing 循环兜底）。
     """
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
