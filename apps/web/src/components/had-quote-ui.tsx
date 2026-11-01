@@ -25,6 +25,8 @@ export const FLAG_LABELS: Record<string, string> = {
 
 export const REASON_LABELS: Record<string, string> = {
 	sale_stopped: "已停售",
+	sale_not_on_sale: "未开售",
+	sale_window_closed: "销售时段外",
 	kickoff_passed: "已开赛",
 	stale_source: "报价过期",
 	jc_three_way_incomplete: "竞彩三向不全",

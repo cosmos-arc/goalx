@@ -484,3 +484,39 @@ def test_cli_delay_audit_missing_db_fails_loud(tmp_path: Path) -> None:
             ),
             settings=settings,
         )
+
+
+def test_not_on_sale_outside_window_own_reason(db: sqlite3.Connection) -> None:
+    """sale-window 票 01：窗外拍点（10:00 北京）未开售=相位事实，归
+    sale_window_closed 不混场次级桶；L2 仍不收。"""
+    _seed_fixture(db, 1)
+    _ledger_row(db, sale="not_on_sale", observed="2026-10-20T02:00:00+00:00")
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20"
+    )
+    reasons = report["overall"]["reasons"]
+    assert reasons["sale_window_closed"] == 1
+    assert "sale_not_on_sale" not in reasons
+    assert report["overall"]["l2"] == 0
+
+
+def test_window_anchor_selfheals_open_time(db: sqlite3.Connection) -> None:
+    """当日实际开售锚（13:00 北京）覆写缺省 11:30：锚前行虽过缺省界仍归窗外。"""
+    _, fixture = _seed_fixture(db, 1)
+    fx_store.append_sale_status(
+        db,
+        SaleStatusInput(
+            fixture_id=fixture,
+            market_code="had",
+            sale_state="on_sale",
+            single_eligible=1,
+            observed_at="2026-10-20T05:00:00+00:00",
+        ),
+    )
+    db.commit()
+    _ledger_row(db, sale="not_on_sale", observed="2026-10-20T04:00:00+00:00")
+    report = ds.build_arrival_audit_report(
+        db, date_from="2026-10-20", date_to="2026-10-20"
+    )
+    assert report["overall"]["reasons"]["sale_window_closed"] == 1
+    assert "sale_not_on_sale" not in report["overall"]["reasons"]

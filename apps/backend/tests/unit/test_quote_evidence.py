@@ -202,14 +202,38 @@ def test_sale_stopped_rejected(db) -> None:
     assert verdict.reasons == ["sale_stopped"]
 
 
-def test_sale_not_on_sale_rejected(db) -> None:
-    """票 09：未开售≠停售——独立拒绝原因，不冒充在售也不混停售桶。"""
+def test_sale_not_on_sale_in_window_rejected(db) -> None:
+    """窗内（北京 14:04）仍未开售=场次级归因；票 09：不冒充在售也不混停售桶。"""
+    fixture = seed_fixture(db)
+    add_jc(db, fixture, {"h": 2.10, "d": 3.40, "a": 3.20})
+    add_sale(db, fixture, state="not_on_sale", observed="2026-09-13T05:00:00+00:00")
+    verdict = qe.adjudicate_had_quote(db, fixture, "2026-09-13T06:04:00+00:00")
+    assert verdict.status == qe.REJECTED
+    assert verdict.reasons == ["sale_not_on_sale"]
+
+
+def test_sale_not_on_sale_outside_window_rejected(db) -> None:
+    """收市后（北京 22:04）未开售=全场相位事实，归因 sale_window_closed。"""
     fixture = seed_fixture(db)
     add_jc(db, fixture, {"h": 2.10, "d": 3.40, "a": 3.20})
     add_sale(db, fixture, state="not_on_sale")
     verdict = qe.adjudicate_had_quote(db, fixture, AS_OF)
     assert verdict.status == qe.REJECTED
-    assert verdict.reasons == ["sale_not_on_sale"]
+    assert verdict.reasons == ["sale_window_closed"]
+
+
+def test_sale_window_anchor_overrides_default(db) -> None:
+    """当日实际开售锚覆写缺省 11:30：锚前拍点虽过缺省界仍算窗外。"""
+    fixture = seed_fixture(db)
+    add_jc(db, fixture, {"h": 2.10, "d": 3.40, "a": 3.20})
+    other = seed_fixture(db)
+    # 另一场 13:00 北京（05:00 UTC）首个 on_sale → 当日开售锚
+    add_sale(db, other, state="on_sale", observed="2026-09-13T05:00:00+00:00")
+    # 目标场 12:00 北京（04:00 UTC）未开售：过缺省 11:30 但在锚 13:00 前
+    add_sale(db, fixture, state="not_on_sale", observed="2026-09-13T04:00:00+00:00")
+    verdict = qe.adjudicate_had_quote(db, fixture, "2026-09-13T04:01:00+00:00")
+    assert verdict.status == qe.REJECTED
+    assert verdict.reasons == ["sale_window_closed"]
 
 
 def test_missing_three_way_rejected(db) -> None:

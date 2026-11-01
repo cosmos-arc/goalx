@@ -38,6 +38,7 @@ from statistics import NormalDist, quantiles
 from typing import Any
 
 from goalx_backend import run_fingerprint as rfp
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence as qe
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.markets import SELECTIONS
@@ -101,6 +102,7 @@ class _RowAudit:
     value_proxy: float | None
     identity_gate: str | None  # None=可比；identity_unknown/identity_mismatch
     close_positive: bool | None  # None=收盘未算（身份/数据缺）
+    window_phase: str | None = None  # 销售窗相位（sale-window 票 01；None=未算）
 
     @property
     def l2(self) -> bool:
@@ -152,7 +154,11 @@ def _terminal_reason(row: _RowAudit, *, tier_s: float) -> str:
     if row.sale_state == "stopped":
         return "sale_stopped"
     if row.sale_state == "not_on_sale":
-        return "sale_not_on_sale"  # 票 09 独立值：未开售≠停售≠未知
+        # 票 09 独立值：未开售≠停售≠未知；sale-window 票 01 再拆：
+        # 窗外拍点的未开售=全场相位事实，窗内才是场次级归因
+        if row.window_phase is not None and row.window_phase != "in_window":
+            return "sale_window_closed"
+        return "sale_not_on_sale"
     if row.sale_state != "on_sale":
         return "sale_unknown"
     if row.single_eligible != 1:
@@ -210,9 +216,12 @@ def _fetch_rows(
 
 
 def _build_row_audit(
-    raw: sqlite3.Row, close_provider: CloseProvider | None
+    raw: sqlite3.Row,
+    close_provider: CloseProvider | None,
+    *,
+    window_anchor: str | None = None,
 ) -> _RowAudit:
-    """账本行 → 审计面（value_proxy/陈旧度/身份门/收盘）。"""
+    """账本行 → 审计面（value_proxy/陈旧度/身份门/收盘/窗相位）。"""
     observed_at = str(raw["observed_at"])
     source_updated_at = raw["source_updated_at"]
     staleness = (
@@ -248,6 +257,7 @@ def _build_row_audit(
         value_proxy=value_proxy,
         identity_gate=identity_gate,
         close_positive=close_positive,
+        window_phase=fx_store.sale_window_phase(observed_at, anchor=window_anchor),
     )
 
 
@@ -705,10 +715,15 @@ def _assemble_report(
     ).fetchone()[0]
     if int(orphan) > 0:
         raise RuntimeError(f"账本存在无法关联场次的行({orphan}行)，拒绝出报告")
-    rows = [
-        _build_row_audit(raw, close_provider)
-        for raw in _fetch_rows(conn, date_from, date_to)
-    ]
+    # 窗相位锚逐北京日预取一次（开售是全局事件，同日同锚）
+    anchors: dict[str, str | None] = {}
+    rows: list[_RowAudit] = []
+    for raw in _fetch_rows(conn, date_from, date_to):
+        observed = str(raw["observed_at"])
+        day = fx_store.beijing_naive(observed).strftime("%Y-%m-%d")
+        if day not in anchors:
+            anchors[day] = fx_store.sale_window_anchor(conn, day)
+        rows.append(_build_row_audit(raw, close_provider, window_anchor=anchors[day]))
     ledger_by_date: dict[str, int] = dict.fromkeys(dates, 0)
     for row in rows:
         ledger_by_date[row.date] += 1

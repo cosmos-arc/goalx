@@ -6,6 +6,7 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
+from datetime import time as dtime
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
@@ -313,6 +314,51 @@ def sale_status_row_exists(conn: sqlite3.Connection, status: SaleStatusInput) ->
         ),
     ).fetchone()
     return row is not None
+
+
+#: 竞彩每日销售窗缺省界（北京时；票09 考据 ~11:30–22:00）。开售侧由当日
+#: 首个 on_sale 观测锚覆写（开售是全局事件；开得晚的日子缺省界自愈）。
+SALE_WINDOW_DEFAULT_OPEN = dtime(11, 30)
+SALE_WINDOW_DEFAULT_CLOSE = dtime(22, 0)
+
+
+def sale_window_anchor(conn: sqlite3.Connection, beijing_day: str) -> str | None:
+    """该北京日首个 on_sale 观测时刻（ISO UTC）；当日未观测到开售则 None。"""
+    start = beijing_naive_to_utc(f"{beijing_day} 00:00")
+    if start is None:
+        return None
+    end = start + timedelta(hours=24)
+    row = conn.execute(
+        """
+            SELECT MIN(observed_at) FROM sale_statuses
+            WHERE sale_state = 'on_sale'
+              AND observed_at >= ? AND observed_at < ?
+        """,
+        (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")),
+    ).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def sale_window_anchor_for(conn: sqlite3.Connection, at: str) -> str | None:
+    """At 时刻所属北京日的开售锚（had-quote 单点判定用）。"""
+    return sale_window_anchor(conn, beijing_naive(at).strftime("%Y-%m-%d"))
+
+
+def sale_window_phase(at: str, *, anchor: str | None = None) -> str:
+    """
+    时刻的每日销售窗相位：``pre_open | in_window | post_close``。
+
+    锚存在用锚的开售墙钟，否则缺省 11:30；收市恒缺省 22:00。区间半开
+    [open, close)。sellStatus 窗外=未开售是相位事实，消费方据此归因
+    （sale-window-derivation 票 01）。
+    """
+    wall = beijing_naive(at).time()
+    open_wall = beijing_naive(anchor).time() if anchor else SALE_WINDOW_DEFAULT_OPEN
+    if wall >= SALE_WINDOW_DEFAULT_CLOSE:
+        return "post_close"
+    if wall >= open_wall:
+        return "in_window"
+    return "pre_open"
 
 
 def latest_sale_status_asof(

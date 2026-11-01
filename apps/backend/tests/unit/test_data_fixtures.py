@@ -7,7 +7,7 @@ from typing import Any
 
 from goalx_backend.data import fixtures as fx
 from goalx_backend.data import quote_evidence
-from goalx_backend.models import MatchCodeInput, SnapshotInput, Tier
+from goalx_backend.models import MatchCodeInput, SaleStatusInput, SnapshotInput, Tier
 
 
 def seed_fixture(
@@ -177,3 +177,47 @@ def test_pending_jingcai_fixtures(db: sqlite3.Connection) -> None:
     pending = fx.pending_jingcai_fixtures(db, "2026-09-13T12:00:00+00:00")
     assert [row["id"] for row in pending] == [fixture]
     assert fx.pending_jingcai_fixtures(db, "2026-09-13T09:00:00+00:00") == []
+
+
+def test_sale_window_phase_default_boundaries() -> None:
+    """缺省窗 [11:30, 22:00) 北京时：开端含、收端不含。"""
+    assert fx.sale_window_phase("2026-11-01T03:29:59+00:00") == "pre_open"
+    assert fx.sale_window_phase("2026-11-01T03:30:00+00:00") == "in_window"
+    assert fx.sale_window_phase("2026-11-01T13:59:59+00:00") == "in_window"
+    assert fx.sale_window_phase("2026-11-01T14:00:00+00:00") == "post_close"
+
+
+def test_sale_window_phase_anchor_overrides_open() -> None:
+    """当日锚（13:00 北京）覆写缺省开时刻：锚前窗外、锚点含开端。"""
+    anchor = "2026-11-01T05:00:00+00:00"
+    assert (
+        fx.sale_window_phase("2026-11-01T03:31:00+00:00", anchor=anchor) == "pre_open"
+    )
+    assert (
+        fx.sale_window_phase("2026-11-01T05:00:00+00:00", anchor=anchor) == "in_window"
+    )
+
+
+def test_sale_window_anchor_first_on_sale_of_beijing_day(
+    db: sqlite3.Connection,
+) -> None:
+    """当日锚=该北京日首个 on_sale 观测；北京日界把 UTC 16:00 归次日。"""
+    fixture = seed_fixture(db)
+    for observed, state in (
+        ("2026-10-21T01:00:00+00:00", "on_sale"),  # 北京 10-21 09:00
+        ("2026-10-21T06:00:00+00:00", "on_sale"),  # 北京 10-21 14:00
+        ("2026-10-20T16:00:00+00:00", "on_sale"),  # 北京 10-21 00:00（界上）
+        ("2026-10-20T15:59:00+00:00", "on_sale"),  # 北京 10-20 23:59（界外）
+    ):
+        fx.append_sale_status(
+            db,
+            SaleStatusInput(
+                fixture_id=fixture,
+                market_code="had",
+                sale_state=state,
+                observed_at=observed,
+            ),
+        )
+    db.commit()
+    assert fx.sale_window_anchor(db, "2026-10-21") == "2026-10-20T16:00:00+00:00"
+    assert fx.sale_window_anchor(db, "2026-11-01") is None

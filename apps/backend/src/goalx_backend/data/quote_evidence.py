@@ -635,8 +635,14 @@ def adjudicate_had_quote(  # noqa: PLR0913 判定接缝集随 as-of/源切换/�
             verdict.reject("sale_stopped")
             return verdict
         if sale["sale_state"] == "not_on_sale":
-            # 票 09：未开售≠停售≠未知——不可购同样短路，但归因独立
-            verdict.reject("sale_not_on_sale")
+            # 票 09：未开售≠停售≠未知——不可购同样短路，但归因独立。
+            # 窗相位自算（sale-window 票 01）：窗外=相位事实（全场未开售），
+            # 窗内仍未开售才是场次级归因。
+            anchor = fx_store.sale_window_anchor_for(conn, as_of)
+            phase = fx_store.sale_window_phase(as_of, anchor=anchor)
+            verdict.reject(
+                "sale_not_on_sale" if phase == "in_window" else "sale_window_closed"
+            )
             return verdict
         if sale["sale_state"] == "unknown":
             verdict.mark_unknown("sale_status_unknown_value")
