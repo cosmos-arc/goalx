@@ -351,12 +351,12 @@ def test_v31_reentrant_after_interrupted_migration() -> None:
 
 
 def test_v33_haircut_calibrations_era_rebuild() -> None:
-    """v33（odds-read-switch 留账）：era 维度入表 + 三列唯一键，旧行标注
+    """v33（odds-read-switch 留账）：source_era 维度入表 + 三列唯一键，旧行标注
     （sp-close:*→jc_sp，其余→odds_api），重入幂等（崩溃窗守卫短路重建）。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    # 先迁到 v32 形态，再换回旧形态表（真实 v32 生产库形状：era 列不存在；
-    # 新 base DDL 已带 era，直接顺序迁移会让 v33 守卫短路、测不到重建腿）
+    # 先迁到 v32 形态，再换回旧形态表（真实 v32 生产库形状：source_era 列不存在；
+    # 新 base DDL 已带 source_era，直接顺序迁移会让 v33 守卫短路、测不到重建腿）
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations"
         " (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
@@ -396,19 +396,20 @@ def test_v33_haircut_calibrations_era_rebuild() -> None:
         """
     )
     conn.commit()
-    assert db.migrate(conn) == 33  # v33 重建腿：旧形态表 → era 维度入表
+    assert db.migrate(conn) == 33  # v33 重建腿：旧形态表 → source_era 维度入表
     rows = conn.execute(
-        "SELECT scope, era FROM haircut_calibrations ORDER BY scope"
+        "SELECT scope, source_era FROM haircut_calibrations ORDER BY scope"
     ).fetchall()
-    assert [(r["scope"], r["era"]) for r in rows] == [
+    assert [(r["scope"], r["source_era"]) for r in rows] == [
         ("overall", "odds_api"),
         ("sp-close:overall", "jc_sp"),
     ]
-    # 三列唯一键：同 scope 不同 era 可并存
+    # 三列唯一键：同 scope 不同 source_era 可并存
     conn.execute(
         """
         INSERT INTO haircut_calibrations
-        (scope, market_code, era, haircut, n_samples, quartiles, source, computed_at)
+        (scope, market_code, source_era, haircut, n_samples, quartiles,
+         source, computed_at)
         VALUES ('overall', 'had', 'srct', 0.07, 40, '[]', 'calibrated', 't')
         """
     )
@@ -416,12 +417,12 @@ def test_v33_haircut_calibrations_era_rebuild() -> None:
         conn.execute(
             """
             INSERT INTO haircut_calibrations
-            (scope, market_code, era, haircut, n_samples, quartiles, source,
+            (scope, market_code, source_era, haircut, n_samples, quartiles, source,
              computed_at)
             VALUES ('overall', 'had', 'srct', 0.07, 40, '[]', 'calibrated', 't')
             """
         )
-    # 崩溃窗重入：抹 33 戳重跑，era 列已在 → 守卫短路，数据保住
+    # 崩溃窗重入：抹 33 戳重跑，source_era 列已在 → 守卫短路，数据保住
     conn.execute("DELETE FROM schema_migrations WHERE version = 33")
     conn.commit()
     assert db.migrate(conn) == 33

@@ -192,8 +192,8 @@ def test_haircut_corpus_era_and_legacy_pinned(db: sqlite3.Connection) -> None:
 
 
 def test_haircut_calibration_era_dimension(db: sqlite3.Connection) -> None:
-    """小账回归：calibration 落库带 era 维度——两代中位数分行不混算，
-    消费端按代取行（默认 odds_api=回测历史口径不变）。"""
+    """小账回归：calibration 落库带 source_era 维度——两代中位数分行不
+    混算，消费端按代取行（默认 odds_api=回测历史口径不变）。"""
     seed_on_sale_fixture(db, business_date="2026-10-31")
     old_fid = seed_on_sale_fixture(
         db,
@@ -218,22 +218,28 @@ def test_haircut_calibration_era_dimension(db: sqlite3.Connection) -> None:
         )
     duck_con = seed_corpus_duck()
     written = hc.calibrate_haircuts(db, min_samples=1, duck_con=duck_con)
-    eras = {(row["scope"], row["era"]) for row in written}
-    assert ("overall", hc.ERA_ODDS_API) in eras
-    assert ("overall", hc.ERA_SRCT) in eras  # 两代分行（落库维度非仅日志）
+    eras = {(row["scope"], row["source_era"]) for row in written}
+    assert ("overall", hc.SOURCE_ERA_ODDS_API) in eras
+    assert ("overall", hc.SOURCE_ERA_SRCT) in eras  # 两代分行（落库维度非仅日志）
     rows = {
-        (str(r["scope"]), str(r["era"])): r
+        (str(r["scope"]), str(r["source_era"])): r
         for r in db.execute(
-            "SELECT scope, era, n_samples FROM haircut_calibrations"
+            "SELECT scope, source_era, n_samples FROM haircut_calibrations"
         ).fetchall()
     }
     assert rows[("overall", "odds_api")]["n_samples"] == 3  # 老场 3 样本归 legacy
     assert rows[("overall", "srct")]["n_samples"] == 3  # 新场 3 样本归 corpus
     # 消费端按代取行：两代各自 calibrated 出数（同 jc 价不同欧侧 → 值分行）
-    assert hc.calibrated_haircut(db, era=hc.ERA_ODDS_API)[1:] == ("calibrated", 3)
-    assert hc.calibrated_haircut(db, era=hc.ERA_SRCT)[1:] == ("calibrated", 3)
+    assert hc.calibrated_haircut(db, source_era=hc.SOURCE_ERA_ODDS_API)[1:] == (
+        "calibrated",
+        3,
+    )
+    assert hc.calibrated_haircut(db, source_era=hc.SOURCE_ERA_SRCT)[1:] == (
+        "calibrated",
+        3,
+    )
     # 无样本代不落行 → 落落默认（不误挂 default 行）
-    empty = hc.calibrated_haircut(db, scope="西甲", era=hc.ERA_SRCT)
+    empty = hc.calibrated_haircut(db, scope="西甲", source_era=hc.SOURCE_ERA_SRCT)
     assert empty == (hc.DEFAULT_HAIRCUT, "default", 0)
 
 

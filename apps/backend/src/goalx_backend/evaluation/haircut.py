@@ -11,9 +11,9 @@ haircut 校准器（票 30，ADR 0007；票 35 补 as-of 配对与方法版本�
   ``haircut_calibrations``（UPSERT，同数据同值可复现），分列场次数
   （n_fixtures）与选择数（n_samples）；样本不足回落默认 −10% 并标注
   source=default。
-- 落库行带 era 维度（EU 读源代，odds-read-switch 小账）：样本欧侧证据
-  来自源T corpus=srct、历史 odds_api 口径=odds_api——两代中位数不混算，
-  消费端按代取行。
+- 落库行带 source_era 维度（证据源代，odds-read-switch 小账）：样本欧侧
+  证据来自源T corpus=srct、历史 odds_api 口径=odds_api——两代中位数不混
+  算，消费端按代取行。
 - v1 只校准 had（欧赔侧唯一可映射玩法）。
 """
 
@@ -37,11 +37,12 @@ DEFAULT_HAIRCUT = 0.10
 MIN_SAMPLES = 30  # 样本不足回落默认（票 30 验收）
 HAIRCUT_METHOD_VERSION = "shin_mean_v1"
 MAX_PAIR_GAP_SECONDS = 300.0  # 配对时差工程初值（票 35），可显式传参调整
-# 落库 era 值域：EU 读源代（odds_api=历史钉死口径 / srct=corpus 切换后）
-# + jc_sp（sp-close 十年官方口径，haircut_decade 专用，与 EU 读源无关）
-ERA_ODDS_API = "odds_api"
-ERA_SRCT = "srct"
-ERA_JC_SP = "jc_sp"
+# 落库 source_era 值域：证据源代（odds_api=历史 EU 读源钉死口径 /
+# srct=源T corpus 切换后）+ jc_sp（sp-close 十年官方口径，haircut_decade
+# 专用）。命名避开 backtest 的 gold era 分层（同包 era1/era2 是另一概念）。
+SOURCE_ERA_ODDS_API = "odds_api"
+SOURCE_ERA_SRCT = "srct"
+SOURCE_ERA_JC_SP = "jc_sp"
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ class HaircutSample:
     jc_odds: float
     eu_books: dict[str, dict[str, float]]  # book -> {"h","d","a"}
     eu_observed_at: str
-    era: str = ERA_ODDS_API  # 欧侧证据读源代（srct=corpus / odds_api=历史）
+    source_era: str = SOURCE_ERA_ODDS_API  # 证据源代（srct=corpus/odds_api=历史）
 
     @property
     def fair_odds(self) -> float:
@@ -171,7 +172,7 @@ def build_haircut_samples(
         books = _books_asof(eu_candidate, pair_time, max_pair_gap_seconds)
         if not books:
             continue  # as-of 时刻无同窗欧共识
-        era = ERA_SRCT if fixture_id in corpus_sids else ERA_ODDS_API
+        era = SOURCE_ERA_SRCT if fixture_id in corpus_sids else SOURCE_ERA_ODDS_API
         for selection in SELECTIONS:
             samples.append(
                 HaircutSample(
@@ -182,7 +183,7 @@ def build_haircut_samples(
                     jc_odds=float(jc_latest[selection]["odds"]),
                     eu_books=books,
                     eu_observed_at=pair_time,
-                    era=era,
+                    source_era=era,
                 )
             )
     if duck_con is not None:
@@ -266,6 +267,51 @@ def quartiles_of(values: list[float]) -> list[float]:
     return [float(q) for q in quantiles(values, n=4, method="inclusive")]
 
 
+@dataclass(frozen=True)
+class CalibrationWrite:
+    """一行校准落库（haircut_calibrations 唯一写入点入参）。"""
+
+    scope: str
+    market_code: str
+    source_era: str
+    haircut: float
+    n_samples: int
+    n_fixtures: int
+    method_version: str
+    quartiles: list[float]
+    source: str
+
+
+def upsert_calibration(conn: sqlite3.Connection, row: CalibrationWrite) -> None:
+    """haircut_calibrations 唯一写入点（实时/十年两校准器共用，防两份漂移）。"""
+    conn.execute(
+        """
+        INSERT INTO haircut_calibrations
+        (scope, market_code, source_era, haircut, n_samples, n_fixtures,
+         method_version, quartiles, source, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope, market_code, source_era) DO UPDATE SET
+            haircut=excluded.haircut, n_samples=excluded.n_samples,
+            n_fixtures=excluded.n_fixtures,
+            method_version=excluded.method_version,
+            quartiles=excluded.quartiles, source=excluded.source,
+            computed_at=excluded.computed_at
+        """,
+        (
+            row.scope,
+            row.market_code,
+            row.source_era,
+            row.haircut,
+            row.n_samples,
+            row.n_fixtures,
+            row.method_version,
+            json.dumps([round(q, 6) for q in row.quartiles]),
+            row.source,
+            utc_now_iso(),
+        ),
+    )
+
+
 def calibrate_haircuts(
     conn: sqlite3.Connection,
     *,
@@ -274,7 +320,7 @@ def calibrate_haircuts(
     max_pair_gap_seconds: float = MAX_PAIR_GAP_SECONDS,
     duck_con: quote_evidence.DuckCon | None = None,
 ) -> list[dict[str, Any]]:
-    """按联赛 + overall × era 估计 haircut 分布并落库；返回写入的报告行。"""
+    """按联赛 + overall × source_era 估计 haircut 分布并落库；返回报告行。"""
     samples = build_haircut_samples(
         conn,
         market_code=market_code,
@@ -284,11 +330,9 @@ def calibrate_haircuts(
     by_scope: dict[tuple[str, str], list[HaircutSample]] = {}
     for sample in samples:
         for scope in ("overall", sample.competition):
-            by_scope.setdefault((scope, sample.era), []).append(sample)
+            by_scope.setdefault((scope, sample.source_era), []).append(sample)
     written: list[dict[str, Any]] = []
-    for (scope, era), group in sorted(by_scope.items()):
-        if not group:
-            continue  # 该代无样本不落行（消费端按代取，不误挂 default 行）
+    for (scope, source_era), group in sorted(by_scope.items()):
         values = [s.haircut for s in group]
         quartiles = quartiles_of(values)
         if len(values) >= min_samples:
@@ -296,36 +340,22 @@ def calibrate_haircuts(
         else:
             haircut, source = DEFAULT_HAIRCUT, "default"
         n_fixtures = len({s.fixture_id for s in group})
-        conn.execute(
-            """
-            INSERT INTO haircut_calibrations
-            (scope, market_code, era, haircut, n_samples, n_fixtures,
-             method_version, quartiles, source, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope, market_code, era) DO UPDATE SET
-                haircut=excluded.haircut, n_samples=excluded.n_samples,
-                n_fixtures=excluded.n_fixtures,
-                method_version=excluded.method_version,
-                quartiles=excluded.quartiles, source=excluded.source,
-                computed_at=excluded.computed_at
-            """,
-            (
-                scope,
-                market_code,
-                era,
-                haircut,
-                len(values),
-                n_fixtures,
-                HAIRCUT_METHOD_VERSION,
-                json.dumps([round(q, 6) for q in quartiles]),
-                source,
-                utc_now_iso(),
-            ),
+        row = CalibrationWrite(
+            scope=scope,
+            market_code=market_code,
+            source_era=source_era,
+            haircut=haircut,
+            n_samples=len(values),
+            n_fixtures=n_fixtures,
+            method_version=HAIRCUT_METHOD_VERSION,
+            quartiles=quartiles,
+            source=source,
         )
+        upsert_calibration(conn, row)
         written.append(
             {
                 "scope": scope,
-                "era": era,
+                "source_era": source_era,
                 "market_code": market_code,
                 "haircut": haircut,
                 "n_samples": len(values),
@@ -344,22 +374,22 @@ def calibrated_haircut(
     *,
     scope: str = "overall",
     market_code: str = "had",
-    era: str = ERA_ODDS_API,
+    source_era: str = SOURCE_ERA_ODDS_API,
     default: float = DEFAULT_HAIRCUT,
 ) -> tuple[float, str, int]:
     """
-    回测切换接口：取某 scope × era 的校准 haircut。
+    回测切换接口：取某 scope × source_era 的校准 haircut。
 
-    era 默认 odds_api（十年研究工具口径=历史代钉死不重算）；活线/新场
-    评估取 era=srct。Returns ``(haircut, source, n_samples)``；无校准行或
-    样本不足行均按其落落值返回（default 行存的就是默认值）。
+    source_era 默认 odds_api（十年研究工具口径=历史代钉死不重算）；活线/
+    新场评估取 source_era=srct。Returns ``(haircut, source, n_samples)``；
+    无校准行或样本不足行均按其落落值返回（default 行存的就是默认值）。
     """
     row = conn.execute(
         """
         SELECT haircut, source, n_samples FROM haircut_calibrations
-        WHERE scope = ? AND market_code = ? AND era = ?
+        WHERE scope = ? AND market_code = ? AND source_era = ?
         """,
-        (scope, market_code, era),
+        (scope, market_code, source_era),
     ).fetchone()
     if row is None:
         return default, "default", 0

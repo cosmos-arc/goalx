@@ -748,3 +748,30 @@ def test_srct_sids_for_fixtures_matches_singular(db) -> None:
         mapping.srct_sid_for_fixture(db, linked),
         mapping.srct_sid_for_fixture(db, unlinked),
     )
+
+
+def test_srct_sids_chunk_merge_above_chunk_size(db) -> None:
+    """分块边界：>900 id 跨块合并结果完整（IN 绑定变量上限防御，十年面
+    ~49k id 场景）。"""
+    ids = []
+    for i in range(901):  # _ID_CHUNK=900 → 恰跨两块
+        fid = seed_fixture(db, home=f"队{i}", away=f"客{i}")
+        ids.append(fid)
+    linked = ids[0], ids[450], ids[900]  # 三块位各取一（首/中/尾）
+    for fid in linked:
+        db.execute(
+            """
+            INSERT INTO source_match_links
+                (fixture_id, source, source_match_id, method, status, meta,
+                 mapped_at)
+            VALUES (?, 'srct', '3001', 'primary_key', 'linked', '{}',
+                    '2026-09-12T00:00:00Z')
+            """,
+            (fid,),
+        )
+    db.commit()
+    batch = mapping.srct_sids_for_fixtures(db, ids)
+    assert set(batch) == set(linked)  # 跨块无一漏
+    assert set(batch.values()) == {"3001"}
+    # 广义 joined 门同口径：全量 id 门内=链集（无 odds_api 行）
+    assert mapping.joined_fixture_ids(db, ids) == set(linked)

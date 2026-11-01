@@ -798,14 +798,8 @@ def track2_snapshots(
             start = (moment + offset - horizon).isoformat(timespec="seconds")
             end = (moment + offset).isoformat(timespec="seconds")
             in_window = fx_store.fixtures_in_window(conn, start, end)
-            sid_map = mapping.srct_sids_for_fixtures(
-                conn, [int(row["id"]) for row in in_window]
-            )
-            targets = [
-                row
-                for row in in_window
-                if row["odds_api_event_id"] is not None or int(row["id"]) in sid_map
-            ]
+            joined = mapping.joined_fixture_ids(conn, [int(r["id"]) for r in in_window])
+            targets = [row for row in in_window if int(row["id"]) in joined]
             fresh: list[int] = []
             for row in targets:
                 fid = int(row["id"])

@@ -689,22 +689,56 @@ def srct_sid_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> str | Non
     return str(row["source_match_id"]) if row else None
 
 
+# IN 绑定分块（十年面 ~49k id 超 SQLite 绑定变量上限——老 999/新 32766，
+# 统一按保守 900 分块）
+_ID_CHUNK = 900
+
+
+def _chunked(ids: Collection[int]) -> Iterator[tuple[int, ...]]:
+    ordered = tuple(sorted(set(ids)))
+    for i in range(0, len(ordered), _ID_CHUNK):
+        yield ordered[i : i + _ID_CHUNK]
+
+
 def srct_sids_for_fixtures(
     conn: sqlite3.Connection, fixture_ids: Collection[int]
 ) -> dict[int, str]:
-    """批量版 srct_sid_for_fixture（一次查询；UNIQUE(fixture_id, source) 保证同义）。"""
-    ids = sorted(set(fixture_ids))
-    if not ids:
-        return {}
-    placeholders = ", ".join("?" for _ in ids)
-    rows = conn.execute(
-        f"""
-        SELECT fixture_id, source_match_id FROM source_match_links
-        WHERE source = ? AND status = ? AND fixture_id IN ({placeholders})
-        """,  # noqa: S608
-        (SRCT_SOURCE, STATUS_LINKED, *ids),
-    ).fetchall()
-    return {int(r["fixture_id"]): str(r["source_match_id"]) for r in rows}
+    """批量版 srct_sid_for_fixture（分块单查；UNIQUE(fixture_id, source) 保证同义）。"""
+    out: dict[int, str] = {}
+    for chunk in _chunked(fixture_ids):
+        placeholders = ", ".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT fixture_id, source_match_id FROM source_match_links
+            WHERE source = ? AND status = ? AND fixture_id IN ({placeholders})
+            """,  # noqa: S608
+            (SRCT_SOURCE, STATUS_LINKED, *chunk),
+        ).fetchall()
+        out.update({int(r["fixture_id"]): str(r["source_match_id"]) for r in rows})
+    return out
+
+
+def joined_fixture_ids(
+    conn: sqlite3.Connection, fixture_ids: Collection[int]
+) -> set[int]:
+    """
+    广义 joined 批量判定（has_srct_link 的批量版，票 01 单一出处语义）。
+
+    odds_api 历史链 ∪ srct 链。候选面消费（轨二拍点等）用本入口，勿内联
+    复写谓词——读源再切换时只改 mapping 一处。
+    """
+    out = set(srct_sids_for_fixtures(conn, fixture_ids))
+    for chunk in _chunked(fixture_ids):
+        placeholders = ", ".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT id FROM fixtures
+            WHERE odds_api_event_id IS NOT NULL AND id IN ({placeholders})
+            """,  # noqa: S608
+            chunk,
+        ).fetchall()
+        out.update(int(r["id"]) for r in rows)
+    return out
 
 
 def has_srct_link(conn: sqlite3.Connection, fixture_id: int) -> bool:

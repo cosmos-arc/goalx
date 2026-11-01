@@ -78,7 +78,7 @@
 | --- | --- | --- | --- |
 | `backtest_runs` / `-predictions` / `-bets` / `-metrics` | 回测四件套 | run（label/params/summary）、prediction（had/fair+model_fingerprint）、bet（kelly/EV）、metric（scope 分层） | append |
 | `clv_records` | CLV 对账 | taken_odds vs close_prob；close_basis 分层（pinnacle 主锚/betfair 辅/consensus 兜底） | append+幂等 |
-| `haircut_calibrations` | EV 折价校准 | scope×market×era 分位 haircut（era=EU 读源代：odds_api/srct/jc_sp）；method_version 随行 | append |
+| `haircut_calibrations` | EV 折价校准 | scope×market×source_era 分位 haircut（source_era=证据源代：odds_api/srct/jc_sp）；method_version 随行 | append |
 
 ### infra / 脚手架
 
@@ -1349,7 +1349,7 @@ measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重�
 | `id` | INTEGER | PK |
 | `scope` | TEXT | NOT NULL |
 | `market_code` | TEXT | NOT NULL |
-| `era` | TEXT | NOT NULL，DEFAULT 'odds_api' |
+| `source_era` | TEXT | NOT NULL，DEFAULT 'odds_api' |
 | `haircut` | REAL | NOT NULL |
 | `n_samples` | INTEGER | NOT NULL |
 | `quartiles` | TEXT | NOT NULL |
@@ -1358,7 +1358,7 @@ measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重�
 | `n_fixtures` | INTEGER | NOT NULL，DEFAULT 0 |
 | `method_version` | TEXT | NOT NULL，DEFAULT 'shin_mean_v0' |
 
-唯一键 `UNIQUE(`scope`, `market_code`, `era`)`
+唯一键 `UNIQUE(`scope`, `market_code`, `source_era`)`
 <!-- schema-doc:END:table:haircut_calibrations -->
 ### infra / 脚手架
 
