@@ -588,6 +588,8 @@ _PROBE_HORIZON_MINUTES = 16 * 60  # 粗筛上限（北京 19 点覆盖到次日�
 # 开售锚轮询带（ingest-orchestration 票 04）：起点由属主的缺省开售界
 # 推导（前移 30min 防早开），终点让位 12:30 可购窗拍（调度耦合字面量）。
 # 带内零候选也拍——开售翻转即锚，精度=拍距 5 分钟，盲带收窄至拍距。
+# ponytail: 唤醒风暴下积压拍并发全落带内时请求 burst 至积压拍数（锚由
+# MIN(observed_at) 吸收正确性无损）；锁败率实测超阈值再加跨拍互斥。
 _SALE_OPEN_POLL_START = (
     datetime.combine(d_date.min, fx_store.SALE_WINDOW_DEFAULT_OPEN)
     - timedelta(minutes=30)

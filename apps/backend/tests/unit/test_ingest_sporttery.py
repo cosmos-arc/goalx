@@ -745,9 +745,10 @@ def test_probe_polls_for_sale_open_in_window_until_flip(db, tmp_path) -> None:
 
 
 def test_probe_poll_before_open_keeps_polling_no_anchor(db, tmp_path) -> None:
-    """翻转前（全未开售）：拍了不产锚，下一拍继续（直到翻转或带末让位）。"""
+    """翻转前（真实预售值 "2"=未开售，票 09 实证；"0" 实测从未出现）：
+    拍了不产锚，下一拍继续（直到翻转或带末让位）。"""
     closed = json.loads(json.dumps(SAMPLE))
-    closed["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "0"
+    closed["value"]["matchInfoList"][0]["subMatchList"][0]["sellStatus"] = "2"
     calls: list[str] = []
     sporttery.probe_sale_stops(
         db,
@@ -758,6 +759,39 @@ def test_probe_poll_before_open_keeps_polling_no_anchor(db, tmp_path) -> None:
     )
     assert calls  # 无锚 → 带内继续拍
     assert fx_store.sale_window_anchor(db, "2026-09-12") is None
+
+
+def test_probe_poll_field_absent_means_on_sale(db, tmp_path) -> None:
+    """correctness F4 隐性契约钉住：端点语义=字段缺席按 on_sale 记
+    （SAMPLE 原样即无 sellStatus 键）——带内字段缺席首拍即锚。"""
+    calls: list[str] = []
+    sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(SAMPLE, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 3, 5, tzinfo=UTC),
+    )
+    assert calls
+    assert fx_store.sale_window_anchor(db, "2026-09-12") == "2026-09-12T03:05:00+00:00"
+
+
+def test_probe_poll_band_boundaries(db, tmp_path) -> None:
+    """correctness F5：带边界钉住——11:00 含（拍）、12:30 排他（让位窗拍）；
+    终点与 protocol-v1-window cron 的耦合是警示灯（cron 改晚须同步本带）。"""
+    for moment, expect_call in (
+        (datetime(2026, 9, 12, 3, 0, 0, tzinfo=UTC), True),  # 北京 11:00 整
+        (datetime(2026, 9, 12, 4, 30, 0, tzinfo=UTC), False),  # 北京 12:30 整
+    ):
+        calls: list[str] = []
+        sporttery.probe_sale_stops(
+            db,
+            Settings(),
+            _probe_client(SAMPLE, calls),
+            raw_root=tmp_path,
+            now=moment,
+        )
+        assert bool(calls) == expect_call, moment
 
 
 def test_probe_poll_outside_window_no_request(db, tmp_path) -> None:
@@ -951,3 +985,32 @@ def test_store_matches_empty_face_accounting(db) -> None:
     stats3 = sporttery.store_matches(db, sporttery.parse_matches(SAMPLE))
     assert stats3.no_market_matches == 0
     assert stats3.empty_markets == []
+
+
+def test_odds_anchor_dense_probe_degrade_keeps_kickoff_leg(
+    monkeypatch, db, tmp_path
+) -> None:
+    """correctness F1 回归：开售轮询带内 probe 抛错必须降级——kickoff 桶
+    跨桶不重火，probe 炸整拍=该桶锚永久缺失。"""
+    import contextlib
+
+    import goalx_backend.tasks as tasks_mod
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise httpx.ConnectError("probe down")
+
+    monkeypatch.setattr(tasks_mod.sporttery, "probe_sale_stops", boom)
+    monkeypatch.setattr(
+        tasks_mod,
+        "task_conn",
+        lambda: contextlib.nullcontext(enter_result=db),
+    )
+    monkeypatch.setattr(
+        tasks_mod,
+        "polite_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda req: httpx.Response(500))
+        ),
+    )
+    out = tasks_mod.odds_anchor_dense()
+    assert out["kickoff_anchor"]["events"] == 0  # kickoff 腿照走不牵连
