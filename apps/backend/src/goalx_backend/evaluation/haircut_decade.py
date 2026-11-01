@@ -33,6 +33,7 @@ from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation.backtest import era_fair_probs
 from goalx_backend.evaluation.haircut import (
     DEFAULT_HAIRCUT,
+    ERA_JC_SP,
     MIN_SAMPLES,
     quartiles_of,
 )
@@ -194,10 +195,10 @@ def calibrate_decade(
         conn.execute(
             """
             INSERT INTO haircut_calibrations
-            (scope, market_code, haircut, n_samples, n_fixtures, method_version,
-             quartiles, source, computed_at)
-            VALUES (?, 'had', ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope, market_code) DO UPDATE SET
+            (scope, market_code, era, haircut, n_samples, n_fixtures,
+             method_version, quartiles, source, computed_at)
+            VALUES (?, 'had', ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scope, market_code, era) DO UPDATE SET
                 haircut=excluded.haircut, n_samples=excluded.n_samples,
                 n_fixtures=excluded.n_fixtures,
                 method_version=excluded.method_version,
@@ -206,6 +207,7 @@ def calibrate_decade(
             """,
             (
                 scope,
+                ERA_JC_SP,
                 haircut,
                 len(values),
                 n_fixtures,

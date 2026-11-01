@@ -689,6 +689,24 @@ def srct_sid_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> str | Non
     return str(row["source_match_id"]) if row else None
 
 
+def srct_sids_for_fixtures(
+    conn: sqlite3.Connection, fixture_ids: Collection[int]
+) -> dict[int, str]:
+    """批量版 srct_sid_for_fixture（一次查询；UNIQUE(fixture_id, source) 保证同义）。"""
+    ids = sorted(set(fixture_ids))
+    if not ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT fixture_id, source_match_id FROM source_match_links
+        WHERE source = ? AND status = ? AND fixture_id IN ({placeholders})
+        """,  # noqa: S608
+        (SRCT_SOURCE, STATUS_LINKED, *ids),
+    ).fetchall()
+    return {int(r["fixture_id"]): str(r["source_match_id"]) for r in rows}
+
+
 def has_srct_link(conn: sqlite3.Connection, fixture_id: int) -> bool:
     """Joined 判定单一出处（odds-read-switch 票 01）：odds_api 历史行 ∪ srct 链。"""
     row = conn.execute(

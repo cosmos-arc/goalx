@@ -504,6 +504,79 @@ def test_track2_task_window_idempotent_late(tmp_path, monkeypatch) -> None:
     conn.close()
 
 
+def test_track2_srct_only_candidate_via_corpus(tmp_path, monkeypatch) -> None:
+    """小账回归（odds-read-switch 留账）：仅 srct 链场也是候选——原
+    odds_api 单一过滤 9-25 后结构性零候选；锚直读 corpus，零 odds_api 拉取。"""
+    import contextlib
+    from datetime import datetime as _dt
+    from datetime import timedelta
+
+    import duckdb
+
+    import goalx_backend.tasks as tasks_mod
+    from goalx_backend import db as goalx_db
+    from goalx_backend.data import quote_evidence
+
+    db_path = tmp_path / "t.db"
+    conn = goalx_db.connect(db_path)
+    goalx_db.migrate(conn)
+    now = _dt.fromisoformat("2026-10-17T14:00:00+00:00")
+    # 候选：仅 srct 链（odds_api_event_id 保持 NULL）
+    competition = fx_store.upsert_competition(conn, "英超")
+    home = fx_store.upsert_team(conn, "主srct")
+    away = fx_store.upsert_team(conn, "客srct")
+    fid = fx_store.upsert_fixture(
+        conn, competition, "2026-10-18T14:00:00+00:00", home, away
+    )
+    conn.execute(
+        "INSERT INTO source_match_links"
+        " (fixture_id, source, source_match_id, method, status, meta, mapped_at)"
+        " VALUES (?, 'srct', '3001', 'primary_key', 'linked', '{}',"
+        " '2026-10-17T00:00:00+00:00')",
+        (fid,),
+    )
+    conn.commit()
+    duck_con = duckdb.connect(":memory:")
+    duck_con.execute(
+        "CREATE TABLE odds_change_event (sid VARCHAR, bookmaker_id VARCHAR,"
+        " market VARCHAR, published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,"
+        " odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE, source_order INTEGER)"
+    )
+    duck_con.execute(
+        "CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)"
+    )
+    anchor = quote_evidence.SRCT_PINNACLE_BOOK
+    observed = now - timedelta(minutes=10)
+    duck_con.execute(
+        "INSERT INTO odds_change_event VALUES"
+        " ('3001', ?, '1x2', ?, ?, 2.0, 3.5, 3.2, 1)",
+        [anchor, observed - timedelta(hours=1), observed],
+    )
+    duck_con.execute("INSERT INTO bookmaker VALUES (?, 100)", [anchor])
+
+    @contextlib.contextmanager
+    def fake_reader():
+        yield duck_con
+
+    monkeypatch.setattr(tasks_mod.corpus_duckdb, "reader", fake_reader)
+    pulls: list[str] = []
+
+    def fake_pull(conn, settings, client, *, anchor, targets):
+        pulls.append(anchor)
+        return tasks_mod.oddsapi.OddsIngestStats()
+
+    monkeypatch.setenv("GOALX_DB_PATH", str(db_path))
+    result = tasks_mod.track2_snapshots(now=now, pull=fake_pull, decision_at=now)
+    assert result["24h"]["candidates"] == 1
+    assert result["24h"]["captured"] == 1
+    assert pulls == []  # 无 odds_api 链 → 零拉取（corpus 直读）
+    row = conn.execute(
+        "SELECT anchor_ref FROM track2_snapshots WHERE fixture_id=?", (fid,)
+    ).fetchone()
+    assert row["anchor_ref"] == anchor
+    conn.close()
+
+
 def test_track2_sale_states_four_way_and_stale_correction(
     tmp_path, monkeypatch
 ) -> None:

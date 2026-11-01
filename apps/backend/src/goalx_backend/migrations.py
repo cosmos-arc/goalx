@@ -471,12 +471,14 @@ _V3_STATEMENTS = (
         id INTEGER PRIMARY KEY,
         scope TEXT NOT NULL,
         market_code TEXT NOT NULL,
+        era TEXT NOT NULL DEFAULT 'odds_api'
+            CHECK (era IN ('odds_api', 'srct', 'jc_sp')),
         haircut REAL NOT NULL,
         n_samples INTEGER NOT NULL,
         quartiles TEXT NOT NULL,
         source TEXT NOT NULL CHECK (source IN ('calibrated', 'default')),
         computed_at TEXT NOT NULL,
-        UNIQUE (scope, market_code)
+        UNIQUE (scope, market_code, era)
     )
     """,
     """
@@ -1779,6 +1781,53 @@ def _apply_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v33(conn: sqlite3.Connection) -> None:
+    """
+    v33（odds-read-switch 票 05 留账）：haircut_calibrations 分代维度。
+
+    校准行落库加 era（EU 读源代：odds_api=历史钉死口径 / srct=源T
+    corpus 切换后 / jc_sp=sp-close 十年官方口径），UNIQUE 键扩为
+    (scope, market_code, era)——两代中位数不再混算进同一行。旧行标注：
+    sp-close:* 行= jc_sp，其余= odds_api（历史 EU 配对面全部产自切换前）。
+    SQLite 不能 ALTER UNIQUE → 标准表重建（v32 同法；列存在守卫=重入
+    幂等，W1 教训）。
+    """
+    if _column_exists(conn, "haircut_calibrations", "era"):
+        return
+    conn.execute("DROP TABLE IF EXISTS haircut_calibrations_v33")
+    conn.execute(
+        """
+        CREATE TABLE haircut_calibrations_v33 (
+            id INTEGER PRIMARY KEY,
+            scope TEXT NOT NULL,
+            market_code TEXT NOT NULL,
+            era TEXT NOT NULL DEFAULT 'odds_api'
+                CHECK (era IN ('odds_api', 'srct', 'jc_sp')),
+            haircut REAL NOT NULL,
+            n_samples INTEGER NOT NULL,
+            n_fixtures INTEGER NOT NULL DEFAULT 0,
+            method_version TEXT NOT NULL DEFAULT 'shin_mean_v0',
+            quartiles TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('calibrated', 'default')),
+            computed_at TEXT NOT NULL,
+            UNIQUE (scope, market_code, era)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO haircut_calibrations_v33
+        SELECT id, scope, market_code,
+               CASE WHEN scope LIKE 'sp-close:%' THEN 'jc_sp' ELSE 'odds_api' END,
+               haircut, n_samples, n_fixtures, method_version,
+               quartiles, source, computed_at
+        FROM haircut_calibrations
+        """
+    )
+    conn.execute("DROP TABLE haircut_calibrations")
+    conn.execute("ALTER TABLE haircut_calibrations_v33 RENAME TO haircut_calibrations")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1812,4 +1861,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (30, _apply_v30),
     (31, _apply_v31),
     (32, _apply_v32),
+    (33, _apply_v33),
 )

@@ -568,12 +568,32 @@ def get_fixture(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row | None
 def joined_fixtures_in_window(
     conn: sqlite3.Connection, start_utc: str, end_utc: str
 ) -> list[sqlite3.Row]:
-    """已 join 且开赛时间落在 [start, end] 的场次（closing 前置检查，票 37）。"""
+    """
+    已 join 且开赛时间落在 [start, end] 的场次（closing 前置检查，票 37）。
+
+    join 判定仍是 odds_api 原口径（本查询的消费者 oddsapi 锚拉/closing
+    前置都是 odds_api 原生面）；广义 joined（odds_api ∪ srct 链）候选面
+    用 fixtures_in_window + mapping 判定。
+    """
     return conn.execute(
         """
         SELECT * FROM fixtures
         WHERE odds_api_event_id IS NOT NULL
           AND kickoff_utc >= ? AND kickoff_utc <= ?
+        ORDER BY kickoff_utc
+        """,
+        (start_utc, end_utc),
+    ).fetchall()
+
+
+def fixtures_in_window(
+    conn: sqlite3.Connection, start_utc: str, end_utc: str
+) -> list[sqlite3.Row]:
+    """开赛时间落在 [start, end] 的全部场次（join 判定归调用方）。"""
+    return conn.execute(
+        """
+        SELECT * FROM fixtures
+        WHERE kickoff_utc >= ? AND kickoff_utc <= ?
         ORDER BY kickoff_utc
         """,
         (start_utc, end_utc),

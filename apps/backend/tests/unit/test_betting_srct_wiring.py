@@ -191,6 +191,52 @@ def test_haircut_corpus_era_and_legacy_pinned(db: sqlite3.Connection) -> None:
     assert new_fid not in {s.fixture_id for s in samples_no_duck}
 
 
+def test_haircut_calibration_era_dimension(db: sqlite3.Connection) -> None:
+    """小账回归：calibration 落库带 era 维度——两代中位数分行不混算，
+    消费端按代取行（默认 odds_api=回测历史口径不变）。"""
+    seed_on_sale_fixture(db, business_date="2026-10-31")
+    old_fid = seed_on_sale_fixture(
+        db,
+        business_date="2026-09-12",
+        linked=False,
+        kickoff="2026-09-12T19:00:00+00:00",
+        jc_at="2026-09-12T15:02:00+00:00",
+    )
+    legacy_anchor = quote_evidence.SHARP_ANCHOR_SOURCE
+    for sel, odds in (("h", 2.0), ("d", 3.5), ("a", 3.2)):
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=old_fid,
+                market_code="had",
+                selection_code=sel,
+                source=legacy_anchor,
+                odds=odds,
+                captured_at="2026-09-12T15:00:00+00:00",
+                observed_at="2026-09-12T15:00:00+00:00",
+            ),
+        )
+    duck_con = seed_corpus_duck()
+    written = hc.calibrate_haircuts(db, min_samples=1, duck_con=duck_con)
+    eras = {(row["scope"], row["era"]) for row in written}
+    assert ("overall", hc.ERA_ODDS_API) in eras
+    assert ("overall", hc.ERA_SRCT) in eras  # 两代分行（落库维度非仅日志）
+    rows = {
+        (str(r["scope"]), str(r["era"])): r
+        for r in db.execute(
+            "SELECT scope, era, n_samples FROM haircut_calibrations"
+        ).fetchall()
+    }
+    assert rows[("overall", "odds_api")]["n_samples"] == 3  # 老场 3 样本归 legacy
+    assert rows[("overall", "srct")]["n_samples"] == 3  # 新场 3 样本归 corpus
+    # 消费端按代取行：两代各自 calibrated 出数（同 jc 价不同欧侧 → 值分行）
+    assert hc.calibrated_haircut(db, era=hc.ERA_ODDS_API)[1:] == ("calibrated", 3)
+    assert hc.calibrated_haircut(db, era=hc.ERA_SRCT)[1:] == ("calibrated", 3)
+    # 无样本代不落行 → 落落默认（不误挂 default 行）
+    empty = hc.calibrated_haircut(db, scope="西甲", era=hc.ERA_SRCT)
+    assert empty == (hc.DEFAULT_HAIRCUT, "default", 0)
+
+
 @pytest.fixture(autouse=True)
 def _reset_dim_cache() -> None:
     """维度 TTL 缓存进程级——逐测清空防跨库污染（票 05）。"""

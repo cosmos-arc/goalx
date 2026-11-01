@@ -723,3 +723,28 @@ def test_sync_live_link_does_not_align_kickoff(db) -> None:
     assert fx_store.get_fixture(db, fixture_id)["kickoff_utc"] == (
         "2026-09-12T19:05:00+00:00"
     )
+
+
+def test_srct_sids_for_fixtures_matches_singular(db) -> None:
+    """批量 sid 解析与单场语义同（UNIQUE(fixture_id, source) 保证无歧义），
+    未链/重复入参/空集各归其位（odds-read-switch 小账：haircut N+1→批查）。"""
+    linked = seed_fixture(db)
+    unlinked = seed_fixture(db, home="无链主队", away="无链客队")
+    db.execute(
+        """
+        INSERT INTO source_match_links
+            (fixture_id, source, source_match_id, method, status, meta, mapped_at)
+        VALUES (?, 'srct', '3003932', 'primary_key', 'linked', '{}',
+                '2026-09-12T00:00:00Z')
+        """,
+        (linked,),
+    )
+    db.commit()
+    assert mapping.srct_sids_for_fixtures(db, []) == {}
+    # 重复入参去重、未链缺席——键集与单场调用逐一等同
+    batch = mapping.srct_sids_for_fixtures(db, [linked, linked, unlinked])
+    assert batch == {linked: "3003932"}
+    assert (batch.get(linked), batch.get(unlinked)) == (
+        mapping.srct_sid_for_fixture(db, linked),
+        mapping.srct_sid_for_fixture(db, unlinked),
+    )
