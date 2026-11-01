@@ -323,10 +323,10 @@ def parse_over_page(
     html: str, *, shape_skips: list[int] | None = None
 ) -> list[DayMatch]:
     """
-    Over 日页 → 完赛场次行（纯函数；非完赛/无 sid 行跳过）。
+    Over 日页 → 完赛场次行（无副作用；非完赛/无 sid 行跳过）。
 
-    shape_skips（缺账惯例，ingest-orchestration 票 03）：sid 行存在但
-    行形状（字段/队名）解析失败的次数累加进该列表——日页改版致全行
+    shape_skips（缺账惯例，ingest-orchestration 票 03）：可选出参计数，
+    sid 行存在但行形状（字段/队名）解析失败时追加——日页改版致全行
     不匹配时，调用方面级缺账可见，不再零痕迹（zucai 断供 4 个月同族）。
     """
     matches: list[DayMatch] = []
@@ -1611,7 +1611,7 @@ def _account_day_page_shape(
     """
     if not shape_skips:
         return
-    stats.day_page_shape_skips = len(shape_skips)
+    stats.day_page_shape_skips = len(shape_skips)  # collect_day 每日单次调用
     logger.warning(
         "srct {} 日页 {} 行形状解析失败（页改版候选）", date, len(shape_skips)
     )

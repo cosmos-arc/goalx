@@ -361,8 +361,9 @@ def test_skipped_no_books_counted(db) -> None:
     assert stats.ingest.events == 1  # 好事件照入库（行为不变）
 
 
-def test_propline_capture_task_registered() -> None:
-    """票 06 裁决：备用源留库 + manual CLI 入口（tasks 可调、统计面完整）。"""
-    from goalx_backend import tasks
+def test_propline_capture_cli_registered() -> None:
+    """票 06 裁决：备用源留库 + manual CLI 入口可点火（子命令注册钉住）。"""
+    from goalx_backend.cli import build_parser
 
-    assert hasattr(tasks, "propline_capture")
+    subcommands = build_parser().parse_known_args(["propline-capture"])[0].command
+    assert subcommands == "propline-capture"

@@ -83,7 +83,8 @@ class PoolSyncStats:
     share_rows: int = 0
     missing_shares: int = 0
     parse_version: str = ""
-    # 预期当期面空的缺账（ingest-orchestration 票 02；防断供 4 个月重演）
+    # 预期当期面空的缺账（ingest-orchestration 票 02；防断供 4 个月重演）。
+    # 元素=玩法码（sfc/jqc）或面哨兵 "sfc_last_draw"（票 03：上期彩果面）
     empty_markets: list[str] = field(default_factory=list)
 
 
