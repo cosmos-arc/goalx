@@ -26,7 +26,7 @@
 | 回测工具链（backtest + 十年报告 + 运行指纹） | ✓ | ✓ | — | — | 运行指纹随 run 入档（票 06 本批，[633b7b2](https://github.com/cosmos-arc/goalx/commit/633b7b2)）；十年四报告 docs/plans/backtest-decade/（[c092ad4](https://github.com/cosmos-arc/goalx/commit/c092ad4)，Run21-23 可精确重放）；按需工具非日常运行 |
 | 新闻提取（NewsShock 抽取器） | ✓ | ✓ | — | — | caliber-loop N 相 137 事件（[a662b36](https://github.com/cosmos-arc/goalx/commit/a662b36)）；线已终审冻结归档（证据不足），不做日常运行 |
 | 估值带（multiline 约束可行性，B 线归档工具） | ✓ | ✓ | — | — | measure 票 10（[3396a3c](https://github.com/cosmos-arc/goalx/commit/3396a3c)）+ PR#181 票 04 certified/conflicts 分流；归档为估值带工具非运行面 |
-| 密集锚/轨二快照（track2_snapshots） | ✓ | — | **✗** | — | 票 47（PR#57）+ 轨二（PR#169 [2288297](https://github.com/cosmos-arc/goalx/commit/2288297)）；**主库 0 行——代码在册、零候选触发，运行验收不达成是本表第一价值行**；2026-11-01 候选查询解绑 odds_api（广义 joined=∪srct 链，corpus 锚直读），拍点行开始积累后本行翻 ✓ |
+| 密集锚/轨二快照（track2_snapshots） | ✓ | — | ✓ | — | 票 47（PR#57）+ 轨二（PR#169 [2288297](https://github.com/cosmos-arc/goalx/commit/2288297)）；曾长期主库 0 行（odds_api 候选过滤结构性零触发，本表首条 ✗ 价值行）；2026-11-01 PR#193 候选解绑广义 joined 后首拍即出数——**5 行（3×12h+2×24h，corpus 锚 cid177，全可购）**，运行验收达成 |
 | **今日页欧赔共识 + had 判定 EV 面** | ✓ | — | **◐** | — | **2026-10-31 补行（用户使用投诉触发）**：自 9-25 换源裁决结构性断供——读侧死命名空间（`odds_api:%`）+ 当期零映射 + 当日物化缺通道（诊断记忆 `goalx-today-page-eu-feed-dead-20261031`）；10-31 晚 23 场在售 books=0/EV 全空实证。修复板 `.scratch/odds-read-switch/` 票 01-03 |
 | **陈盘信号（stale_line）** | ✓ | ✓ | **✗** | — | **同日补行：sharp 锚 `odds_api:pinnacle` 同死源**（票48 落地 9-21，源 9-25 摘除后主锚从未活过）；cid177 切换在修复板票 02。10-31 晚全部在售场 sharp_ref/drift=NULL 实证 |
 | **had 纸面下注闭环（join→quote→stake→bet）** | ✓ | — | **✗** | — | **同日补行：`bets` 表 0 行，闭环从未真实发生过**（闸门 fail-closed 全拒 + 输入断供双因）；修复板落地后首注即本行运行验收证据 |
@@ -76,5 +76,7 @@
 - 2026-10-31 晚：odds-read-switch 票 01-03 合 main 后欧赔面行 ✗→◐（待
   首绿）；晨检七项→八项（+今日页欧赔输入面，票04；红线语义=红不许静默
   跳过）。
-- 2026-11-01：小账清账——track2 行注记候选面已解绑 odds_api（行积累后
-  翻 ✓）；晨检八项→九项（+纸面闭环首注观察，首注>0 翻闭环行）。
+- 2026-11-01：小账清账——track2 行注记候选面已解绑 odds_api；晨检八项→九项
+  （+纸面闭环首注观察，首注>0 翻闭环行）。
+- 2026-11-01 晚补：PR#193 合 main + 栈重启后 track2 首拍 5 行落库（corpus
+  锚），track2 行 ✗→✓——补行以来第一条由 ✗ 翻 ✓ 的行（修复闭环走通）。
