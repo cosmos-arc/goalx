@@ -231,14 +231,13 @@ def _probs_dict(raw: object) -> dict[str, float] | None:
     return probs
 
 
-def _signal_of(
-    row: sqlite3.Row,
-    gold_row: dict[str, Any],
-    fair: dict[str, Any],
-    model: dict[str, Any],
-) -> _MatchSignal:
-    """单场归因样本（特征全为 PIT 列；realized 用赛果做标签）。"""
-    ftr = str(row["ftr"]).lower()
+def features_of(gold_row: dict[str, Any]) -> dict[str, float]:
+    """
+    Gold 信号行 → PIT 特征 dict（票 02 复盘面复用的单一出处）。
+
+    与归因样本同一特征口径：注册表列直读 + 临场切片派生（1x2 devig
+    位移 / AH 锚同线水位位移）；缺列不入 dict（空≠无）。
+    """
     features: dict[str, float] = {}
     for key, column, _kind in FEATURES:
         value = gold_row.get(column)
@@ -272,13 +271,24 @@ def _signal_of(
     )
     if same_line and ah_early is not None and ah_close is not None:
         features["late_move_ah_home"] = ah_close - ah_early
+    return features
+
+
+def _signal_of(
+    row: sqlite3.Row,
+    gold_row: dict[str, Any],
+    fair: dict[str, Any],
+    model: dict[str, Any],
+) -> _MatchSignal:
+    """单场归因样本（特征全为 PIT 列；realized 用赛果做标签）。"""
+    ftr = str(row["ftr"]).lower()
     return _MatchSignal(
         era=str(gold_row["era"]) if gold_row["era"] is not None else "unknown",
         model_edges={side: float(model[side]) - float(fair[side]) for side in _SIDES},
         realized={
             side: (1.0 if ftr == side else 0.0) - float(fair[side]) for side in _SIDES
         },
-        features=features,
+        features=features_of(gold_row),
     )
 
 

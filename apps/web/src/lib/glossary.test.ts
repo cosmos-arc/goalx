@@ -12,7 +12,7 @@ import { filterGlossary, GLOSSARY, glossaryEntry } from "./glossary";
  * 增补价段 2.0–2.6 词条（21 条）。
  */
 test("all agreed entries are present with unique ids", () => {
-	expect(GLOSSARY).toHaveLength(21);
+	expect(GLOSSARY).toHaveLength(22);
 	expect(GLOSSARY.map((entry) => entry.id)).toEqual([
 		"ev",
 		"eu-consensus",
@@ -21,6 +21,7 @@ test("all agreed entries are present with unique ids", () => {
 		"books",
 		"low-confidence",
 		"price-band",
+		"misprice-buckets",
 		"paper-vs-live",
 		"pnl-roi",
 		"forward-inclusion",
@@ -68,8 +69,8 @@ test("glossaryEntry resolves by id and misses cleanly", () => {
 
 test("filterGlossary matches term, alias and definition, case-insensitively", () => {
 	// 空查询 = 全部（保持原顺序）
-	expect(filterGlossary("")).toHaveLength(21);
-	expect(filterGlossary("   ")).toHaveLength(21);
+	expect(filterGlossary("")).toHaveLength(22);
+	expect(filterGlossary("   ")).toHaveLength(22);
 	// term 命中
 	expect(filterGlossary("单固").map((entry) => entry.id)).toEqual(["single"]);
 	// 别名命中（大小写不敏感）

@@ -101,6 +101,19 @@ export const GLOSSARY: GlossaryEntry[] = [
 			"只读展示面（2026-11-01 用户裁决）：出处是特征桶族效应的引申观察段而非价段直接回测；前向读数攒够后再裁是否升级，升级前不得当信号用。",
 	},
 	{
+		id: "misprice-buckets",
+		term: "错价桶（特征桶复盘）",
+		aliases: ["错价桶", "misprice-buckets", "特征桶", "ah_phase_pre", "late_move", "ou_line_drift"],
+		definition:
+			"十年回测（signal-attribution，n≈33883）发现 7 个显著特征桶面（|t|≥2 且桶内 n≥100），其中判据可平移到今日数据的三面已上线：临场 1 小时主胜概率上行、24 小时主胜概率上行/下行。已开球行按 gold 收盘特征判据打只读标注。",
+		direction:
+			"十年聚合发现（桶级 1–2pp 量级市场偏差），未经前向验证，非投注信号——不参与任何资格判定、EV 计算或候选生成。判据是收盘时态特征：未开球场次不标（判据未齐），复盘语义。",
+		example:
+			"临场 1 小时主胜 devig 概率较 1 小时前锚上行 → 标「临场1h主热」；24 小时维度上行/下行 → 标「24h主热/主冷」。一场可命中 0-2 面。",
+		caution:
+			"只读展示面（misprice-bucket-display 票 02，2026-11-01 裁决①=c 增量 1）：效应量为十年混合口径（含 psc_proxy 时代），不可当 live 预期搬用。其余四面（亚盘书数族三面、大小线升）因采集密度量纲漂移/数据缺口待增量 2 重校后再裁上线；桶判据单一出处=signal_attribution。",
+	},
+	{
 		id: "paper-vs-live",
 		term: "纸面 vs 真金",
 		aliases: ["paper", "live", "纸面", "真金", "模拟盘"],

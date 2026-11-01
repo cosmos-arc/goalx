@@ -98,7 +98,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const list = page.getByTestId("glossary-list");
 	await expect(list.getByTestId("glossary-card-ev")).toBeVisible();
 	// 词条计数随票增补（misprice-bucket-display/01 后 21）
-	expect(await list.locator("article").count()).toBe(21);
+	expect(await list.locator("article").count()).toBe(22);
 
 	const search = page.getByTestId("glossary-search");
 	await search.fill("clv_prob");
@@ -109,7 +109,7 @@ test("glossary page lists first-batch entries, searches, and empties honestly", 
 	const empty = page.getByTestId("empty-state");
 	await expect(empty).toBeVisible();
 	await empty.getByRole("button", { name: "清空检索" }).click();
-	await expect(list.locator("article")).toHaveCount(21);
+	await expect(list.locator("article")).toHaveCount(22);
 });
 
 // 票 17：历史页真实落地——口径行常显，聚合区/空态/降级三选一都算通过

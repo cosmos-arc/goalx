@@ -26,6 +26,7 @@ from goalx_backend.data.today import (
     TodayFixtureView,
     build_today_view,
 )
+from goalx_backend.evaluation import bucket_face
 from goalx_backend.markets import SELECTIONS
 from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
@@ -61,9 +62,13 @@ async def get_today_fixtures(
     ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
     """
     with corpus_duckdb.reader() as duck_con:
-        return build_today_view(
+        rows = build_today_view(
             db, date or beijing_business_date(), days=days, duck_con=duck_con
         )
+        # 错价桶复盘标注（misprice 票 02 增量 1）：已开球行按 gold 桶判据
+        # 追加只读 flags；未开球判据未齐不标，gold 缺席降级零动作
+        bucket_face.attach_review_faces(db, duck_con, rows, now=datetime.now(tz=UTC))
+        return rows
 
 
 class OddsSnapshotView(BaseModel):
