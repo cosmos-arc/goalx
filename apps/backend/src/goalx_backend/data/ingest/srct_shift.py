@@ -290,7 +290,7 @@ def _bump_beats(
     return row
 
 
-def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累加（同 collect_day 先例）
+def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四类拍/缺账面累加（同 collect_day 先例）
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -359,6 +359,12 @@ def run_shift(  # noqa: PLR0911, PLR0913 接缝参数随防封/预算/窗口累�
         srct.SRCT_PROVIDER, SHIFT_ENTRY_DATASET, entry_key, body, ext=".js"
     )
     sids = parse_basid(body)
+    if not sids:
+        # 面级缺账（票 03）：200 有体但清单变量消失（反爬变形候选）——
+        # discovered=0 只是隐含可见，缺账进 failed 对齐 zucai 断供惯例；
+        # 不改行为：空清单照常走完（JC 拍相位不受牵连）
+        stats.failed["_entry"] = "BaSID 有响应但无清单变量（0 sid）"
+        logger.warning("srct shift BaSID 无清单变量（响应 {} 字节）", len(body))
     stats.discovered = len(sids)
     stats.known = sum(1 for sid in sids if sid in known)
     for sid in sids:

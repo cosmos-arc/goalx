@@ -114,7 +114,7 @@ CORPUS_SCOPE: tuple[str, ...] = (
 )
 
 # 防封参数（research/20 §九 定案 4）：请求间隔 2.4s±0.8s 均匀抖动（间距）+
-# 滑动窗口硬顶 25/分钟（jitter 均值 ≈25/min，窗口只加顶不改间距；2026-09-28 用户提速令）
+# 滑动窗口硬顶 30/分钟（2026-09-28 提速令；jitter 均值 ≈24/min 在顶之下）
 JITTER_RANGE: tuple[float, float] = (1.4, 2.6)
 RATE_LIMIT_PER_MINUTE = 30
 _REQUEST_WINDOW = RateLimitItemPerMinute(RATE_LIMIT_PER_MINUTE)
@@ -314,12 +314,21 @@ class SrctCollectStats:
     detail_nonempty: int = 0  # 详情页有技统/首发场数（票 61 起）
     analysis_nonempty: int = 0  # 分析页有特征数据场数（票 62 起）
     bronze_repaired: int = 0  # raw 有而 bronze 缺的本地重解析回补数
+    day_page_shape_skips: int = 0  # 日页 sid 行形状解析失败数（票 03 缺账）
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # 夜班停机原因（budget/circuit；None=干净跑完）
 
 
-def parse_over_page(html: str) -> list[DayMatch]:
-    """Over 日页 → 完赛场次行（纯函数；非完赛/无 sid 行跳过）。"""
+def parse_over_page(
+    html: str, *, shape_skips: list[int] | None = None
+) -> list[DayMatch]:
+    """
+    Over 日页 → 完赛场次行（纯函数；非完赛/无 sid 行跳过）。
+
+    shape_skips（缺账惯例，ingest-orchestration 票 03）：sid 行存在但
+    行形状（字段/队名）解析失败的次数累加进该列表——日页改版致全行
+    不匹配时，调用方面级缺账可见，不再零痕迹（zucai 断供 4 个月同族）。
+    """
     matches: list[DayMatch] = []
     for chunk in re.split(r"<tr", html):
         sid = _SID_RE.search(chunk)
@@ -331,6 +340,8 @@ def parse_over_page(html: str) -> list[DayMatch]:
         fields = _ROW_FIELDS_RE.match(text)
         teams = _TEAMS_RE.search(text)
         if fields is None or teams is None:
+            if shape_skips is not None:
+                shape_skips.append(1)
             continue
         matches.append(
             DayMatch(
@@ -1590,7 +1601,27 @@ def _load_day_page(  # noqa: PLR0913 与 collect_day 同集接缝（防封/预�
     return body
 
 
-def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切片 13 归并预算面
+def _account_day_page_shape(
+    date: str, parsed: list[DayMatch], shape_skips: list[int], stats: SrctCollectStats
+) -> None:
+    """
+    票 03 缺账：日页 sid 行形状漂移计数，整页零行可解析进 parse_failed。
+
+    借既有列流进夜摘要 parse_failed_count，零 schema 迁移。
+    """
+    if not shape_skips:
+        return
+    stats.day_page_shape_skips = len(shape_skips)
+    logger.warning(
+        "srct {} 日页 {} 行形状解析失败（页改版候选）", date, len(shape_skips)
+    )
+    if not parsed:
+        stats.parse_failed[f"{date}:day_page"] = (
+            f"shape_broken: {len(shape_skips)} sid rows, 0 parsed"
+        )
+
+
+def collect_day(  # noqa: PLR0913 端点循环分支与防封/测试接缝随护栏/切片累加
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -1626,7 +1657,10 @@ def collect_day(  # noqa: PLR0913 防封/测试接缝参数随切片累加，切
     )
     if body is None:
         return stats
-    scope = filter_scope(parse_over_page(decode_day_page(body)))
+    shape_skips: list[int] = []
+    parsed = parse_over_page(decode_day_page(body), shape_skips=shape_skips)
+    _account_day_page_shape(date, parsed, shape_skips, stats)
+    scope = filter_scope(parsed)
     stats.scope_sids = [m.sid for m in scope]
     jitter_rng = random.Random() if rng is None else rng  # noqa: S311 抖动非加密用途
     specs = _endpoint_specs(client, settings, depth=depth)

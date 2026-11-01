@@ -352,6 +352,9 @@ class PoolSyncStats(pool_store.PoolSyncStats):
 
     source: str = SOURCE
     parse_version: str = PARSE_VERSION
+    # 回填缺账（票 03）：空期数（老期/无 jqc）与因起点期号缺失被跳过的玩法
+    empty_periods: int = 0
+    skipped_games: int = 0
 
 
 def _ingest_period(
@@ -404,6 +407,13 @@ def sync_current(
         face = cast("dict[str, Any]", value.get(face_key) or {})
         if not face.get("matchList"):
             stats.empty_markets.append(market)
+    # 上期彩果面（票 03）：sfc 面恒带 lastPoolDraw——恒空即面级缺账
+    # （官方改版候选），与当期面同进 empty_markets 留痕
+    sfc_face = cast("dict[str, Any]", value.get("sfcMatch") or {})
+    if not cast("dict[str, Any]", sfc_face.get("lastPoolDraw") or {}).get(
+        "lotteryDrawNum"
+    ):
+        stats.empty_markets.append("sfc_last_draw")
     for period in parse_current(value):
         _ingest_period(conn, period, stats)
     pool_store.record_pool_sync_run(conn, stats)
@@ -439,6 +449,7 @@ def _backfill_starts(
     missing = [GAME_MARKET.get(g, g) for g in games if not starts[g]]
     if missing:
         logger.warning("zucai official 回填：{} 当期无期号，本轮跳过该玩法", missing)
+        stats.skipped_games = len(missing)
     return starts
 
 
@@ -483,6 +494,7 @@ def backfill_draws(
                 time.sleep(sleeper)
         if not got_any:
             empty_periods += 1
+    stats.empty_periods = empty_periods
     if empty_periods:
         logger.info("zucai official 回填：{} 期无数据（老期/无 jqc）", empty_periods)
     pool_store.record_pool_sync_run(conn, stats)
@@ -500,4 +512,6 @@ def stats_dict(stats: PoolSyncStats) -> dict[str, Any]:
         "share_rows": stats.share_rows,
         "missing_shares": stats.missing_shares,
         "empty_markets": stats.empty_markets,
+        "empty_periods": stats.empty_periods,
+        "skipped_games": stats.skipped_games,
     }

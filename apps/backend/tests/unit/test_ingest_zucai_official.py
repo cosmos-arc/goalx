@@ -347,3 +347,45 @@ def test_sync_current_jqc_hard_failure_degrades_not_kills(db) -> None:
     assert stats.empty_markets == ["jqc"]
     row = db.execute("SELECT empty_markets FROM pool_sync_runs").fetchone()
     assert json.loads(row["empty_markets"]) == ["jqc"]
+
+
+# —— 票 03 缺账：上期彩果面 + 回填空期/缺起点玩法 ——
+def test_sync_current_last_draw_face_empty_accounted(db) -> None:
+    """sfc 面 lastPoolDraw 恒空（官方改版候选）：缺账进 empty_markets 并落库。"""
+    current = json.loads(json.dumps(_CURRENT_VALUE))
+    del current["sfcMatch"]["lastPoolDraw"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url.params["param"]).startswith("94,"):
+            return httpx.Response(200, json={"success": True, "value": {}})
+        return httpx.Response(200, json={"success": True, "value": current})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda req: (
+                handler(req)
+                if req.url.path.endswith("getFootBallMatchV1.qry")
+                else httpx.Response(500, text="no-route")
+            )
+        )
+    )
+    stats = zucai_official.sync_current(db, Settings(), client)
+    assert "sfc_last_draw" in stats.empty_markets
+    row = db.execute("SELECT empty_markets FROM pool_sync_runs").fetchone()
+    assert "sfc_last_draw" in json.loads(row["empty_markets"])
+
+
+def test_backfill_counters_empty_periods_and_skipped_games(db) -> None:
+    """空期数与缺起点玩法进 stats（原先只进日志；票 03 对齐惯例）。"""
+    stats = zucai_official.backfill_draws(
+        db,
+        Settings(),
+        _mock_client(),  # jqc 不在售：94,0 无期号 → 该玩法本轮跳过
+        periods=1,
+        sleeper=0,
+    )
+    assert stats.skipped_games == 1  # jqc 起点 缺
+    assert stats.empty_periods == 1  # 26132 空（draws 表外）
+    face = zucai_official.stats_dict(stats)
+    assert face["empty_periods"] == 1
+    assert face["skipped_games"] == 1

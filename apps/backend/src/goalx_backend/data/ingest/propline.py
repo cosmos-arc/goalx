@@ -297,6 +297,7 @@ class FetchSportResult:
     """一个 sport 的拉取结果（unavailable=结构化 404，无对应联赛）。"""
 
     events: list[ParsedEvent] = field(default_factory=list)
+    raw_events: int = 0  # 响应内事件数（票 03：与 events 差=解析静默丢）
     remaining: int | None = None
     unavailable: bool = False
 
@@ -338,6 +339,7 @@ def _fetch_sport_odds(
     record_request(conn, f"sport={sport_key}")
     result = FetchSportResult(remaining=_remaining(response))
     raw_events = response.json()
+    result.raw_events = len(raw_events)
     observed = now.isoformat(timespec="seconds")
     sha, raw_ref = (
         observations.save_raw(raw_root, "propline", response.content)
@@ -543,6 +545,7 @@ class ProplineRunStats:
     daily_remaining: int | None = None
     unavailable_sports: list[str] = field(default_factory=list)
     unmatched: int = 0
+    skipped_no_books: int = 0  # 事件零完整书被静默丢的数（票 03 缺账）
 
 
 def fetch_and_store_odds(
@@ -577,6 +580,7 @@ def fetch_and_store_odds(
         if result.unavailable:
             stats.unavailable_sports.append(sport_key)
         stats.ingest.events += len(result.events)
+        stats.skipped_no_books += result.raw_events - len(result.events)
         join_report = join_fixtures(conn, result.events)
         stats.unmatched += len(join_report.unmatched)
         stored = store_events(conn, result.events)

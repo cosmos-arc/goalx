@@ -277,3 +277,22 @@ def test_failed_open_beat_retries_next_run(tmp_path: Path) -> None:
     stats2, store = _run(tmp_path, _client(), now_utc + timedelta(minutes=30))
     assert stats2.open_beats == 1
     assert store.has(srct.SRCT_PROVIDER, srct.ODDS_DATASET, f"{SID_FAR}@open")
+
+
+# —— 票 03 缺账：BaSID 200 有体但清单变量消失（反爬变形候选） ——
+def test_basid_body_without_soccer_var_face_accounted(tmp_path: Path) -> None:
+    """清单空：缺账进 failed['_entry']，行为不变（零 sid 走完、JC 相位照常）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/basid/BaSID.js":
+            # 有体但足球清单变量被反爬变形吃掉
+            return httpx.Response(200, content=b'var Ba_Basket="999";')
+        return httpx.Response(200, content=_multi_book_page("换页"))
+
+    now_utc = datetime(2026, 9, 26, 2, 30, tzinfo=UTC)
+    stats, _store = _run(
+        tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), now_utc
+    )
+    assert stats.discovered == 0
+    assert "BaSID 有响应但无清单变量" in stats.failed["_entry"]
+    assert stats.stopped is None  # 不早退：照常走完

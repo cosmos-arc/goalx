@@ -103,3 +103,50 @@ def test_budget_stop_returns_not_raises(tmp_path: Any) -> None:
     assert stats.stopped == "budget"
     assert budget.requests == 3
     assert store.jc_backfill_days("done") == set()  # 半途日不入账
+
+
+# —— 票 03 缺账：uniform 行缺 matchId 不得零痕迹 ——
+def test_rows_without_matchid_counted(tmp_path: Any) -> None:
+    """行在而 matchId 缺（形状漂移候选）：计数进 stats，日账判定行为不变。"""
+    body = json.dumps(
+        {
+            "success": True,
+            "value": {
+                "matchResult": [
+                    {"matchId": 700001, "matchDate": "2026-09-22"},
+                    {"matchId": None, "matchDate": "2026-09-22"},  # 形状漂移行
+                    {"matchDate": "2026-09-22"},  # 键缺失行
+                ],
+                "pages": 1,
+            },
+        }
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "getUniformMatchResultV1" in request.url.path:
+            return httpx.Response(200, content=body)
+        if "getFixedBonusV1" in request.url.path:
+            return httpx.Response(200, content=FIXED_BODY)
+        return httpx.Response(500, text="no-route")
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    mids, dropped = jc_backfill.enumerate_day_mids(
+        httpx.Client(transport=httpx.MockTransport(handler)), settings, "2026-09-22"
+    )
+    assert mids == ["700001"]
+    assert dropped == 2
+    stats = jc_backfill.backfill_range(
+        store,
+        settings,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        date_to="2026-09-22",
+        date_from="2026-09-22",
+        budget=srct.NightBudget(request_cap=100),
+        sleeper=lambda _s: None,
+        sleep_seconds=0,
+    )
+    assert stats.rows_without_matchid == 2
+    # 行为不变：唯一可采 mid 照采，日账照走
+    assert stats.mids_seen == 1
+    assert store.jc_backfill_days("done") == {"2026-09-22"}

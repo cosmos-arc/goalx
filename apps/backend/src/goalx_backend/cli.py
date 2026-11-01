@@ -165,6 +165,21 @@ def _cmd_ingest_odds() -> None:
     )
 
 
+def _cmd_propline_capture() -> None:
+    """手动拉一次 PropLine 快照(备用源重启入口，票 06 裁决)。"""
+    stats = tasks.propline_capture()
+    logger.info(
+        "events={} snaps={} dup={} req={} no_books={} unmatched={} avail={}",
+        stats.ingest.events,
+        stats.ingest.snapshots,
+        stats.ingest.duplicate_snapshots,
+        stats.requests_used,
+        stats.skipped_no_books,
+        stats.unmatched,
+        stats.unavailable_sports,
+    )
+
+
 def _cmd_ingest_hist() -> None:
     """导入历史底座(六大联赛全季)。"""
     stats = tasks.fd_history_import()
@@ -1294,6 +1309,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="重解析 sporttery 原始证据入库(票 38 存量单固修正,幂等)",
     )
     sub.add_parser("ingest-odds", help="手动拉一次欧赔(走 credit 护栏)")
+    sub.add_parser(
+        "propline-capture", help="手动拉一次 PropLine 快照(备用源重启入口,票 06)"
+    )
     sub.add_parser("ingest-hist", help="导入五大三季历史底座")
     sub.add_parser("audit-ledger", help="只读核查旧账与更正历史")
     sub.add_parser("settle", help="手动结算批跑")
@@ -1768,6 +1786,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-jingcai": _cmd_ingest_jingcai,
         "reprocess-sporttery": _cmd_reprocess_sporttery,
         "ingest-odds": _cmd_ingest_odds,
+        "propline-capture": _cmd_propline_capture,
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
         "funnel-report": lambda: _cmd_funnel_report(args),

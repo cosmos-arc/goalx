@@ -850,3 +850,34 @@ def test_league_map_covers_jc_listing_names() -> None:
         assert name in sporttery.LEAGUE_MAP, f"JC 赛事 {name} 无映射"
     # 别名键保留（同名同键，双键等价）
     assert sporttery.LEAGUE_MAP["欧罗巴"] == sporttery.LEAGUE_MAP["欧联"]
+
+
+# —— 票 03 缺账：玩法块缺席/无有效报价不得静默缩面 ——
+def test_store_matches_empty_face_accounting(db) -> None:
+    import copy
+
+    # 玩法块被官方改版整体吃掉：场次零玩法块 + 五玩法面全缺
+    broken = copy.deepcopy(SAMPLE)
+    sub = broken["value"]["matchInfoList"][0]["subMatchList"][0]
+    for code in ("had", "hhad", "crs", "ttg", "hafu"):
+        del sub[code]
+    stats = sporttery.store_matches(db, sporttery.parse_matches(broken))
+    assert stats.no_market_matches == 1
+    assert sorted(stats.empty_markets) == ["crs", "had", "hafu", "hhad", "ttg"]
+
+    # 价键改名致报价全不可解析（时戳在、价空 → 块被静默缩面）：同面孔位
+    renamed = copy.deepcopy(SAMPLE)
+    sub2 = renamed["value"]["matchInfoList"][0]["subMatchList"][0]
+    sub2["had"] = {
+        "oddsH": "6.60",  # 键改名 → 无有效价（时戳保留走通解析）
+        "updateDate": "2026-09-12",
+        "updateTime": "22:29:36",
+    }
+    stats2 = sporttery.store_matches(db, sporttery.parse_matches(renamed))
+    assert stats2.no_market_matches == 0  # 其余四玩法仍在
+    assert stats2.empty_markets == ["had"]  # had 面全场缺席
+
+    # 健康载荷：计数零（行为不变）
+    stats3 = sporttery.store_matches(db, sporttery.parse_matches(SAMPLE))
+    assert stats3.no_market_matches == 0
+    assert stats3.empty_markets == []
