@@ -1828,6 +1828,18 @@ def _apply_v33(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE haircut_calibrations_v33 RENAME TO haircut_calibrations")
 
 
+def _apply_v34(conn: sqlite3.Connection) -> None:
+    """
+    v34（ingest-orchestration 票 02）：pool_sync_runs 增 empty_markets。
+
+    当期同步预期面空的缺账（goals4 断供 4 个月教训：空 if-skip 无痕）。
+    JSON 数组文本；旧行 NULL=无记录（该字段引入前不回填）。列存在守卫=
+    重入幂等（同 v31 W1 教训）。
+    """
+    if not _column_exists(conn, "pool_sync_runs", "empty_markets"):
+        conn.execute("ALTER TABLE pool_sync_runs ADD COLUMN empty_markets TEXT")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1862,4 +1874,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (31, _apply_v31),
     (32, _apply_v32),
     (33, _apply_v33),
+    (34, _apply_v34),
 )

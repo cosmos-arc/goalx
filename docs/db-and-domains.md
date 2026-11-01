@@ -812,6 +812,7 @@ append-only 触发器：`srcb_change_runs_no_delete`、`srcb_change_runs_no_upda
 | `missing_shares` | INTEGER | NOT NULL |
 | `parse_version` | TEXT | NOT NULL |
 | `created_at` | TEXT | NOT NULL |
+| `empty_markets` | TEXT | — |
 
 append-only 触发器：`pool_sync_runs_no_delete`、`pool_sync_runs_no_update`
 <!-- schema-doc:END:table:pool_sync_runs -->
