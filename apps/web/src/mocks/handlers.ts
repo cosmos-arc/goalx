@@ -126,7 +126,7 @@ export const todayFixture = [
 		home_team: "A 队",
 		away_team: "B 队",
 		business_date: beijingBusinessDate(Date.now()),
-		kickoff_utc: hoursFromNow(5),
+		kickoff_utc: minutesAgoIso(150), // 已完赛复盘行：复盘面 4 面全可命中（含 ou——真后端临场不投影 ou，未来场不得带该 flag）
 		is_single: true,
 		joined: true,
 		jc_odds: { h: 2.1, d: 3.25, a: 3.15 },
@@ -134,7 +134,7 @@ export const todayFixture = [
 		books: 0,
 		eu_prob: null,
 		ev: null,
-		flags: ["price_band_2_0_2_6", "late_move_h:pos", "late_move24_h:pos"], // 主胜 2.1 段内 + 桶面复盘（对齐真后端口径）
+		flags: ["price_band_2_0_2_6", "late_move_h:pos", "late_move24_h:pos", "ou_line_drift:pos"], // 主胜 2.1 段内 + 桶面复盘（含裁决③ ou 第 4 面，对齐真后端口径）
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "rejected",

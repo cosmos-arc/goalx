@@ -97,16 +97,17 @@ test("renders the combo card from the engine and the feed in engine order", asyn
 		"纸面期一律 flat（红线）",
 	);
 
-	// 推荐流：唯一正 EV 场置顶；其余按开赛时间（1.5h → 5h → 26h）
+	// 推荐流：唯一正 EV 场置顶；其余按开赛时间（fixture 3 已完赛复盘行
+	// → 1.5h → 26h——裁决③后 mock fixture 3 是过去场，可带 ou 复盘 flag）
 	const feed = screen.getByTestId("market-feed");
 	const cards = within(feed).getAllByTestId(/^market-card-/);
 	expect(cards.map((card) => card.getAttribute("data-testid"))).toEqual([
 		"market-card-1",
-		"market-card-2",
 		"market-card-3",
+		"market-card-2",
 		"market-card-4",
 	]);
-	// 非可投场（fixture 3 停售）：按钮禁用 + 资格徽章说明原因；跨日场（4）带"明天"标签
+	// 非可投场（fixture 3 停售且已开赛）：按钮禁用 + 资格徽章说明原因；跨日场（4）带"明天"标签
 	expect(screen.getByTestId("market-pick-3-h")).toBeDisabled();
 	expect(within(screen.getByTestId("market-card-3")).getByTestId("had-quote-rejected")).toHaveTextContent("已停售");
 	expect(within(screen.getByTestId("market-card-4")).getByText("明天")).toBeInTheDocument();

@@ -26,15 +26,20 @@ def _gold_row(**overrides: Any) -> dict[str, Any]:
 
 
 def test_faces_volume_family_not_live() -> None:
-    """书数族/大小线族撤下面（量纲漂移/数据缺口，增量 2 重校）：即使
-    gold 行带这些特征值也不得打面（防回潮）。"""
+    """书数族撤下面（裁决③永不上线）：即使 gold 行带这些特征值也不得打面
+    （防回潮）；ou 线漂移符号面（裁决③复盘第 4 面）按符号亮。"""
     row = _gold_row(ah_n_pre=300, ah_n_inplay=300, ou_line_drift=0.25)
-    assert bf.faces_for_gold_row(row) == []
+    assert bf.faces_for_gold_row(row) == ["ou_line_drift:pos"]
+    # 下行不显著面零命中；书数族值再大也不回潮
+    assert bf.faces_for_gold_row(_gold_row(ah_n_pre=999, ou_line_drift=-0.5)) == []
+    # 零/亚 EPS 位移 → "zero" 桶不亮（drift 分桶 EPS=1e-9，correctness 加固）
+    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=0.0)) == []
+    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=1e-12)) == []
 
 
 def test_faces_drift_signs_and_missing() -> None:
     """drift 桶按符号；特征缺列不判（空≠无）。"""
-    # 唯一上线的 drift 族=late_move（devig 派生）；符号语义见下
+    # 唯一上线的 drift 族=late_move（devig 派生）+ ou 线漂移（列直读）
     # late_move 族走 devig 派生：close 主概率高于 q1h 锚 → pos
     late_up = _gold_row(
         close1x2_h=2.0,
@@ -367,6 +372,29 @@ def test_live_anchor_book_pinned_to_gold_anchor() -> None:
     assert quote_evidence.SRCT_PINNACLE_BOOK == corpus_gate.ANCHOR_BOOK
 
 
+def test_live_never_lights_ou_face(db: sqlite3.Connection) -> None:
+    """裁决③钉死：ou 线漂移面复盘专属（gold 行直读、日频口径）——临场
+    合成行不含该列（输入 market_quote 是日频 silver 非 as-of 轨迹，投影
+    滞后一日不诚实），未开球行即使锚书在价也只可能亮 late_move 族。"""
+    kickoff = NOW + timedelta(minutes=30)
+    row = _Row(
+        fixture_id=_seed_linked_fixture(db, kickoff.isoformat()),
+        kickoff_utc=kickoff.isoformat(),
+    )
+    duck = _live_duck(
+        [
+            _Quote(kickoff - timedelta(hours=25), (2.4, 3.4, 3.3)),
+            _Quote(kickoff - timedelta(minutes=90), (2.4, 3.4, 3.2)),
+            _Quote(kickoff - timedelta(minutes=40), (2.0, 3.5, 4.0)),
+        ]
+    )
+    try:
+        bf.attach_live_faces(db, duck, [row], now=NOW)
+    finally:
+        duck.close()
+    assert row.flags == ["late_move_h:pos", "late_move24_h:pos"]  # 无 ou 面
+
+
 def test_live_ignores_past_rows(db: sqlite3.Connection) -> None:
     """面归属互斥：已开球行归复盘面，临场面不重复标注。"""
     row = _Row(
@@ -411,7 +439,7 @@ def test_live_naive_and_garbage_kickoff_skip(
     not _CORPUS_DUCK.exists(), reason="本机语料桥缺席（CI 跳过，真树跑）"
 )
 def test_real_gold_view_bucketing_smoke() -> None:
-    """真 gold 视图冒烟：近 30 天已完赛场 3 上线面各至少命中一次。"""
+    """真 gold 视图冒烟：近 30 天已完赛场 4 上线面各至少命中一次。"""
     try:
         con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
     except duckdb.IOException:
@@ -449,7 +477,7 @@ def test_real_gold_view_bucketing_smoke() -> None:
     reason="本机 run5 报告/语料桥缺席（CI 跳过）",
 )
 def test_live_faces_reproduce_report() -> None:
-    """上线面契约验收（票 02 验收①）：run5 样本重放 → 3 drift 面 n 与
+    """上线面契约验收（票 02 验收①）：run5 样本重放 → 4 drift 面 n 与
     signal-attribution 报告逐位一致（历史归属复算对上）。"""
     import json
     import sqlite3 as sq
