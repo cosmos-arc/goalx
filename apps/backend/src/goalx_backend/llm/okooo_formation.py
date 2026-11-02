@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 import httpx
 from limits import RateLimitItemPerMinute
+from limits.strategies import MovingWindowRateLimiter
 from loguru import logger
 
 from goalx_backend.data import pool as pool_store
@@ -180,6 +181,28 @@ def _draft_for(injuries: FormationInjuries, moment: str) -> IntelDraft:
     )
 
 
+def _fetch_injury_draft(
+    client: httpx.Client,
+    limiter: MovingWindowRateLimiter,
+    source_id: str,
+    stats: InjuryStats,
+    moment: str,
+) -> IntelDraft | None:
+    """拉单页伤停并转情报草稿；失败/无伤停段返回 None（stats 记失败）。"""
+    try:
+        throttle(limiter, _RATE_CEILING)
+        html = fetch_formation_page(client, source_id)
+    except httpx.HTTPError as exc:
+        stats.fetch_failed += 1
+        logger.warning("formation 拉取失败 {}: {}", source_id, exc)
+        return None
+    time.sleep(_SLEEP_SECONDS)
+    injuries = parse_formation_injuries(html)
+    if injuries is None:
+        return None  # 页面无伤停段（历史场次等）——不产情报
+    return _draft_for(injuries, moment)
+
+
 def collect_injury_intel(
     conn: sqlite3.Connection,
     client: httpx.Client,
@@ -191,8 +214,9 @@ def collect_injury_intel(
     moment = now or utc_now_iso()
     limiter = default_limiter()
     drafts: list[tuple[int, IntelDraft]] = []
+    seen: set[int] = set()  # goals4 与 ttt14 场次重叠——同 fixture 不重复拉页
     with atomic(conn):
-        for market_code in ("ttt14", "pick9"):
+        for market_code in ("ttt14", "pick9", "goals4"):
             for period in pool_store.list_pool_periods(conn, market_code):
                 deadline = period["sales_deadline"]
                 if deadline is None or str(deadline) < moment:
@@ -204,23 +228,24 @@ def collect_injury_intel(
                         str(row["kickoff_utc"]),
                         str(row["home_team"]),
                         str(row["away_team"]),
+                        source_match_id=(
+                            str(row["source_match_id"])
+                            if row["source_match_id"]
+                            else None
+                        ),
                     )
                     source_id = row["source_match_id"]
                     if fixture_id is None or not source_id:
                         continue  # 无桥接或无源场次 id——无从拉取
-                    stats.with_source_id += 1
-                    try:
-                        throttle(limiter, _RATE_CEILING)
-                        html = fetch_formation_page(client, str(source_id))
-                    except httpx.HTTPError as exc:
-                        stats.fetch_failed += 1
-                        logger.warning("formation 拉取失败 {}: {}", source_id, exc)
+                    if fixture_id in seen:
                         continue
-                    time.sleep(_SLEEP_SECONDS)
-                    injuries = parse_formation_injuries(html)
-                    if injuries is None:
-                        continue  # 页面无伤停段（历史场次等）——不产情报
-                    drafts.append((fixture_id, _draft_for(injuries, moment)))
+                    seen.add(fixture_id)
+                    stats.with_source_id += 1
+                    draft = _fetch_injury_draft(
+                        client, limiter, str(source_id), stats, moment
+                    )
+                    if draft is not None:
+                        drafts.append((fixture_id, draft))
         for fixture_id, draft in drafts:
             if insert_intel_observation(conn, fixture_id, draft):
                 stats.inserted += 1

@@ -200,6 +200,29 @@ WHERE
     ).fetchone()
 
 
+def unique_jc_fixture_by_source_match(
+    conn: sqlite3.Connection, source_match_id: str
+) -> tuple[int, str] | None:
+    """
+    源T match id → (fixture_id, kickoff_utc)；仅当 id 唯一命中一个竞彩场次。
+
+    池映射 id 直连（pool-mapping-goals4/01）专用：多 fixture 命中=歧义，
+    返回 None 由消费端回落名字+时间窗路径，不猜。
+    """
+    rows = conn.execute(
+        """
+            SELECT DISTINCT f.id AS fid, f.kickoff_utc AS kickoff
+            FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id
+            WHERE mc.kind = 'jingcai' AND mc.source_match_id = ?
+        """,
+        (source_match_id,),
+    ).fetchall()
+    if len(rows) != 1:
+        return None
+    return int(rows[0]["fid"]), str(rows[0]["kickoff"])
+
+
 def jc_board_rows_in_horizon(
     conn: sqlite3.Connection,
     *,

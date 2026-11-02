@@ -327,7 +327,7 @@ def _latest_scout_id(conn: sqlite3.Connection, fixture_id: int) -> str:
 
 def _is_pool_fixture(conn: sqlite3.Connection, fixture_id: int, moment: str) -> bool:
     """该场是否属于当期在售彩池（决定 analyst 的熔断用途档）。"""
-    for market_code in ("ttt14", "pick9"):
+    for market_code in ("ttt14", "pick9", "goals4"):
         for period in pool_store.list_pool_periods(conn, market_code):
             deadline = period["sales_deadline"]
             if deadline is None or str(deadline) < moment:
@@ -339,6 +339,11 @@ def _is_pool_fixture(conn: sqlite3.Connection, fixture_id: int, moment: str) -> 
                         str(row["kickoff_utc"]),
                         str(row["home_team"]),
                         str(row["away_team"]),
+                        source_match_id=(
+                            str(row["source_match_id"])
+                            if row["source_match_id"]
+                            else None
+                        ),
                     )
                     == fixture_id
                 ):

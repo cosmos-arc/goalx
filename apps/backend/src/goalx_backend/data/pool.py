@@ -25,7 +25,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel
 
@@ -33,6 +33,9 @@ from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
+
+if TYPE_CHECKING:  # 仅类型标注（本模块与 modelling 有局部导入环）
+    from goalx_backend.modelling.score_matrix import ScoreMatrix
 
 CST = timezone(timedelta(hours=8))  # 传统足彩业务时区：北京时间
 
@@ -47,6 +50,9 @@ POOL_RETURN_RATE = 0.65
 COLD_SHARE_MAX = 0.25
 # 池场次 ↔ 竞彩场次映射的开赛时间容差（同一场比赛两源时间口径差）
 _MATCH_KICKOFF_TOLERANCE_SECONDS = 2 * 3600
+# id 直连路径的日期护栏（北京钟面）：池 kickoff 只有日期精度，只比对日期不比时刻；
+# 超 2 天视为脏 id/跨季复用，回落名字+时间窗（pool-mapping-goals4/01）
+_MATCH_KICKOFF_DAY_TOLERANCE = 2
 
 
 @dataclass
@@ -445,7 +451,12 @@ _NAME_PREFIX_MIN_CHARS = 2
 
 
 def names_match(pool_name: str, fixture_name: str) -> bool:
-    """源B 缩写名 vs 库内全名的宽松匹配（互为前缀，去空白）。"""
+    """
+    池侧名 vs 库内全名的宽松匹配（互为前缀，去空白）。
+
+    源B 缩写名时代路径，官方源全名同走此兜底——id 直连的回落段
+    （pool-mapping-goals4/01）。
+    """
     a = pool_name.replace(" ", "")
     b = fixture_name.replace(" ", "")
     if a == b:
@@ -463,13 +474,29 @@ def match_fixture_id(
     kickoff_utc: str,
     home_team: str,
     away_team: str,
+    *,
+    source_match_id: str | None = None,
 ) -> int | None:
     """
-    池场次 → 竞彩 fixture_id（业务日窗口 + 主客名宽松匹配；无映射 None）。
+    池场次 → 竞彩 fixture_id（无映射 None）。
 
-    场次 SQL 归 fixtures 仓储（ADR 0008）：候选集用 fx_store 的业务日查询，
-    匹配（时间容差 + 名字前缀）在纯 Python 层完成。
+    优先 source_match_id 直连（官方池 infohubMatchId 与竞彩 match_codes 同源
+    id，pool-mapping-goals4/01）：官方池 kickoff 只有日期精度（落北京当日
+    00:00），名字+时间容差路径对晚场系统性 miss，id 直连是设计本意。id 唯一
+    命中且开球日（北京钟面）与池日期差 ≤2 天才采用；歧义或日期打架回落
+    名字+窗路径（对老期次/无 id 行仍有效）。
+
+    场次 SQL 归 fixtures 仓储（ADR 0008）：id 查询与候选集都在 fx_store，
+    名字+时间容差匹配在纯 Python 层完成。
     """
+    if source_match_id:
+        hit = fx_store.unique_jc_fixture_by_source_match(conn, source_match_id)
+        if hit is not None:
+            fixture_id, jc_kickoff = hit
+            pool_date = datetime.fromisoformat(kickoff_utc).astimezone(CST).date()
+            jc_date = datetime.fromisoformat(jc_kickoff).astimezone(CST).date()
+            if abs((jc_date - pool_date).days) <= _MATCH_KICKOFF_DAY_TOLERANCE:
+                return fixture_id
     kickoff = datetime.fromisoformat(kickoff_utc)
     base = kickoff.astimezone(CST).date()
     candidates = fx_store.fixtures_for_business_dates(
@@ -517,16 +544,57 @@ def model_prob_for_fixture(
 
 # 一场一选的三向顺序：官方池码 + 中文标签 + had 字母（视图装配用）
 _POOL_TRIPLE = (("3", "胜", "h"), ("1", "平", "d"), ("0", "负", "a"))
+# goals4（四场进球）档位：每场主/客各选 0/1/2/3+ 档，3+ 聚尾
+_GOALS4_BAND_LABELS = {0: "0球", 1: "1球", 2: "2球", 3: "3+球"}
+
+
+def market_code_for_period(conn: sqlite3.Connection, pool_period_id: int) -> str:
+    """期次所属玩法码（selections 形状分支用；期次行必在，缺行返回空串）。"""
+    row = conn.execute(
+        "SELECT market_code FROM pool_periods WHERE id = ?", (pool_period_id,)
+    ).fetchone()
+    return str(row["market_code"]) if row else ""
+
+
+def _goal_bands_from_matrix(matrix: ScoreMatrix) -> dict[str, float]:
+    """比分矩阵 → goals4 档位边际（行和=主队档、列和=客队档，3+ 聚尾）。"""
+    bands = {f"{side}{band}": 0.0 for side in ("h", "a") for band in range(4)}
+    for home_goals, row in enumerate(matrix.grid):
+        for away_goals, p in enumerate(row):
+            bands[f"h{min(home_goals, 3)}"] += float(p)
+            bands[f"a{min(away_goals, 3)}"] += float(p)
+    return bands
+
+
+def model_goal_bands_for_fixture(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> dict[str, float] | None:
+    """
+    映射成功时取 as_of 前最新 ML Forecast 的进球档边际（goals4 面）。
+
+    PIT 口径同 model_prob_for_fixture（issued_at <= as_of）。
+    """
+    from goalx_backend.modelling.forecast import (  # noqa: PLC0415 局部导入避免环
+        forecast_matrix_from_payload,
+        latest_forecast_asof,
+    )
+
+    row = latest_forecast_asof(conn, fixture_id, as_of, track="ml")
+    if row is None:
+        return None
+    payload = json.loads(str(row["payload"]))
+    matrix = forecast_matrix_from_payload(payload)
+    return _goal_bands_from_matrix(matrix)
 
 
 class PoolSelectionView(BaseModel):
-    """一场一选的彩池口径三向数据。"""
+    """彩池口径选择档（ttt14 三向 h/d/a；goals4 进球档 h0..h3/a0..a3）。"""
 
-    code: str  # h/d/a
+    code: str
     label: str
-    prob: float | None = None  # 概率（模型口径优先，退化为欧指去水）
+    prob: float | None = None  # 概率（ttt14: 模型/欧指去水；goals4: 仅模型档位边际）
     prob_source: str  # model | euro_devig | none
-    share: float | None = None  # 公众份额（源B 人气，estimated）
+    share: float | None = None  # 公众份额（人气源已下线，恒 None）
     implied_odds: float | None = None  # 估计派彩赔率 = 返奖率/share
     ev: float | None = None  # p × 估计赔率 − 1（缺份额 None）
 
@@ -556,37 +624,79 @@ def match_rows_with_fixture_ids(
                 str(row["kickoff_utc"]),
                 str(row["home_team"]),
                 str(row["away_team"]),
+                source_match_id=(
+                    str(row["source_match_id"]) if row["source_match_id"] else None
+                ),
             ),
         )
         for row in pool_matches_for_period(conn, pool_period_id)
     ]
 
 
-def match_views(
-    conn: sqlite3.Connection, pool_period_id: int, now: str
-) -> list[PoolMatchView]:
-    """期次 → 三向视图列表（概率/份额/估计赔率/EV 装配；详情与生成器共用）。"""
-    shares = latest_shares_for_period(conn, pool_period_id)
-    views: list[PoolMatchView] = []
-    for row, fixture_id in match_rows_with_fixture_ids(conn, pool_period_id):
-        seq = int(row["match_seq"])
-        model_prob = (
-            model_prob_for_fixture(conn, fixture_id, now)
-            if fixture_id is not None
+def _wdl_selection_views(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    fixture_id: int | None,
+    shares_seq: dict[str, float],
+    now: str,
+) -> list[PoolSelectionView]:
+    """ttt14 三向选择档（模型 → 欧指去水兜底 → none）。"""
+    model_prob = (
+        model_prob_for_fixture(conn, fixture_id, now)
+        if fixture_id is not None
+        else None
+    )
+    devig = devig_euro_odds(
+        (row["euro_odds_h"], row["euro_odds_d"], row["euro_odds_a"])
+    )
+    selection_views: list[PoolSelectionView] = []
+    for position, (code, label, had) in enumerate(_POOL_TRIPLE):
+        if model_prob is not None:
+            prob, source = model_prob[had], "model"
+        elif devig is not None:
+            prob, source = devig[position], "euro_devig"
+        else:
+            prob, source = None, "none"
+        share = shares_seq.get(code)
+        implied = parimutuel_odds(share) if share else None
+        ev = (
+            parimutuel_ev(prob, share)
+            if prob is not None and share is not None
             else None
         )
-        devig = devig_euro_odds(
-            (row["euro_odds_h"], row["euro_odds_d"], row["euro_odds_a"])
+        selection_views.append(
+            PoolSelectionView(
+                code=had,
+                label=label,
+                prob=round(prob, 4) if prob is not None else None,
+                prob_source=source,
+                share=round(share, 4) if share is not None else None,
+                implied_odds=round(implied, 2) if implied else None,
+                ev=round(ev, 4) if ev is not None else None,
+            )
         )
-        selection_views: list[PoolSelectionView] = []
-        for position, (code, label, had) in enumerate(_POOL_TRIPLE):
-            if model_prob is not None:
-                prob, source = model_prob[had], "model"
-            elif devig is not None:
-                prob, source = devig[position], "euro_devig"
-            else:
-                prob, source = None, "none"
-            share = shares.get(seq, {}).get(code)
+    return selection_views
+
+
+def _goals4_selection_views(
+    conn: sqlite3.Connection,
+    fixture_id: int | None,
+    shares_seq: dict[str, float],
+    now: str,
+) -> list[PoolSelectionView]:
+    """goals4 进球档（8 档/场）：概率只认 ML 档位边际，无三向兜底。"""
+    bands = (
+        model_goal_bands_for_fixture(conn, fixture_id, now)
+        if fixture_id is not None
+        else None
+    )
+    selection_views: list[PoolSelectionView] = []
+    for side, side_label in (("h", "主"), ("a", "客")):
+        for band in range(4):
+            code = f"{side}{band}"
+            prob = bands.get(code) if bands is not None else None
+            source = "model" if prob is not None else "none"
+            share = shares_seq.get(code)
             implied = parimutuel_odds(share) if share else None
             ev = (
                 parimutuel_ev(prob, share)
@@ -595,14 +705,33 @@ def match_views(
             )
             selection_views.append(
                 PoolSelectionView(
-                    code=had,
-                    label=label,
+                    code=code,
+                    label=f"{side_label}{_GOALS4_BAND_LABELS[band]}",
                     prob=round(prob, 4) if prob is not None else None,
                     prob_source=source,
                     share=round(share, 4) if share is not None else None,
                     implied_odds=round(implied, 2) if implied else None,
                     ev=round(ev, 4) if ev is not None else None,
                 )
+            )
+    return selection_views
+
+
+def match_views(
+    conn: sqlite3.Connection, pool_period_id: int, now: str
+) -> list[PoolMatchView]:
+    """期次 → 选择档视图列表（ttt14 三向 / goals4 进球档；详情与生成器共用）。"""
+    market_code = market_code_for_period(conn, pool_period_id)
+    shares = latest_shares_for_period(conn, pool_period_id)
+    views: list[PoolMatchView] = []
+    for row, fixture_id in match_rows_with_fixture_ids(conn, pool_period_id):
+        seq = int(row["match_seq"])
+        shares_seq = shares.get(seq, {})
+        if market_code == "goals4":
+            selection_views = _goals4_selection_views(conn, fixture_id, shares_seq, now)
+        else:
+            selection_views = _wdl_selection_views(
+                conn, row, fixture_id, shares_seq, now
             )
         views.append(
             PoolMatchView(
