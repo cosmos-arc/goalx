@@ -40,6 +40,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -447,19 +448,53 @@ class StreamingPartitions:
         writer.write_table(pa.Table.from_pylist(buffer, schema=self._schema))
         self._buffers[part] = []
 
+    def abort(self) -> None:
+        """
+        失败收尾：尽力关句柄并清本轮 tmp——正式区零触碰（不发布、不清理）。
+
+        票 01（boundary-hardening）：构建失败只弃本轮；否则空/残缺 writer 集
+        被 prune 当陈旧分区清掉，上一轮已发布数据无端消失。清理容错：句柄
+        关闭失败也必须把 tmp 删干净，且不得掩盖原始异常。足迹按
+        ``_buffers`` 键集——append 过的分区全在内，覆盖 _flush 里
+        mkdir/开 writer 失败、未注册进 ``_writers`` 的分区。
+        """
+        for writer in self._writers.values():
+            with contextlib.suppress(Exception):
+                writer.close()
+        for part in self._buffers:
+            with contextlib.suppress(OSError):
+                (part / silver.tmp_name()).unlink(missing_ok=True)
+            if not (part / "data.parquet").exists():
+                # 本轮 mkdir 的新建分区目录随收（零残留）；非空=并行进程
+                # 在写该分区，只清自己不留痕、不动别人的 tmp。
+                with contextlib.suppress(OSError):
+                    part.rmdir()
+                with contextlib.suppress(OSError):
+                    part.parent.rmdir()
+        self._writers.clear()
+        self._buffers.clear()
+
     def close(self, *, prune: bool = True) -> tuple[int, int]:
         """
-        收尾：冲全部 buffer、关 writer、tmp 替换；prune=True 清陈旧分区。
+        成功路径收尾：冲全部 buffer、关 writer、tmp 替换；prune=True 清陈旧分区。
+
+        冲缓冲/关句柄/替换任一阶段失败即转 abort——tmp 不残留（已替换的
+        分区保留新内容：多文件无轮级事务，轮级原子发布=发布 generation
+        雾区，map boundary-hardening）。
 
         增量路径（票 11）传 prune=False——未触及分区不在 writer 集内，若照
         全量清理语义会误删；陈旧分区的清理由全量维护口径负责。
         """
-        for part in list(self._buffers):
-            self._flush(part)
-        for writer in self._writers.values():
-            writer.close()
-        for part in self._writers:
-            (part / silver.tmp_name()).replace(part / "data.parquet")
+        try:
+            for part in list(self._buffers):
+                self._flush(part)
+            for writer in self._writers.values():
+                writer.close()
+            for part in self._writers:
+                (part / silver.tmp_name()).replace(part / "data.parquet")
+        except BaseException:
+            self.abort()
+            raise
         target = set(self._writers)
         stale = silver.remove_stale(self._root, target) if prune else 0
         return len(target), stale
@@ -1233,9 +1268,12 @@ def build_odds_change_events(
                     out,
                     tracker,
                 )
+    except BaseException:
+        out.abort()  # 失败只弃本轮：正式区零触碰（票 01）
+        raise
     finally:
         shutil.rmtree(spill_root, ignore_errors=True)
-        partitions, stale = out.close(prune=clean_stale)
+    partitions, stale = out.close(prune=clean_stale)
     report.partitions = partitions
     report.stale_partitions_removed = stale
     report.partition_keys = sorted(out.written_keys)

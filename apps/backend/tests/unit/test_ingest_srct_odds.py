@@ -801,6 +801,71 @@ def test_spill_dir_cleaned_and_crash_leftover_safe_rerun(tmp_path: Path) -> None
     assert _tree_digest(root) == digest  # 重跑幂等不受残留影响
 
 
+def _tree_layout(root: Path) -> list[str]:
+    """全树相对路径清单（目录+文件）：钉失败路径对正式区零增删。"""
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["spill", "load_chunk", "emit", "writer_ctor", "commit_close", "replace"],
+)
+def test_failed_full_build_keeps_previous_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """全量构建任一阶段失败:上一轮已发布分区逐字节不动,零 tmp/空目录残留。
+
+    票 01(boundary-hardening,审阅 P1-1):失败路径只弃本轮——不冲正式
+    文件、不清理,否则空/残缺 writer 集会被 prune 当陈旧清掉上轮数据。
+    emit/writer_ctor/commit_close/replace 四点配 chunk_rows=2,保证失败
+    前已有分区 flush 出 writer+tmp,钉住 abort 的清理核(首场即炸的空
+    writer 集是结构性 no-op,断言会空转)。
+    """
+    store, _ = _collect_bronze(tmp_path)
+    root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET
+    spill_root = store.root / "tmp" / "srct_odds_spill"
+    try:
+        srct_odds.build_odds_change_events(store, chunk_sids=1)
+        digest = _tree_digest(root)
+        layout = _tree_layout(root)
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(f"injected:{stage}")
+
+        if stage == "spill":
+            monkeypatch.setattr(srct_odds, "_spill_selected", _boom)
+        elif stage == "load_chunk":
+            monkeypatch.setattr(srct_odds, "_load_chunk_bronzes", _boom)
+        elif stage == "emit":
+            # 第二场才炸:首场已 flush,abort 必须清掉其 writer tmp
+            calls = {"n": 0}
+
+            def _boom_second(*_args: object, **_kwargs: object) -> None:
+                calls["n"] += 1
+                if calls["n"] > 1:
+                    raise RuntimeError(f"injected:{stage}")
+
+            monkeypatch.setattr(srct_odds, "_emit_sid", _boom_second)
+        elif stage == "writer_ctor":
+            # _flush 里 ParquetWriter 构造失败(ENOSPC 形态):分区还没注册
+            # 进 _writers,abort 足迹必须仍覆盖它
+            monkeypatch.setattr(pq.ParquetWriter, "__init__", _boom)
+        elif stage == "commit_close":
+            # commit 的关句柄阶段(替换正式文件之前)
+            monkeypatch.setattr(pq.ParquetWriter, "close", _boom)
+        elif stage == "replace":
+            monkeypatch.setattr(Path, "replace", _boom)
+        else:
+            pytest.fail(f"unknown stage: {stage}")
+        with pytest.raises(RuntimeError, match=f"injected:{stage}"):
+            srct_odds.build_odds_change_events(store, chunk_sids=1, chunk_rows=2)
+        assert _tree_digest(root) == digest
+        assert _tree_layout(root) == layout
+        assert not spill_root.exists()  # spill 残留清理(finally rmtree)也被钉住
+    finally:
+        store.close()
+
+
 def test_ledger_selects_latest_row_and_filters_old_version(tmp_path: Path) -> None:
     """选轨遍只装信封账本（结构保证：值全 int）；后行胜出+旧版本不可见。"""
     store, _ = _collect_bronze(tmp_path)
