@@ -134,7 +134,7 @@ export const todayFixture = [
 		books: 0,
 		eu_prob: null,
 		ev: null,
-		flags: ["price_band_2_0_2_6", "late_move_h:pos", "late_move24_h:pos"], // 主胜 2.1 段内 + 桶面复盘（对齐真后端口径）
+		flags: ["price_band_2_0_2_6", "late_move_h:pos", "late_move24_h:pos", "ou_line_drift:pos"], // 主胜 2.1 段内 + 桶面复盘（含裁决③ ou 第 4 面，对齐真后端口径）
 		had_quote: {
 			as_of: minutesAgoIso(1),
 			status: "rejected",

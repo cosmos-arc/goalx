@@ -1,11 +1,12 @@
 """
-错价桶只读展示面（misprice-bucket-display 票 02，裁决①=c 双件）。
+错价桶只读展示面（misprice-bucket-display 票 02/03，裁决①=c 双件）。
 
 十年回测的真错价桶（signal-attribution run5，|t|≥2 且 n≥100 过探索纪律
-后 7 桶面）：本模块把其中判据可平移的面投到今日页——复盘面（已完赛，
-gold 行收盘时态判据天然齐）+ 临场态投影（未开球，as-of now 判据逐步
-变齐）——追加只读 flags，不进 had 闸门/EV/候选/bets 任何决策路径
-（同票 01 纪律）。
+后 7 桶面；裁决③终态=4 面上线）：本模块把判据可平移的面投到今日页——
+复盘面（已完赛，gold 行收盘时态判据天然齐：late_move 族 3 面 + ou 线
+漂移 1 面）+ 临场态投影（未开球，as-of now 判据逐步变齐：late_move 族
+独有——ou 输入是日频 silver 无 as-of 轨迹，不投影）——追加只读 flags，
+不进 had 闸门/EV/候选/bets 任何决策路径（同票 01 纪律）。
 
 口径（裁决②）：桶判据与特征计算平移自 signal_attribution 单一出处
 （features_of），**效应量/t 值不可搬**——live 文案只写"十年聚合发现"。
@@ -27,17 +28,18 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import gold_reader, mapping, quote_evidence
 from goalx_backend.evaluation.signal_attribution import bucket_of, features_of
 
-# 上线面=判据严格平移的符号类（devig 概率位移，无量纲）。书数族
-# （ah_phase_pre:low/mid、ah_phase_inplay:high）因采集密度量纲漂移撤下
-# （十月 ah_n_inplay q67=1437 vs 十年冻结 214——切点对今日失真，复盘冒烟
-# 实证）；ou_line_drift 输入 market_quote 曾停摆月余（票 03④ 根因：
-# remat 不覆盖该 silver，gold 对 10 月全缺），票 03① gold-rebuild 日频
-# 保鲜后随重校裁决（票 03③）一并定。三面待增量 2 重校（滚动分位/
-# 密度归一）后另裁。
+# 上线面=判据严格平移的符号类（devig 概率位移/线漂移，无量纲）。
+# 书数族（ah_phase_pre:low/mid、ah_phase_inplay:high）**裁决③（2026-11-02
+# 用户令按推荐）永不上线**：十年冻结切点对近三月 100% 全员 high（0 场
+# low/mid）结构性失效，滚动重校换语义断十年出处——十年结论留报告，防回潮
+# 守卫+测试钉死。ou_line_drift:pos 裁决③起为复盘面第 4 面（gold 行直读，
+# 日频口径——输入 market_quote 08:40 重建保鲜）；其临场投影不做（输入是
+# 日频 silver 非 as-of 轨迹，投影滞后一日不诚实，合成行不含该列）。
 SIGNIFICANT_FACES: tuple[tuple[str, str, str, str], ...] = (
     ("late_move_h:pos", "late_move_h", "drift", "pos"),
     ("late_move24_h:pos", "late_move24_h", "drift", "pos"),
     ("late_move24_h:neg", "late_move24_h", "drift", "neg"),
+    ("ou_line_drift:pos", "ou_line_drift", "drift", "pos"),
 )
 
 # 临场锚窗（与 gold._anchor_slices 同语义：开球前 1h/24h 末价切点）
@@ -53,8 +55,9 @@ def faces_for_gold_row(gold_row: dict[str, Any]) -> list[str]:
     out: list[str] = []
     for flag, key, kind, bucket in SIGNIFICANT_FACES:
         if kind != "drift":
-            # 防回潮守卫：dist 面须随增量 2 的重校切点一起回归（滚动分位/
-            # 密度归一），裸加元组会按 (0,0) 静默错分桶（量纲 bug 复发形态）
+            # 防回潮守卫（裁决③终态）：书数族永不上线，dist 面裸加元组会按
+            # (0,0) 静默错分桶（量纲 bug 复发形态）——如要翻案须先过十年
+            # 重跑 signal-attribution 的新研究票，不是加一行元组的事
             raise ValueError(f"面 {flag} 非符号类，缺重校切点（增量 2 义务）")
         value = features.get(key)
         if value is None:
