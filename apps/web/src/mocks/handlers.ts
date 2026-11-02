@@ -126,7 +126,7 @@ export const todayFixture = [
 		home_team: "A 队",
 		away_team: "B 队",
 		business_date: beijingBusinessDate(Date.now()),
-		kickoff_utc: hoursFromNow(5),
+		kickoff_utc: minutesAgoIso(150), // 已完赛复盘行：复盘面 4 面全可命中（含 ou——真后端临场不投影 ou，未来场不得带该 flag）
 		is_single: true,
 		joined: true,
 		jc_odds: { h: 2.1, d: 3.25, a: 3.15 },

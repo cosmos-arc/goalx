@@ -32,6 +32,9 @@ def test_faces_volume_family_not_live() -> None:
     assert bf.faces_for_gold_row(row) == ["ou_line_drift:pos"]
     # 下行不显著面零命中；书数族值再大也不回潮
     assert bf.faces_for_gold_row(_gold_row(ah_n_pre=999, ou_line_drift=-0.5)) == []
+    # 零/亚 EPS 位移 → "zero" 桶不亮（drift 分桶 EPS=1e-9，correctness 加固）
+    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=0.0)) == []
+    assert bf.faces_for_gold_row(_gold_row(ou_line_drift=1e-12)) == []
 
 
 def test_faces_drift_signs_and_missing() -> None:
@@ -436,7 +439,7 @@ def test_live_naive_and_garbage_kickoff_skip(
     not _CORPUS_DUCK.exists(), reason="本机语料桥缺席（CI 跳过，真树跑）"
 )
 def test_real_gold_view_bucketing_smoke() -> None:
-    """真 gold 视图冒烟：近 30 天已完赛场 3 上线面各至少命中一次。"""
+    """真 gold 视图冒烟：近 30 天已完赛场 4 上线面各至少命中一次。"""
     try:
         con = duckdb.connect(str(_CORPUS_DUCK), read_only=True)
     except duckdb.IOException:
@@ -474,7 +477,7 @@ def test_real_gold_view_bucketing_smoke() -> None:
     reason="本机 run5 报告/语料桥缺席（CI 跳过）",
 )
 def test_live_faces_reproduce_report() -> None:
-    """上线面契约验收（票 02 验收①）：run5 样本重放 → 3 drift 面 n 与
+    """上线面契约验收（票 02 验收①）：run5 样本重放 → 4 drift 面 n 与
     signal-attribution 报告逐位一致（历史归属复算对上）。"""
     import json
     import sqlite3 as sq
