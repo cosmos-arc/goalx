@@ -258,6 +258,11 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
         timeout=25.0,
     )
     response.raise_for_status()
+    # 取证面（票 05 运行核验 2026-11-02 补）：raw 每日一槽存最新体——
+    # 缺账/零编码行排查有据（此前 parse-only 无痕迹，核验只能反推）
+    store.ingest_raw(
+        "srct", "bfdata", f"@gap-{now:%Y%m%d}", response.content, ext=".js"
+    )
     coded = parse_bfdata(response.content)
     if not coded:
         # 面级缺账（票 03 惯例对偶，correctness F2）：有等待场而响应零编码行

@@ -414,6 +414,9 @@ def test_gap_fill_discovers_sid_not_in_basid(tmp_path: Path) -> None:
     assert stats.gap_waiting == 1
     assert stats.gap_filled == 1
     assert "4004444" in store.shift_matches()  # 建档落表（复用主班链路）
+    # 取证面（2026-11-02 加固）：bfdata 每日一槽落 raw，缺账排查有据
+    raw = store.raw_path("srct", "bfdata", "@gap-20260926", ext=".js")
+    assert raw.exists(), "bfdata 原体未落 raw 存档"
 
 
 def test_gap_fill_time_mismatch_skips(tmp_path: Path) -> None:

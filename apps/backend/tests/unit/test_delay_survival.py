@@ -101,7 +101,7 @@ def _ledger_row(
 
 
 def _at(lag_seconds: int) -> str:
-    """OBS 往前 lag 秒的 ISO 时刻（构造陈旧度）。"""
+    """OBS 往前 lag 秒的 ISO 时刻（构造调盘静止时长）。"""
     return (datetime.fromisoformat(OBS) - timedelta(seconds=lag_seconds)).isoformat()
 
 
@@ -164,7 +164,7 @@ def test_full_funnel_layers_reasons_metric(db: sqlite3.Connection) -> None:
     overall = report["overall"]
     assert overall["l1"] == 14
     assert overall["l2"] == 10  # A-D 出局
-    assert overall["l3"] == 7  # E/F/G 出局；H-N 陈旧度=0
+    assert overall["l3"] == 7  # E/F/G 出局；H-N 调盘静止=0
     assert overall["survival_ratio"] == pytest.approx(7 / 10)
     assert overall["reasons"] == {
         "sale_stopped": 1,
@@ -198,8 +198,8 @@ def test_full_funnel_layers_reasons_metric(db: sqlite3.Connection) -> None:
         "identity_mismatch": 1,
         "close_missing": 2,  # G 无收盘桩 + L 提供方空手
     }
-    # 预指定对照：剔陈旧>300s 后 F(3600s) 出分母、G(200s) 留（但 G 收盘
-    # 缺仍出主指标分母）；陈旧度不可算行同剔（与漏斗 stale 语义一致）
+    # 预指定对照：剔调盘静止>300s 后 F(3600s) 出分母、G(200s) 留（但 G 收盘
+    # 缺仍出主指标分母）；调盘静止不可算行同剔（与漏斗 stale 语义一致）
     contrast = overall["contrasts"]["excl_stale_gt_300s"]
     assert contrast["n_l2_computable"] == 8
     assert contrast["n_denominator"] == 4
@@ -284,7 +284,7 @@ def test_day_classification_and_gate(db: sqlite3.Connection) -> None:
 
 
 def test_staleness_distribution(db: sqlite3.Connection) -> None:
-    """陈旧度分位数/直方桶/不可算单列。"""
+    """调盘静止时长分位数/直方桶/不可算单列。"""
     _seed_fixture(db, 1)
     for lag in (10, 100, 200, 400, 5000, 40000):
         _ledger_row(db, source_updated=_at(lag))
