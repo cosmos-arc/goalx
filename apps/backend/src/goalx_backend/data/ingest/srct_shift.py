@@ -259,9 +259,14 @@ def _fill_gap_sids(  # noqa: PLR0913 同 run_shift 接缝集（闸门/预算/统
     )
     response.raise_for_status()
     # 取证面（票 05 运行核验 2026-11-02 补）：raw 每日一槽存最新体——
-    # 缺账/零编码行排查有据（此前 parse-only 无痕迹，核验只能反推）
+    # 缺账/零编码行排查有据（此前 parse-only 无痕迹，核验只能反推）；
+    # 日期取北京钟面（与 entry/daily 拍键同规，correctness F2）
     store.ingest_raw(
-        "srct", "bfdata", f"@gap-{now:%Y%m%d}", response.content, ext=".js"
+        srct.SRCT_PROVIDER,
+        "bfdata",
+        f"@gap-{now.astimezone(BEIJING):%Y%m%d}",
+        response.content,
+        ext=".js",
     )
     coded = parse_bfdata(response.content)
     if not coded:

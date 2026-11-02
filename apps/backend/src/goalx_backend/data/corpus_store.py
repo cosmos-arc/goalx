@@ -452,7 +452,14 @@ class CorpusStore:
     def ingest_raw(
         self, provider: str, dataset: str, key: str, body: bytes, *, ext: str = ""
     ) -> RawRef:
-        """gzip+sha256 落盘并记 checkpoint（幂等：重写同内容无害）。"""
+        """
+        gzip+sha256 落盘并记 checkpoint（幂等：重写同内容无害）。
+
+        台账行随覆写更新（correctness F1，2026-11-02）：@gap-* 类每日槽
+        键会以不同体重写——ledger 的 sha/fetched_at 必须跟盘上最新体，
+        否则 verify_raw 误报腐化、取证时间错档。首写键（内容恒定）行为
+        与 INSERT OR IGNORE 时代逐位一致。
+        """
         sha = hashlib.sha256(body).hexdigest()
         path = self.raw_path(provider, dataset, key, ext=ext)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -471,9 +478,14 @@ class CorpusStore:
         conn = self._checkpoint()
         conn.execute(
             """
-            INSERT OR IGNORE INTO raw_artifacts
+            INSERT INTO raw_artifacts
                 (provider, dataset, key, sha256, path, byte_size, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (provider, dataset, key) DO UPDATE SET
+                sha256 = excluded.sha256,
+                path = excluded.path,
+                byte_size = excluded.byte_size,
+                fetched_at = excluded.fetched_at
             """,
             (provider, dataset, key, sha, str(path), len(body), utc_now_iso()),
         )

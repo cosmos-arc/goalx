@@ -1105,8 +1105,9 @@ def _cmd_gold_build(
     Gold 特征面全量重算（backtest-decade B 相，幂等零请求）。
 
     委派 tasks.gold_rebuild（ADR-0005 单一实现，misprice 票 03① 起定拍
-    08:40 同源）：银段先重物化 market_quote（remat 不覆盖，曾停摆月余），
-    再 gold 全量重算 + corpus.duckdb 刷新。settings 注入口只服务测试接缝。
+    08:40 同源）：余量护栏先行（<6GiB 整轮 deferred 零写入），银段先重物化
+    market_quote（remat 不覆盖，曾停摆月余），再 gold 全量重算 +
+    corpus.duckdb 刷新。settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     try:

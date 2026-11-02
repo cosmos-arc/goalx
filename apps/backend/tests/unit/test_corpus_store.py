@@ -90,3 +90,23 @@ def test_bronze_sid_cache_anchor_recheck_on_external_replace(tmp_path: Path) -> 
         assert store.bronze_sids("p", "d", "v1") == set()
     finally:
         store.close()
+
+
+def test_ingest_raw_overwrite_updates_ledger(tmp_path: Path) -> None:
+    """correctness F1（2026-11-02）：每日槽键（@gap-*）以不同体覆写——
+    台账行必须跟盘上最新体（sha/fetched_at），否则 verify_raw 误报腐化、
+    取证时间错档；首写键行为与 INSERT OR IGNORE 时代逐位一致。"""
+    import hashlib
+
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store.ingest_raw("srct", "bfdata", "@gap-20261102", b"body-one")
+        store.ingest_raw("srct", "bfdata", "@gap-20261102", b"body-two")
+        assert store.read_raw("srct", "bfdata", "@gap-20261102") == b"body-two"
+        assert (
+            store.raw_sha("srct", "bfdata", "@gap-20261102")
+            == hashlib.sha256(b"body-two").hexdigest()
+        )
+        assert store.verify_raw("srct", "bfdata", "@gap-20261102")
+    finally:
+        store.close()
