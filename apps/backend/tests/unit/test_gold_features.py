@@ -689,6 +689,30 @@ def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> Non
     assert n == 4
 
 
+def test_gold_rebuild_defers_low_headroom(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 03 运行实录加固（2026-11-02 首班 OOM）：余量 <6GiB 整轮
+    deferred 零写入——不建库不碰树，明日定拍自愈（晨检面兜底可见）。"""
+    from types import SimpleNamespace
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    monkeypatch.setattr(
+        tasks_mod.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(available=1 * 1024**3),
+    )
+    monkeypatch.setattr(
+        tasks_mod.psutil, "swap_memory", lambda: SimpleNamespace(free=0)
+    )
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_low_headroom:")
+    assert "market" not in payload  # 零写入让位，不是半程降级
+
+
 def test_gold_rebuild_view_refresh_lock_degrades(
     built: Built, monkeypatch: pytest.MonkeyPatch
 ) -> None:

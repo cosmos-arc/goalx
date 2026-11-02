@@ -17,7 +17,7 @@ Wilson 95% CI。
 - 收盘比对仅参考身份同类（anchor/consensus 白名单，票 03）——
   unknown/mismatch 行分母外单列，不静默混层；
 - Stage 1 只判读 d=0 档；30/60/180/300 秒档骨架保留标 pending；
-- 停止条件（预注册定值）：回填占 L1 >30% 且剔除回填与陈旧(>300s)
+- 停止条件（预注册定值）：回填占 L1 >30% 且剔除回填与调盘静止(>300s)
   后 L3 正 EV <每周 1 个 → 判"到达性不足"归档；
 - 首跑定位 shakeout 不产结论；≥30 销售日才出主指标正式读数。
 
@@ -66,8 +66,9 @@ CloseProvider = Callable[[str, str, str, str], tuple[float, str, str] | None]
 _KNOWN_BOUNDARIES: tuple[str, ...] = (
     "账本自 2026-10-20 起（PR#172），首周含修复期（10-22 收盘回填链路修复"
     + "前的行参考身份为 unknown 层）。",
-    "密集锚（票 47）自上线零触发，无独立高频重观察；陈旧度 s 是'报价已多旧'"
-    + "的代理，不是'延迟后仍在'的直接验证——直接验证是 Stage 2 的事。",
+    "密集锚（票 47）自上线零触发，无独立高频重观察；s（展示名=调盘静止"
+    + "时长，2026-11-01 裁决正名不改数）是'距上次调盘多久'的代理，不是"
+    + "'延迟后仍在'的直接验证——直接验证是 Stage 2 的事。",
     "would_bet 面与账本分母不同（漏斗有资格门），本协议分母以账本为准，"
     + "漏斗面仅作对照描述。",
     "首跑定位=协议 shakeout（验证口径与报告形态），不产结论。",
@@ -75,7 +76,8 @@ _KNOWN_BOUNDARIES: tuple[str, ...] = (
 
 _QUANTILE_KEYS = ("min", "p25", "median", "p75", "p90", "max")
 
-# 陈旧度直方桶上界（秒）→ 标签；全部越界落 >3600s
+# 调盘静止时长直方桶上界（秒）→ 标签（正名不改数：键/桶界全不动）；
+# 全部越界落 >3600s
 _STALENESS_BUCKETS: tuple[tuple[float, str], ...] = (
     (60.0, "0-60s"),
     (180.0, "60-180s"),
@@ -110,7 +112,7 @@ class _RowAudit:
         return self.sale_state == "on_sale" and self.single_eligible == 1
 
     def l3(self, tier_s: float) -> bool:
-        """延迟后可达：非回填、参考在、陈旧度≤档位。"""
+        """延迟后可达：非回填、参考在、调盘静止时长≤档位。"""
         if not self.l2 or self.backfilled or not self.has_reference:
             return False
         return self.staleness_s is not None and self.staleness_s <= tier_s
@@ -129,7 +131,7 @@ def _wilson_ci(successes: int, n: int) -> list[float] | None:
 
 
 def _staleness_bucket(s: float) -> str:
-    """陈旧度直方桶（边界含上端；≤0 单列=拍点即源更新时刻）。"""
+    """调盘静止时长直方桶（边界含上端；≤0 单列=拍点即源更新时刻）。"""
     if s <= 0:
         return "<=0s"
     for bound, label in _STALENESS_BUCKETS:
@@ -165,7 +167,7 @@ def _terminal_reason(row: _RowAudit, *, tier_s: float) -> str:
 
 
 def _post_l2_reason(row: _RowAudit, *, tier_s: float) -> str:
-    """L2 行的后续终态：参考/回填/陈旧三门外，交 L3 后估值/身份/收盘门。"""
+    """L2 行的后续终态：参考/回填/调盘静止三门外，交 L3 后估值/身份/收盘门。"""
     if not row.has_reference:
         return "no_reference"
     if row.backfilled:
@@ -219,7 +221,7 @@ def _build_row_audit(
     *,
     window_anchor: str | None = None,
 ) -> _RowAudit:
-    """账本行 → 审计面（value_proxy/陈旧度/身份门/收盘/窗相位）。"""
+    """账本行 → 审计面（value_proxy/调盘静止时长/身份门/收盘/窗相位）。"""
     observed_at = str(raw["observed_at"])
     source_updated_at = raw["source_updated_at"]
     staleness = (
@@ -346,7 +348,7 @@ def _reasons(rows: list[_RowAudit], *, tier_s: float) -> dict[str, int]:
 
 
 def _staleness_distribution(rows: list[_RowAudit]) -> dict[str, Any]:
-    """陈旧度 s 分布（分位数+直方桶；不可算行单列）。"""
+    """调盘静止时长 s 分布（分位数+直方桶；不可算行单列）。"""
     values = sorted(r.staleness_s for r in rows if r.staleness_s is not None)
     buckets: dict[str, int] = {}
     for s in values:
@@ -377,7 +379,7 @@ def _staleness_distribution(rows: list[_RowAudit]) -> dict[str, Any]:
 
 
 def _missing_reason_key(r: _RowAudit) -> str:
-    """缺失原因分层键（prereg §5：回填/陈旧/身份不明全维度）。"""
+    """缺失原因分层键（prereg §5：回填/调盘静止/身份不明全维度）。"""
     if not r.l2:
         return "not_l2"
     if not r.has_reference:
@@ -568,7 +570,7 @@ def _day_payload(rows: list[_RowAudit]) -> dict[str, Any]:
 
 
 def _overall_face(rows: list[_RowAudit]) -> dict[str, Any]:
-    """总体面：分母逐层 + 主指标 + 预指定对照 + 档位骨架 + 陈旧度分布。"""
+    """总体面：分母逐层 + 主指标 + 预指定对照 + 档位骨架 + 调盘静止分布。"""
     return {
         **_day_payload(rows),
         "contrasts": {
@@ -577,7 +579,7 @@ def _overall_face(rows: list[_RowAudit]) -> dict[str, Any]:
                 [
                     r
                     for r in rows
-                    # 陈旧度不可算行同剔（与漏斗 stale 语义一致，Spec 轴三审）
+                    # 调盘静止不可算行同剔（与漏斗 stale 语义一致，Spec 轴三审）
                     if r.l2
                     and r.staleness_s is not None
                     and r.staleness_s <= STALE_STOP_SECONDS
@@ -822,7 +824,7 @@ def _md_summary(report: dict[str, Any], w: Callable[[str], None]) -> None:
     _metric_line(w, "总体（L2）", metric)
     _metric_line(w, "剔除回填前/后·后", overall["contrasts"]["excl_backfilled"])
     excl_stale = overall["contrasts"]["excl_stale_gt_300s"]
-    _metric_line(w, "剔除陈旧>300s前/后·后", excl_stale)
+    _metric_line(w, "剔除调盘静止>300s前/后·后", excl_stale)
     w("")
     excluded = metric["positive_excluded"]
     w(
@@ -867,9 +869,11 @@ def _md_day_tables(report: dict[str, Any], w: Callable[[str], None]) -> None:
 
 
 def _md_dist_stop(report: dict[str, Any], w: Callable[[str], None]) -> None:
-    """陈旧度分布 + 停止条件输入 + 描述层分层。"""
+    """调盘静止时长分布 + 停止条件输入 + 描述层分层。"""
     st = report["overall"]["staleness"]
-    w("## 陈旧度分布（s = observed_at − source_updated_at）")
+    w("## 调盘静止时长分布（s = observed_at − source_updated_at）")
+    w("")
+    w("- 正名注记（2026-11-01 裁决，不改数）：s=JC 调盘未动时长（非'迟到'）。")
     w("")
     w(
         f"- 可算 {st['n_computable']} 行（不可算 {st['n_missing']} 行）；"
@@ -899,7 +903,7 @@ def _md_dist_stop(report: dict[str, Any], w: Callable[[str], None]) -> None:
         else f"{sc['per_week_active_day_basis']:.2f}"
     )
     w(
-        f"- 剔除回填与陈旧后 L3 正EV：{sc['l3_positive_ex_backfill_ex_stale']} 个"
+        f"- 剔除回填与调盘静止后 L3 正EV：{sc['l3_positive_ex_backfill_ex_stale']} 个"
         + f"≈{per_week_txt}/周（日历窗）/"
         + f" {active_txt}/周（活跃日 {sc['active_days']} 天）"
         + f"（阈值 <{sc['per_week_threshold']}/周）"

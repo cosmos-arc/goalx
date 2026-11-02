@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import duckdb
 import httpx
+import psutil
 from loguru import logger
 
 from goalx_backend.betting import frozen as frozen_mod
@@ -451,6 +452,11 @@ def settlement_sweep() -> dict[str, int]:
         return run_settlement(conn)
 
 
+# gold-rebuild 内存余量下限（remat 票 13 FULL_REMAT_MIN_HEADROOM_BYTES 同值）：
+# 16GB+6GB swap 盒上 build_market_quotes 峰值 ~3.2GB，低于此余量并发必 OOM
+_GOLD_REBUILD_MIN_HEADROOM_BYTES = 6 * 1024**3
+
+
 def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     """
     Gold 日频重算（misprice 票 03①）：market_quote 保鲜 + gold 全量重建。
@@ -460,8 +466,18 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     根因坐实）。本任务银段先重物化 market_quote（asian_odds+over_down
     bronze 幂等全量）再 gold 全量重算，08:40 定拍赶在 09:05 晨检 gold
     新鲜度面前。settings 注入口只服务测试接缝。
+
+    内存护栏（票 03 运行实录 2026-11-02 首班）：build_market_quotes 峰值
+    ~3.2GB，余量不足时整轮 deferred 零写入让位（与手工跑/其他重载并发
+    会 OOM Crashed，remat 票 13 同款防线）——明日定拍自愈，晨检 gold
+    新鲜度面（36h 绿）兜底可见。
     """
     resolved = settings if settings is not None else get_settings()
+    headroom = psutil.virtual_memory().available + psutil.swap_memory().free
+    if headroom < _GOLD_REBUILD_MIN_HEADROOM_BYTES:
+        note = f"deferred_low_headroom: {headroom / 1024**3:.1f}GiB"
+        logger.warning("gold-rebuild {}", note)
+        return {"deferred": note}
     if not resolved.db_path.exists():
         raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
     store = CorpusStore(resolved.corpus_root)
