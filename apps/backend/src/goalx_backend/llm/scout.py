@@ -201,7 +201,7 @@ def scout_targets(
     """目标集合：彩池桥接场次（pool 用途）+ 在售竞彩 Tier1（scout 用途）。"""
     moment = now or utc_now_iso()
     targets: dict[int, Purpose] = {}
-    for market_code in ("ttt14", "pick9"):
+    for market_code in ("ttt14", "pick9", "goals4"):
         for period in pool_store.list_pool_periods(conn, market_code):
             deadline = period["sales_deadline"]
             if deadline is None or str(deadline) < moment:
@@ -212,6 +212,9 @@ def scout_targets(
                     str(row["kickoff_utc"]),
                     str(row["home_team"]),
                     str(row["away_team"]),
+                    source_match_id=(
+                        str(row["source_match_id"]) if row["source_match_id"] else None
+                    ),
                 )
                 if fixture_id is not None:
                     targets[fixture_id] = Purpose.POOL

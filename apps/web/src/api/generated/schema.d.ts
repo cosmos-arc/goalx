@@ -302,7 +302,7 @@ export interface paths {
         };
         /**
          * 彩池期次列表(传统足彩)
-         * @description 已采集期次（期次/对阵/分布来自源B 同步；销量列无官方直接源）。
+         * @description 已采集期次（期次/对阵来自体彩官方源同步；销量列无官方直接源）。
          */
         get: operations["list_pool_periods_api_v1_pool_periods_get"];
         put?: never;
@@ -322,7 +322,9 @@ export interface paths {
         };
         /**
          * 彩池期次详情(对阵/分布/EV)
-         * @description 一场一选三向：概率(模型/欧指去水)、份额、估计派彩赔率、EV。
+         * @description 期次对阵+概率：ttt14 三向（模型/欧指去水）、goals4 进球档（模型档位边际）。
+         *
+         *     份额/EV 见 caliber（无源恒空）。
          */
         get: operations["get_pool_period_api_v1_pool_periods__period_no__get"];
         put?: never;
@@ -2139,7 +2141,7 @@ export interface components {
         };
         /**
          * PoolPeriodDetailView
-         * @description 期次详情：对阵三向（概率/份额/估计赔率/EV）+ 资金状态 + 口径说明。
+         * @description 期次详情：对阵选择档（ttt14 三向 / goals4 进球档）+ 资金状态 + 口径说明。
          */
         PoolPeriodDetailView: {
             /** Period No */
@@ -2189,7 +2191,7 @@ export interface components {
         };
         /**
          * PoolSelectionView
-         * @description 一场一选的彩池口径三向数据。
+         * @description 彩池口径选择档（ttt14 三向 h/d/a；goals4 进球档 h0..h3/a0..a3）。
          */
         PoolSelectionView: {
             /** Code */

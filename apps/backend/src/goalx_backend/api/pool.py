@@ -58,7 +58,7 @@ class PoolPeriodView(BaseModel):
 
 
 class PoolPeriodDetailView(BaseModel):
-    """期次详情：对阵三向（概率/份额/估计赔率/EV）+ 资金状态 + 口径说明。"""
+    """期次详情：对阵选择档（ttt14 三向 / goals4 进球档）+ 资金状态 + 口径说明。"""
 
     period_no: str
     sales_deadline: str | None = None
@@ -70,9 +70,14 @@ class PoolPeriodDetailView(BaseModel):
 
 CALIBER_TEXT = (
     "概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；"
-    "份额 = 第三方人气分布（公众分布代理，非官方池份额）；"
+    "份额 = 公众分布代理（人气源已下线，常规环境恒空；官方仅开奖后 published 数据）；"
     "估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；"
-    "EV = 概率 × 估计赔率 − 1，未建模 price impact 与分彩风险。"
+    "EV = 概率 × 估计赔率 − 1（缺份额不可算），未建模 price impact 与分彩风险。"
+)
+CALIBER_TEXT_GOALS4 = (
+    "四场进球每场主/客各选一档（0/1/2/3+球）；"
+    "概率 = 模型档位边际（映射场次有赛前 Forecast 时，无映射/无预测为空，"
+    "无三向欧指兜底）；份额无源，估计派彩赔率与 EV 不可算。"
 )
 
 
@@ -156,7 +161,7 @@ def _state_view_from_list(row: sqlite3.Row) -> PoolStateView | None:
 async def list_pool_periods(
     db: DbDep, market_code: str = "ttt14"
 ) -> list[PoolPeriodView]:
-    """已采集期次（期次/对阵/分布来自源B 同步；销量列无官方直接源）。"""
+    """已采集期次（期次/对阵来自体彩官方源同步；销量列无官方直接源）。"""
     now = utc_now_iso()
     return [
         PoolPeriodView(
@@ -182,7 +187,11 @@ async def list_pool_periods(
 async def get_pool_period(
     period_no: str, db: DbDep, market_code: str = "ttt14"
 ) -> PoolPeriodDetailView:
-    """一场一选三向：概率(模型/欧指去水)、份额、估计派彩赔率、EV。"""
+    """
+    期次对阵+概率：ttt14 三向（模型/欧指去水）、goals4 进球档（模型档位边际）。
+
+    份额/EV 见 caliber（无源恒空）。
+    """
     pool_period_id = pool_store.pool_period_id(db, market_code, period_no)
     if pool_period_id is None:
         raise HTTPException(status_code=404, detail=f"period {period_no} not found")
@@ -194,7 +203,7 @@ async def get_pool_period(
         matches=views,
         state=_state_view(pool_store.pool_state_for_period(db, pool_period_id)),
         shares_captured_at=pool_store.shares_captured_at(db, pool_period_id),
-        caliber=CALIBER_TEXT,
+        caliber=CALIBER_TEXT_GOALS4 if market_code == "goals4" else CALIBER_TEXT,
     )
 
 
@@ -232,6 +241,10 @@ async def generate_cold_variants(
     payload: ColdVariantsPayload, db: DbDep
 ) -> ColdVariantsView:
     """基础票 + 冷度 1..N 贪心冷门变体（估值口径与期次详情一致）。"""
+    if payload.market_code not in {"ttt14", "pick9"}:
+        # 生成器语义=一场一选；goals4 一场两档硬跑产出废票（pool-mapping-goals4/02）。
+        # pick9 同语义且期次与 ttt14 同存（实际不走此分支），保 404 语义
+        raise HTTPException(422, detail="生成器未接该玩法（一场一选语义）")
     pool_period_id = pool_store.pool_period_id(
         db, payload.market_code, payload.period_no
     )
@@ -297,6 +310,9 @@ class TargetPlanView(BaseModel):
 )
 async def build_target_plan(payload: TargetPlanPayload, db: DbDep) -> TargetPlanView:
     """目标奖金 → 推荐票面 + 建议注数（估计口径，诚实标注不承诺）。"""
+    if payload.market_code not in {"ttt14", "pick9"}:
+        # 同搏冷护栏：一场一选语义（pool-mapping-goals4/02）
+        raise HTTPException(422, detail="生成器未接该玩法（一场一选语义）")
     pool_period_id = pool_store.pool_period_id(
         db, payload.market_code, payload.period_no
     )

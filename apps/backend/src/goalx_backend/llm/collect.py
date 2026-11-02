@@ -180,8 +180,9 @@ def collect_pool_intel(
     """当期在售彩池场次的情报采集（幂等；无桥接/无映射如实计数）。"""
     stats = IntelSyncStats()
     moment = now or utc_now_iso()
+    seen: set[int] = set()  # goals4 场次常与 ttt14 重叠——同 fixture 只采一次
     with atomic(conn):
-        for market_code in ("ttt14", "pick9"):
+        for market_code in ("ttt14", "pick9", "goals4"):
             for period in pool_store.list_pool_periods(conn, market_code):
                 deadline = period["sales_deadline"]
                 if deadline is None or str(deadline) < moment:
@@ -194,6 +195,11 @@ def collect_pool_intel(
                         str(row["kickoff_utc"]),
                         str(row["home_team"]),
                         str(row["away_team"]),
+                        source_match_id=(
+                            str(row["source_match_id"])
+                            if row["source_match_id"]
+                            else None
+                        ),
                     )
                     if fixture_id is None:
                         note = (
@@ -202,6 +208,9 @@ def collect_pool_intel(
                         )
                         stats.notes.append(note)
                         continue
+                    if fixture_id in seen:
+                        continue
+                    seen.add(fixture_id)
                     stats.with_fixture += 1
                     before = stats.inserted
                     stats.inserted += collect_fdhist_intel(
