@@ -8,6 +8,8 @@ import {
 	isGoalsPickable,
 	rankFixturesForFeed,
 	rankGoalsFixturesForFeed,
+	slipFormPlan,
+	slipFormSummary,
 } from "./combo-engine";
 
 /**
@@ -243,7 +245,7 @@ describe("buildHadCombo 口径输出", () => {
 		expect(result.picks).toHaveLength(2);
 		expect(result.totalStake).toBe(40);
 		expect(result.expectedProfit).toBeCloseTo(2.8, 6);
-		expect(result.notes.some((note) => note.includes("共识口径"))).toBe(true);
+		expect(result.notes.some((note) => note.includes("口径随票型"))).toBe(true);
 		expect(result.notes.some((note) => note.includes("EV≤0 不入选"))).toBe(true);
 		expect(result.notes.some((note) => note.includes("flat"))).toBe(true);
 	});
@@ -420,5 +422,44 @@ describe("buildGoalsCombo 排序与约束（单关为主）", () => {
 		expect(rankGoalsFixturesForFeed([noModelLater, weak, noModelSoon, strong]).map((f) => f.fixture_id)).toEqual([
 			1, 2, 3, 4,
 		]);
+	});
+});
+
+// ---- 票型票级计算（report-audit 票 02：预览 == 提交落库，单源）----
+
+describe("slipFormPlan 两口径黄金样例（票 02）", () => {
+	// 报告样例：两腿赔率 2/3、EV 10%/5%、各 20 元
+	const legs = [
+		{ ev: 0.1, stake: 20 },
+		{ ev: 0.05, stake: 20 },
+	];
+
+	test("singles：总注 40 元 / EV 合计 3 元（线性合计，每场独立结算）", () => {
+		const plan = slipFormPlan(legs, "singles");
+		expect(plan.bets).toBe(2);
+		expect(plan.totalStake).toBe(40);
+		expect(plan.expectedProfit).toBe(3);
+		expect(plan.jointEv).toBeNull();
+		expect(plan.hitCondition).toContain("每场独立结算");
+		expect(slipFormSummary(plan)).toContain("2 注 · 总注 ¥40.00 · 预期 +¥3.00");
+	});
+
+	test("parlay：注金 20 元，联合 EV = (1.10×1.05)−1 = 15.5%，预期 3.10 元", () => {
+		const plan = slipFormPlan(legs, "parlay");
+		expect(plan.bets).toBe(1);
+		expect(plan.totalStake).toBe(20);
+		expect(plan.jointEv).toBeCloseTo(0.155, 4);
+		expect(plan.expectedProfit).toBeCloseTo(3.1, 2);
+		expect(plan.hitCondition).toContain("全部命中");
+		expect(slipFormSummary(plan)).toContain("注金 ¥20.00 · 联合 EV 15.5% · 预期 +¥3.10");
+	});
+
+	test("单腿两票型同数（口径差只在多腿）；空腿 fail-closed", () => {
+		const single = [{ ev: 0.1, stake: 20 }];
+		expect(slipFormPlan(single, "singles")).toEqual(
+			expect.objectContaining({ bets: 1, totalStake: 20, expectedProfit: 2 }),
+		);
+		expect(slipFormPlan(single, "parlay").expectedProfit).toBe(2);
+		expect(() => slipFormPlan([], "singles")).toThrow();
 	});
 });

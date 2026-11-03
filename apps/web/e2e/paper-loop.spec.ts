@@ -82,8 +82,8 @@ test("玩法页推荐流排序与组合头部（票 wb-03）：无正 EV 诚实�
 	await expect(combo).toBeVisible();
 	await expect(combo.getByTestId("market-combo-empty")).toContainText("无正 EV 机会");
 	await expect(combo.getByTestId("market-combo-apply")).toHaveCount(0);
-	// 约束说明常驻（口径可对账）
-	await expect(combo.getByTestId("market-combo-notes")).toContainText("共识口径");
+	// 约束说明常驻（口径可对账；票 02 起预期口径随票型标注）
+	await expect(combo.getByTestId("market-combo-notes")).toContainText("预期口径随票型");
 
 	// 就地选注可用（不提交——保持后续步骤的注数断言不变）：003 停售不可选，002 可选
 	await page.getByTestId("market-pick-2-a").click();
@@ -155,6 +155,8 @@ test("2串1 共同可购买；无效腿由服务器拒绝（不止禁用按钮�
 	await page.getByTestId("pick-1-h").click();
 	await page.getByTestId("pick-2-a").click();
 	await page.getByTestId("basket-open").click();
+	// 票 02：双腿默认单关——本用例锁 2串1 共同可购判定，显式切票型
+	await page.getByTestId("basket-form-parlay").click();
 	await page.getByTestId("basket-stake").fill("2");
 	await page.getByTestId("basket-submit").click();
 	await expect(page.getByTestId("fixtures-message")).toContainText("已建建议");

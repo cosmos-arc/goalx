@@ -3,12 +3,18 @@ import { fetchBankroll, fetchTodayFixtures } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
-import { BasketBar, BasketDrawer, useHadBasket } from "../components/had-basket";
-import { EligibleCard, evClass, evText, isPickable, MAX_LEGS, makeLeg } from "../components/had-quote-ui";
+import { BasketBar, BasketDrawer, SlipFormChooser, useHadBasket } from "../components/had-basket";
+import { EligibleCard, evClass, evText, isPickable, makeLeg } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
-import { buildHadCombo, HAD_COMBO_CONFIG, rankFixturesForFeed } from "../lib/combo-engine";
+import {
+	buildHadCombo,
+	HAD_COMBO_CONFIG,
+	rankFixturesForFeed,
+	slipFormPlan,
+	slipFormSummary,
+} from "../lib/combo-engine";
 import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
 import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 
@@ -19,6 +25,9 @@ import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
  * - 组合头部卡：组合引擎 v1 纯函数产出（腿列表/每腿建议注额/注数/预期收益/
  *   约束说明），EV≤0 不入选，空窗诚实占位；一键带入就地选注篮（复用场次页
  *   常驻条 + Drawer 模式，服务器校验唯一权威）；
+ * - 票型显式化（report-audit 票 02）：两腿组合带入前显式选"两笔单关/一注
+ *   2串1"，两口径预览并列（总注/联合 EV/命中条件，ticketPlan 单源）；默认
+ *   记住上次选择，首次默认单关合计（引擎本义），2串1 为显式切换动作；
  * - bankroll 取真金余额（GET /bankroll）；纸面期组合一律 flat 档建议
  *   （2%，区间 1–5%），仓位细化（¼Kelly 等）归票 06，本页不做。
  */
@@ -35,7 +44,7 @@ export function MarketHadPage() {
 	const now = Date.now();
 	const fixtures = fixturesQuery.data ?? [];
 	const basket = useHadBasket(now, fixtures);
-	const { legs, message, pick } = basket;
+	const { legs, message, pick, slipForm, chooseSlipForm } = basket;
 
 	// 推荐流只依赖场次（资金池未就绪也能先看排序）；组合注额需 bankroll 到位才给建议
 	const feedOrder = fixturesQuery.data !== undefined ? rankFixturesForFeed(fixtures) : [];
@@ -46,22 +55,41 @@ export function MarketHadPage() {
 					bankroll: bankrollQuery.data.balance ?? 0,
 				})
 			: null;
-	// 组合卡建议仓位（票 wb-06）：1 注=单关口径；2 注=按"一注 2串1"整注联合口径
+	// 票型票级计划（票 02 单源）：组合卡预览与带入后提交同口径
+	const comboPlans =
+		combo !== null && combo.picks.length > 0
+			? {
+					singles: slipFormPlan(combo.picks, "singles"),
+					parlay: combo.picks.length >= 2 ? slipFormPlan(combo.picks, "parlay") : null,
+				}
+			: null;
+	const comboSelected =
+		comboPlans !== null && (slipForm !== "parlay" || comboPlans.parlay === null)
+			? comboPlans.singles
+			: (comboPlans?.parlay ?? null);
+	// 组合卡建议仓位（票 wb-06）：口径随票型——单关=每注独立（示例最优一注），2串1=联合整注
+	const comboAdviceNote =
+		combo && combo.picks.length === 2 && slipForm === "singles"
+			? "组合卡按纸面 flat 档口径（两笔单关：每注独立，示例最优一注）；真金 ¼Kelly 在选注篮切真金后给出"
+			: "组合卡按纸面 flat 档口径（2 注时带入后按一注 2串1 整注）；真金 ¼Kelly 在选注篮切真金后给出";
 	const comboAdvice =
-		combo && combo.picks.length === 2
-			? parlayAdviceInput(combo.picks.map((pick) => ({ ev: pick.ev, odds: pick.odds })))
-			: { ev: combo?.picks[0]?.ev ?? null, odds: combo?.picks[0]?.odds ?? null };
+		combo && combo.picks.length === 2 && slipForm === "singles"
+			? { ev: combo.picks[0]?.ev ?? null, odds: combo.picks[0]?.odds ?? null }
+			: combo && combo.picks.length === 2
+				? parlayAdviceInput(combo.picks.map((pick) => ({ ev: pick.ev, odds: pick.odds })))
+				: { ev: combo?.picks[0]?.ev ?? null, odds: combo?.picks[0]?.odds ?? null };
 
-	/** 一键带入：组合腿就地进本页选注篮并展开（组合引擎已保证同场不重复、≤2 腿）。 */
+	/** 一键带入：组合腿就地进本页选注篮并展开（引擎已保证同场不重复、≤2 腿）；
+	 * 票型按卡上显式选择随腿带入（票 02：带入什么票型就提交什么票型）。 */
 	function applyCombo() {
-		if (combo === null || combo.picks.length === 0) {
+		if (combo === null || combo.picks.length === 0 || comboPlans === null || comboSelected === null) {
 			return;
 		}
 		basket.setLegs(combo.picks.map((pickEntry) => makeLeg(pickEntry.fixture, pickEntry.selection, pickEntry.odds)));
 		basket.setStake(String(combo.picks[0]?.stake ?? HAD_COMBO_CONFIG.stake.minStakeCny));
 		basket.setMessage(
-			combo.picks.length === MAX_LEGS
-				? "已带入 2 条推荐——选注篮按一注 2串1 提交；组合卡预期收益按两条独立单关口径（EV×注额）合计"
+			combo.picks.length >= 2
+				? `已带入 ${combo.picks.length} 条推荐——按${comboSelected.form === "singles" ? "两笔单关" : "一注 2串1"}提交（${slipFormSummary(comboSelected)}）`
 				: `已带入 1 条推荐（建议注额 ¥${combo.picks[0]?.stake.toFixed(2)}，预期收益按 EV×注额 共识口径）`,
 		);
 		basket.setBasketOpen(true);
@@ -156,12 +184,28 @@ export function MarketHadPage() {
 										</span>
 									</span>
 								</h2>
-								{combo && combo.picks.length > 0 ? (
+								{combo && combo.picks.length > 0 && comboSelected ? (
 									<p className={`${TABULAR_NUMS} text-sm`} data-testid="market-combo-total">
-										总注额 ¥{combo.totalStake.toFixed(2)} · 预期收益{" "}
-										<span className={evClass(combo.expectedProfit)}>+¥{combo.expectedProfit.toFixed(2)}</span>
+										总注额 ¥{comboSelected.totalStake.toFixed(2)} · 预期收益{" "}
+										<span className={evClass(comboSelected.expectedProfit)}>
+											+¥{comboSelected.expectedProfit.toFixed(2)}
+										</span>
 										<span className="text-xs font-normal text-muted-foreground">
-											（<GlossaryTerm id="ev">EV×注额</GlossaryTerm> 共识口径）
+											{combo.picks.length >= 2 ? (
+												comboSelected.form === "singles" ? (
+													<>
+														（两笔单关 · <GlossaryTerm id="ev">EV</GlossaryTerm> 线性合计）
+													</>
+												) : (
+													<>
+														（一注 2串1 · <GlossaryTerm id="ev">联合 EV</GlossaryTerm> 口径）
+													</>
+												)
+											) : (
+												<>
+													（<GlossaryTerm id="ev">EV×注额</GlossaryTerm> 共识口径）
+												</>
+											)}
 										</span>
 									</p>
 								) : null}
@@ -212,6 +256,19 @@ export function MarketHadPage() {
 											</li>
 										))}
 									</ul>
+									{/* 票型显式选择（票 02）：两口径预览并列，带入即所选票型；人裁决：
+									 * 记住上次选择，首次默认单关合计（引擎本义），2串1 为显式切换 */}
+									{comboPlans?.parlay ? (
+										<div className="mb-3">
+											<SlipFormChooser
+												form={slipForm}
+												onChoose={chooseSlipForm}
+												singlesPlan={comboPlans.singles}
+												parlayPlan={comboPlans.parlay}
+												testidPrefix="market-combo"
+											/>
+										</div>
+									) : null}
 									{combo.bankrollNote ? (
 										<p
 											data-testid="market-combo-bankroll-warning"
@@ -234,7 +291,7 @@ export function MarketHadPage() {
 											bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
 											ev={comboAdvice.ev}
 											odds={comboAdvice.odds}
-											note="组合卡按纸面 flat 档口径（2 注时带入后按一注 2串1 整注）；真金 ¼Kelly 在选注篮切真金后给出"
+											note={comboAdviceNote}
 											testid="market-combo-stake-advice"
 										/>
 									</div>
