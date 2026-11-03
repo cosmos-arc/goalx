@@ -40,7 +40,10 @@ duckdb 桥视图为路径绑定（分区重写即时可见，无需重建）。
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import sqlite3
+import uuid
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import cast
@@ -361,7 +364,10 @@ def run_remat(
     缺省真实 psutil——护栏场景余量不足全量直接 deferred，见票 13）。
     """
     report = RematReport(built_at=utc_now_iso())
-    holder = store.try_acquire_remat_lock(stale_after_seconds=REMAT_LOCK_STALE_SECONDS)
+    run_token = uuid.uuid4().hex
+    holder = store.try_acquire_remat_lock(
+        stale_after_seconds=REMAT_LOCK_STALE_SECONDS, run_token=run_token
+    )
     if holder is not None:
         # 拍后增量钩子与 08:10 全量并发（F1）：锁被占零动作早退——全量
         # 整轮成功推水位后，下一拍自然回增量
@@ -371,7 +377,54 @@ def run_remat(
     try:
         return _run_remat_locked(store, report, full=full, headroom_fn=headroom_fn)
     finally:
-        store.release_remat_lock()
+        _release_quietly(store, run_token)
+
+
+def _release_quietly(store: CorpusStore, run_token: str) -> None:
+    """
+    释放锁但不让释放故障掩盖正体异常（correctness F1，票 02）。
+
+    释放侧 sqlite 故障只告警：锁行留驻由 6h 过期兜底（fail-safe 方向，
+    互斥性不破），根因异常原样上抛。
+    """
+    try:
+        store.release_remat_lock(run_token)
+    except sqlite3.Error as exc:
+        logger.warning(
+            "remat 锁释放失败（留驻由 {}h 过期兜底）：{}",
+            REMAT_LOCK_STALE_SECONDS // 3600,
+            exc,
+        )
+
+
+class RematLockBusy(Exception):
+    """Silver 树构建锁被占（票 02）：holder=持锁行（人读早退信息）。"""
+
+    def __init__(self, holder: dict[str, object]) -> None:
+        self.holder = holder
+        super().__init__(f"pid={holder['holder_pid']} since={holder['started_at']}")
+
+
+@contextmanager
+def silver_build_lock(store: CorpusStore) -> Generator[None]:
+    """
+    Silver 树构建互斥（票 02）：与 run_remat 同一把 srct_remat_lock。
+
+    定时（srct-remat 08:10 / gold-rebuild 08:40）与手工（cli srct-odds /
+    srct-market / srct-silver）写入口共用——并发重建同一 silver 面会
+    StreamingPartitions 互相覆盖（P1-2）。被占即 raise RematLockBusy（调用
+    方裁决行为：手工=立即退出报持锁信息，定拍=deferred 让位）。
+    """
+    run_token = uuid.uuid4().hex
+    holder = store.try_acquire_remat_lock(
+        stale_after_seconds=REMAT_LOCK_STALE_SECONDS, run_token=run_token
+    )
+    if holder is not None:
+        raise RematLockBusy(holder)
+    try:
+        yield
+    finally:
+        _release_quietly(store, run_token)
 
 
 def _run_remat_locked(

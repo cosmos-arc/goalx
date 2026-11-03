@@ -369,6 +369,29 @@ def test_cli_srct_market_payload(
     assert Path(payload["duckdb"]).exists()
 
 
+def test_cli_srct_market_busy_lock_exits_with_holder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """票 02 人裁决：手工 CLI 撞锁=立即退出报持锁信息（锁在构建之前，
+    空 corpus 即可钉住零构建早退路径）。"""
+    from datetime import UTC, datetime
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    store._checkpoint().execute(
+        "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+        " VALUES (1, 999999, ?, 'peer-run')",
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+    store._checkpoint().commit()
+    store.close()
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_srct_market(argparse.Namespace(), settings=settings)
+    assert "999999" in str(excinfo.value)
+    assert capsys.readouterr().out == ""  # 无成功路径 payload
+
+
 def test_bookmaker_absorbs_market_identities(tmp_path: Path) -> None:
     """票 64：cid=8 有代称化身份（多庄页遮罩名），ou 空间入字典。"""
     store = _build_corpus(tmp_path)
