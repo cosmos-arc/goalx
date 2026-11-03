@@ -149,3 +149,68 @@ def test_inventory_walk_survives_concurrent_delete(
     monkeypatch.setattr(Path, "stat", racing_stat)
     inventory = store.dataset_inventory()
     assert inventory["silver"] == {"files": 0, "bytes": 0}  # 竞态文件跳过不炸
+
+
+# --- boundary-hardening 票 06：进程运行指纹 ---
+
+
+def test_process_face_shape_and_config_sensitivity(tmp_path: Path) -> None:
+    """全字符串面;同配置同哈希;配置变化必换哈希;库缺席 schema=unknown。"""
+    from goalx_backend.config import Settings
+    from goalx_backend.run_fingerprint import process_face
+
+    base = Settings(_env_file=None, db_path=tmp_path / "a.db")
+    face = process_face(base)
+    assert set(face) == {"git_sha", "git_dirty", "config_hash", "schema_version"}
+    assert re.fullmatch(r"[0-9a-f]{40}", face["git_sha"])  # repo 内跑
+    assert face["git_dirty"] in {"true", "false"}
+    assert _SHA256.match(face["config_hash"])
+    assert face["schema_version"] == "unknown"  # conn 缺席不假装
+
+    same = process_face(Settings(_env_file=None, db_path=tmp_path / "a.db"))
+    assert same["config_hash"] == face["config_hash"]
+    other = process_face(Settings(_env_file=None, db_path=tmp_path / "b.db"))
+    assert other["config_hash"] != face["config_hash"]
+
+    conn = _migrated_db(tmp_path / "c.db")
+    try:
+        with_schema = process_face(base, conn=conn)
+        assert with_schema["schema_version"].isdigit()
+    finally:
+        conn.close()
+
+
+def test_schedules_startup_fingerprint_logs_dirty_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """调度入口启动打指纹行;dirty=true 追加 WORKTREE DIRTY 亮黄行(照跑)。"""
+    from loguru import logger
+
+    from goalx_backend import schedules
+
+    monkeypatch.setattr(
+        "goalx_backend.run_fingerprint._git_face",
+        lambda _root: {"sha": "a" * 40, "dirty": True},
+    )
+    messages: list[str] = []
+    sink = logger.add(messages.append)
+    try:
+        schedules.log_startup_fingerprint()
+    finally:
+        logger.remove(sink)
+    combined = "\n".join(messages)
+    assert "runtime fingerprint" in combined
+    assert "a" * 40 in combined  # sha 进日志,晨检 grep 面
+    assert "WORKTREE DIRTY" in combined
+
+    monkeypatch.setattr(
+        "goalx_backend.run_fingerprint._git_face",
+        lambda _root: {"sha": "a" * 40, "dirty": False},
+    )
+    clean: list[str] = []
+    sink = logger.add(clean.append)
+    try:
+        schedules.log_startup_fingerprint()
+    finally:
+        logger.remove(sink)
+    assert "WORKTREE DIRTY" not in "\n".join(clean)

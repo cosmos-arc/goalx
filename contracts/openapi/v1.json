@@ -22,7 +22,7 @@
           "system"
         ],
         "summary": "Liveness probe",
-        "description": "Report whether the process is alive.",
+        "description": "Report whether the process is alive (with startup runtime fingerprint).",
         "operationId": "health_check_healthz_get",
         "responses": {
           "200": {

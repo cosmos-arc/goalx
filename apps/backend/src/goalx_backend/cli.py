@@ -1319,6 +1319,23 @@ def _cmd_seed_demo() -> None:
         conn.close()
 
 
+def _cmd_e2e_corpus() -> None:
+    """生成 corpus 主链 e2e 夹具（boundary-hardening 票 06；须隔离库）。"""
+    from goalx_backend.data.ingest.e2e_corpus import (  # noqa: PLC0415
+        build,
+        ensure_isolated_db,
+    )
+
+    conn = connect()
+    try:
+        migrate(conn)
+        ensure_isolated_db(conn)  # 同 seed-demo 红线：拒绝写主库伪造实采
+    finally:
+        conn.close()
+    manifest = build(get_settings())
+    logger.info("e2e corpus fixture: {}", manifest["manifest_path"])
+
+
 def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的平铺 argparse
     """CLI 参数。"""
     parser = argparse.ArgumentParser(prog="goalx", description="goalx 运维命令")
@@ -1794,6 +1811,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     sub.add_parser(
         "seed-demo", help="写入演示/E2E 种子(只允许隔离库, 拒绝写主库伪造实采)"
     )
+    sub.add_parser(
+        "e2e-corpus",
+        help="生成 corpus 主链 e2e 夹具(四场制式, 只允许隔离库; 票 06)",
+    )
     # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
     datasets.add_cli_subparsers(sub)
     return parser
@@ -1861,6 +1882,7 @@ def main(argv: list[str] | None = None) -> int:
         "clubelo-elo": lambda: _cmd_clubelo_elo(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
+        "e2e-corpus": _cmd_e2e_corpus,
     }
     # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
     # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）

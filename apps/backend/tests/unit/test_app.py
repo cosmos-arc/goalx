@@ -19,7 +19,28 @@ def test_healthz_reports_ok(client: TestClient) -> None:
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+
+
+def test_healthz_carries_runtime_fingerprint(client: TestClient) -> None:
+    """票 06 运行隔离:/healthz 报进程加载代码的 git 身份+配置/库指纹。"""
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    body = response.json()
+    # 全字符串面(契约 dict[str,str] 不变形);测试跑在 git 仓库内
+    assert set(body) >= {
+        "status",
+        "git_sha",
+        "git_dirty",
+        "config_hash",
+        "schema_version",
+    }
+    assert len(body["git_sha"]) == 40  # 真仓库内=完整 sha
+    assert body["git_dirty"] in {"true", "false"}
+    assert len(body["config_hash"]) == 64
+    assert body["schema_version"].isdigit()  # client fixture 已 migrate
 
 
 def test_readyz_reports_ready(client: TestClient) -> None:

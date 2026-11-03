@@ -57,12 +57,14 @@ from prefect.deployments.runner import RunnerDeployment
 from prefect.schedules import Schedule
 
 from goalx_backend import datasets
+from goalx_backend.config import get_settings
 from goalx_backend.flows import (
     daily_capture_flow,
     daily_wrap_flow,
     draw_results_sync_flow,
     weekly_refresh_flow,
 )
+from goalx_backend.run_fingerprint import process_face
 
 
 def build_deployments() -> dict[str, RunnerDeployment]:
@@ -137,6 +139,26 @@ def build_deployments() -> dict[str, RunnerDeployment]:
     return deployments
 
 
+def log_startup_fingerprint() -> None:
+    """
+    启动指纹一行（boundary-hardening 票 06 运行隔离）。
+
+    晨检 grep 此行即知调度进程加载代码的 git 身份;dirty=true 属亮黄
+    照跑（人裁决 2026-11-02①:不拒跑——10-31 票01 实录的未提交代码触
+    主库风险靠可见性兜底,而非拒绝服务）。schema_version 缺省打不出
+    （调度进程无常驻连接,库身份由各 flow 自报）。
+    """
+    face = process_face(get_settings())
+    logger.info(
+        "runtime fingerprint: git_sha={} git_dirty={} config_hash={}",
+        face["git_sha"],
+        face["git_dirty"],
+        face["config_hash"],
+    )
+    if face["git_dirty"] == "true":
+        logger.warning("WORKTREE DIRTY — 调度在未提交代码上运行(晨检亮黄,照跑不拒)")
+
+
 def main(only: str | None = None) -> None:
     """
     单进程服务协议 v1 的定时 deployment（随票累加）。
@@ -146,6 +168,7 @@ def main(only: str | None = None) -> None:
     分隔符拒绝（fail-loud——静默全量会复活判死面，静默零面则空转常驻，
     2026-10-31 correctness F2/F3）。
     """
+    log_startup_fingerprint()
     deployments = build_deployments()
     # 未知键校验取 gate 摘除前的全量键集：缺省 --only 含 srct-night，先摘
     # 后校验会把缺省键判为未知——GOALX_SRCT_NIGHT_OFF 置位即崩、零面服务

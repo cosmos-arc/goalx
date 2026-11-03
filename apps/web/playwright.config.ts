@@ -6,8 +6,8 @@ const webPort = Number(process.env["E2E_WEB_PORT"] ?? 5173);
 
 export default defineConfig({
 	testDir: "./e2e",
-	// paper-loop 由 playwright.loop.config.ts 单独跑（需要隔离后端/DB）
-	testIgnore: /paper-loop/,
+	// paper-loop/corpus-loop 各由专属 config 单独跑（需要隔离后端/DB）
+	testIgnore: /paper-loop|corpus-loop/,
 	timeout: 30_000,
 	fullyParallel: true,
 	retries: process.env["CI"] ? 1 : 0,

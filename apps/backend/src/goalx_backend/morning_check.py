@@ -1,9 +1,10 @@
 """
-09:05 晨检代码化（ingest-orchestration 票 01）：12 项只读红绿面。
+09:05 晨检代码化（ingest-orchestration 票 01）：13 项只读红绿面。
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
-晨检防缺数据。本模块只读不修（repair 各归其主）；网络面仅第 10 项
-漂移对账走官方当期端点（≤2 请求）。CLI `goalx morning-check` 输出逐项
+晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
+对账走官方当期端点（≤2 请求）+ 第 13 项本机 /healthz（票 06 运行指纹,
+dirty=黄）。CLI `goalx morning-check` 输出逐项
 [ok|degraded|fail] + 退出码（任何 fail → 1；degraded 不红）。
 
 阈值（票 01 人裁决项写死）：
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import socket
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -109,6 +111,56 @@ def check_stack(*, api_port: int = 8000, prefect_port: int = 4200) -> CheckItem:
     both_down = len(down) == len(up) + len(down)
     status = OK if not down else (FAIL if both_down else DEGRADED)
     return CheckItem("stack", status, f"up={up} down={down}")
+
+
+def check_runtime_fingerprint(
+    log_path: Path,
+    *,
+    api_port: int = 8000,
+    probe: Callable[[], dict[str, str]] | None = None,
+) -> CheckItem:
+    """
+    项 13 运行指纹（boundary-hardening 票 06）。
+
+    serve /healthz dirty 旗 + 调度日志最近一次启动指纹的 WORKTREE DIRTY
+    行。dirty=黄不红（人裁决 2026-11-02①：照跑不拒,晨检亮黄——未提交
+    代码跑调度是 10-31 票 01 实录过的主库风险面,可见性兜底）。probe
+    注入供测试;缺省实打 /healthz。
+    """
+    notes: list[str] = []
+    worst = OK
+
+    def _default_probe() -> dict[str, str]:
+        with httpx.Client(timeout=2.0) as client:
+            response = client.get(f"http://127.0.0.1:{api_port}/healthz")
+            response.raise_for_status()
+            return dict(response.json())
+
+    fetch = probe if probe is not None else _default_probe
+    try:
+        face = fetch()
+        notes.append(
+            f"api sha={str(face.get('git_sha'))[:12]} dirty={face.get('git_dirty')}"
+        )
+        if face.get("git_dirty") == "true":
+            worst = DEGRADED
+    except (httpx.HTTPError, ValueError):
+        notes.append("healthz 不可读")  # 栈死红绿由项 1 覆盖,此处只缺面
+    try:
+        text = log_path.read_bytes()[-_SERVE_LOG_TAIL_BYTES:].decode(errors="replace")
+    except OSError:
+        text = ""
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if "runtime fingerprint" in line]
+    if not starts:
+        notes.append("调度启动指纹行缺(栈未含票 06)")
+    else:
+        # 最近一次启动指纹之后的 dirty 行才是本班次的（老行跨重启不计）
+        if any("WORKTREE DIRTY" in line for line in lines[starts[-1] :]):
+            worst = DEGRADED
+            notes.append("调度 WORKTREE DIRTY")
+        notes.append(lines[starts[-1]].split(" - ")[-1].strip()[:90])
+    return CheckItem("runtime_fingerprint", worst, "; ".join(notes))
 
 
 def check_night(store: CorpusStore, *, now: datetime) -> CheckItem:
@@ -314,10 +366,10 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 12 项（只读；网络面仅第 10 项官方当期端点）。"""
+    """跑全部 13 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
-    items = [check_stack()]
+    items = [check_stack(), check_runtime_fingerprint(log_path)]
     # 只读红线注记：CorpusStore 冷启动会幂等自建 checkpoint 表（mkdir+DDL），
     # 语料根缺失时晨检不因此炸——接受（表结构幂等，无数据写入）
     store = CorpusStore(settings.corpus_root)
