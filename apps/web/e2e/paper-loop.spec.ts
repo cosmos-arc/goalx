@@ -331,6 +331,51 @@ test("进球玩法页（票 wb-05）：模型 EV 组合 → ttg 独立单关落�
 	expect(Number(goalsBets[0]?.["n"])).toBe(1);
 });
 
+test("票 06：选注草稿全站持久 + 一成一败重试同键不落双行", async ({ page }) => {
+	// 跨页研究两场：场次页选 001 主胜 → 胜平负页草稿仍在 → 研究页仍在
+	await page.goto("/fixtures");
+	await page.getByTestId("pick-1-h").click();
+	await page.goto("/markets/had");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+	await page.goto("/fixtures/1");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+	// 刷新恢复（localStorage 单源）
+	await page.reload();
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+
+	// 回场次页补 002（仅串关在售=非单固）→ 两笔单关：001 成 / 002 服务器拒
+	await page.goto("/fixtures");
+	await page.getByTestId("pick-2-a").click();
+	const betPosts: Array<Record<string, unknown>> = [];
+	page.on("request", (request) => {
+		if (request.method() === "POST" && request.url().endsWith("/api/v1/bets")) {
+			betPosts.push(request.postDataJSON() as Record<string, unknown>);
+		}
+	});
+	await page.getByTestId("basket-open").click();
+	await page.getByTestId("basket-stake").fill("2");
+	await page.getByTestId("basket-submit").click();
+	const message = page.getByTestId("fixtures-message");
+	await expect(message).toContainText("第 2 笔失败");
+	await expect(message).toContainText("失败腿留篮可重试");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2"); // 失败腿留篮
+
+	// 草稿不丢：路由切换后仍在
+	await page.goto("/bets");
+	await page.goto("/fixtures");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+
+	// 同键重放（网络丢失重试场景）：直发已成功腿原请求体 → 回带同注，不落双行
+	const okPost = betPosts[0];
+	expect(typeof okPost?.["client_request_id"]).toBe("string");
+	const replay = await page.request.post("/api/v1/bets", { data: okPost });
+	expect(replay.status()).toBe(201);
+	const replayed = (await replay.json()) as { id: number; client_request_id: string };
+	const originals = dbRows(`SELECT id FROM bets WHERE client_request_id = '${okPost?.["client_request_id"]}'`);
+	expect(originals).toHaveLength(1); // 同键不落双行
+	expect(replayed.id).toBe(Number(originals[0]?.["id"])); // 回带既有注
+});
+
 test("浏览器、API 与 DB 最终状态一致", async ({ page }) => {
 	const apiBets = (
 		(await (await page.request.get("/api/v1/bets")).json()) as Array<{

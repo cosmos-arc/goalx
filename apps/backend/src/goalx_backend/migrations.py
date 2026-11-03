@@ -1884,6 +1884,24 @@ def _apply_v36(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v37(conn: sqlite3.Connection) -> None:
+    """
+    v37（report-audit-20261103 票 06）：bets 增 client_request_id。
+
+    客户端建注幂等键（人裁决 2026-11-03：bets 表加列、永久保留——对账
+    需要）。部分唯一索引：同键重复提交不落双行（API 层撞索引返回既有
+    注）；NULL=未带键（池票/内部调用/存量行），不受约束。
+    """
+    if not _column_exists(conn, "bets", "client_request_id"):
+        conn.execute("ALTER TABLE bets ADD COLUMN client_request_id TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bets_client_request_id
+        ON bets(client_request_id) WHERE client_request_id IS NOT NULL
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1921,6 +1939,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (34, _apply_v34),
     (35, _apply_v35),
     (36, _apply_v36),
+    (37, _apply_v37),
 )
 
 

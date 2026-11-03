@@ -71,6 +71,8 @@ class BetDraft(BaseModel):
     stake: float = Field(gt=0, allow_inf_nan=False)
     legs: list[LegInput] = Field(min_length=1)
     strategy_version: str | None = None
+    # 客户端建注幂等键（票 06）：同键重复提交不落双行（撞唯一索引回带）
+    client_request_id: str | None = Field(default=None, max_length=200)
 
 
 class ActualLegOdds(BaseModel):
@@ -214,9 +216,16 @@ def create_bet_with_legs(
     EV——口径不可得存 None，事后不倒填。price_source 由 API 层经
     resolve_paper_price 裁定（live=live_backfill；缺省不落标签=旧行为，
     仅供既有内部调用）。
+
+    幂等（票 06）：draft.client_request_id 带键且已有同键注 → 直接回带
+    既有注 id（不落双行）；撞唯一索引的并发竞态同样回带（fail-safe）。
     """
     if price_source is not None and price_source not in PRICE_SOURCES:
         raise ValueError(f"未知 price_source: {price_source}")
+    if draft.client_request_id is not None:
+        existing = bt_store.bet_id_for_request(conn, draft.client_request_id)
+        if existing is not None:
+            return existing
     seen: set[int] = set()
     for leg in draft.legs:
         if leg.fixture_id in seen:
@@ -224,15 +233,25 @@ def create_bet_with_legs(
         seen.add(leg.fixture_id)
     with atomic(conn):
         snapshot = build_ev_snapshot(conn, draft.legs, duck_con=duck_con)
-        bet = bt_store.create_bet(
-            conn,
-            draft.mode,
-            MarketKind.FIXED,
-            draft.stake,
-            strategy_version=draft.strategy_version,
-            ev_snapshot=snapshot,
-            price_source=price_source,
-        )
+        try:
+            bet = bt_store.create_bet(
+                conn,
+                draft.mode,
+                MarketKind.FIXED,
+                draft.stake,
+                strategy_version=draft.strategy_version,
+                ev_snapshot=snapshot,
+                price_source=price_source,
+                client_request_id=draft.client_request_id,
+            )
+        except sqlite3.IntegrityError as exc:
+            # 并发竞态：另一请求已用同键落注——回带既有（不落双行）
+            if draft.client_request_id is None or "client_request_id" not in str(exc):
+                raise
+            existing = bt_store.bet_id_for_request(conn, draft.client_request_id)
+            if existing is None:
+                raise
+            return existing
         for leg in draft.legs:
             bt_store.add_leg(conn, bet, leg)
     return bet

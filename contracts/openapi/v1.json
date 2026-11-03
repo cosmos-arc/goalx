@@ -553,8 +553,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "建注(注级建议; 服务端校验 had 资格+纸面价绑定)",
-        "description": "创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。\n\n纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效\nhad 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则\nsystem_paper 标签+腿级快照身份落库；报价不可得(或非 had)为\nmanual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。",
+        "summary": "建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 重放回带)",
+        "description": "创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。\n\n纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效\nhad 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则\nsystem_paper 标签+腿级快照身份落库；报价不可得(或非 had)为\nmanual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。\n\n幂等(票 06)：client_request_id 同键重复提交回带既有注(201 同体)，\n不落双行——批量逐腿提交的重试安全网。重放在资格/价绑校验**之前**\n短路：原决策已落库，腿事后停售/价变不改变\"该请求已建注\"的事实。",
         "operationId": "create_bet_api_v1_bets_post",
         "requestBody": {
           "required": true,
@@ -2476,6 +2476,18 @@
               }
             ],
             "title": "Allow Manual Price"
+          },
+          "client_request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
           }
         },
         "type": "object",
@@ -2800,6 +2812,17 @@
               }
             ],
             "title": "Price Source"
+          },
+          "client_request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
           }
         },
         "type": "object",

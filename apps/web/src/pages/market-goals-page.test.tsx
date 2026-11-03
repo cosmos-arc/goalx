@@ -204,14 +204,18 @@ test("basket drawer submits multiple singles and surfaces server rejection", asy
 	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议");
 	expect(captured.bodies[0]).toMatchObject({ mode: "live", stake: 20, strategy_version: "goals-v1" });
 
-	// 服务器拒绝 = 唯一权威：400 detail 透出
+	// 服务器拒绝 = 唯一权威：400 detail 透出（票 06 逐腿语义：失败腿留篮可重试）
 	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
 	await user.click(screen.getByTestId("goals-basket-open"));
 	server.use(
 		http.post("*/api/v1/bets", () => HttpResponse.json({ detail: "fixture 2 不可投: sale_stopped" }, { status: 400 })),
 	);
 	await user.click(screen.getByTestId("goals-basket-submit"));
-	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("建注失败");
+	const rejection = await screen.findByTestId("goals-market-message");
+	expect(rejection).toHaveTextContent("第 1 笔（周六002 2）失败：fixture 2 不可投: sale_stopped");
+	expect(rejection).toHaveTextContent("成功 0/失败 1，失败腿留篮可重试");
+	// 失败腿留篮（草稿不丢）
+	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3");
 	await user.click(screen.getByText("继续浏览"));
 	await waitFor(() => expect(screen.queryByTestId("goals-basket-stake")).not.toBeInTheDocument());
 });
