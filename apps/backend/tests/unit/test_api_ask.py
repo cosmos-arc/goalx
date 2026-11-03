@@ -127,8 +127,12 @@ def test_ask_streams_agui_events_and_records_cost(
     client, db_path = ask_client
     import goalx_backend.llm.ask as ask_mod
 
+    holder: dict[str, _FakeResult] = {}
+
     def _fake_run_streamed(*args: object, **kwargs: object) -> _FakeResult:
-        return _FakeResult()  # Runner.run_streamed 是同步方法（流在 stream_events）
+        # Runner.run_streamed 是同步方法（流在 stream_events）
+        holder["r"] = _FakeResult()
+        return holder["r"]
 
     monkeypatch.setattr(ask_mod.Runner, "run_streamed", _fake_run_streamed)
 
@@ -156,6 +160,8 @@ def test_ask_streams_agui_events_and_records_cost(
     assert row["units"] == 150.0
     assert row["note"].endswith("/ask")
     assert "fixture_id" in row["meta"]
+    # 票 08②：正常完成路径零取消（finally 只对未完成流 cancel）
+    assert holder["r"].cancelled == 0
 
 
 def test_ask_no_intel_degrades_without_model_call(
@@ -296,3 +302,13 @@ def test_ask_stream_close_cancels_upstream(
     finally:
         conn.close()
     assert result_holder["r"].cancelled == 1  # 断开即取消上游
+    # 断开路径 usage 未定（随完成事件到达）——零记账是既定口径，钉死防
+    # 未来"顺手补记账"静默改变
+    conn2 = connect(db_path)
+    try:
+        n_cost = conn2.execute(
+            "SELECT COUNT(*) AS n FROM cost_ledger WHERE category = 'llm_call'"
+        ).fetchone()["n"]
+    finally:
+        conn2.close()
+    assert n_cost == 0

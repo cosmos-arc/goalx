@@ -98,7 +98,9 @@ export function createAskTransport(fixtureId: number): ChatTransport<UIMessage> 
 					stream.close();
 				},
 				cancel() {
-					// ai-sdk 流取消：三层收尾——上游 run 取消 + fetch 真断流 + 退订
+					// ai-sdk 流取消。真断流靠 controller.abort()（下方 fetch 的
+					// signal）；abortRun 只中止 HttpAgent 内部控制器——其 signal
+					// 已被我们的 fetch 覆盖，调用属协议卫生而非断流机制
 					agent.abortRun();
 					controller.abort();
 					subscription?.unsubscribe();

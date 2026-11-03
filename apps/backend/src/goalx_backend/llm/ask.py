@@ -5,7 +5,8 @@
 RUN_FINISHED；失败 RUN_ERROR 收尾），经 openai-agents Runner 流式调
 GLM（ADR-0004），prompt 只注入该场已存证情报。无情报场次不调模型，
 直接走诚实降级话术（零成本）。每次调用按 usage 记 cost_ledger
-（用途标签 ask）。追问不落任何预测/证据工件（advisory 层）。
+（用途标签 ask；断开/失败路径 usage 未定不记账——上游取消后无完成
+事件，票 08②）。追问不落任何预测/证据工件（advisory 层）。
 """
 
 from __future__ import annotations
