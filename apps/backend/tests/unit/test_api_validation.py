@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from goalx_backend.config import Settings
-from goalx_backend.db import connect, migrate
+from goalx_backend.db import connect, connect_research, migrate
 from goalx_backend.evaluation.forward_validation import (
     ForwardCoverage,
     ForwardGroupMetrics,
@@ -22,18 +22,22 @@ from goalx_backend.main import create_app
 
 @pytest.fixture
 def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
-    """预置一个 done 回测 run（含指标）与注单的 API 客户端。"""
+    """预置一个 done 回测 run（含指标）与注单的 API 客户端。
+
+    backtest 行种进研究库（票 07②：验证页回测读面与运行面库分文件）。"""
     db_path = tmp_path / "validation.db"
+    research_path = tmp_path / "research.db"
     conn = connect(db_path)
     migrate(conn)
-    conn.execute(
+    rconn = connect_research(research_path)
+    rconn.execute(
         "INSERT INTO backtest_runs (label, params, status, created_at, finished_at,"
         " summary) VALUES ('m2-smoke', '{}', 'done', '2026-09-13T10:00:00+00:00',"
         " '2026-09-13T10:05:00+00:00', ?)",
         (json.dumps({"predictions": 100, "bets": 12, "roi": -0.01}),),
     )
-    run_id = int(conn.execute("SELECT id FROM backtest_runs").fetchone()["id"])
-    conn.execute(
+    run_id = int(rconn.execute("SELECT id FROM backtest_runs").fetchone()["id"])
+    rconn.execute(
         "INSERT INTO backtest_metrics (run_id, scope, metrics)"
         " VALUES (?, 'overall', ?)",
         (
@@ -49,10 +53,11 @@ def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
             ),
         ),
     )
-    conn.execute(
+    rconn.execute(
         "INSERT INTO backtest_metrics (run_id, scope, metrics) VALUES (?, 'E0', ?)",
         (run_id, json.dumps({"n": 60, "skill_rps": 0.01})),
     )
+    rconn.commit()
     # 两注已结算 paper 注（yield 曲线）
     comp = conn.execute(
         "INSERT INTO competitions (name, tier, created_at) VALUES ('英超','tier1','x')"
@@ -95,7 +100,10 @@ def seeded_client(tmp_path: Path) -> Iterator[TestClient]:
         )
     conn.commit()
     conn.close()
-    with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
+    rconn.close()
+    with TestClient(
+        create_app(settings=Settings(db_path=db_path, research_db_path=research_path))
+    ) as client:
         yield client
 
 

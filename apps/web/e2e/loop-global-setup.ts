@@ -7,8 +7,11 @@ import path from "node:path";
  */
 export default function globalSetup(): void {
 	const dbPath = path.join(import.meta.dirname, "../test-results/loop-e2e.db");
+	// 票 07②：验证页回测读面走研究库（playwright.loop.config 同名文件）
+	const researchDbPath = path.join(import.meta.dirname, "../test-results/loop-e2e-research.db");
 	for (const suffix of ["", "-wal", "-shm"]) {
 		rmSync(`${dbPath}${suffix}`, { force: true });
+		rmSync(`${researchDbPath}${suffix}`, { force: true });
 	}
 	execSync("uv run --no-sync python -m goalx_backend.cli migrate", {
 		cwd: path.resolve(import.meta.dirname, "../../.."),

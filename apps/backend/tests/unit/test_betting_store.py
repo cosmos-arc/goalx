@@ -149,6 +149,44 @@ def test_materialize_combinations(db: sqlite3.Connection) -> None:
     assert count == 2
 
 
+def test_materialize_combinations_rejects_over_limit(
+    db: sqlite3.Connection,
+) -> None:
+    """票 07④：组合数超上限先算后拒——拒绝发生在任何写入之前。"""
+    slip = bt.create_slip(db, BetMode.PAPER)
+    for seq in range(1, 15):  # 14 场 × 3 向 = 4,782,969 > 10 万
+        for sel in ("3", "1", "0"):
+            bt.add_pool_pick(db, slip, seq, sel)
+    with pytest.raises(ValueError, match="超上限"):
+        bt.materialize_combinations(db, slip)
+    # 拒绝零写入：无组合行，也无半截删除/插入
+    n = db.execute(
+        "SELECT COUNT(*) AS n FROM combinations WHERE slip_id = ?", (slip,)
+    ).fetchone()["n"]
+    assert n == 0
+
+
+def test_materialize_combinations_preserves_prior_rows_on_reject(
+    db: sqlite3.Connection,
+) -> None:
+    """超限拒绝不动已物化的上一轮组合（幂等面不被毒化）。"""
+    slip = bt.create_slip(db, BetMode.PAPER)
+    for sel in ("3", "1"):
+        bt.add_pool_pick(db, slip, 1, sel)
+    bt.add_pool_pick(db, slip, 2, "0")
+    assert bt.materialize_combinations(db, slip) == 2
+    # 追加复式面致超限（2×3^13 连乘远超 10 万）
+    for seq in range(2, 15):
+        for sel in ("3", "1", "0"):
+            bt.add_pool_pick(db, slip, seq, sel)
+    with pytest.raises(ValueError, match="超上限"):
+        bt.materialize_combinations(db, slip)
+    count = db.execute(
+        "SELECT COUNT(*) AS n FROM combinations WHERE slip_id = ?", (slip,)
+    ).fetchone()["n"]
+    assert count == 2
+
+
 def test_bankroll_events(db: sqlite3.Connection) -> None:
     bet = bt.create_bet(db, BetMode.LIVE, MarketKind.FIXED, 2.0)
     assert bt.bankroll_balance(db) is None

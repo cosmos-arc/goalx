@@ -1892,3 +1892,91 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (34, _apply_v34),
     (35, _apply_v35),
 )
+
+
+# ---- 研究库（boundary-hardening 票 07②：回测表物理迁出运行面库） ----
+# 版本号独立于运行面 MIGRATIONS（不同文件各自的 schema_migrations）。
+# DDL 与运行面终态同形（v3 建 + v25 重建后的形状）；运行面历史链不动。
+
+
+def _apply_research_v1(conn: sqlite3.Connection) -> None:
+    """研究库首版：backtest 四表终态形状。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id INTEGER PRIMARY KEY,
+            label TEXT NOT NULL,
+            params TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running'
+                CHECK (status IN ('running', 'done', 'failed')),
+            created_at TEXT NOT NULL,
+            finished_at TEXT,
+            summary TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtest_predictions (
+            id INTEGER PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+            match_key TEXT NOT NULL,
+            competition TEXT NOT NULL,
+            season TEXT NOT NULL,
+            match_date TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            era TEXT,
+            ftr TEXT CHECK (ftr IN ('H', 'D', 'A') OR ftr IS NULL),
+            had_probs TEXT NOT NULL,
+            fair_probs TEXT NOT NULL,
+            fair_source TEXT NOT NULL
+                CHECK (fair_source IN ('psc', 'avgc', 'traj_anchor', 'traj_cons')),
+            model_fingerprint TEXT NOT NULL,
+            train_window_end TEXT NOT NULL,
+            UNIQUE (run_id, match_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtest_bets (
+            id INTEGER PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+            kind TEXT NOT NULL CHECK (kind IN ('single', 'parlay2')),
+            competition TEXT NOT NULL,
+            placed_week TEXT NOT NULL,
+            stake REAL NOT NULL,
+            legs TEXT NOT NULL,
+            ev REAL NOT NULL,
+            kelly REAL,
+            status TEXT NOT NULL CHECK (status IN ('won', 'lost', 'void')),
+            payout REAL NOT NULL,
+            profit REAL NOT NULL,
+            detail TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtest_metrics (
+            id INTEGER PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES backtest_runs(id),
+            scope TEXT NOT NULL,
+            metrics TEXT NOT NULL,
+            UNIQUE (run_id, scope)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_backtest_bets_run ON backtest_bets(run_id)"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_backtest_predictions_run
+            ON backtest_predictions(run_id)
+        """
+    )
+
+
+RESEARCH_MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = ((1, _apply_research_v1),)

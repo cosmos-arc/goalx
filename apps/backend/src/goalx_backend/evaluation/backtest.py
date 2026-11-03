@@ -51,6 +51,7 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -1465,6 +1466,7 @@ def run_backtest(
     params: BacktestParams,
     *,
     label: str,
+    fingerprint_conn: sqlite3.Connection | None = None,
 ) -> BacktestResult:
     """
     执行一次完整回测（run 维度隔离，同参数重跑产生新 run）。
@@ -1473,6 +1475,12 @@ def run_backtest(
     相同的 ``settle_fixed_bet`` 代码路径。数据面 = gold 快照：run params
     入档 gold 版本/构建戳/输入 digest 与成熟度基准日（gold 构建侧钉的
     口径，非 run 日）——重放差异由该组字段解释。
+
+    conn = 研究库连接（票 07② 人裁决①：backtest 表物理独立于运行面库，
+    组合根注入；fingerprint_conn = 运行面库连接，供运行指纹 db 面描述
+    系统身份，缺席时指纹 db 面退用 conn）。事务粒度（票 07②）：running
+    行先提交（其他连接中途可见），逐联赛一短事务（回测进行中运行面库
+    写入不被占——研究库分文件后更是零竞争面）。
     """
     _validate_window(params)
     matches, lag_rows, gold_version, view_status, duplicates = fetch_decade_matches(
@@ -1506,7 +1514,10 @@ def run_backtest(
         "gold_maturity_today": meta.get("maturity_today"),
         "gold_input_digests": meta.get("input_digests"),
         # 票 06：运行指纹（git/deps/db/corpus 四面），隔离复现可对工件倒推输入
-        "run_fingerprint": rfp.build_run_fingerprint(conn=conn, store=store),
+        "run_fingerprint": rfp.build_run_fingerprint(
+            conn=fingerprint_conn if fingerprint_conn is not None else conn,
+            store=store,
+        ),
     }
     cur = conn.execute(
         """
@@ -1516,6 +1527,9 @@ def run_backtest(
         (label, json.dumps(run_params, ensure_ascii=False), utc_now_iso()),
     )
     run_id = int(cur.lastrowid or 0)
+    # running 先提交（票 07②）：进度面对其他连接即刻可见，不与后续计算
+    # 同处一个跨全程长事务
+    conn.commit()
     result = BacktestResult(run_id=run_id)
     try:
         by_comp: dict[str, list[GoldMatch]] = {}
@@ -1531,6 +1545,8 @@ def run_backtest(
                 result,
                 lag_face=lag_face,
             )
+            # 逐联赛 checkpoint 提交（票 07②）：单联赛一短事务
+            conn.commit()
         conn.execute(
             """
             UPDATE backtest_runs
@@ -1563,7 +1579,12 @@ def run_backtest(
             ),
         )
         conn.commit()
-    except Exception:
+    except BaseException:
+        # 中途失败：已提交的逐联赛行保留（与既有语义一致——失败前从未回滚
+        # 过），run 标 failed 由读者判不完整。BaseException（correctness F3）：
+        # running 先提交后，Ctrl-C（KeyboardInterrupt）也必须把 run 落到
+        # failed——否则留下永久 running 僵尸行（SIGKILL 仍不可拦，读面按
+        # created_at 陈旧度识别）
         conn.execute(
             "UPDATE backtest_runs SET status = 'failed', finished_at = ? WHERE id = ?",
             (utc_now_iso(), run_id),
@@ -1571,6 +1592,86 @@ def run_backtest(
         conn.commit()
         raise
     return result
+
+
+# 研究库历史回填（票 07②）：四表保 id 搬运；表名字面量（归属闸）；
+# 字面量拼接只为行宽（同 model_layers 先例）。ON CONFLICT(id) DO NOTHING
+# 只忽略主键撞号（correctness F5：OR IGNORE 会连 CHECK/NOT NULL 违反一并
+# 静默吞）——SELECT 侧 WHERE true 是 SQLite 对带 SELECT 的 upsert 的
+# 解析要求
+_RESEARCH_BACKFILL_SQL: tuple[tuple[str, str], ...] = (
+    (
+        "backtest_runs",
+        "INSERT INTO research.backtest_runs SELECT * FROM backtest_runs"  # noqa: S608
+        + " WHERE true ON CONFLICT(id) DO NOTHING",
+    ),
+    (
+        "backtest_predictions",
+        "INSERT INTO research.backtest_predictions"  # noqa: S608
+        + " SELECT * FROM backtest_predictions WHERE true"
+        + " ON CONFLICT(id) DO NOTHING",
+    ),
+    (
+        "backtest_bets",
+        "INSERT INTO research.backtest_bets SELECT * FROM backtest_bets"  # noqa: S608
+        + " WHERE true ON CONFLICT(id) DO NOTHING",
+    ),
+    (
+        "backtest_metrics",
+        "INSERT INTO research.backtest_metrics"  # noqa: S608
+        + " SELECT * FROM backtest_metrics WHERE true"
+        + " ON CONFLICT(id) DO NOTHING",
+    ),
+)
+
+
+def backfill_research(
+    conn: sqlite3.Connection, research_db_path: Path
+) -> dict[str, int]:
+    """
+    运行面库 backtest 历史一次性搬入研究库（票 07② 人裁决①）。
+
+    conn = 运行面库连接；研究库 ATTACH 为 research。id 保序（报告/工件
+    引用的 run id 不漂移）；ON CONFLICT(id) 幂等可重跑。搬运后运行面库
+    旧行只读留存。列形漂移（运行面新列而研究库 DDL 未跟）与历史行违反
+    研究库 CHECK/NOT NULL 都会在此处声性报错而非静默截断（F5）。
+
+    撞号守卫：研究库已有与运行面库不同源的 run（先跑过新回测——自增
+    id 与历史 id 重叠但内容不同，或 id 不在历史集内）时直接拒绝，提示
+    清空研究库重跑（一次性迁移，正常路径先 backfill 后回测；纯重跑的
+    镜像行放行）。
+
+    原子性（correctness F4）：守卫与四表搬运同处一个 BEGIN IMMEDIATE
+    事务（对全部 attached 库取写锁）——并发新回测要么在守卫前落
+    running 行（守卫看到不同源行→拒绝），要么 busy 等待清晰报错；
+    守卫 SELECT 与搬运 INSERT 之间无窗口。代价：搬运期间并发回测会
+    撞写锁报错——一次性迁移时段属可接受（清晰失败优于静默丢行）。
+    """
+    conn.execute("ATTACH ? AS research", (str(research_db_path),))
+    copied: dict[str, int] = {}
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        foreign = conn.execute(
+            "SELECT COUNT(*) FROM research.backtest_runs AS r"  # noqa: S608
+            + " WHERE NOT EXISTS (SELECT 1 FROM backtest_runs AS s"
+            + " WHERE s.id = r.id AND s.label = r.label"
+            + " AND s.created_at = r.created_at)"
+        ).fetchone()
+        if int(foreign[0]) > 0:
+            raise RuntimeError(
+                f"研究库存在 {int(foreign[0])} 条与运行面库不同源的 run——"
+                + "先跑过新回测会与历史 id 撞号静默丢行；"
+                + "请清空研究库后重跑本命令，再跑新回测"
+            )
+        for table, sql in _RESEARCH_BACKFILL_SQL:
+            cur = conn.execute(sql)
+            copied[table] = max(cur.rowcount, 0)
+        conn.commit()
+    finally:
+        if conn.in_transaction:
+            conn.rollback()
+        conn.execute("DETACH research")
+    return copied
 
 
 def run_summary(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:

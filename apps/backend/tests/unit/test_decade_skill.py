@@ -420,3 +420,25 @@ def test_bet_without_detail_raises(db, store):
     db.execute("UPDATE backtest_bets SET detail = NULL")
     with pytest.raises(ValueError, match="detail"):
         dsk.build_decade_skill_report(db, store, run_id=run_id)
+
+
+def test_report_on_research_conn_with_fingerprint_conn(
+    db: sqlite3.Connection, store: CorpusStore, tmp_path: Path
+) -> None:
+    """票 07② correctness F1：报告读面=研究库（只有 backtest 四表），
+    指纹 db 面经 fingerprint_conn 描述运行面库——不崩、不空。"""
+    from goalx_backend.db import connect_research
+
+    rconn = connect_research(tmp_path / "research.db")
+    try:
+        run_id = _seed_run(rconn, "split")
+        _seed_pred(rconn, run_id, "s1", era="psc_proxy")
+        rconn.commit()
+        payload = dsk.build_decade_skill_report(
+            rconn, store, run_id=run_id, fingerprint_conn=db
+        )
+    finally:
+        rconn.close()
+    assert payload["prediction_faces"]["overall"]["n"] == 1
+    # 指纹 db 面=运行面库身份（fixtures 等表在 db 里），非 None 非研究库空面
+    assert payload["run_fingerprint"]["db"] is not None

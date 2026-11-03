@@ -693,47 +693,89 @@ def test_gold_rebuild_defers_low_headroom(
     built: Built, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """票 03 运行实录加固（2026-11-02 首班 OOM）：余量 <6GiB 整轮
-    deferred 零写入——不建库不碰树，明日定拍自愈（晨检面兜底可见）。"""
-    from types import SimpleNamespace
+    deferred 零写入——不建库不碰树，明日定拍自愈（晨检面兜底可见）。
 
+    票 07③：探测发生在预算内（silver_build_lock 持锁后）。"""
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
-    monkeypatch.setattr(
-        tasks_mod.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(available=1 * 1024**3),
-    )
-    monkeypatch.setattr(
-        tasks_mod.psutil, "swap_memory", lambda: SimpleNamespace(free=0)
-    )
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 * 1024**3)
     payload = tasks_mod.gold_rebuild(settings=settings)
     assert str(payload["deferred"]).startswith("deferred_low_headroom:")
     assert "market" not in payload  # 零写入让位，不是半程降级
+
+
+def test_gold_rebuild_low_headroom_defer_releases_budget(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 07③：低余量 deferred 从预算内早退——锁必须释放，不能把
+    silver_build_lock 留驻到 6h 过期（那会把明日定拍也顶掉）。"""
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 * 1024**3)
+    assert "deferred" in tasks_mod.gold_rebuild(settings=settings)
+    probe = CorpusStore(settings.corpus_root)
+    try:
+        row = (
+            probe._checkpoint()
+            .execute("SELECT COUNT(*) AS n FROM srct_remat_lock")
+            .fetchone()
+        )
+    finally:
+        probe.close()
+    assert row["n"] == 0  # 预算已还，不是留驻
+
+
+def test_gold_rebuild_lock_precedes_headroom_probe(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 07③ 序钉死：锁先于余量探测——锁被占且余量不足时，上报的是
+    持锁人（lock_busy）而非 low_headroom。若探测被移回锁外，本测试红。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 * 1024**3)
+    holder = CorpusStore(settings.corpus_root)
+    try:
+        holder._checkpoint().execute(
+            "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+            " VALUES (1, 424243, ?, 'remat-run')",
+            (datetime.now(UTC).isoformat(timespec="seconds"),),
+        )
+        holder._checkpoint().commit()
+    finally:
+        holder.close()
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_silver_build_lock_busy:")
+    assert "market" not in payload
 
 
 def test_gold_rebuild_defers_on_silver_build_lock(
     built: Built, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """boundary-hardening 票 02：与 srct-remat/手工构建共用 silver 锁——
-    撞锁（如 08:10 全量未收班）deferred 让位，零写入不并行重建。"""
+    撞锁（如 08:10 全量未收班）deferred 让位，零写入不并行重建。
+
+    票 07③：锁先于余量探测——预算被占时直接让位（哪怕余量同时不足，
+    上报的也是持锁人，运维面可定位）。"""
     from datetime import UTC, datetime
-    from types import SimpleNamespace
 
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
     # 余量充足，隔离出锁路径（CI 小盒不因 headroom 误deferred）
-    monkeypatch.setattr(
-        tasks_mod.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(available=8 * 1024**3),
-    )
-    monkeypatch.setattr(
-        tasks_mod.psutil, "swap_memory", lambda: SimpleNamespace(free=0)
-    )
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 8 * 1024**3)
     holder = CorpusStore(settings.corpus_root)
     try:
         holder._checkpoint().execute(

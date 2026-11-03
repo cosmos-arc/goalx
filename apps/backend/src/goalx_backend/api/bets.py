@@ -473,12 +473,27 @@ async def list_slips(db: DbDep) -> list[SlipView]:
 @router.post(
     "/api/v1/pool-slips",
     summary="创建待结算的 paper 池票草稿",
-    responses={400: {"description": "暂不支持 live 奖池票"}},
+    responses={
+        400: {"description": "暂不支持 live 奖池票"},
+        422: {
+            "description": "复式组合数超上限(10万);载荷校验失败",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/HTTPValidationError"}
+                }
+            },
+        },
+    },
     status_code=201,
     response_model=SlipView,
 )
-async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
-    """按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。"""
+def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
+    """
+    按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
+
+    组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
+    线程池不占事件循环（correctness F6，同票 07①）。
+    """
     if payload.mode is BetMode.LIVE:
         raise HTTPException(
             status_code=400, detail="奖池奖金未实现, 暂不支持 live 池票"
@@ -491,25 +506,30 @@ async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
         raise HTTPException(
             status_code=404, detail=f"pool period {payload.pool_period_id} 不存在"
         )
-    with atomic(db):
-        slip = bt_store.create_slip(
-            db,
-            payload.mode,
-            pool_period_id=payload.pool_period_id,
-            note=payload.note,
-            source="manual",
-        )
-        for pick in payload.picks:
-            bt_store.add_pool_pick(
+    try:
+        with atomic(db):
+            slip = bt_store.create_slip(
                 db,
-                slip,
-                pick.match_seq,
-                pick.selection_code,
-                fixture_id=pick.fixture_id,
+                payload.mode,
+                pool_period_id=payload.pool_period_id,
+                note=payload.note,
+                source="manual",
             )
-        bt_store.materialize_combinations(
-            db, slip, stake_per_combination=payload.stake_per_combination
-        )
+            for pick in payload.picks:
+                bt_store.add_pool_pick(
+                    db,
+                    slip,
+                    pick.match_seq,
+                    pick.selection_code,
+                    fixture_id=pick.fixture_id,
+                )
+            bt_store.materialize_combinations(
+                db, slip, stake_per_combination=payload.stake_per_combination
+            )
+    except bt_store.CombinationLimitExceeded as exc:
+        # 票 07④：组合数超上限=4xx 拒绝（atomic 回滚,不落半截票）。
+        # 专用异常而非裸 ValueError——同块其他来源的 ValueError 不被误标
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     row = bt_store.get_slip(db, slip)
     if row is None:
         raise HTTPException(status_code=500, detail="slip vanished after insert")

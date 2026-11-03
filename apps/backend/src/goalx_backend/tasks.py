@@ -20,7 +20,6 @@ from datetime import UTC, date, datetime, timedelta
 
 import duckdb
 import httpx
-import psutil
 from loguru import logger
 
 from goalx_backend.betting import frozen as frozen_mod
@@ -452,11 +451,6 @@ def settlement_sweep() -> dict[str, int]:
         return run_settlement(conn)
 
 
-# gold-rebuild 内存余量下限（remat 票 13 FULL_REMAT_MIN_HEADROOM_BYTES 同值）：
-# 16GB+6GB swap 盒上 build_market_quotes 峰值 ~3.2GB，低于此余量并发必 OOM
-_GOLD_REBUILD_MIN_HEADROOM_BYTES = 6 * 1024**3
-
-
 def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     """
     Gold 日频重算（misprice 票 03①）：market_quote 保鲜 + gold 全量重建。
@@ -475,18 +469,23 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     构建互斥（boundary-hardening 票 02）：market_quote 面与手工
     srct-market/srct-odds 同走 silver_build_lock（同一把 srct_remat_lock）
     ——撞锁（如 08:10 全量 remat 未收班）即 deferred 让位，不并行重建。
+
+    余量探测在预算内（票 07③）：先持 silver_build_lock（重任务并发
+    预算=1），锁内测余量——"通过余量检查"即蕴含"独占预算"，启动瞬间
+    两任务同时通过检查后各自分配内存的窗口被关死。口径/下限与 remat
+    全量同源（srct_remat.headroom_bytes / FULL_REMAT_MIN_HEADROOM_BYTES）。
     """
     resolved = settings if settings is not None else get_settings()
-    headroom = psutil.virtual_memory().available + psutil.swap_memory().free
-    if headroom < _GOLD_REBUILD_MIN_HEADROOM_BYTES:
-        note = f"deferred_low_headroom: {headroom / 1024**3:.1f}GiB"
-        logger.warning("gold-rebuild {}", note)
-        return {"deferred": note}
     if not resolved.db_path.exists():
         raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
     store = CorpusStore(resolved.corpus_root)
     try:
         with srct_remat.silver_build_lock(store):
+            headroom = srct_remat.headroom_bytes()
+            if headroom < srct_remat.FULL_REMAT_MIN_HEADROOM_BYTES:
+                note = f"deferred_low_headroom: {headroom / 1024**3:.1f}GiB"
+                logger.warning("gold-rebuild {}", note)
+                return {"deferred": note}  # with 出口释放预算，明日定拍自愈
             market_report = srct_market.build_market_quotes(store)
             face = connect(resolved.db_path)
             try:

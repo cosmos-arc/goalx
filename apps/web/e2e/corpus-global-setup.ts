@@ -10,11 +10,13 @@ import path from "node:path";
  * 与 loop 夹具（seed-demo 演示数据）分离：本套件证明真实 corpus 读径。
  */
 export const corpusDbPath = path.join(import.meta.dirname, "../test-results/corpus-e2e.db");
+export const corpusResearchDbPath = path.join(import.meta.dirname, "../test-results/corpus-e2e-research.db");
 export const corpusRootPath = path.join(import.meta.dirname, "../test-results/corpus-e2e-tree");
 
 export default function globalSetup(): void {
 	for (const suffix of ["", "-wal", "-shm"]) {
 		rmSync(`${corpusDbPath}${suffix}`, { force: true });
+		rmSync(`${corpusResearchDbPath}${suffix}`, { force: true });
 	}
 	rmSync(corpusRootPath, { recursive: true, force: true });
 	const env = {

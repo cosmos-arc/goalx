@@ -241,6 +241,7 @@ def _review_condition(review_counts: dict[str, int]) -> ConditionProgress:
 def validation_progress(
     conn: sqlite3.Connection,
     *,
+    research_conn: sqlite3.Connection | None = None,
     yield_mode: str = "paper",
     review_counts: dict[str, int] | None = None,
 ) -> ValidationProgressView:
@@ -253,6 +254,9 @@ def validation_progress(
       2026-09-28——周重训后样本窗口重置属诚实降级，历史好版本不作数）；
     - 复核：误导率 ≤10% 且 ≥10 条（review_counts 由 api 层注入）；
     - 整赛季：独立显示，未验收前不通过。
+
+    research_conn = 研究库连接（票 07②：backtest 表读面）。缺省回退 conn
+    ——同库形态（测试/未拆分环境）下 latest_run 照读。
     """
     clv_stats = clv_mod.clv_report(conn)
     paper_clv_bets = (
@@ -317,14 +321,15 @@ def validation_progress(
     live_rows, live_dups = _settled_bets(conn, "live")
     conditions.append(_season_condition(paper_rows))
 
-    run_row = conn.execute(
+    bt_conn = research_conn if research_conn is not None else conn
+    run_row = bt_conn.execute(
         """
         SELECT * FROM backtest_runs WHERE status = 'done'
         ORDER BY created_at DESC, id DESC LIMIT 1
         """
     ).fetchone()
     latest_view: BacktestRunView | None = (
-        _run_view(run_row, _overall_metrics(conn, int(run_row["id"])))
+        _run_view(run_row, _overall_metrics(bt_conn, int(run_row["id"])))
         if run_row is not None
         else None
     )

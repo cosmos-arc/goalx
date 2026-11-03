@@ -136,18 +136,25 @@ def run_baseline_comparison(
     params: bt.BacktestParams,
     *,
     base_label: str = "baseline",
+    fingerprint_conn: sqlite3.Connection | None = None,
 ) -> dict[str, dict[str, Any]]:
     """
     fair_source=psc/avgc 各跑一个对照 run（旧 run 保留，票 34 验收 5）。
 
     引擎 v2（票 13）后与主回测同走 gold match_features；psc/avgc 为源
     选择器（作用于 fdhist 配对行），配对缺席的行两 run 同步无基准。
+    conn = 研究库连接（票 07②）；fingerprint_conn 透传 run_backtest。
     """
     results: dict[str, dict[str, Any]] = {}
     for source in ("psc", "avgc"):
         run_params = replace(params, fair_source=source)
         result = bt.run_backtest(
-            conn, duck_con, store, run_params, label=f"{base_label}-{source}"
+            conn,
+            duck_con,
+            store,
+            run_params,
+            label=f"{base_label}-{source}",
+            fingerprint_conn=fingerprint_conn,
         )
         results[source] = {
             "run_id": result.run_id,

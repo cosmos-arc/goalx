@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from goalx_backend.api.deps import get_db
+from goalx_backend.api.deps import get_db, get_research_db
 from goalx_backend.evaluation import baseline
 from goalx_backend.evaluation import forward_validation as fwd
 from goalx_backend.evaluation.baseline import BaselineQualityReport
@@ -26,6 +26,8 @@ from goalx_backend.llm.review import verdict_counts as review_verdict_counts
 
 router = APIRouter(tags=["validation"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
+# 回测表读面走研究库（票 07②：与运行面库分文件）
+ResearchDbDep = Annotated[sqlite3.Connection, Depends(get_research_db)]
 
 
 @router.get(
@@ -33,8 +35,8 @@ DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
     summary="回测 run 列表",
     response_model=list[BacktestRunView],
 )
-async def list_backtest_runs(db: DbDep) -> list[BacktestRunView]:
-    """全部回测 run（新→旧），附 overall 指标摘要。"""
+async def list_backtest_runs(db: ResearchDbDep) -> list[BacktestRunView]:
+    """全部回测 run（新→旧），附 overall 指标摘要（读研究库）。"""
     return list_runs(db)
 
 
@@ -44,8 +46,8 @@ async def list_backtest_runs(db: DbDep) -> list[BacktestRunView]:
     response_model=BacktestRunDetailView,
     responses={404: {"description": "run 不存在"}},
 )
-async def get_backtest_run(run_id: int, db: DbDep) -> BacktestRunDetailView:
-    """一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧）。"""
+async def get_backtest_run(run_id: int, db: ResearchDbDep) -> BacktestRunDetailView:
+    """一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。"""
     detail = backtest_run_details(db, run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="run not found")
@@ -59,6 +61,7 @@ async def get_backtest_run(run_id: int, db: DbDep) -> BacktestRunDetailView:
 )
 async def get_validation_progress(
     db: DbDep,
+    research_db: ResearchDbDep,
     yield_mode: Annotated[
         str, Query(pattern="^(paper|live)$", description="收益曲线 mode")
     ] = "paper",
@@ -74,6 +77,7 @@ async def get_validation_progress(
     """
     return validation_progress(
         db,
+        research_conn=research_db,
         yield_mode=yield_mode,
         review_counts=review_verdict_counts(db),
     )

@@ -220,6 +220,7 @@ def build_model_layers_report(
     treatments: list[tuple[str, int]],
     baseline_run_id: int,
     today: date | None = None,
+    fingerprint_conn: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
     """多 treatment vs 基线的模型层对照 → reports/ 双视图。"""
     labels = [label for label, _ in treatments]
@@ -299,7 +300,12 @@ def build_model_layers_report(
         ),
     }
     # 票 06：工件自证身份（git/deps/db/corpus）
-    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
+    # 票 07②：报告读研究库,指纹 db 面仍描述运行面库(fingerprint_conn 透传,
+    # 缺省回退 conn——同库形态如旧)
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(
+        conn=fingerprint_conn if fingerprint_conn is not None else conn,
+        store=store,
+    )
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / f"{REPORT_BASENAME}.md").write_text(
