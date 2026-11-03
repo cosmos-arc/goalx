@@ -64,6 +64,20 @@ export type AppRoute =
 	| "/settings";
 
 /** API 错误 → 可读文本（detail 字符串/对象都处理，不显示 [object Object]）。 */
+export function currentQuotes(error: unknown): CurrentQuote[] | null {
+	if (typeof error !== "object" || error === null || !("detail" in error)) {
+		return null;
+	}
+	const detail = (error as { detail: unknown }).detail;
+	if (typeof detail !== "object" || detail === null || !("current_quotes" in detail)) {
+		return null;
+	}
+	const quotes = (detail as { current_quotes: unknown }).current_quotes;
+	return Array.isArray(quotes) ? (quotes as CurrentQuote[]) : null;
+}
+
+import type { CurrentQuote } from "../api/goalx";
+
 export function errorText(error: unknown): string {
 	if (typeof error === "object" && error !== null && "detail" in error) {
 		const detail = (error as { detail: unknown }).detail;

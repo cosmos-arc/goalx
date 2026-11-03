@@ -1840,6 +1840,21 @@ def _apply_v34(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE pool_sync_runs ADD COLUMN empty_markets TEXT")
 
 
+def _apply_v35(conn: sqlite3.Connection) -> None:
+    """
+    v35（boundary-hardening 票 04）：bets 增 price_source。
+
+    价格来源三分类标签：system_paper（系统纸面决策，服务器验证——唯一
+    进正式纸面成绩面）/ live_backfill（真实票据回录，按实际条款结算，
+    不要求等于系统报价）/ manual_research（手工研究假设，不进正式
+    可执行性验证）。旧行 NULL=未分类（人裁决 2026-11-02：历史不回溯
+    打标，仅新记录生效；消费侧 NULL 按"非 system_paper"排除）。
+    腿级证据身份沿用既有 bet_legs.snapshot_id（服务器报价快照行 id）。
+    """
+    if not _column_exists(conn, "bets", "price_source"):
+        conn.execute("ALTER TABLE bets ADD COLUMN price_source TEXT")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1875,4 +1890,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (32, _apply_v32),
     (33, _apply_v33),
     (34, _apply_v34),
+    (35, _apply_v35),
 )

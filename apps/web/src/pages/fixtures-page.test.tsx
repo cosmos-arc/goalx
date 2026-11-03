@@ -553,3 +553,41 @@ test("poolList-derived single fixture shows no parlay-only badge and can lead a 
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
 	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周四006 主胜");
 });
+
+// ---- boundary-hardening 票 04：建注价变 409 ----
+
+test("create suggestion 409 price drift clears basket and surfaces new price (票 04 裁决①)", async () => {
+	const user = userEvent.setup();
+	await renderAt("/fixtures");
+	await screen.findByTestId("pick-1-h");
+	await user.click(screen.getByTestId("pick-1-h"));
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
+	server.use(
+		http.post("*/api/v1/bets", () =>
+			HttpResponse.json(
+				{
+					detail: {
+						message: "报价已变: fixture 1 h: 5.8（快照 #147）",
+						current_quotes: [
+							{
+								fixture_id: 1,
+								selection_code: "h",
+								server_odds: 5.8,
+								snapshot_id: 147,
+								observed_at: "2026-11-03T10:00:00+00:00",
+							},
+						],
+					},
+				},
+				{ status: 409 },
+			),
+		),
+	);
+	await user.click(screen.getByTestId("basket-open"));
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("报价已变");
+	expect(screen.getByTestId("fixtures-message")).toHaveTextContent("h → 5.80");
+	expect(screen.getByTestId("fixtures-message")).toHaveTextContent("重新选注");
+	// 旧价腿清篮：不再按页面旧价直接落库
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+});

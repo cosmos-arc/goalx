@@ -19,7 +19,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 import duckdb
 from loguru import logger
@@ -731,31 +731,77 @@ def adjudicate_had_quote(  # noqa: PLR0913 判定接缝集随 as-of/源切换/�
     return verdict
 
 
-def _adjudicate_jc(
-    conn: sqlite3.Connection,
-    verdict: HadQuoteVerdict,
-    as_of: str,
-    freshness_seconds: float,
-) -> None:
+class QuoteBinding(NamedTuple):
+    """一选项的服务器报价绑定（boundary-hardening 票 04：身份+赔率+观测时刻）。"""
+
+    snapshot_id: int
+    odds: float
+    observed_at: str
+
+
+def latest_jc_had_rows(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> tuple[dict[str, SnapshotRow], str | None]:
+    """
+    as_of 前可证的每选项最新 sporttery had 快照行（判定与价绑定的共同核）。
+
+    返回 ``(selection → 行, 拿不到三向齐全的原因)``；原因为空即三向齐
+    （原因口径与 _adjudicate_jc 既有 reasons 一致，供其分层降级）。
+    """
     rows = conn.execute(
         """
         SELECT * FROM odds_snapshots
         WHERE fixture_id = ? AND market_code = 'had' AND source = 'sporttery'
         ORDER BY captured_at, id
         """,
-        (verdict.fixture_id,),
+        (fixture_id,),
     ).fetchall()
     if not rows:
-        verdict.mark_unknown("jc_no_quote")
-        return
+        return {}, "jc_no_quote"
     eligible = [r for r in rows if (t := effective_observed_at(r)) and t <= as_of]
     if not eligible:
         # 有报价但无法证明 as_of 前已观测（含旧行 observed_at 未知）
-        verdict.mark_unknown("jc_observed_at_unknown")
-        return
+        return {}, "jc_observed_at_unknown"
     latest = latest_per_selection(eligible)
     if set(latest) != set(SELECTIONS):
-        verdict.reject("jc_three_way_incomplete")
+        return {}, "jc_three_way_incomplete"
+    return latest, None
+
+
+def had_quote_binding(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> dict[str, QuoteBinding] | None:
+    """
+    当前有效 had 三向报价绑定（票 04）：每选项 (快照行 id, 赔率, 观测时刻)。
+
+    None=无法绑定（无报价/观测时点不可证/三向不齐）——调用方按
+    "手工研究假设"降级，不得当系统验证价。
+    """
+    latest, _reason = latest_jc_had_rows(conn, fixture_id, as_of)
+    if not latest:
+        return None
+    return {
+        sel: QuoteBinding(
+            snapshot_id=int(row["id"]),
+            odds=float(row["odds"]),
+            observed_at=str(effective_observed_at(row)),
+        )
+        for sel, row in latest.items()
+    }
+
+
+def _adjudicate_jc(
+    conn: sqlite3.Connection,
+    verdict: HadQuoteVerdict,
+    as_of: str,
+    freshness_seconds: float,
+) -> None:
+    latest, reason = latest_jc_had_rows(conn, verdict.fixture_id, as_of)
+    if reason == "jc_three_way_incomplete":
+        verdict.reject(reason)
+        return
+    if reason is not None:
+        verdict.mark_unknown(reason)
         return
     for sel, row in latest.items():
         verdict.jc_odds[sel] = float(row["odds"])

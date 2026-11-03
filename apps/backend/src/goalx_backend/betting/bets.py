@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 
 from pydantic import BaseModel, Field
@@ -12,7 +13,37 @@ from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import adjudicate_had_quote
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.models import BetMode, LegInput, MarketKind
+from goalx_backend.models import (
+    PRICE_SOURCE_MANUAL_RESEARCH,
+    PRICE_SOURCE_SYSTEM_PAPER,
+    PRICE_SOURCES,
+    BetMode,
+    LegInput,
+    MarketKind,
+)
+
+# 价格来源三分类词表在 models.py（store 与本用例层共用，ADR-0008 归属）；
+# 语义注释见彼处。OFFICIAL_PAPER 语义：
+# - system_paper 系统纸面决策：服务器重取报价验证，腿级证据身份落
+#   bet_legs.snapshot_id——正式纸面成绩面的完整成员；
+# - manual_research 手工研究假设：明确排除出正式可执行性验证/成绩面；
+# - 历史 NULL（人裁决 2026-11-02 不回溯打标）：维持既有面不追溯排除
+#   （"仅新记录生效"），只排除显式 manual_research。
+# 客户端价与服务器价相等容差（同一十进制字面量解析，只防浮点尾差）
+_ODDS_EPSILON = 1e-9
+
+
+def is_official_paper(row: sqlite3.Row) -> bool:
+    """
+    该注是否进正式纸面成绩面（消费侧判据：paper 且非 manual_research）。
+
+    历史 NULL 注不回溯排除（裁决③"仅新记录生效"）；system_paper 完整
+    成员、NULL 维持既有面。manual_research 由 review_views 与
+    settled_purchased_bets 两处消费点强制排除。
+    """
+    return str(row["mode"]) == "paper" and (
+        row["price_source"] != PRICE_SOURCE_MANUAL_RESEARCH
+    )
 
 
 class SameFixtureParlayError(ValueError):
@@ -21,6 +52,16 @@ class SameFixtureParlayError(ValueError):
 
 class BetEligibilityError(ValueError):
     """had 选择/锁定不满足服务端共享证据资格（票 36；界面禁用不替代本判定）。"""
+
+
+class LegQuoteView(BaseModel):
+    """一腿的服务器当前报价（价变 409 载荷）。"""
+
+    fixture_id: int
+    selection_code: str
+    server_odds: float
+    snapshot_id: int
+    observed_at: str
 
 
 class BetDraft(BaseModel):
@@ -46,18 +87,136 @@ class ActualTerms(BaseModel):
     leg_odds: list[ActualLegOdds] = Field(default_factory=list)
 
 
+class PriceMismatchError(ValueError):
+    """
+    纸面价与服务器当前有效报价不一致（票 04 裁决①：返回新价要求确认）。
+
+    current_quotes=价变腿的服务器现价——调用方（HTTP 层）以 409 呈现，
+    客户端确认后按 server_odds 重提（或显式 allow_manual_price 走研究
+    假设类）。
+    """
+
+    def __init__(self, current_quotes: list[LegQuoteView]) -> None:
+        self.current_quotes = current_quotes
+
+        parts = ", ".join(
+            f"{q.fixture_id} {q.selection_code}: {q.server_odds}"
+            for q in current_quotes
+        )  # 快照身份在结构化 current_quotes 里，消息只给人读
+        super().__init__(f"报价已变: {parts}")
+
+
+def resolve_paper_price(
+    conn: sqlite3.Connection, legs: list[LegInput]
+) -> tuple[list[LegInput], str, list[LegQuoteView]]:
+    """
+    纸面建注价绑定（票 04）：按共享证据面重取当前有效 had 报价。
+
+    返回 ``(腿(绑定后), price_source, 价变腿)``：
+
+    - 全腿 had 且三向可绑且客户端价==服务器价 → system_paper，腿带
+      snapshot_id（身份落库）；
+    - 任一价变 → 价变腿列表非空（调用方未显式走手工假设时须 409）；
+    - 任一腿不可绑（非 had 市场 / 无报价 / 三向不齐）→ manual_research
+      （可绑腿仍绑 snapshot_id——证据只增不减，类标签决定官方性）。
+    """
+    moment = utc_now_iso()
+    bound: list[LegInput] = []
+    mismatches: list[LegQuoteView] = []
+    all_bound = True
+    for leg in legs:
+        binding = (
+            quote_evidence.had_quote_binding(conn, leg.fixture_id, moment)
+            if leg.market_code == "had"
+            else None
+        )
+        row = binding.get(leg.selection_code) if binding else None
+        if row is None:
+            all_bound = False
+            bound.append(leg)
+            continue
+        bound.append(leg.model_copy(update={"snapshot_id": row.snapshot_id}))
+        if not math.isclose(leg.locked_odds, row.odds, rel_tol=_ODDS_EPSILON):
+            mismatches.append(
+                LegQuoteView(
+                    fixture_id=leg.fixture_id,
+                    selection_code=leg.selection_code,
+                    server_odds=row.odds,
+                    snapshot_id=row.snapshot_id,
+                    observed_at=row.observed_at,
+                )
+            )
+    source = (
+        PRICE_SOURCE_SYSTEM_PAPER
+        if all_bound and not mismatches
+        else PRICE_SOURCE_MANUAL_RESEARCH
+    )
+    return bound, source, mismatches
+
+
+def rebind_paper_price(
+    conn: sqlite3.Connection, legs: list[LegInput], *, allow_update: bool
+) -> list[LegInput]:
+    """
+    纸面锁定（票级回录）时的价重验（票 04 范围①"确认时"）。
+
+    锁定即正式赛前决策：与建注间隔内报价可能已动。价变且未确认更新 →
+    raise PriceMismatchError（409 返回新价）；allow_update=True = 客户端
+    已确认按服务器价落库——locked_odds 刷新为当前有效价并重绑快照身份。
+    不可绑腿维持原样（锁定时点资格校验另由 validate_had_selections 把关）。
+    """
+    moment = utc_now_iso()
+    mismatches: list[LegQuoteView] = []
+    rebound: list[LegInput] = []
+    for leg in legs:
+        binding = (
+            quote_evidence.had_quote_binding(conn, leg.fixture_id, moment)
+            if leg.market_code == "had"
+            else None
+        )
+        row = binding.get(leg.selection_code) if binding else None
+        if row is None:
+            rebound.append(leg)
+            continue
+        if math.isclose(leg.locked_odds, row.odds, rel_tol=_ODDS_EPSILON):
+            rebound.append(leg.model_copy(update={"snapshot_id": row.snapshot_id}))
+        else:
+            mismatches.append(
+                LegQuoteView(
+                    fixture_id=leg.fixture_id,
+                    selection_code=leg.selection_code,
+                    server_odds=row.odds,
+                    snapshot_id=row.snapshot_id,
+                    observed_at=row.observed_at,
+                )
+            )
+            rebound.append(
+                leg.model_copy(
+                    update={"locked_odds": row.odds, "snapshot_id": row.snapshot_id}
+                )
+            )
+    if mismatches and not allow_update:
+        raise PriceMismatchError(mismatches)
+    return rebound
+
+
 def create_bet_with_legs(
     conn: sqlite3.Connection,
     draft: BetDraft,
     *,
     duck_con: quote_evidence.DuckCon | None = None,
+    price_source: str | None = None,
 ) -> int:
     """
     建注（含校验：竞彩禁止同场串关）；返回 bet id。
 
     建注即落注级 EV 快照（票 41）：锁定时刻的欧共识/模型双口径概率与
-    EV——口径不可得存 None，事后不倒填。
+    EV——口径不可得存 None，事后不倒填。price_source 由 API 层经
+    resolve_paper_price 裁定（live=live_backfill；缺省不落标签=旧行为，
+    仅供既有内部调用）。
     """
+    if price_source is not None and price_source not in PRICE_SOURCES:
+        raise ValueError(f"未知 price_source: {price_source}")
     seen: set[int] = set()
     for leg in draft.legs:
         if leg.fixture_id in seen:
@@ -72,6 +231,7 @@ def create_bet_with_legs(
             draft.stake,
             strategy_version=draft.strategy_version,
             ev_snapshot=snapshot,
+            price_source=price_source,
         )
         for leg in draft.legs:
             bt_store.add_leg(conn, bet, leg)
@@ -158,13 +318,54 @@ def _load_purchasable_bets(
     return bets
 
 
+def _rebind_paper_legs(
+    conn: sqlite3.Connection, bets: list[sqlite3.Row], allow_price_update: bool
+) -> None:
+    """
+    锁定时价重验落库（票 04；调用方已在同票事务内）。
+
+    仅 system_paper 注重验：价变未确认 raise PriceMismatchError（整票
+    回滚）；确认则 locked_odds/snapshot_id 刷新为决策时点服务器价；
+    价格一致也刷新快照身份（锁定时点才是决策时点）。手工研究假设/
+    历史未分类自定价，不重验不改写。
+    """
+    for bet in bets:
+        if bet["price_source"] != PRICE_SOURCE_SYSTEM_PAPER:
+            continue
+        legs = [
+            LegInput(
+                fixture_id=int(leg["fixture_id"]),
+                market_code=str(leg["market_code"]),
+                selection_code=str(leg["selection_code"]),
+                locked_odds=float(leg["locked_odds"]),
+                goal_line=leg["goal_line"],
+            )
+            for leg in json.loads(bet["legs"])
+        ]
+        rebound = rebind_paper_price(conn, legs, allow_update=allow_price_update)
+        bet_id = int(bet["id"])
+        for leg, new in zip(legs, rebound, strict=True):
+            if leg != new:
+                bt_store.update_leg_price_binding(
+                    conn, bet_id, new.fixture_id, new.locked_odds, new.snapshot_id
+                )
+
+
 def record_purchase(
     conn: sqlite3.Connection,
     bet_ids: list[int],
     placed_at: str | None = None,
     actuals: dict[int, ActualTerms] | None = None,
+    *,
+    allow_price_update: bool = False,
 ) -> int:
-    """票级回录：勾选实际购买子集，生成一张票；live 注按实际条款扣减 bankroll。"""
+    """
+    票级回录：勾选实际购买子集，生成一张票；live 注按实际条款扣减 bankroll。
+
+    paper 锁定即正式赛前决策（票 04）：同事务内重验服务器当前有效报价——
+    价变且未确认（allow_price_update=False）raise PriceMismatchError 整票
+    回滚；确认更新则 locked_odds/snapshot_id 刷新为决策时点服务器价。
+    """
     if not bet_ids or len(set(bet_ids)) != len(bet_ids):
         raise ValueError("bet_ids 必须非空且不能重复")
     terms = actuals or {}
@@ -178,6 +379,8 @@ def record_purchase(
         unknown = set(terms) - set(bet_ids)
         if unknown:
             raise ValueError(f"actuals 引用了不在本票内的 bet: {sorted(unknown)}")
+        if mode is BetMode.PAPER:
+            _rebind_paper_legs(conn, bets, allow_price_update)
         slip = bt_store.create_slip(conn, mode, placed_at=at)
         bt_store.attach_bets_to_slip(conn, slip, bet_ids, at)
         for bet in bets:

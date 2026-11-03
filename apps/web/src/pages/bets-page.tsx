@@ -35,6 +35,7 @@ import {
 	todayFixturesKey,
 } from "../lib/query-keys";
 import {
+	currentQuotes,
 	earliestKickoffMs,
 	errorText,
 	legText,
@@ -64,10 +65,29 @@ const FORWARD_LABELS: Record<string, string> = {
 	included: "前瞻纳入",
 	excluded_unlocked: "未锁定, 排除",
 	excluded_post_kickoff: "锁定晚于开赛, 排除",
+	excluded_price_source: "价格未验证, 排除",
 	live_separate: "live 单独分组",
 	missing_closing: "缺 closing",
 	unknown: "资格未知",
 };
+
+/** 价格来源三分类（boundary-hardening 票 04 裁决②：面板可见维度）。 */
+const PRICE_SOURCE_LABELS: Record<string, string> = {
+	system_paper: "系统纸面",
+	live_backfill: "真实回录",
+	manual_research: "手工假设",
+};
+
+function PriceSourceBadge({ source }: { source: string | null | undefined }) {
+	if (source === null || source === undefined) {
+		return null; // 历史注未回溯打标（裁决③）
+	}
+	return (
+		<Badge variant="outline" className="ml-1 text-muted-foreground" data-testid={`price-source-${source}`}>
+			{PRICE_SOURCE_LABELS[source] ?? source}
+		</Badge>
+	);
+}
 
 function ModeBadge({ mode }: { mode: string }) {
 	return mode === "live" ? (
@@ -131,6 +151,7 @@ function BetTable({
 							<TableCell className={TABULAR_NUMS}>{bet.id}</TableCell>
 							<TableCell>
 								<ModeBadge mode={bet.mode} />
+								<PriceSourceBadge source={bet.price_source} />
 							</TableCell>
 							<TableCell className="whitespace-nowrap">{legText(bet)}</TableCell>
 							<TableCell className={`${TABULAR_NUMS} whitespace-nowrap`}>{stakeText(bet)}</TableCell>
@@ -229,14 +250,49 @@ export function BetsPage() {
 			: `建议 #${bet.id} 含场次将在 ${minutes} 分钟后开赛（不足 5 分钟）——锁定后可能失去前瞻复盘资格。再次点击确认锁定。`;
 	}
 
+	// 价变确认（票 04 裁决①）：锁定时服务器报价已变 → 409 展示新价，
+	// 用户确认后按服务器价落库（allow_price_update）。attempts 走 ref：
+	// onError 闭包里 mutation.variables 尚未提交本次值
+	const [priceConfirm, setPriceConfirm] = useState<{
+		betId: number;
+		odds: number;
+		legCount: number;
+	} | null>(null);
 	const lockPaper = useMutation({
-		mutationFn: (betId: number) => recordPurchase({ bet_ids: [betId] }),
+		mutationFn: (input: { betId: number; allowPriceUpdate: boolean }) =>
+			recordPurchase({
+				bet_ids: [input.betId],
+				allow_price_update: input.allowPriceUpdate,
+			}),
 		onSuccess: (slip) => {
 			setMessage(`已锁定纸面票 #${slip.id}（¥${slip.stake_total}，不产生真金流水）`);
+			setPriceConfirm(null);
 			refresh();
 		},
-		onError: (error) => setMessage(`锁定失败：${errorText(error)}`),
+		onError: (error, variables) => {
+			const quotes = currentQuotes(error);
+			const first = quotes?.[0];
+			if (quotes !== null && first !== undefined) {
+				setPriceConfirm({
+					betId: variables.betId,
+					odds: first.server_odds,
+					legCount: quotes.length,
+				});
+				setMessage(
+					`报价已变（${quotes
+						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
+						.join("、")}）——请确认按服务器新价锁定`,
+				);
+			} else {
+				setMessage(`锁定失败：${errorText(error)}`);
+			}
+		},
 	});
+
+	function lockBet(betId: number, allowPriceUpdate: boolean) {
+		setPriceConfirm(null); // 换锁另一注时清旧确认按钮（残留可点）
+		lockPaper.mutate({ betId, allowPriceUpdate });
+	}
 
 	function handleLock(bet: Bet) {
 		const warning = kickoffWarning(bet);
@@ -245,7 +301,7 @@ export function BetsPage() {
 			setMessage(warning);
 			return;
 		}
-		lockPaper.mutate(bet.id);
+		lockBet(bet.id, false);
 	}
 
 	// ---- 真实回录 Drawer（票 06：实际金额/逐腿赔率/时点 + 快照对照） ----
@@ -395,6 +451,19 @@ export function BetsPage() {
 				{message ? (
 					<p data-testid="bets-message" role="status" className="mb-4 rounded-md bg-muted px-3 py-2 text-sm">
 						{message}
+						{priceConfirm ? (
+							<button
+								type="button"
+								data-testid={`price-confirm-${priceConfirm.betId}`}
+								className="ml-3 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground"
+								disabled={lockPaper.isPending}
+								onClick={() => lockBet(priceConfirm.betId, true)}
+							>
+								{priceConfirm.legCount > 1
+									? `按服务器新价确认锁定（${priceConfirm.legCount} 腿已变）`
+									: `按新价 ${priceConfirm.odds.toFixed(2)} 确认锁定`}
+							</button>
+						) : null}
 					</p>
 				) : null}
 

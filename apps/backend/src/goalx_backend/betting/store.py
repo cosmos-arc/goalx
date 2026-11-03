@@ -70,7 +70,13 @@ def decision_key(
 
 
 def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
-    """全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。"""
+    """
+    全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。
+
+    正式纸面成绩面闸门（boundary-hardening 票 04 范围④）：manual_research
+    纸面注排除（验证/CLV 共用本分母）；历史 NULL 不回溯排除（裁决③）。
+    live 注不受影响。
+    """
     rows = conn.execute(
         """
         SELECT b.id AS bet_id, b.mode, b.status, b.market_kind, b.placed_at,
@@ -81,6 +87,7 @@ def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
         FROM bets b
         JOIN bet_legs l ON l.bet_id = b.id
         WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
+          AND NOT (b.mode = 'paper' AND b.price_source IS 'manual_research')
         ORDER BY b.settled_at, b.id, l.id
         """
     ).fetchall()
@@ -179,16 +186,22 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     slip_id: int | None = None,
     strategy_version: str | None = None,
     ev_snapshot: BetEvSnapshot | None = None,
+    price_source: str | None = None,
 ) -> int:
-    """Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。"""
+    """
+    Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。
+
+    price_source=价格来源三分类（票 04，v35 列）；None=不落标签（旧行为）。
+    """
     snap = ev_snapshot or EMPTY_SNAPSHOT
     cur = conn.execute(
         """
             INSERT INTO bets
 (slip_id, mode, market_kind, purchased, stake, placed_at,
             created_at, strategy_version,
-snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model,
+            price_source)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -203,9 +216,32 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             snap.prob_model,
             snap.ev_consensus,
             snap.ev_model,
+            price_source,
         ),
     )
     return _insert_id(cur)
+
+
+def update_leg_price_binding(
+    conn: sqlite3.Connection,
+    bet_id: int,
+    fixture_id: int,
+    locked_odds: float,
+    snapshot_id: int | None,
+) -> None:
+    """
+    锁定时价重绑（票 04）：locked_odds 刷新为服务器决策价+快照身份。
+
+    仅 system_paper 纸面注的确认路径调用（同票事务内）；(bet, fixture)
+    唯一——一注内 fixture 不重复由建注串关校验保证。
+    """
+    conn.execute(
+        """
+        UPDATE bet_legs SET locked_odds = ?, snapshot_id = ?
+        WHERE bet_id = ? AND fixture_id = ?
+        """,
+        (locked_odds, snapshot_id, bet_id, fixture_id),
+    )
 
 
 def add_leg(conn: sqlite3.Connection, bet_id: int, leg: LegInput) -> int:
@@ -239,7 +275,7 @@ def list_bets(
     """List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。"""
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
-            b.actual_stake, b.strategy_version,
+            b.actual_stake, b.strategy_version, b.price_source,
             b.placed_at, b.created_at, b.status, b.payout, b.profit, b.settled_at,
             b.snap_prob_consensus, b.snap_prob_model,
             b.snap_ev_consensus, b.snap_ev_model,
@@ -251,6 +287,7 @@ def list_bets(
             l.market_code,
 'selection_code', l.selection_code, 'locked_odds',
             l.locked_odds, 'actual_odds', l.actual_odds,
+'snapshot_id', l.snapshot_id,
 'goal_line', json_extract(l.meta, '$.goal_line')))
 FROM
             bet_legs l WHERE l.bet_id = b.id) AS legs
@@ -276,6 +313,7 @@ def get_bet(conn: sqlite3.Connection, bet_id: int) -> sqlite3.Row | None:
             'market_code', l.market_code,
 'selection_code', l.selection_code,
             'locked_odds', l.locked_odds, 'actual_odds', l.actual_odds,
+'snapshot_id', l.snapshot_id,
 'goal_line', json_extract(l.meta,
             '$.goal_line')))
 FROM bet_legs l WHERE l.bet_id = b.id) AS legs

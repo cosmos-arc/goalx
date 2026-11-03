@@ -22,6 +22,18 @@ export type DepositInput = Schemas["DepositPayload"];
 export type DepositCreated = Schemas["DepositCreatedView"];
 export type CostSummary = Schemas["CostSummaryView"];
 export type BetCreateInput = Schemas["BetCreate"];
+/**
+ * 价变 409 载荷一腿（boundary-hardening 票 04）。契约中该 schema 内联在
+ * /api/v1/bets 与 /api/v1/bet-slips 的 409 响应里（不进 components，本
+ * 类型为其镜像——后端字段改动时两者需同步）。
+ */
+export type CurrentQuote = {
+	fixture_id: number;
+	selection_code: string;
+	server_odds: number;
+	snapshot_id: number;
+	observed_at: string;
+};
 export type SlipCreateInput = Schemas["SlipCreate"];
 export type StakeAdviceInput = Schemas["StakeAdviceRequest"];
 export type StakeAdvice = Schemas["StakeSuggestion"];

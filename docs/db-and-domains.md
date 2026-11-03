@@ -1020,6 +1020,7 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `snap_prob_model` | REAL | — |
 | `snap_ev_consensus` | REAL | — |
 | `snap_ev_model` | REAL | — |
+| `price_source` | TEXT | — |
 <!-- schema-doc:END:table:bets -->
 <!-- schema-doc:BEGIN:table:bet_legs -->
 #### `bet_legs`

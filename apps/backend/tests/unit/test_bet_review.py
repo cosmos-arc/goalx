@@ -15,7 +15,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.bets import (
+    PRICE_SOURCE_SYSTEM_PAPER,
+    BetDraft,
+    create_bet_with_legs,
+    record_purchase,
+)
 from goalx_backend.betting.store import list_bets
 from goalx_backend.evaluation.bet_review import review_views
 from goalx_backend.models import BetMode, LegInput
@@ -45,6 +50,7 @@ def _seed_fixtures(db: sqlite3.Connection) -> None:
 def _create_bet(
     db: sqlite3.Connection, fixture_id: int, mode: BetMode = BetMode.PAPER
 ) -> int:
+    """造态注：paper 按 system_paper 落标（票 04 后 official 面口径）。"""
     return create_bet_with_legs(
         db,
         BetDraft(
@@ -59,6 +65,7 @@ def _create_bet(
                 )
             ],
         ),
+        price_source=(PRICE_SOURCE_SYSTEM_PAPER if mode is BetMode.PAPER else None),
     )
 
 
@@ -135,6 +142,7 @@ def test_closing_counts_legs_not_bets(db: sqlite3.Connection) -> None:
                 ),
             ],
         ),
+        price_source=PRICE_SOURCE_SYSTEM_PAPER,
     )
     record_purchase(db, [bet_id])
     _seed_closing(db, bet_id, fixture_id=1)  # 只补第一腿

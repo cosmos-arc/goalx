@@ -61,6 +61,7 @@ class PoolPeriodDetailView(BaseModel):
     """期次详情：对阵选择档（ttt14 三向 / goals4 进球档）+ 资金状态 + 口径说明。"""
 
     period_no: str
+    pool_period_id: int  # 稳定期次身份（票 04：池票落库携带,替代前端硬编码 null）
     sales_deadline: str | None = None
     matches: list[PoolMatchView]
     state: PoolStateView | None = None
@@ -199,6 +200,7 @@ async def get_pool_period(
     views = pool_store.match_views(db, pool_period_id, now)
     return PoolPeriodDetailView(
         period_no=period_no,
+        pool_period_id=pool_period_id,
         sales_deadline=pool_store.pool_period_deadline(db, pool_period_id),
         matches=views,
         state=_state_view(pool_store.pool_state_for_period(db, pool_period_id)),
