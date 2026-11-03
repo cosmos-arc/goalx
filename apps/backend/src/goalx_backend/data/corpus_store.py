@@ -8,9 +8,10 @@ duckdb/ + checkpoint.db（本模块自持表 SQL，ADR-0008）。
 
 raw 落盘约定：每响应 gzip 原样字节 + 内容 sha256，路径
 ``raw/{provider}/{dataset}/{key}{ext}.gz``；checkpoint 行记 sha/path/bytes，
-(provider, dataset, key) 唯一——断点续传与零重抓都查这一张表。写入次序
-先文件后 checkpoint 行：中断落在这两步之间时重跑会重抓该条并幂等覆盖，
-同内容重写无害。
+(provider, dataset, key) 唯一——断点续传与零重抓都查这一张表。发布次序
+先文件后 checkpoint 行（同 key 跨进程按数据集目录 flock 互斥、同序完成，
+boundary-hardening 票 03）：中断落在这两步之间时重跑会重抓该条并幂等
+覆盖，同内容重写无害。
 
 bronze 落盘约定（切片 12）：每数据集一文件
 ``bronze/{provider}/{dataset}.ndjson.gz``，NDJSON(gzip) append-only，行 =
@@ -26,6 +27,7 @@ srct_night_summaries（每夜请求/新增/吸收/失败摘要，晨检一眼健
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import gzip
 import hashlib
@@ -33,6 +35,7 @@ import json
 import os
 import re
 import sqlite3
+import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -474,37 +477,53 @@ class CorpusStore:
         键会以不同体重写——ledger 的 sha/fetched_at 必须跟盘上最新体，
         否则 verify_raw 误报腐化、取证时间错档。首写键（内容恒定）行为
         与 INSERT OR IGNORE 时代逐位一致。
+
+        发布互斥（boundary-hardening 票 03，P1-3）：写 tmp→replace→
+        台账三步同序完成后才返回——旧实现文件序与台账序可交叉（A 落盘
+        →B 落盘+B 记账→A 记账=盘上 B 体、台账 A sha）。粒度=数据集目录
+        flock（同 key 必同目录；临界段毫秒级，对采集限速零感知，也免按
+        key 锁文件让 raw 树 inode 翻倍）。tmp 名带随机后缀：同名 .part
+        双班竞态根除（票 03），失败自清，SIGKILL 残留由树 walk 的
+        .part 跳过容忍。
         """
         sha = hashlib.sha256(body).hexdigest()
         path = self.raw_path(provider, dataset, key, ext=ext)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".part")
-        with (
-            tmp.open("wb") as raw_fh,
-            gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
-        ):
-            fh.write(body)
+        # flock 目录用 fd（数据集目录稳定存在，目标文件每次 replace 换
+        # inode 不能锁本体）；kernel 在持锁进程死亡时自动释放，无过期治理
+        lock_fd = os.open(path.parent, os.O_RDONLY)
         try:
-            tmp.replace(path)
-        except FileNotFoundError:
-            # 双班竞态:对端先 replace 走了同名 .part——目标已达成,当成功
-            if not (path.exists() and not tmp.exists()):
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.part")
+            try:
+                with (
+                    tmp.open("wb") as raw_fh,
+                    gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
+                ):
+                    fh.write(body)
+                tmp.replace(path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    tmp.unlink()
                 raise
-        conn = self._checkpoint()
-        conn.execute(
-            """
-            INSERT INTO raw_artifacts
-                (provider, dataset, key, sha256, path, byte_size, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (provider, dataset, key) DO UPDATE SET
-                sha256 = excluded.sha256,
-                path = excluded.path,
-                byte_size = excluded.byte_size,
-                fetched_at = excluded.fetched_at
-            """,
-            (provider, dataset, key, sha, str(path), len(body), utc_now_iso()),
-        )
-        conn.commit()
+            conn = self._checkpoint()
+            conn.execute(
+                """
+                INSERT INTO raw_artifacts
+                    (provider, dataset, key, sha256, path, byte_size, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (provider, dataset, key) DO UPDATE SET
+                    sha256 = excluded.sha256,
+                    path = excluded.path,
+                    byte_size = excluded.byte_size,
+                    fetched_at = excluded.fetched_at
+                """,
+                (provider, dataset, key, sha, str(path), len(body), utc_now_iso()),
+            )
+            conn.commit()
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
         return RawRef(sha256=sha, path=path, byte_size=len(body))
 
     def read_raw(
