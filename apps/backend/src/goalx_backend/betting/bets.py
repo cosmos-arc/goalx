@@ -245,10 +245,18 @@ def create_bet_with_legs(
                 client_request_id=draft.client_request_id,
             )
         except sqlite3.IntegrityError as exc:
-            # 并发竞态：另一请求已用同键落注——回带既有（不落双行）
-            if draft.client_request_id is None or "client_request_id" not in str(exc):
+            # 并发竞态：另一请求已用同键落注——回带既有（不落双行）。
+            # 判别 = UNIQUE 错误码 + 列名（非 client_request_id 的唯一冲突照抛）
+            request_id = draft.client_request_id
+            same_key_race = (
+                request_id is not None
+                and getattr(exc, "sqlite_errorcode", None)
+                == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                and "client_request_id" in str(exc)
+            )
+            if request_id is None or not same_key_race:
                 raise
-            existing = bt_store.bet_id_for_request(conn, draft.client_request_id)
+            existing = bt_store.bet_id_for_request(conn, request_id)
             if existing is None:
                 raise
             return existing

@@ -50,18 +50,24 @@ def _fks(conn: sqlite3.Connection, table: str) -> dict[str, str]:
     return out
 
 
-def _uniques(conn: sqlite3.Connection, table: str) -> list[str]:
-    """唯一键列表（'(`a`,`b`)' 形式；自动 rowid 索引与非唯一索引跳过）。"""
-    keys: list[str] = []
+def _uniques(conn: sqlite3.Connection, table: str) -> list[tuple[str, bool]]:
+    """
+    唯一键列表（'(`a`,`b`)' 形式 + 是否部分索引）。
+
+    自动 rowid 索引与非唯一索引跳过（票 45 评审口径）。
+    """
+    keys: list[tuple[str, bool]] = []
     for idx in conn.execute(f'PRAGMA index_list("{table}")').fetchall():
         # idx = (seq, name, unique, origin, partial)：origin 空=PK 自动索引；
-        # unique=0 = 普通索引（曾误标"唯一键"，票 45 评审修正）
+        # unique=0 = 普通索引（曾误标"唯一键"，票 45 评审修正）；
+        # partial=1 = 部分索引（WHERE 内才约束，票 06 幂等键 NULL 行不受约束）
         if not str(idx[3]) or not int(idx[2]):
             continue
         cols = [
             str(r[2]) for r in conn.execute(f'PRAGMA index_info("{idx[1]}")').fetchall()
         ]
-        keys.append("(" + ", ".join(f"`{c}`" for c in cols if c) + ")")
+        partial = idx[4] == 1
+        keys.append(("(" + ", ".join(f"`{c}`" for c in cols if c) + ")", partial))
     return sorted(set(keys))
 
 
@@ -89,8 +95,9 @@ def render_table_block(conn: sqlite3.Connection, table: str) -> str:
         if name in fks:
             flags.append(f"FK→{fks[name]}")
         lines.append(f"| `{name}` | {ctype} | {'，'.join(flags) or '—'} |")
-    for key in _uniques(conn, table):
-        lines.append(f"\n唯一键 `UNIQUE{key}`")
+    for key, partial in _uniques(conn, table):
+        note = "（部分索引：WHERE 内才约束，NULL 行不受约束）" if partial else ""
+        lines.append(f"\n唯一键 `UNIQUE{key}`{note}")
     triggers = _triggers(conn, table)
     if triggers:
         lines.append("\nappend-only 触发器：" + "、".join(f"`{t}`" for t in triggers))

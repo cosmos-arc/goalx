@@ -193,7 +193,6 @@ export function MarketGoalsPage() {
 				invalidateBets(queryClient);
 			}
 		},
-		onError: (error) => setMessage(`建注失败：${errorText(error)}`),
 	});
 
 	return (
