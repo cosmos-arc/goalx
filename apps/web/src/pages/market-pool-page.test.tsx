@@ -152,7 +152,11 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	expect(submit).toBeEnabled();
 	expect(submit).toHaveTextContent("1 注 × ¥2");
 
-	let captured: { mode?: string; picks?: Array<{ match_seq: number; selection_code: string }> } = {};
+	let captured: {
+		mode?: string;
+		pool_period_id?: number | null;
+		picks?: Array<{ match_seq: number; selection_code: string }>;
+	} = {};
 	server.use(
 		http.post("*/api/v1/pool-slips", async ({ request }) => {
 			captured = (await request.json()) as typeof captured;
@@ -175,6 +179,8 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	expect(await screen.findByTestId("pool-submit-result")).toHaveTextContent("已建纸面池票 #902");
 	// 提交载荷：mode=paper + 官方池码（h→3/d→1/a→0）
 	expect(captured.mode).toBe("paper");
+	// 票 04：池票携带真实期次身份（详情视图 pool_period_id，替代硬编码 null）
+	expect(captured.pool_period_id).toBe(poolPeriodDetailFixture.pool_period_id);
 	expect(captured.picks?.[0]).toEqual({ match_seq: 1, selection_code: "3" });
 });
 

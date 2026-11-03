@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
 import { invalidateBets } from "../lib/query-keys";
-import { errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { currentQuotes, errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import { isPickable, type Leg, MAX_LEGS, makeLeg, type PickableFixture, type Selection } from "./had-quote-ui";
 import { parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
 import {
@@ -108,7 +108,23 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			setBasketOpen(false);
 			invalidateBets(queryClient);
 		},
-		onError: (error) => setMessage(`建注失败：${errorText(error)}`),
+		onError: (error) => {
+			// 价变（票 04 裁决①）：清篮+刷新场次列表（新价随查询回到页面），
+			// 用户按新价重新选注——旧价不经确认直进成绩的红线在服务器侧
+			const quotes = currentQuotes(error);
+			if (quotes !== null && quotes.length > 0) {
+				setLegs([]);
+				setBasketOpen(false);
+				void queryClient.invalidateQueries({ queryKey: ["fixtures", "today"] });
+				setMessage(
+					`报价已变（${quotes
+						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
+						.join("、")}）——已刷新列表，请按新价重新选注`,
+				);
+				return;
+			}
+			setMessage(`建注失败：${errorText(error)}`);
+		},
 	});
 
 	return {

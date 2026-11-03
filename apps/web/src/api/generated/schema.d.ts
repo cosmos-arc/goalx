@@ -236,8 +236,13 @@ export interface paths {
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
         /**
-         * 建注(注级建议; 服务端校验 had 资格)
+         * 建注(注级建议; 服务端校验 had 资格+纸面价绑定)
          * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
+         *
+         *     纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
+         *     had 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则
+         *     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
+         *     manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
          */
         post: operations["create_bet_api_v1_bets_post"];
         delete?: never;
@@ -260,11 +265,12 @@ export interface paths {
         get: operations["list_slips_api_v1_bet_slips_get"];
         put?: never;
         /**
-         * 票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)
+         * 票级回录(paper 提交时重新校验停售/过期+价重验; live 可附实际条款)
          * @description 把勾选的建议注合成一张票并标记已购。
          *
-         *     paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live
-         *     回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
+         *     paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；system_paper
+         *     注另做价重验（票 04）：报价已变 409 返回新价，确认后按服务器价落库；
+         *     live 回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
          */
         post: operations["create_slip_api_v1_bet_slips_post"];
         delete?: never;
@@ -1044,6 +1050,8 @@ export interface components {
             legs: components["schemas"]["LegPayload"][];
             /** Strategy Version */
             strategy_version?: string | null;
+            /** Allow Manual Price */
+            allow_manual_price?: boolean | null;
         };
         /**
          * BetEvSnapshotView
@@ -1076,6 +1084,8 @@ export interface components {
             actual_odds?: number | null;
             /** Goal Line */
             goal_line?: number | null;
+            /** Snapshot Id */
+            snapshot_id?: number | null;
         };
         /**
          * BetMode
@@ -1134,6 +1144,8 @@ export interface components {
             legs: components["schemas"]["BetLegView"][];
             review?: components["schemas"]["BetReviewView"] | null;
             ev_snapshot?: components["schemas"]["BetEvSnapshotView"] | null;
+            /** Price Source */
+            price_source?: string | null;
         };
         /**
          * BlindReviewPayload
@@ -2146,6 +2158,8 @@ export interface components {
         PoolPeriodDetailView: {
             /** Period No */
             period_no: string;
+            /** Pool Period Id */
+            pool_period_id: number;
             /** Sales Deadline */
             sales_deadline?: string | null;
             /** Matches */
@@ -2402,6 +2416,8 @@ export interface components {
             actuals?: {
                 [key: string]: components["schemas"]["ActualTermsPayload"];
             };
+            /** Allow Price Update */
+            allow_price_update?: boolean | null;
         };
         /**
          * SlipView
@@ -3085,6 +3101,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description 纸面价与服务器当前有效报价不一致(返回新价; 按 server_odds 重提,或 allow_manual_price 走研究假设) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3147,6 +3170,13 @@ export interface operations {
             };
             /** @description bet 不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description system_paper 注锁定时服务器报价已变(返回新价; 确认按服务器价落库则 allow_price_update=true 重提) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

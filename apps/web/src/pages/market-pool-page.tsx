@@ -158,7 +158,7 @@ export function MarketPoolPage() {
 		}
 		submitMutation.mutate({
 			mode: "paper",
-			pool_period_id: null,
+			pool_period_id: detail.pool_period_id,
 			stake_per_combination: STAKE_PER_COMBINATION,
 			picks: pickedEntries.map(({ match, code }) => ({
 				match_seq: match.match_seq,

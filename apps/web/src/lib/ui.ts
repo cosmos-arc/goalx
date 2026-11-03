@@ -64,6 +64,27 @@ export type AppRoute =
 	| "/settings";
 
 /** API 错误 → 可读文本（detail 字符串/对象都处理，不显示 [object Object]）。 */
+/** 价变 409 载荷（boundary-hardening 票 04）：服务器当前有效报价腿列表。 */
+export type CurrentQuote = {
+	fixture_id: number;
+	selection_code: string;
+	server_odds: number;
+	snapshot_id: number;
+	observed_at: string;
+};
+
+export function currentQuotes(error: unknown): CurrentQuote[] | null {
+	if (typeof error !== "object" || error === null || !("detail" in error)) {
+		return null;
+	}
+	const detail = (error as { detail: unknown }).detail;
+	if (typeof detail !== "object" || detail === null || !("current_quotes" in detail)) {
+		return null;
+	}
+	const quotes = (detail as { current_quotes: unknown }).current_quotes;
+	return Array.isArray(quotes) ? (quotes as CurrentQuote[]) : null;
+}
+
 export function errorText(error: unknown): string {
 	if (typeof error === "object" && error !== null && "detail" in error) {
 		const detail = (error as { detail: unknown }).detail;

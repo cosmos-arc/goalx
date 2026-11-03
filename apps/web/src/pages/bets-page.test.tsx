@@ -428,3 +428,66 @@ test("shows empty states honestly when there are no bets", async () => {
 	expect(screen.getByText("尚无已结算注——开奖导入并结算后在这里复盘。")).toBeInTheDocument();
 	expect(screen.getByText("无回录票。")).toBeInTheDocument();
 });
+
+// ---- boundary-hardening 票 04：价变确认 + 价格来源维度 ----
+
+test("lock price-drift 409 → confirm at server price (票 04 裁决①)", async () => {
+	const user = userEvent.setup();
+	await renderBets();
+	await screen.findByTestId("section-suggestions");
+	const bodies: Array<Record<string, unknown>> = [];
+	let calls = 0;
+	server.use(
+		http.post("*/api/v1/bet-slips", async ({ request }) => {
+			calls += 1;
+			bodies.push((await request.json()) as Record<string, unknown>);
+			if (calls === 1) {
+				return HttpResponse.json(
+					{
+						detail: {
+							message: "报价已变: fixture 1 h: 5.8（快照 #147）",
+							current_quotes: [
+								{
+									fixture_id: 1,
+									selection_code: "h",
+									server_odds: 5.8,
+									snapshot_id: 147,
+									observed_at: "2026-11-03T10:00:00+00:00",
+								},
+							],
+						},
+					},
+					{ status: 409 },
+				);
+			}
+			return HttpResponse.json(
+				{
+					id: 77,
+					mode: "paper",
+					placed_at: "t",
+					note: null,
+					created_at: "t",
+					bet_count: 1,
+					stake_total: 100,
+					profit_total: 0,
+				},
+				{ status: 201 },
+			);
+		}),
+	);
+	await user.click(screen.getByTestId("lock-1"));
+	const confirm = await screen.findByTestId("price-confirm-1");
+	expect(confirm).toHaveTextContent("按新价 5.80 确认锁定");
+	expect(screen.getByTestId("bets-message")).toHaveTextContent("报价已变");
+	await user.click(confirm);
+	expect(await screen.findByTestId("bets-message")).toHaveTextContent("已锁定纸面票 #77");
+	expect(bodies[1]?.["allow_price_update"]).toBe(true);
+});
+
+test("price source dimension visible on rows (票 04 裁决②)", async () => {
+	await renderBets();
+	await screen.findByTestId("section-suggestions");
+	// mock 注 #1=paper/system_paper、#3=live/live_backfill
+	expect(screen.getAllByTestId("price-source-system_paper")[0]).toHaveTextContent("系统纸面");
+	expect(screen.getAllByTestId("price-source-live_backfill")[0]).toHaveTextContent("真实回录");
+});

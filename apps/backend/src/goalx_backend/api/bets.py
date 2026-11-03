@@ -12,12 +12,15 @@ from pydantic import BaseModel, Field
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
+    PRICE_SOURCE_LIVE_BACKFILL,
     ActualLegOdds,
     ActualTerms,
     BetDraft,
     BetEligibilityError,
+    PriceMismatchError,
     create_bet_with_legs,
     record_purchase,
+    resolve_paper_price,
     validate_had_selections,
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
@@ -47,6 +50,9 @@ class BetCreate(BaseModel):
     stake: float = Field(gt=0)
     legs: list[LegPayload] = Field(min_length=1)
     strategy_version: str | None = None
+    # 手工研究假设通道(票 04 三分类③):客户端价不被系统报价约束,
+    # 落 manual_research 标签,不进正式纸面成绩面(None/False=系统价通道)
+    allow_manual_price: bool | None = None
 
 
 class ActualLegOddsPayload(BaseModel):
@@ -69,6 +75,9 @@ class SlipCreate(BaseModel):
     bet_ids: list[int] = Field(min_length=1)
     placed_at: str | None = None
     actuals: dict[str, ActualTermsPayload] = Field(default_factory=dict)
+    # 价变确认(票 04 裁决①):锁定时服务器报价已变,409 返回新价后,
+    # 客户端确认按服务器价落库则置 true 重提(None/False=未确认)
+    allow_price_update: bool | None = None
 
 
 class PoolPickPayload(BaseModel):
@@ -98,6 +107,7 @@ class BetLegView(BaseModel):
     locked_odds: float
     actual_odds: float | None = None
     goal_line: float | None = None
+    snapshot_id: int | None = None  # 服务器报价快照身份(票 04;未绑定为 null)
 
 
 class BetEvSnapshotView(BaseModel):
@@ -130,6 +140,9 @@ class BetView(BaseModel):
     legs: list[BetLegView]
     review: BetReviewView | None = None
     ev_snapshot: BetEvSnapshotView | None = None
+    # 价格来源三分类(票 04 裁决② 面板可见维度): system_paper/
+    # live_backfill/manual_research;历史注 null
+    price_source: str | None = None
 
 
 class SlipView(BaseModel):
@@ -214,20 +227,34 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
         legs=[BetLegView(**leg) for leg in json.loads(row["legs"])],
         review=review,
         ev_snapshot=_ev_snapshot_view(row),
+        price_source=row["price_source"],
     )
 
 
 @router.post(
     "/api/v1/bets",
-    summary="建注(注级建议; 服务端校验 had 资格)",
+    summary="建注(注级建议; 服务端校验 had 资格+纸面价绑定)",
     status_code=201,
     response_model=BetView,
     responses={
-        400: {"description": "非法串关(同场多腿)或 had 资格不满足(停售/已开赛/非单固)"}
+        400: {"description": "非法串关(同场多腿)或 had 资格不满足(停售/已开赛/非单固)"},
+        409: {
+            "description": (
+                "纸面价与服务器当前有效报价不一致(返回新价; "
+                "按 server_odds 重提,或 allow_manual_price 走研究假设)"
+            )
+        },
     },
 )
 async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
-    """创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。"""
+    """
+    创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
+
+    纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
+    had 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则
+    system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
+    manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
+    """
     legs = [
         LegInput(
             fixture_id=leg.fixture_id,
@@ -241,16 +268,32 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     try:
         with corpus_duckdb.reader() as duck_con:
             validate_had_selections(db, legs, duck_con=duck_con)
+            if payload.mode is BetMode.LIVE:
+                # live 回录独立路径：按实际条款结算，不要求等于系统报价
+                bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL
+            else:
+                bound, price_source, mismatches = resolve_paper_price(db, legs)
+                if mismatches and not payload.allow_manual_price:
+                    raise PriceMismatchError([m.model_dump() for m in mismatches])
+                if mismatches:
+                    # 显式手工价通道：客户端价保留，类标签③
+                    price_source = "manual_research"
             bet_id = create_bet_with_legs(
                 db,
                 BetDraft(
                     mode=payload.mode,
                     stake=payload.stake,
-                    legs=legs,
+                    legs=bound,
                     strategy_version=payload.strategy_version,
                 ),
                 duck_con=duck_con,
+                price_source=price_source,
             )
+    except PriceMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "current_quotes": exc.current_quotes},
+        ) from exc
     except BetEligibilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ValueError, sqlite3.IntegrityError) as exc:
@@ -277,7 +320,7 @@ async def list_bets(
 
 @router.post(
     "/api/v1/bet-slips",
-    summary="票级回录(paper 提交时重新校验停售/过期; live 可附实际条款)",
+    summary="票级回录(paper 提交时重新校验停售/过期+价重验; live 可附实际条款)",
     status_code=201,
     response_model=SlipView,
     responses={
@@ -285,14 +328,21 @@ async def list_bets(
             "description": "mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固)"
         },
         404: {"description": "bet 不存在"},
+        409: {
+            "description": (
+                "system_paper 注锁定时服务器报价已变(返回新价; "
+                "确认按服务器价落库则 allow_price_update=true 重提)"
+            )
+        },
     },
 )
 async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
     """
     把勾选的建议注合成一张票并标记已购。
 
-    paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；live
-    回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
+    paper 锁定是正式赛前决策，服务器按共享证据再校验停售/过期；system_paper
+    注另做价重验（票 04）：报价已变 409 返回新价，确认后按服务器价落库；
+    live 回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
     """
     actuals: dict[int, ActualTerms] = {
         int(bet_id): ActualTerms(
@@ -329,8 +379,17 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
                         duck_con=duck_con,
                     )
         slip_id = record_purchase(
-            db, payload.bet_ids, payload.placed_at, actuals=actuals
+            db,
+            payload.bet_ids,
+            payload.placed_at,
+            actuals=actuals,
+            allow_price_update=bool(payload.allow_price_update),
         )
+    except PriceMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "current_quotes": exc.current_quotes},
+        ) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BetEligibilityError as exc:

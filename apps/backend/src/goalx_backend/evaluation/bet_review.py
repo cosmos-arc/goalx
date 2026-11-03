@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
+from goalx_backend.betting import bets
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation import clv as clv_mod
 
@@ -63,6 +64,11 @@ def review_views(
             forward = "unknown"
         elif str(row["mode"]) == "live":
             forward = "live_separate"
+        elif not bets.is_official_paper(row):
+            # 消费口径(boundary-hardening 票 04 范围④):正式纸面成绩面只认
+            # system_paper(服务器验证价);manual_research 与历史未分类(NULL,
+            # 人裁决 2026-11-02 不回溯打标)排除
+            forward = "excluded_price_source"
         elif pre_kickoff is not True:
             forward = "excluded_post_kickoff"
         elif closing_present is not True:
