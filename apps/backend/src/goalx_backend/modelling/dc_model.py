@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
+import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -33,10 +35,14 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded
 from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
 
+logger = logging.getLogger(__name__)
+
 # Tier1 五大 fd 代码（票 26：五大主动；Tier2 如 N1 荷甲扩导列为可选项）
 TIER1_COMPETITIONS = ("E0", "SP1", "I1", "D1", "F1")
 DEFAULT_HALF_LIFE_DAYS = 365.0
-ARTIFACT_SCHEMA_VERSION = 1
+# 票 05：身份公式纳入 bootstrap 数量（v1 不含,[] 与非空同身份互相覆盖）。
+# v1 旧工件按落盘 artifact_id 寻址,不做重扫迁移。
+ARTIFACT_SCHEMA_VERSION = 2
 _MIN_TEAMS = 2
 
 
@@ -172,43 +178,133 @@ class TrainingRun:
     base: DCArtifact
     bootstrap: list[DCArtifact] = field(default_factory=list)
     seed: int = 0
+    # 训练环境版本：训练时 None=取当前环境；复载后= payload 冻结值,
+    # 环境升级不改旧工件身份（票 05）。
+    versions: dict[str, str] | None = None
+    # 落盘身份：from_payload 冻结,artifact_id() 直接返回——旧工件（含
+    # v1 公式产物）按落盘身份寻址,不因公式演进而漂移。
+    stored_artifact_id: str | None = None
+    # 身份所属 schema 时代:from_payload 记录,重存时按原 schema 写出,
+    # v1 旧工件复载→重存→复载不因 schema 抬升而自坏。
+    stored_schema: int | None = None
 
     def artifact_id(self) -> str:
-        """
-        工件身份 = 数据指纹 + 训练配置(half-life) + seed + 实现/依赖版本。
+        """内容寻址工件身份（决定文件名,不同配置不互相覆盖）。"""
+        # 身份 = 数据指纹 + 训练配置(half-life/bootstrap 数量) + seed
+        # + 实现/依赖版本。
+        # 票 34 验收 6：同数据不同 half-life/seed/实现版本必须生成不同身份；
+        # 票 05：bootstrap=[] 与非空不同身份（v1 同身份互相覆盖的根因）。
+        if self.stored_artifact_id is not None:
+            return self.stored_artifact_id
+        return self._compute_artifact_id()
 
-        票 34 验收 6：同数据不同 half-life/seed/实现版本必须生成不同身份；
-        身份决定文件名（内容寻址、不互相覆盖，旧工件可追溯）。
+    def _compute_artifact_id(self) -> str:
+        """现行公式重算身份（无视冻结短路——校验/守卫用）。"""
+        canonical = json.dumps(
+            {
+                "data_fingerprint": self.base.data_fingerprint,
+                "half_life_days": self.base.half_life_days,
+                "n_bootstrap": len(self.bootstrap),
+                "seed": self.seed,
+                "versions": self._effective_versions(),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _effective_versions(self) -> dict[str, str]:
+        """身份用版本：复载工件=训练环境冻结值；新建=当前环境。"""
+        return self.versions if self.versions is not None else implementation_versions()
+
+    def _check_frozen_identity(self) -> None:
+        """复载工件的冻结身份必须仍与其内容一致——变更后原身份重存=写坏文件。"""
+        if self.stored_artifact_id is None:
+            return
+        if self.stored_schema == ARTIFACT_SCHEMA_VERSION:
+            ok = self._compute_artifact_id() == self.stored_artifact_id
+        else:
+            ok = self._v1_artifact_id() == self.stored_artifact_id
+        if not ok:
+            raise ValueError("复载工件内容已变更,冻结身份失效:不可原身份重存")
+
+    def to_payload(self) -> dict[str, object]:
+        """Serialize to the on-disk JSON payload shape."""
+        self._check_frozen_identity()
+        schema = (
+            self.stored_schema
+            if self.stored_schema is not None
+            else ARTIFACT_SCHEMA_VERSION
+        )
+        return {
+            "schema_version": schema,
+            "artifact_id": self.artifact_id(),
+            "base": asdict(self.base),
+            "bootstrap": [asdict(boot) for boot in self.bootstrap],
+            "seed": self.seed,
+            "versions": self._effective_versions(),
+        }
+
+    def _v1_artifact_id(self) -> str:
+        """
+        票 34 时代(v1)身份公式快照(不含 n_bootstrap)。
+
+        仅用于旧工件加载校验——历史公式按当时形态保留,勿与现行公式同步。
         """
         canonical = json.dumps(
             {
                 "data_fingerprint": self.base.data_fingerprint,
                 "half_life_days": self.base.half_life_days,
                 "seed": self.seed,
-                "versions": implementation_versions(),
+                "versions": self._effective_versions(),
             },
             sort_keys=True,
         )
         return hashlib.sha256(canonical.encode()).hexdigest()
 
-    def to_payload(self) -> dict[str, object]:
-        """Serialize to the on-disk JSON payload shape."""
-        return {
-            "schema_version": ARTIFACT_SCHEMA_VERSION,
-            "artifact_id": self.artifact_id(),
-            "base": asdict(self.base),
-            "bootstrap": [asdict(boot) for boot in self.bootstrap],
-            "seed": self.seed,
-            "versions": implementation_versions(),
-        }
-
     @classmethod
     def from_payload(cls, payload: dict[str, object]) -> TrainingRun:
-        """Rebuild a run from its on-disk JSON payload."""
+        """
+        Rebuild a run from its on-disk JSON payload.
+
+        versions 取 payload 冻结值（训练环境身份);落盘身份按其时代公式
+        严校验——篡改身份字段（含降级 schema 绕过）被拒。票 34 前无
+        artifact_id 字段的更老工件无身份可校,按现行重算寻址。
+        """
         base = DCArtifact(**payload["base"])  # type: ignore[arg-type]
         boots = [DCArtifact(**item) for item in payload["bootstrap"]]  # type: ignore[arg-type]
         seed = int(str(payload.get("seed", 0)))
-        return cls(base=base, bootstrap=boots, seed=seed)
+        raw_versions = payload.get("versions")
+        versions = (
+            {str(k): str(v) for k, v in raw_versions.items()}
+            if isinstance(raw_versions, dict)
+            else None
+        )
+        run = cls(base=base, bootstrap=boots, seed=seed, versions=versions)
+        stored = payload.get("artifact_id")
+        if stored is not None and not isinstance(stored, str):
+            raise ValueError(f"artifact_id 类型非法: {type(stored).__name__}")
+        if isinstance(stored, str):
+            schema = int(str(payload.get("schema_version", 1)))
+            # 校验按工件时代的公式分发:当前公式(含 n_bootstrap)与 v1 公式
+            # (票 34 形态,42/42 盘面工件实证匹配)各验各的——防篡改也防把
+            # v2 文件降级 schema 绕过校验。未来公式再演进时在此加分支。
+            if schema == ARTIFACT_SCHEMA_VERSION:
+                ok = run._compute_artifact_id() == stored
+            elif schema == 1 and versions is not None:
+                ok = run._v1_artifact_id() == stored
+            else:
+                raise ValueError(
+                    f"不支持的身份 schema: {schema}"
+                    + ("" if versions is not None else "(有身份却无版本记录)")
+                )
+            if not ok:
+                recalc = run._compute_artifact_id()
+                raise ValueError(
+                    f"工件身份与内容不一致: 记 {stored[:16]} 算 {recalc[:16]}"
+                )
+            run.stored_artifact_id = stored
+            run.stored_schema = schema
+        return run
 
 
 def bootstrap_dc_models(
@@ -249,28 +345,41 @@ def run_filename(run: TrainingRun) -> str:
 
 
 def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
-    """把训练 run 落盘（JSON，幂等覆盖同指纹文件）；返回文件路径。"""
+    """把训练 run 原子落盘（tmp+replace,读侧不见半写文件）；返回文件路径。"""
     directory = Path(models_dir) / run.base.competition
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / run_filename(run)
-    path.write_text(
-        json.dumps(run.to_payload(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    tmp = directory / f".{path.name}.tmp-{os.getpid()}"
+    try:
+        tmp.write_text(
+            json.dumps(run.to_payload(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)  # replace 成功后已不存在;失败清残留
     return path
 
 
 def list_runs(
     models_dir: str | Path, competition: str
 ) -> list[tuple[TrainingRun, Path]]:
-    """一个联赛的全部训练 run，按训练窗口上界排序（旧→新）。"""
+    """
+    一个联赛的全部训练 run，按训练窗口上界排序（旧→新）。
+
+    单个坏工件（损坏/篡改/未来 schema）跳过并告警,不毒化整目录——
+    其余联赛/工件的预测照常（票 05 correctness:读取路径不因个别文件收紧）。
+    """
     directory = Path(models_dir) / competition
     if not directory.exists():
         return []
     runs: list[tuple[TrainingRun, Path]] = []
     for path in sorted(directory.glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        runs.append((TrainingRun.from_payload(payload), path))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            runs.append((TrainingRun.from_payload(payload), path))
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("跳过坏工件 %s: %s", path, exc)
     runs.sort(key=lambda item: (item[0].base.train_window_end, item[0].base.fitted_at))
     return runs
 
