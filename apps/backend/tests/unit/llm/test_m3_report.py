@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.results import DrawResultInput, upsert_draw_result
+from goalx_backend.evaluation.forward_validation import (
+    ForwardCoverage,
+    ForwardGroupMetrics,
+    ForwardSkillReport,
+)
 from goalx_backend.llm.m3_report import (
     TIER_A_MIN_PAIRS,
+    PairedFusedVsMl,
+    _ece_clean,
+    _mean_ece,
+    _tier_a,
+    _tier_b,
     intel_quality,
     m3_protocol_report,
     paired_fused_vs_ml,
@@ -219,3 +231,151 @@ def test_blind_summary_in_report(db: sqlite3.Connection) -> None:
     report = m3_protocol_report(db).model_dump()
     assert report["blind_review"]["total"] == 1
     assert report["blind_review"]["llm_share"] == 1.0
+
+
+# ---- 票 03：ECE 真算 + Tier B 方向核验（判词三态）----
+
+
+def _coverage() -> ForwardCoverage:
+    return ForwardCoverage(
+        settled_fixtures=0,
+        no_forecast=0,
+        post_kickoff_only=0,
+        no_market_baseline=0,
+        scored=0,
+    )
+
+
+def _paired(
+    *,
+    pairs: int = 600,
+    span_weeks: int = 32,
+    dm_p: float = 0.001,
+    mean_rps_delta: float = -0.012,
+    dm_stat: float = -3.2,
+) -> PairedFusedVsMl:
+    return PairedFusedVsMl(
+        pairs=pairs,
+        fused_win_rate=0.55,
+        mean_rps_delta=mean_rps_delta,
+        dm_stat=dm_stat,
+        dm_p=dm_p,
+        span_weeks=span_weeks,
+    )
+
+
+def test_tier_b_three_verdicts_by_direction() -> None:
+    """票 03 黄金样例：显著更好→达标候选；显著更差→方向反向；不显著→未达标。"""
+    # 显著更好（delta<0 与 dm_stat<0 同向）+ 复核净 → 达标候选
+    better = _tier_b(_paired(), review_clean=True)
+    assert better.checks["fused_better_direction"] is True
+    assert better.verdict == "达标候选（须用户显式裁决切换）"
+    # 显著更差（DM 双侧只测有差异）→ 方向反向，不再误判达标候选
+    worse = _tier_b(
+        _paired(mean_rps_delta=0.012, dm_stat=3.2, dm_p=0.001), review_clean=True
+    )
+    assert worse.checks["dm_p_lt_005"] is True
+    assert worse.checks["fused_better_direction"] is False
+    assert worse.verdict == "方向反向（融合显著更差）——未达标"
+    # 不显著（p=0.4）→ 未达标（方向反向仅在显著时单列）
+    flat = _tier_b(
+        _paired(dm_p=0.4, mean_rps_delta=-0.001, dm_stat=-0.8), review_clean=True
+    )
+    assert flat.verdict == "未达标"
+    # 样本不足 → 未证明
+    small = _tier_b(_paired(pairs=100), review_clean=True)
+    assert small.verdict == "未证明（样本不足）"
+    # correctness F2 钉行为：delta 缺失（现实不可达）但 dm_stat>0 显著 → 仍方向反向
+    no_delta = _tier_b(
+        PairedFusedVsMl(
+            pairs=600,
+            fused_win_rate=0.45,
+            mean_rps_delta=None,
+            dm_stat=3.2,
+            dm_p=0.001,
+            span_weeks=32,
+        ),
+        review_clean=True,
+    )
+    assert no_delta.verdict == "方向反向（融合显著更差）——未达标"
+
+
+def test_tier_a_reachable_with_real_ece() -> None:
+    """票 03：ECE 真算后 Tier A 判决可达（原桩恒 None → ece 检查恒 False）。"""
+    paired = PairedFusedVsMl(
+        pairs=250,
+        fused_win_rate=0.55,
+        mean_rps_delta=-0.01,
+        dm_stat=-2.5,
+        dm_p=0.01,
+        span_weeks=8,
+    )
+    status = _tier_a(paired, ece_clean=True)
+    assert status.verdict == "达标（融合线保留）"
+    assert status.checks["ece_no_degradation"] is True
+
+
+def test_mean_ece_pair_count_weighted() -> None:
+    """票 03 人裁决口径：组内三键等权 → 组间按 n_fixtures 加权。"""
+    report = ForwardSkillReport(
+        rule="r",
+        track="llm",
+        coverage=_coverage(),
+        groups={
+            "a": ForwardGroupMetrics(
+                n=100,
+                n_fixtures=100,
+                ece_h=0.1,
+                ece_d=0.1,
+                ece_a=0.1,
+                insufficient_samples=False,
+            ),
+            "b": ForwardGroupMetrics(
+                n=300,
+                n_fixtures=300,
+                ece_h=0.2,
+                ece_d=0.2,
+                ece_a=0.2,
+                insufficient_samples=False,
+            ),
+            "zero": ForwardGroupMetrics(n=0, n_fixtures=0),
+        },
+    )
+    # (100×0.1 + 300×0.2) / 400 = 0.175；零样本/样本不足组不计权
+    assert _mean_ece(report) == pytest.approx(0.175)
+    # correctness F1：两个各 25 场的不足组聚合到 50 场也不作通过依据
+    split = ForwardSkillReport(
+        rule="r",
+        track="llm",
+        coverage=_coverage(),
+        groups={
+            "glm:1": ForwardGroupMetrics(
+                n=25, n_fixtures=25, ece_h=0.0, ece_d=0.0, ece_a=0.0
+            ),
+            "glm:2": ForwardGroupMetrics(
+                n=25, n_fixtures=25, ece_h=0.0, ece_d=0.0, ece_a=0.0
+            ),
+        },
+    )
+    assert _mean_ece(split) is None
+    assert (
+        _mean_ece(
+            ForwardSkillReport(rule="r", track="llm", coverage=_coverage(), groups={})
+        )
+        is None
+    )
+
+
+def test_ece_clean_computes_from_seeded_tracks(db: sqlite3.Connection) -> None:
+    """票 03 集成：≥30 样本两轨可算（原桩恒 None）——同概率两轨 ECE 相等 → 无劣化。"""
+    for fixture_id in range(1, 31):
+        _seed_one(
+            db,
+            fixture_id,
+            ml=(0.45, 0.3, 0.25),
+            llm=(0.45, 0.3, 0.25),
+            fused=None,
+            home_goals=fixture_id % 3,  # 混合结果分布
+            away_goals=(fixture_id + 1) % 3,
+        )
+    assert _ece_clean(db) is True
