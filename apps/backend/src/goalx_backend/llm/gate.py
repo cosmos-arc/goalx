@@ -208,7 +208,7 @@ def analyst_review(
     if info is None:
         return PARSE_FAILED, None
     moment = now or utc_now_iso()
-    intels = intel_for_fixture(conn, fixture_id)
+    intels = intel_for_fixture(conn, fixture_id, as_of=moment)
     ml = latest_triple(conn, fixture_id, "ml", as_of=moment) or (0.0, 0.0, 0.0)
     scout = latest_triple(conn, fixture_id, "llm", as_of=moment) or (0.0, 0.0, 0.0)
     with atomic(conn):
@@ -296,7 +296,7 @@ def gate_sweep(
                 if _is_pool_fixture(conn, fixture_id, moment)
                 else Purpose.SCOUT
             )
-            scout_id = _latest_scout_id(conn, fixture_id)
+            scout_id = _latest_scout_id(conn, fixture_id, moment)
             try:
                 status, _rid = analyst_review(
                     conn,
@@ -319,9 +319,13 @@ def gate_sweep(
     return stats
 
 
-def _latest_scout_id(conn: sqlite3.Connection, fixture_id: int) -> str:
-    """最新 llm 轨工件 id（revision_of 引用目标，analyst 产出前即 scout 行）。"""
-    row = latest_forecast_asof(conn, fixture_id, utc_now_iso(), track="llm")
+def _latest_scout_id(conn: sqlite3.Connection, fixture_id: int, moment: str) -> str:
+    """
+    Moment 时点最新 llm 轨工件 id（revision_of 引用目标）。
+
+    回放同口径：不指向决策时刻之后才出现的行（票 04 correctness I2）。
+    """
+    row = latest_forecast_asof(conn, fixture_id, moment, track="llm")
     return str(row["id"]) if row else ""
 
 

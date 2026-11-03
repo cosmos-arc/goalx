@@ -197,6 +197,88 @@ def test_gate_routes_tier1_big_divergence_to_analyst(
     assert n_llm == 2  # 仍是 scout + analyst 两行，无重复追加
 
 
+def test_analyst_replay_excludes_future_intel(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 04 回放黄金样例：analyst 复核在 backdated now 下读不到未来情报。"""
+    from goalx_backend.llm.client import Purpose
+    from goalx_backend.llm.gate import analyst_review
+    from goalx_backend.llm.store import IntelDraft, insert_intel_observation
+
+    fixture_id = _seed_fixture(db)
+    past_id = insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="伤停",
+            text="过去情报",
+            source="s",
+            collected_at="2026-09-19T22:00:00+00:00",
+            collector="c",
+            raw_payload={"i": 1},
+        ),
+    )
+    insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="伤停",
+            text="未来情报",
+            source="s",
+            collected_at="2026-09-19T23:45:00+00:00",
+            collector="c",
+            raw_payload={"i": 2},
+        ),
+    )
+    monkeypatch.setattr(
+        "goalx_backend.llm.client._build_client",
+        lambda s, base: _StubClient(_ANALYST_OUT),
+    )
+    status, row_id = analyst_review(
+        db,
+        Settings(glm_api_key="k"),
+        fixture_id,
+        purpose=Purpose.SCOUT,
+        scout_hash="x",
+        now="2026-09-19T23:30:00+00:00",
+    )
+    assert status == "inserted"
+    row = db.execute("SELECT payload FROM forecasts WHERE id = ?", (row_id,)).fetchone()
+    revision = json.loads(str(row["payload"]))
+    assert revision["intel_ids"] == [past_id]
+    assert revision["intel_count"] == 1
+    assert "未来情报" not in str(row["payload"])
+
+
+def test_latest_scout_id_bounded_by_moment(db: sqlite3.Connection) -> None:
+    """票 04 correctness I2：revision_of 目标按 moment 时点取——回放不
+    指向决策时刻之后才出现的 analyst 修订行。"""
+    from goalx_backend.llm.gate import _latest_scout_id
+
+    fixture_id = _seed_fixture(db)
+    _seed_forecasts(
+        db, fixture_id, _ml_triple(_ml_matrix_payload()), (0.25, 0.30, 0.45)
+    )
+    insert_forecast(
+        db,
+        fixture_id=fixture_id,
+        track="llm",
+        model_version="glm:glm-5.3",
+        content_hash=f"analyst-{fixture_id}",
+        payload={"h": 0.4, "d": 0.3, "a": 0.3, "analyst": True},
+        issued_at="2026-09-19T11:30:00+00:00",  # 决策时刻之后才出现的修订
+    )
+    llm_rows = db.execute(
+        "SELECT id FROM forecasts WHERE fixture_id = ? AND track = 'llm' ORDER BY id",
+        (fixture_id,),
+    ).fetchall()
+    scout_id, analyst_id = str(llm_rows[0]["id"]), str(llm_rows[1]["id"])
+    # moment=11:00 → scout 原行（10:50），不是 11:30 的修订行
+    assert _latest_scout_id(db, fixture_id, "2026-09-19T11:00:00+00:00") == scout_id
+    # moment=12:00 → 修订行
+    assert _latest_scout_id(db, fixture_id, "2026-09-19T12:00:00+00:00") == analyst_id
+
+
 def test_gate_small_divergence_records_without_analyst(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

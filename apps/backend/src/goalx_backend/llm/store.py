@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
@@ -39,7 +40,15 @@ class IntelDraft:
 def insert_intel_observation(
     conn: sqlite3.Connection, fixture_id: int, draft: IntelDraft
 ) -> int | None:
-    """追加一条情报观测；同内容已存在时静默跳过（返回 None）。"""
+    """
+    追加一条情报观测；同内容已存在时静默跳过（返回 None）。
+
+    collected_at 写入前规范化为秒精度 +00:00 ISO（票 04 as_of 谓词按
+    字典序比较的前提；非 ISO 输入 fail-loud 拒绝，不静默误界）。
+    """
+    normalized = datetime.fromisoformat(draft.collected_at).isoformat(
+        timespec="seconds"
+    )
     digest = raw_hash(draft.raw_payload)
     cursor = conn.execute(
         """
@@ -53,7 +62,7 @@ def insert_intel_observation(
             draft.kind,
             draft.text,
             draft.source,
-            draft.collected_at,
+            normalized,
             draft.collector,
             json.dumps(draft.raw_payload, ensure_ascii=False, sort_keys=True),
             digest,
@@ -64,29 +73,37 @@ def insert_intel_observation(
     return row_id if cursor.rowcount and row_id is not None else None
 
 
-def intel_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> list[sqlite3.Row]:
-    """一场的全部已存证情报（按采集时点升序）。"""
+def intel_for_fixture(
+    conn: sqlite3.Connection, fixture_id: int, *, as_of: str | None = None
+) -> list[sqlite3.Row]:
+    """
+    一场的已存证情报（按采集时点升序）。
+
+    as_of = 时点界（collected_at <= as_of，票 04 决策时刻语义）；不传 =
+    全量——实时面现行为零改动。回放链路传各自 moment 即读不到未来情报。
+    """
     return conn.execute(
         """
-        SELECT * FROM intel_observations WHERE fixture_id = ?
+        SELECT * FROM intel_observations
+        WHERE fixture_id = ? AND (? IS NULL OR collected_at <= ?)
         ORDER BY collected_at, id
         """,
-        (fixture_id,),
+        (fixture_id, as_of, as_of),
     ).fetchall()
 
 
 def intel_summary_by_fixture(
-    conn: sqlite3.Connection, fixture_ids: list[int]
+    conn: sqlite3.Connection, fixture_ids: list[int], *, as_of: str | None = None
 ) -> dict[int, list[tuple[str, str]]]:
-    """多场次的 (source, collected_at) 列表（评测报告情报质量列用）。"""
+    """多场次的 (source, collected_at) 列表（评测报告情报质量列用；as_of 同上）。"""
     out: dict[int, list[tuple[str, str]]] = {}
     for fixture_id in fixture_ids:
         rows = conn.execute(
             """
             SELECT source, collected_at FROM intel_observations
-            WHERE fixture_id = ?
+            WHERE fixture_id = ? AND (? IS NULL OR collected_at <= ?)
             """,
-            (fixture_id,),
+            (fixture_id, as_of, as_of),
         ).fetchall()
         out[fixture_id] = [(str(r["source"]), str(r["collected_at"])) for r in rows]
     return out
