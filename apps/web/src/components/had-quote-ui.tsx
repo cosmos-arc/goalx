@@ -1,4 +1,5 @@
 import type { HadQuoteStatus, TodayFixture } from "../api/goalx";
+import { newRequestId } from "../lib/basket-store";
 import { localTime, SELECTION_LABELS, SELECTIONS, type Selection, TABULAR_NUMS } from "../lib/ui";
 import { GlossaryTerm } from "./glossary-term";
 import { Badge } from "./ui/badge";
@@ -79,9 +80,12 @@ export type Leg = {
 	match_code: string;
 	home_team: string;
 	away_team: string;
+	kickoff_utc: string;
 	selection: Selection;
 	odds: number;
 	single_eligible: boolean | null;
+	/** 腿稳定幂等键（票 06）：pick 时生成，重试同键不落双行；开球时间随腿持久化（篮内截止展示）。 */
+	request_id: string;
 };
 
 export function oddsText(value: number | null | undefined): string {
@@ -146,9 +150,11 @@ export function makeLeg(fixture: PickableFixture, selection: Selection, odds: nu
 		match_code: fixture.match_code,
 		home_team: fixture.home_team,
 		away_team: fixture.away_team,
+		kickoff_utc: fixture.kickoff_utc,
 		selection,
 		odds,
 		single_eligible: fixture.had_quote?.single_eligible ?? null,
+		request_id: newRequestId(),
 	};
 }
 

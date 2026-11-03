@@ -239,13 +239,17 @@ export interface paths {
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
         /**
-         * 建注(注级建议; 服务端校验 had 资格+纸面价绑定)
+         * 建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 重放回带)
          * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
          *
          *     纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
          *     had 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则
          *     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
          *     manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
+         *
+         *     幂等(票 06)：client_request_id 同键重复提交回带既有注(201 同体)，
+         *     不落双行——批量逐腿提交的重试安全网。重放在资格/价绑校验**之前**
+         *     短路：原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
          */
         post: operations["create_bet_api_v1_bets_post"];
         delete?: never;
@@ -1094,6 +1098,8 @@ export interface components {
             strategy_version?: string | null;
             /** Allow Manual Price */
             allow_manual_price?: boolean | null;
+            /** Client Request Id */
+            client_request_id?: string | null;
         };
         /**
          * BetEvSnapshotView
@@ -1191,6 +1197,8 @@ export interface components {
             ev_snapshot?: components["schemas"]["BetEvSnapshotView"] | null;
             /** Price Source */
             price_source?: string | null;
+            /** Client Request Id */
+            client_request_id?: string | null;
         };
         /**
          * BlindReviewPayload

@@ -35,6 +35,7 @@ export type GoalsLeg = {
 	match_code: string;
 	home_team: string;
 	away_team: string;
+	kickoff_utc: string;
 	market: GoalsMarket;
 	selection: string;
 	/** 人话标签（提交仍用 market/selection 原码）。 */
@@ -42,6 +43,8 @@ export type GoalsLeg = {
 	odds: number;
 	/** 模型×竞彩价口径 EV（票 wb-06 选注篮建议仓位用；无模型场为 null）。 */
 	ev: number | null;
+	/** 腿稳定幂等键（票 06）：pick/带入时生成，重试同键；开球时间随注持久化（篮内截止展示）。 */
+	request_id: string;
 };
 
 /** 选项钮：赔率 + EV 着色；无报价/不可投禁用（诚实显示网格）。 */

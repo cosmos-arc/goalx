@@ -53,6 +53,9 @@ class BetCreate(BaseModel):
     # 手工研究假设通道(票 04 三分类③):客户端价不被系统报价约束,
     # 落 manual_research 标签,不进正式纸面成绩面(None/False=系统价通道)
     allow_manual_price: bool | None = None
+    # 客户端幂等键(票 06):同键重复提交不落双行(回带既有注);
+    # 腿级单关=腿稳定键,串关=腿键有序拼接;不传=旧行为
+    client_request_id: str | None = Field(default=None, max_length=200)
 
 
 class ActualLegOddsPayload(BaseModel):
@@ -174,6 +177,8 @@ class BetView(BaseModel):
     # 价格来源三分类(票 04 裁决② 面板可见维度): system_paper/
     # live_backfill/manual_research;历史注 null
     price_source: str | None = None
+    # 客户端幂等键(票 06,永久保留——对账需要);未带键的历史注 null
+    client_request_id: str | None = None
 
 
 class SlipView(BaseModel):
@@ -295,12 +300,26 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
         review=review,
         ev_snapshot=_ev_snapshot_view(row),
         price_source=row["price_source"],
+        client_request_id=row["client_request_id"],
     )
+
+
+def _replayed_bet_view(
+    db: sqlite3.Connection, client_request_id: str
+) -> BetView | None:
+    """同幂等键既有注视图（票 06 重放回带；无则 None 走正常建注）。"""
+    existing_id = bt_store.bet_id_for_request(db, client_request_id)
+    if existing_id is None:
+        return None
+    row = bt_store.get_bet(db, existing_id)
+    if row is None:
+        return None
+    return _bet_view(row, review_views(db, [row]).get(existing_id))
 
 
 @router.post(
     "/api/v1/bets",
-    summary="建注(注级建议; 服务端校验 had 资格+纸面价绑定)",
+    summary="建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 重放回带)",
     status_code=201,
     response_model=BetView,
     responses={
@@ -322,7 +341,15 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     had 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则
     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
     manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
+
+    幂等(票 06)：client_request_id 同键重复提交回带既有注(201 同体)，
+    不落双行——批量逐腿提交的重试安全网。重放在资格/价绑校验**之前**
+    短路：原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
     """
+    if payload.client_request_id is not None:
+        replayed = _replayed_bet_view(db, payload.client_request_id)
+        if replayed is not None:
+            return replayed
     legs = [
         LegInput(
             fixture_id=leg.fixture_id,
@@ -353,6 +380,7 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
                     stake=payload.stake,
                     legs=bound,
                     strategy_version=payload.strategy_version,
+                    client_request_id=payload.client_request_id,
                 ),
                 duck_con=duck_con,
                 price_source=price_source,

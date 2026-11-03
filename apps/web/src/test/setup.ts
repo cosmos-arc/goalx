@@ -1,6 +1,7 @@
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, expect, vi } from "vitest";
+import { __resetBasketForTests } from "../lib/basket-store";
 import { server } from "../mocks/server";
 
 // The matcher-only entry point is workspace-isolation safe: unlike the
@@ -31,5 +32,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
 	server.resetHandlers();
 	cleanup();
+	// 票 06：全站篮草稿是模块级单源——测试间必须隔离（含 localStorage）
+	__resetBasketForTests();
 });
 afterAll(() => server.close());

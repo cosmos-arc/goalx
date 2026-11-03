@@ -201,21 +201,25 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     strategy_version: str | None = None,
     ev_snapshot: BetEvSnapshot | None = None,
     price_source: str | None = None,
+    client_request_id: str | None = None,
 ) -> int:
     """
     Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。
 
     price_source=价格来源三分类（票 04，v35 列）；None=不落标签（旧行为）。
+    client_request_id=客户端幂等键（票 06，v37 列）：撞唯一索引抛
+    IntegrityError——调用侧捕获后以 bet_id_for_request 取回既有注；
+    None=未带键（旧行为，池票/内部调用不受约束）。
     """
     snap = ev_snapshot or EMPTY_SNAPSHOT
     cur = conn.execute(
         """
             INSERT INTO bets
-(slip_id, mode, market_kind, purchased, stake, placed_at,
+	(slip_id, mode, market_kind, purchased, stake, placed_at,
             created_at, strategy_version,
-snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model,
-            price_source)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model,
+            price_source, client_request_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -231,9 +235,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             snap.ev_consensus,
             snap.ev_model,
             price_source,
+            client_request_id,
         ),
     )
     return _insert_id(cur)
+
+
+def bet_id_for_request(conn: sqlite3.Connection, client_request_id: str) -> int | None:
+    """同幂等键的既有注 id（无则 None）——重复提交去重回带。"""
+    row = conn.execute(
+        "SELECT id FROM bets WHERE client_request_id = ?", (client_request_id,)
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def update_leg_price_binding(
@@ -290,6 +303,7 @@ def list_bets(
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
             b.actual_stake, b.strategy_version, b.price_source,
+            b.client_request_id,
             b.placed_at, b.created_at, b.status, b.payout, b.profit, b.settled_at,
             b.snap_prob_consensus, b.snap_prob_model,
             b.snap_ev_consensus, b.snap_ev_model,

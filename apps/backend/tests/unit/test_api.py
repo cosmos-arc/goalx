@@ -629,6 +629,58 @@ def test_bet_create_list_and_same_fixture_rejected(api_client: TestClient) -> No
     assert len(listing.json()) == 1
 
 
+def test_bet_create_idempotent_client_request_id(demo_client: TestClient) -> None:
+    """票 06：同 client_request_id 重复提交回带既有注（201 同体），不落双行。"""
+    single_ok, _parlay_ok, _stopped = _demo_ids(demo_client)
+    body = _had_leg_payload(single_ok, "h") | {"client_request_id": "leg-abc-1"}
+    first = demo_client.post("/api/v1/bets", json=body)
+    assert first.status_code == 201
+    assert first.json()["client_request_id"] == "leg-abc-1"
+    replay = demo_client.post("/api/v1/bets", json=body)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == first.json()["id"]
+    matched = [
+        bet
+        for bet in demo_client.get("/api/v1/bets").json()
+        if bet["client_request_id"] == "leg-abc-1"
+    ]
+    assert len(matched) == 1  # 同键不落双行
+    # 不带键 = 旧行为：同内容照常第二注
+    again = demo_client.post("/api/v1/bets", json=_had_leg_payload(single_ok, "h"))
+    assert again.status_code == 201
+    assert again.json()["id"] != first.json()["id"]
+
+
+def test_bet_replay_short_circuits_before_eligibility(demo_client: TestClient) -> None:
+    """票 06 correctness F6b：同键重放在资格校验之前短路——原决策已
+    落库，腿事后停售/换成无效腿不改变"该请求已建注"的事实。"""
+    single_ok, _parlay_ok, stopped = _demo_ids(demo_client)
+    created = demo_client.post(
+        "/api/v1/bets",
+        json=_had_leg_payload(single_ok, "h") | {"client_request_id": "leg-replay-1"},
+    )
+    assert created.status_code == 201
+    # 同键但腿换成停售场（正常提交必 400）：重放短路 → 201 回带原注
+    replay = demo_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 2.0,
+            "client_request_id": "leg-replay-1",
+            "legs": [
+                {
+                    "fixture_id": stopped,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 2.0,
+                }
+            ],
+        },
+    )
+    assert replay.status_code == 201
+    assert replay.json()["id"] == created.json()["id"]
+
+
 def test_bet_creation_eligibility_rules(demo_client: TestClient) -> None:
     """票 36 选择入口：单固校验、串关共同可购买、停售/开赛拒绝（服务端）。"""
     single_ok, parlay_ok, stopped = _demo_ids(demo_client)

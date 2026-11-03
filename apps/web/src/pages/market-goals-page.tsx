@@ -8,7 +8,7 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-ui";
 import { BasketFormFields } from "../components/had-basket";
-import { evClass } from "../components/had-quote-ui";
+import { evClass, kickoffInfo, localTime } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
@@ -21,6 +21,7 @@ import {
 	DrawerHeader,
 	DrawerTitle,
 } from "../components/ui/drawer";
+import { basketActions, newRequestId, useBasket } from "../lib/basket-store";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
 import { bankrollKey, goalsMarketKey, invalidateBets } from "../lib/query-keys";
 import { dayNoteOf, errorText, TABULAR_NUMS } from "../lib/ui";
@@ -49,11 +50,9 @@ export function MarketGoalsPage() {
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
 	const queryClient = useQueryClient();
 	const [market, setMarket] = useState<GoalsMarket>("ttg");
-	const [legs, setLegs] = useState<GoalsLeg[]>([]);
+	// 票 06：篮草稿走全站单源 store（与 had 三页共用一份草稿，路由/刷新不丢）
+	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
-	const [stake, setStake] = useState("100");
-	const [strategyVersion, setStrategyVersion] = useState("");
-	const [mode, setMode] = useState<"paper" | "live">("paper");
 	const [message, setMessage] = useState<string | null>(null);
 	const now = Date.now();
 
@@ -77,16 +76,19 @@ export function MarketGoalsPage() {
 		odds: bestLeg?.odds ?? null,
 	} as const;
 
-	/** 选注规则：同选项再点=移除；上限=行内提示；独立单关允许同场多注。 */
+	/** 选注规则：同选项再点=移除；上限=行内提示；独立单关允许同场多注。
+	 * request_id 生成于 pick（票 06）：重试同键，服务端不落双行。
+	 * 提交中篮内容冻结（correctness F1）：逐腿派发期间 pick/移除/带入
+	 * 全禁——失败处理按提交时快照留篮，中途变更会被快照覆写复活。 */
 	function pick(fixture: GoalsFixture, pickedMarket: GoalsMarket, selection: GoalsSelection) {
-		if (selection.odds === null || selection.odds === undefined) {
+		if (selection.odds === null || selection.odds === undefined || createSuggestion.isPending) {
 			return;
 		}
 		const existing = legs.find(
 			(leg) => leg.fixture_id === fixture.fixture_id && leg.market === pickedMarket && leg.selection === selection.code,
 		);
 		if (existing) {
-			setLegs(legs.filter((leg) => leg !== existing));
+			basketActions.setGoalsLegs(legs.filter((leg) => leg !== existing));
 			setMessage(null);
 			return;
 		}
@@ -94,47 +96,54 @@ export function MarketGoalsPage() {
 			setMessage(`已达 ${MAX_GOALS_LEGS} 注上限（进球类单关为主）——先在选注篮移除一注`);
 			return;
 		}
-		setLegs([
+		basketActions.setGoalsLegs([
 			...legs,
 			{
 				fixture_id: fixture.fixture_id,
 				match_code: fixture.match_code,
 				home_team: fixture.home_team,
 				away_team: fixture.away_team,
+				kickoff_utc: fixture.kickoff_utc,
 				market: pickedMarket,
 				selection: selection.code,
 				label: goalsLabel(pickedMarket, selection.code),
 				odds: selection.odds,
 				ev: selection.ev ?? null,
+				request_id: newRequestId(),
 			},
 		]);
 		setMessage(null);
 	}
 
 	function removeLeg(index: number) {
-		setLegs(legs.filter((_, i) => i !== index));
+		if (createSuggestion.isPending) {
+			return; // 同 pick：飞行中锁定编辑
+		}
+		basketActions.setGoalsLegs(legs.filter((_, i) => i !== index));
 		setMessage(null);
 	}
 
 	/** 一键带入：组合腿就地进本页选注篮（每注独立单关，注额预填）。 */
 	function applyCombo() {
-		if (combo === null || combo.picks.length === 0) {
+		if (combo === null || combo.picks.length === 0 || createSuggestion.isPending) {
 			return;
 		}
-		setLegs(
+		basketActions.setGoalsLegs(
 			combo.picks.map((pickEntry) => ({
 				fixture_id: pickEntry.fixture.fixture_id,
 				match_code: pickEntry.fixture.match_code,
 				home_team: pickEntry.fixture.home_team,
 				away_team: pickEntry.fixture.away_team,
+				kickoff_utc: pickEntry.fixture.kickoff_utc,
 				market: pickEntry.market,
 				selection: pickEntry.selection,
 				label: goalsLabel(pickEntry.market, pickEntry.selection),
 				odds: pickEntry.odds,
 				ev: pickEntry.ev,
+				request_id: newRequestId(),
 			})),
 		);
-		setStake(String(combo.picks[0]?.stake ?? GOALS_COMBO_CONFIG.stake.minStakeCny));
+		basketActions.setStake(String(combo.picks[0]?.stake ?? GOALS_COMBO_CONFIG.stake.minStakeCny));
 		setMessage(
 			`已带入 ${combo.picks.length} 条推荐——每条按独立单关提交（建议注额 ¥${combo.picks[0]?.stake.toFixed(2)}/注）`,
 		);
@@ -142,15 +151,18 @@ export function MarketGoalsPage() {
 	}
 
 	const createSuggestion = useMutation({
-		mutationFn: async () => {
-			// 进球类以单关为主：每腿独立一注（服务器侧 non-had 腿按既有行为不校验）
-			const created = [];
-			for (const leg of legs) {
-				created.push(
-					await createBet({
+		mutationFn: async (): Promise<{ created: number[]; failedAt: number | null }> => {
+			// 进球类以单关为主：每腿独立一注（服务器侧 non-had 腿按既有行为不校验）。
+			// 票 06：逐腿 try/catch——一成一败时已成注保留账面、失败腿起留篮
+			// 可重试（同 request_id 只补发失败腿，不重复已建注）
+			const created: number[] = [];
+			for (const [index, leg] of legs.entries()) {
+				try {
+					const bet = await createBet({
 						mode,
 						stake: Number(stake),
 						strategy_version: strategyVersion.trim() === "" ? null : strategyVersion.trim(),
+						client_request_id: leg.request_id,
 						legs: [
 							{
 								fixture_id: leg.fixture_id,
@@ -159,18 +171,34 @@ export function MarketGoalsPage() {
 								locked_odds: leg.odds,
 							},
 						],
-					}),
-				);
+					});
+					created.push(bet.id);
+				} catch (error) {
+					// 失败腿起整段留篮（前面的已成注保留账面）；未提交 ≠ 失败，
+					// 分开计数（correctness F3）
+					basketActions.setGoalsLegs(legs.slice(created.length));
+					if (created.length > 0) {
+						invalidateBets(queryClient);
+					}
+					setMessage(
+						`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）失败：${errorText(error)}` +
+							`——成功 ${created.length} · 失败 1 · 未提交 ${legs.length - index - 1}，失败/未提交腿留篮可重试`,
+					);
+					return { created, failedAt: index };
+				}
 			}
-			return created;
+			return { created, failedAt: null };
 		},
-		onSuccess: (created) => {
-			setMessage(`已建 ${created.length} 条单关建议 — 去投注页锁定`);
-			setLegs([]);
-			setBasketOpen(false);
-			invalidateBets(queryClient);
+		onSuccess: ({ created, failedAt }) => {
+			if (failedAt === null) {
+				setMessage(`已建 ${created.length} 条单关建议 — 去投注页锁定`);
+				basketActions.setGoalsLegs([]);
+				setBasketOpen(false);
+			}
+			if (created.length > 0) {
+				invalidateBets(queryClient);
+			}
 		},
-		onError: (error) => setMessage(`建注失败：${errorText(error)}`),
 	});
 
 	return (
@@ -436,6 +464,11 @@ export function MarketGoalsPage() {
 							点推荐流赔率或"一键带入"加入；单关须单固
 						</span>
 					)}
+					{hadLegs.length > 0 ? (
+						<span className="hidden text-xs text-info sm:inline" data-testid="goals-basket-cross-had">
+							另有胜平负草稿 {hadLegs.length} 腿（场次/玩法页提交）
+						</span>
+					) : null}
 					<button
 						type="button"
 						data-testid="goals-basket-open"
@@ -461,32 +494,41 @@ export function MarketGoalsPage() {
 							<p className="text-sm text-muted-foreground">未选择。点推荐流赔率或组合卡"一键带入"加入。</p>
 						) : (
 							<ul className="space-y-2">
-								{legs.map((leg, index) => (
-									<li
-										key={`${leg.fixture_id}-${leg.market}-${leg.selection}`}
-										className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
-										data-testid="goals-basket-leg"
-									>
-										<span>
-											<span className="text-xs text-muted-foreground">{leg.match_code}</span>
-											<br />
-											{leg.home_team} vs {leg.away_team}
-											<br />
-											<span className="font-medium">
-												{leg.market === "ttg" ? "总进球" : "比分"} {leg.label}
-											</span>
-											<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
-										</span>
-										<button
-											type="button"
-											className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-											aria-label={`移除 ${leg.match_code} ${leg.label}`}
-											onClick={() => removeLeg(index)}
+								{legs.map((leg, index) => {
+									const countdown = kickoffInfo(leg.kickoff_utc, now);
+									return (
+										<li
+											key={`${leg.fixture_id}-${leg.market}-${leg.selection}`}
+											className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
+											data-testid="goals-basket-leg"
 										>
-											移除
-										</button>
-									</li>
-								))}
+											<span>
+												<span className="text-xs text-muted-foreground">{leg.match_code}</span>
+												<br />
+												{leg.home_team} vs {leg.away_team}
+												<br />
+												<span className="font-medium">
+													{leg.market === "ttg" ? "总进球" : "比分"} {leg.label}
+												</span>
+												<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
+												<span
+													className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
+													data-testid="goals-basket-leg-deadline"
+												>
+													开球 {localTime(leg.kickoff_utc)} · {countdown.text}
+												</span>
+											</span>
+											<button
+												type="button"
+												className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+												aria-label={`移除 ${leg.match_code} ${leg.label}`}
+												onClick={() => removeLeg(index)}
+											>
+												移除
+											</button>
+										</li>
+									);
+								})}
 							</ul>
 						)}
 						{legs.length > 0 ? (
@@ -505,7 +547,14 @@ export function MarketGoalsPage() {
 					<DrawerFooter>
 						<BasketFormFields
 							testid="goals-basket"
-							state={{ mode, setMode, stake, setStake, strategyVersion, setStrategyVersion }}
+							state={{
+								mode,
+								setMode: basketActions.setMode,
+								stake,
+								setStake: basketActions.setStake,
+								strategyVersion,
+								setStrategyVersion: basketActions.setStrategyVersion,
+							}}
 							stakeLabel="每注金额(¥)"
 							stakeMin={2}
 						/>

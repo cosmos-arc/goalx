@@ -396,3 +396,73 @@ def test_correction_does_not_silently_repair_legacy_rule_errors(
             ],
         )
     assert list(db.iterdump()) == before
+
+
+def test_same_key_race_returns_existing_bet(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 06 correctness F6a：预检后、INSERT 前并发落同键注——竞态败方
+    回带既有注 id，不落双行，事务状态干净。"""
+    _bet, fixture = make_bet(db)
+    draft = BetDraft(
+        mode=BetMode.LIVE,
+        stake=10,
+        legs=[
+            LegInput(
+                fixture_id=fixture, market_code="had", selection_code="h", locked_odds=2
+            )
+        ],
+        client_request_id="race-key-1",
+    )
+    original_create = bt.create_bet
+
+    def racing_create(conn: sqlite3.Connection, *args: object, **kwargs: object) -> int:
+        # 预检已过、本 INSERT 前：另一请求先用同键落注（无腿裸行即可）
+        if not conn.execute(
+            "SELECT 1 FROM bets WHERE client_request_id = ?", ("race-key-1",)
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO bets (mode, market_kind, stake, created_at,"
+                " client_request_id) VALUES"
+                " ('live', 'fixed', 10, '2026-11-04T00:00:00+00:00', 'race-key-1')"
+            )
+        return original_create(conn, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(bt, "create_bet", racing_create)
+    returned = create_bet_with_legs(db, draft)
+    rows = db.execute(
+        "SELECT id FROM bets WHERE client_request_id = 'race-key-1'"
+    ).fetchall()
+    assert len(rows) == 1  # 不落双行
+    assert returned == int(rows[0]["id"])  # 回带既有
+    db.commit()  # 竞态处理后连接可继续正常工作（无残留失败语句）
+
+
+def test_other_unique_violation_still_raises(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 06 correctness F6c：非 client_request_id 的唯一冲突照抛——
+    列名判别不吞无关 IntegrityError。"""
+    _bet, fixture = make_bet(db)
+
+    def raise_other(conn: sqlite3.Connection, *args: object, **kwargs: object) -> int:
+        raise sqlite3.IntegrityError("UNIQUE constraint failed: bets.some_other_column")
+
+    monkeypatch.setattr(bt, "create_bet", raise_other)
+    with pytest.raises(sqlite3.IntegrityError, match="some_other_column"):
+        create_bet_with_legs(
+            db,
+            BetDraft(
+                mode=BetMode.LIVE,
+                stake=10,
+                legs=[
+                    LegInput(
+                        fixture_id=fixture,
+                        market_code="had",
+                        selection_code="h",
+                        locked_odds=2,
+                    )
+                ],
+                client_request_id="k",
+            ),
+        )

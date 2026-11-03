@@ -340,6 +340,81 @@ test("basket drawer manages legs and creates the suggestion through the real API
 	expect(screen.getByTestId("fixtures-message")).toHaveTextContent("sale_stopped");
 });
 
+test("票 06：草稿跨页持久 + 一成一败重试同键只补发失败腿", async () => {
+	const user = userEvent.setup();
+	// 跨页：场次页选 001 → 研究页同一份草稿（全站单源 store）
+	await renderAt("/fixtures");
+	await user.click(await screen.findByTestId("pick-1-h"));
+	await router.navigate({ to: "/fixtures/$id", params: { id: "1" } });
+	expect(await screen.findByTestId("basket-count")).toHaveTextContent("1/2");
+	// localStorage 已持久（刷新恢复语义，basket-store.test 钉重载往返）
+	const stored = JSON.parse(localStorage.getItem("goalx:basket") ?? "{}");
+	expect(stored.hadLegs).toHaveLength(1);
+
+	// 回场次页补 002（非单固）→ 两笔单关一成一败（001 成 / 002 服务器拒）
+	await router.navigate({ to: "/fixtures" });
+	await user.click(await screen.findByTestId("pick-2-a"));
+	const betJson = (id: number) => ({
+		id,
+		slip_id: null,
+		mode: "paper",
+		market_kind: "fixed",
+		purchased: false,
+		stake: 100,
+		actual_stake: null,
+		strategy_version: null,
+		placed_at: null,
+		locked_at: null,
+		created_at: "2026-11-04T10:00:00+00:00",
+		status: "open",
+		payout: null,
+		profit: null,
+		settled_at: null,
+		legs: [
+			{
+				fixture_id: 2,
+				market_code: "had",
+				selection_code: "a",
+				locked_odds: 2.2,
+				goal_line: null,
+			},
+		],
+		review: null,
+	});
+	const bodies: Array<{ client_request_id?: string; legs?: Array<{ fixture_id: number }> }> = [];
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			const body = (await request.json()) as { client_request_id?: string; legs?: Array<{ fixture_id: number }> };
+			bodies.push(body);
+			if (body.legs?.[0]?.fixture_id === 2) {
+				return HttpResponse.json({ detail: "fixture 2 不可投: 非单固" }, { status: 400 });
+			}
+			return HttpResponse.json(betJson(77), { status: 201 });
+		}),
+	);
+	await user.click(screen.getByTestId("basket-open"));
+	await user.click(screen.getByTestId("basket-submit"));
+	const message = await screen.findByTestId("fixtures-message");
+	expect(message).toHaveTextContent("第 2 笔失败");
+	expect(message).toHaveTextContent("已建 #77，失败腿留篮可重试");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2"); // 失败腿留篮
+	expect(typeof bodies[1]?.client_request_id).toBe("string");
+	const failedKey = bodies[1]?.client_request_id;
+
+	// 重试（全放行）：只补发失败腿且同键——服务端同键不落双行
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			bodies.push((await request.json()) as { client_request_id?: string });
+			return HttpResponse.json(betJson(78), { status: 201 });
+		}),
+	);
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #78（单关）");
+	expect(bodies).toHaveLength(3);
+	expect(bodies[2]?.client_request_id).toBe(failedKey);
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+});
+
 test("renders edge encodings: partial triples, invalid timestamps, passed kickoff, neutral near-zero EV", async () => {
 	server.use(
 		http.get("*/api/v1/fixtures/today", () =>

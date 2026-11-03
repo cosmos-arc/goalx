@@ -2,10 +2,19 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
+import { basketActions, requestIdForLegs, useBasket } from "../lib/basket-store";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
 import { invalidateBets } from "../lib/query-keys";
-import { currentQuotes, errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
-import { isPickable, type Leg, MAX_LEGS, makeLeg, type PickableFixture, type Selection } from "./had-quote-ui";
+import { currentQuotes, errorText, localTime, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import {
+	isPickable,
+	kickoffInfo,
+	type Leg,
+	MAX_LEGS,
+	makeLeg,
+	type PickableFixture,
+	type Selection,
+} from "./had-quote-ui";
 import { parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
 import {
 	Drawer,
@@ -20,15 +29,18 @@ import {
 /**
  * had 选注篮共享件（lean-audit 票 04；review-20260928 票 06 收编研究页）：
  * 场次页/胜平负页/单场研究页三页共用。
- * - useHadBasket：6 状态 + 规则前置（同场替换/MAX_LEGS/单固首腿）+ 建议仓位
- *   输入 + createBet mutation（invalidate ["bets"]）；建议仓位的 leg EV 经
- *   第三参注入（缺省 = 列表页 fixture.ev 字段口径，研究页注入共识口径）；
+ * - useHadBasket：篮草稿走全站单源 store（票 06：路由切换/刷新可恢复，
+ *   与进球页共用一份草稿）+ 规则前置（同场替换/MAX_LEGS/单固首腿）+
+ *   建议仓位输入 + createBet mutation（invalidate ["bets"]）；建议仓位的
+ *   leg EV 经第三参注入（缺省 = 列表页 fixture.ev 字段口径，研究页注入
+ *   共识口径）；
  * - 票型（report-audit 票 02）：篮内 ≥2 腿时显式票型——两笔单关（逐腿独立
  *   建注）/一注 2串1（整注）；预览与提交同走 ticketPlan 单源，无静默切换；
- * - BasketBar：底部常驻条（已选摘要 + 组合赔率）；
- * - BasketDrawer：右侧抽屉（腿列表/票型/建议仓位/模式/金额/策略版本/提交）。
- * 两页文本差异（空态提示）经 emptyHint prop 注入；进球玩法页是独立单关
- * 变体（同场多注/独立提交/goals-* testid），不进本共享件。
+ * - 提交幂等（票 06）：单关腿=腿 request_id、整注=腿键有序拼接，服务端
+ *   同键不落双行——批量一成一败后重试只补发失败腿且不重复已建注；
+ * - BasketBar：底部常驻条（已选摘要 + 组合赔率 + 跨玩法草稿提示）；
+ * - BasketDrawer：右侧抽屉（腿列表含开球时间/票型/建议仓位/模式/金额/
+ *   策略版本/提交）。两页文本差异（空态提示）经 emptyHint prop 注入。
  */
 
 /** 票型记忆键（票 02 人裁决：记住上次选择，首次默认单关合计=引擎本义；
@@ -52,11 +64,9 @@ function persistSlipForm(form: SlipForm): void {
 }
 
 export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverride?: (leg: Leg) => number | null) {
-	const [legs, setLegs] = useState<Leg[]>([]);
+	// 票 06：草稿单源——had 腿/金额/模式/策略版本全站一份（localStorage 持久化）
+	const { hadLegs: legs, stake, strategyVersion, mode } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
-	const [stake, setStake] = useState("100");
-	const [strategyVersion, setStrategyVersion] = useState("");
-	const [mode, setMode] = useState<"paper" | "live">("paper");
 	const [message, setMessage] = useState<string | null>(null);
 	// 票型状态 = 全 app 一份记忆（读 localStorage，缺省单关合计）；卡/篮
 	// 两处选择器都是这份状态的视图（票 02：带入什么票型就提交什么票型）
@@ -66,6 +76,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 		setSlipForm(form);
 		persistSlipForm(form);
 	}
+	const setLegs = basketActions.setHadLegs;
 	const queryClient = useQueryClient();
 
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
@@ -155,6 +166,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 					mode,
 					stake: Number(stake),
 					strategy_version: strategy,
+					// 票 06 幂等：腿键稳定（单关=腿键；整注=腿键有序拼接），
+					// 同键重试服务端回带既有注不落双行
+					client_request_id: requestIdForLegs(betLegs),
 					legs: betLegs.map(legPayload),
 				});
 			// 票型分叉（票 02）：parlay/单腿 = 一注整提（现行路径）；
@@ -176,7 +190,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 					const quotes = currentQuotes(error);
 					if (quotes !== null && quotes.length > 0) {
 						// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
-						// 路径同流；已建成的注保留账面（消息与列表可见）
+						// 路径同流；已建成的注保留账面（消息与列表可见）。
+						// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
+						// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
 						setLegs([]);
 						setBasketOpen(false);
 						if (created.length > 0) {
@@ -235,11 +251,11 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 		basketOpen,
 		setBasketOpen,
 		stake,
-		setStake,
+		setStake: basketActions.setStake,
 		strategyVersion,
-		setStrategyVersion,
+		setStrategyVersion: basketActions.setStrategyVersion,
 		mode,
-		setMode,
+		setMode: basketActions.setMode,
 		message,
 		setMessage,
 		slipForm,
@@ -374,9 +390,10 @@ export function SlipFormChooser({
 	);
 }
 
-/** 底部常驻选注条：浏览全程可见已选腿摘要 + 组合赔率。 */
+/** 底部常驻选注条：浏览全程可见已选腿摘要 + 组合赔率 + 跨玩法草稿提示。 */
 export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint: string }) {
 	const { legs, combinedOdds, setBasketOpen, slipForm } = basket;
+	const { goalsLegs } = useBasket();
 	return (
 		<div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
 			<div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
@@ -397,6 +414,11 @@ export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint:
 				) : (
 					<span className="hidden text-xs text-muted-foreground sm:inline">{emptyHint}</span>
 				)}
+				{goalsLegs.length > 0 ? (
+					<span className="hidden text-xs text-info sm:inline" data-testid="basket-cross-goals">
+						另有进球草稿 {goalsLegs.length} 注（进球页提交）
+					</span>
+				) : null}
 				<button
 					type="button"
 					data-testid="basket-open"
@@ -455,30 +477,39 @@ export function BasketDrawer({
 						<p className="text-sm text-muted-foreground">{emptyHint}</p>
 					) : (
 						<ul className="space-y-2">
-							{legs.map((leg) => (
-								<li
-									key={leg.fixture_id}
-									className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
-									data-testid="basket-leg"
-								>
-									<span>
-										<span className="text-xs text-muted-foreground">{leg.match_code}</span>
-										<br />
-										{leg.home_team} vs {leg.away_team}
-										<br />
-										<span className="font-medium">{SELECTION_LABELS[leg.selection]}</span>
-										<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
-									</span>
-									<button
-										type="button"
-										className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-										aria-label={`移除 ${leg.match_code}`}
-										onClick={() => removeLeg(leg.fixture_id)}
+							{legs.map((leg) => {
+								const countdown = kickoffInfo(leg.kickoff_utc, Date.now());
+								return (
+									<li
+										key={leg.fixture_id}
+										className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
+										data-testid="basket-leg"
 									>
-										移除
-									</button>
-								</li>
-							))}
+										<span>
+											<span className="text-xs text-muted-foreground">{leg.match_code}</span>
+											<br />
+											{leg.home_team} vs {leg.away_team}
+											<br />
+											<span className="font-medium">{SELECTION_LABELS[leg.selection]}</span>
+											<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
+											<span
+												className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
+												data-testid="basket-leg-deadline"
+											>
+												开球 {localTime(leg.kickoff_utc)} · {countdown.text}
+											</span>
+										</span>
+										<button
+											type="button"
+											className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+											aria-label={`移除 ${leg.match_code}`}
+											onClick={() => removeLeg(leg.fixture_id)}
+										>
+											移除
+										</button>
+									</li>
+								);
+							})}
 						</ul>
 					)}
 					{/* 票型显式化（票 02）：≥2 腿必须选票型，预览/命中条件并列，无静默切换 */}
