@@ -249,6 +249,16 @@ export const attributionFixture = {
 	},
 	board_coverage: [3, 3],
 	corpus_reader: "ok",
+	freshness_shadow: {
+		n: 3,
+		n_comparable: 3,
+		rule_fresh: 2,
+		observed_fresh: 3,
+		rule_stale: 1,
+		observed_stale: 0,
+		divergent_rule_stale_observed_fresh: 1,
+	},
+	freshness_shadow_date: beijingBusinessDate(Date.now()),
 	caliber: "六桶=报告措辞；桶判定与 quote_evidence 裁决原因一一对应。",
 } as const satisfies DeepReadonly<components["schemas"]["NoCandidateAttribution"]>;
 
@@ -682,6 +692,15 @@ export const researchFixture = {
 		sale_state: "on_sale",
 		single_eligible: true,
 		jc_source_updated_at: minutesAgoIso(8),
+		// 票 08 五时钟（观测 2 分钟前/价格 8 分钟未变/销售 5 分钟确认/
+		// 欧赔 4 分钟观测/两源同刻）
+		jc_age_seconds: 8 * 60,
+		jc_observed_at: minutesAgoIso(2),
+		jc_observed_age_seconds: 2 * 60,
+		sale_observed_at: minutesAgoIso(5),
+		sale_age_seconds: 5 * 60,
+		eu_age_seconds: 4 * 60,
+		pair_gap_seconds: 0,
 		eu_books: 3,
 	},
 } as const satisfies DeepReadonly<FixtureResearch>;

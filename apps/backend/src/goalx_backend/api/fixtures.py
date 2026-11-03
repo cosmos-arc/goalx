@@ -193,7 +193,7 @@ async def set_manual_join(
 
 
 class HadQuoteVerdictView(BaseModel):
-    """某 as-of 时点的 had 报价判定（票 35 交接契约）。"""
+    """某 as-of 时点的 had 报价判定（票 35 交接契约；票 08 五时钟）。"""
 
     fixture_id: int
     as_of: str
@@ -205,10 +205,16 @@ class HadQuoteVerdictView(BaseModel):
     jc_odds: dict[str, float]
     jc_source_updated_at: str | None = None
     jc_age_seconds: float | None = None
+    # 票 08 五时钟（只记录展示，stale_source 判定仍只看 jc_age_seconds）
+    jc_observed_at: str | None = None
+    jc_observed_age_seconds: float | None = None
+    sale_observed_at: str | None = None
+    sale_age_seconds: float | None = None
     eu_books: int = 0
     eu_probabilities: dict[str, float] | None = None
     eu_fair_odds: dict[str, float] | None = None
     eu_source_updated_at: str | None = None
+    eu_age_seconds: float | None = None
     pair_gap_seconds: float | None = None
     sources: list[str]
 
@@ -256,10 +262,15 @@ async def get_had_quote_verdict(
         jc_odds=verdict.jc_odds,
         jc_source_updated_at=verdict.jc_source_updated_at,
         jc_age_seconds=verdict.jc_age_seconds,
+        jc_observed_at=verdict.jc_observed_at,
+        jc_observed_age_seconds=verdict.jc_observed_age_seconds,
+        sale_observed_at=verdict.sale_observed_at,
+        sale_age_seconds=verdict.sale_age_seconds,
         eu_books=verdict.eu_books,
         eu_probabilities=verdict.eu_probabilities,
         eu_fair_odds=verdict.eu_fair_odds,
         eu_source_updated_at=verdict.eu_source_updated_at,
+        eu_age_seconds=verdict.eu_age_seconds,
         pair_gap_seconds=verdict.pair_gap_seconds,
         sources=verdict.sources,
     )
@@ -378,6 +389,13 @@ def get_fixture_research(
         sale_state=verdict.sale_state,
         single_eligible=verdict.single_eligible,
         jc_source_updated_at=verdict.jc_source_updated_at,
+        jc_age_seconds=verdict.jc_age_seconds,
+        jc_observed_at=verdict.jc_observed_at,
+        jc_observed_age_seconds=verdict.jc_observed_age_seconds,
+        sale_observed_at=verdict.sale_observed_at,
+        sale_age_seconds=verdict.sale_age_seconds,
+        eu_age_seconds=verdict.eu_age_seconds,
+        pair_gap_seconds=verdict.pair_gap_seconds,
         eu_books=verdict.eu_books,
     )
     view.books = [

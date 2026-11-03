@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Protocol
 
 import duckdb
 from loguru import logger
@@ -115,7 +116,17 @@ def effective_source_updated_at(row: SnapshotRow) -> str | None:
 
 @dataclass
 class HadQuoteVerdict:
-    """一个 fixture 在某 as-of 时点的 had 报价判定（交接契约的载荷）。"""
+    """
+    一个 fixture 在某 as-of 时点的 had 报价判定（交接契约的载荷）。
+
+    五时钟（票 08 分时钟；全部只记录展示，stale_source 判定只用
+    jc_age_seconds 一只钟——规则零改动）：
+    1. jc_observed_at/_age_seconds = 最近成功确认观测（本机观测时刻）
+    2. jc_source_updated_at/jc_age_seconds = 价格持续未变时长（源调盘时刻）
+    3. sale_observed_at/_age_seconds = 销售状态最近确认
+    4. eu_source_updated_at/eu_age_seconds = 国际参考最近观测
+    5. pair_gap_seconds = 两源配对时差
+    """
 
     fixture_id: int
     as_of: str
@@ -128,10 +139,15 @@ class HadQuoteVerdict:
     jc_odds: dict[str, float] = field(default_factory=dict)
     jc_source_updated_at: str | None = None
     jc_age_seconds: float | None = None
+    jc_observed_at: str | None = None
+    jc_observed_age_seconds: float | None = None
+    sale_observed_at: str | None = None
+    sale_age_seconds: float | None = None
     eu_books: int = 0
     eu_probabilities: dict[str, float] | None = None
     eu_fair_odds: dict[str, float] | None = None
     eu_source_updated_at: str | None = None
+    eu_age_seconds: float | None = None
     pair_gap_seconds: float | None = None
     sources: list[str] = field(default_factory=list)
 
@@ -697,6 +713,9 @@ def adjudicate_had_quote(  # noqa: PLR0913 判定接缝集随 as-of/源切换/�
         verdict.mark_unknown("sale_status_unknown")
     else:
         verdict.sale_state = str(sale["sale_state"])
+        # 时钟③销售状态最近确认（票 08：只记录展示，不参与判定）
+        verdict.sale_observed_at = str(sale["observed_at"])
+        verdict.sale_age_seconds = seconds_between(as_of, verdict.sale_observed_at)
         if sale["sale_state"] == "stopped":
             verdict.reject("sale_stopped")
             return verdict
@@ -814,6 +833,14 @@ def _adjudicate_jc(
     verdict.jc_source_updated_at = max(source_times)
     age = seconds_between(as_of, verdict.jc_source_updated_at)
     verdict.jc_age_seconds = age
+    # 时钟①最近成功确认观测（票 08：影子口径的钟——stale_source 判定
+    # 仍只看 jc_age_seconds，规则零改动）
+    observed_times = [
+        t for t in (effective_observed_at(r) for r in latest.values()) if t
+    ]
+    if observed_times:
+        verdict.jc_observed_at = max(observed_times)
+        verdict.jc_observed_age_seconds = seconds_between(as_of, verdict.jc_observed_at)
     if age > freshness_seconds:
         verdict.reject("stale_source")
     verdict.sources.append("sporttery")
@@ -952,6 +979,13 @@ def _adjudicate_eu(
     verdict.eu_fair_odds = {
         s: round(1.0 / p, 4) for s, p in zip(SELECTIONS, probs, strict=True)
     }
+    # 时钟④国际参考最近观测（票 08）：观测时基（本机 effective_observed_at，
+    # 与 EU 段 60min 观测龄闸同时基）——非书源自报时间；只记录不参与判定
+    eu_observed_times = [
+        t for t in (effective_observed_at(r) for r in eligible) if t is not None
+    ]
+    if eu_observed_times:
+        verdict.eu_age_seconds = seconds_between(as_of, max(eu_observed_times))
     verdict.sources.extend(sorted(valid_books))
 
 
@@ -1283,3 +1317,184 @@ def jc_sp_overround_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
           AND CAST(odds_a AS REAL) > 1.0
         """
     ).fetchall()
+
+
+# ---- 票 08：新鲜度双口径影子测量（300s 规则并行对照，不改规则） ----
+
+
+class _ShadowQuote(Protocol):
+    """
+    影子记录器消费的判定摘要面（结构性类型——今日读模型行满足）。
+
+    只读属性规避可变属性的不变方差。
+    """
+
+    @property
+    def reasons(self) -> list[str]: ...
+
+    @property
+    def jc_age_seconds(self) -> float | None: ...
+
+    @property
+    def jc_observed_age_seconds(self) -> float | None: ...
+
+    @property
+    def sale_age_seconds(self) -> float | None: ...
+
+    @property
+    def eu_age_seconds(self) -> float | None: ...
+
+    @property
+    def pair_gap_seconds(self) -> float | None: ...
+
+
+class _ShadowRow(Protocol):
+    """影子记录器消费的今日行面（结构性类型，避免反向 import today）。"""
+
+    @property
+    def fixture_id(self) -> int: ...
+
+    @property
+    def had_quote(self) -> _ShadowQuote | None: ...
+
+
+def record_freshness_shadow(
+    conn: sqlite3.Connection,
+    rows: Sequence[_ShadowRow],
+    business_date: str,
+    *,
+    as_of: str,
+    freshness_seconds: float = DEFAULT_FRESHNESS_SECONDS,
+) -> dict[str, int]:
+    """
+    一日影子快照：今日读模型行 → 五时钟 + 双口径结论落库。
+
+    规则口径 = 现行 stale_source 判定（调盘龄 > 300s）；观测口径 =
+    观测龄 > 同 300s（人裁决：最尖对照）。仅记录——正式判定字段零改动，
+    影子落独立表 freshness_shadow（日拍 INSERT OR REPLACE，同场同日
+    最新一拍生效）。行来自 ``build_today_view``（sid/corpus 已在该层
+    解析，本模块不依赖 mapping——分层契约不变）。返回计数供 flow
+    日志/晨检读数。
+
+    分歧方向语义：rule_stale & not observed_stale = "价久未变但刚确认过"
+    （现行规则拒、观测口径放）——票 08 要测量的正是这一类。
+    """
+    counts: dict[str, int] = {
+        "n": 0,
+        "rule_stale": 0,
+        "observed_stale": 0,
+        "rule_stale_observed_fresh": 0,
+        "rule_fresh": 0,
+        "observed_fresh": 0,
+        "n_comparable": 0,
+    }
+    for row in rows:
+        quote = row.had_quote
+        rule_stale = quote is not None and "stale_source" in quote.reasons
+        price_age: float | None = quote.jc_age_seconds if quote else None
+        observed_age: float | None = quote.jc_observed_age_seconds if quote else None
+        observed_stale = observed_age is not None and observed_age > freshness_seconds
+        # 可比行=两钟都可算（无 JC 证据的行两种口径都无法判——计入 n
+        # 可见但不进覆盖分子，防 unknown 混充 fresh）
+        # gap=观测龄−价格龄（差值入库）；可比=两钟都可算（无 JC 证据行
+        # 计入 n 可见但不进覆盖分子，防 unknown 混充 fresh）
+        gap: float | None = None
+        if price_age is not None and observed_age is not None:
+            gap = observed_age - price_age
+        comparable = gap is not None
+        counts["n"] += 1
+        counts["rule_stale"] += int(rule_stale)
+        counts["observed_stale"] += int(observed_stale)
+        counts["rule_stale_observed_fresh"] += int(rule_stale and not observed_stale)
+        counts["rule_fresh"] += int(comparable and not rule_stale)
+        counts["observed_fresh"] += int(comparable and not observed_stale)
+        counts["n_comparable"] += int(comparable)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO freshness_shadow
+                (fixture_id, business_date, as_of, rule_stale_source,
+                 observed_stale, price_age_seconds, observed_age_seconds,
+                 clock_gap_seconds, sale_age_seconds, eu_age_seconds,
+                 pair_gap_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.fixture_id,
+                business_date,
+                as_of,
+                int(rule_stale),
+                int(observed_stale),
+                price_age,
+                observed_age,
+                gap,
+                quote.sale_age_seconds if quote else None,
+                quote.eu_age_seconds if quote else None,
+                quote.pair_gap_seconds if quote else None,
+            ),
+        )
+    conn.commit()
+    return counts
+
+
+def latest_freshness_shadow_date(conn: sqlite3.Connection) -> str | None:
+    """
+    最新已拍业务日（无行/表未建 None——晨检读数入口）。
+
+    v38 前旧库（只读连接无法自 migrate）降级 None 不抛——晨检是新代码
+    首个跑面，缺表部署窗不该打灭整张红绿面（correctness F3）。
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT business_date FROM freshness_shadow
+            ORDER BY business_date DESC LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return str(row["business_date"]) if row is not None else None
+
+
+def freshness_shadow_summary(
+    conn: sqlite3.Connection, business_date: str
+) -> dict[str, int] | None:
+    """
+    一日影子读数（晨检/面板只读消费）：双口径新鲜覆盖 + 分歧计数。
+
+    覆盖分母=可比行（两钟都可算；无 JC 证据行计入 n 可见但不进分子）。
+    无当日行/表未建返回 None（未拍不硬判——同 latest_ 入口缺表降级）。
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT rule_stale_source, observed_stale, price_age_seconds,
+                   observed_age_seconds
+            FROM freshness_shadow WHERE business_date = ?
+            """,
+            (business_date,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    if not rows:
+        return None
+    n = len(rows)
+    comparable = [
+        r
+        for r in rows
+        if r["price_age_seconds"] is not None and r["observed_age_seconds"] is not None
+    ]
+    n_comparable = len(comparable)
+    rule_stale = sum(int(r["rule_stale_source"]) for r in rows)
+    observed_stale = sum(int(r["observed_stale"]) for r in rows)
+    divergent = sum(
+        1 for r in rows if int(r["rule_stale_source"]) and not int(r["observed_stale"])
+    )
+    return {
+        "n": n,
+        "n_comparable": n_comparable,
+        "rule_fresh": sum(1 for r in comparable if not int(r["rule_stale_source"])),
+        "observed_fresh": sum(1 for r in comparable if not int(r["observed_stale"])),
+        "rule_stale": rule_stale,
+        "observed_stale": observed_stale,
+        "divergent_rule_stale_observed_fresh": divergent,
+    }

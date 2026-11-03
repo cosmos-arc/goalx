@@ -48,6 +48,25 @@ function normalizedImplied(odds: number): number {
 	return odds > 1 ? 1 / odds : 0;
 }
 
+/** 票 08 两源时差人类可读（corpus 出版时滞可跨日，按量级给单位）。 */
+function gapText(seconds: number): string {
+	if (seconds < 90) {
+		return `${Math.round(seconds)}s`;
+	}
+	if (seconds < 5400) {
+		return `${Math.round(seconds / 60)}分钟`;
+	}
+	return `${(seconds / 86400).toFixed(1)}天`;
+}
+
+/** 票 08 五时钟展示：秒龄 → 整分钟（null/undefined=未知占位）。 */
+function clockMinutes(seconds: number | null | undefined): string {
+	if (seconds === null || seconds === undefined) {
+		return "—";
+	}
+	return `${Math.round(seconds / 60)}分钟前`;
+}
+
 export function FixtureResearchPage() {
 	const { id } = useParams({ from: "/fixtures/$id" });
 	const fixtureId = Number(id);
@@ -149,6 +168,19 @@ export function FixtureResearchPage() {
 								)}
 								{data.joined ? null : " · 未接入欧赔"}
 							</p>
+							{/* 票 08 五时钟分离展示：判定只看"价格未变"一只钟，其余四钟对照可见 */}
+							{data.had_quote ? (
+								<p className="mt-1 text-xs text-muted-foreground" data-testid="research-clocks">
+									五时钟：确认观测 {clockMinutes(data.had_quote.jc_observed_age_seconds)} · 价格未变{" "}
+									{clockMinutes(data.had_quote.jc_age_seconds)} · 销售确认{" "}
+									{clockMinutes(data.had_quote.sale_age_seconds)} · 欧赔观测{" "}
+									{clockMinutes(data.had_quote.eu_age_seconds)} · 两源时差{" "}
+									{data.had_quote.pair_gap_seconds === null || data.had_quote.pair_gap_seconds === undefined
+										? "—"
+										: gapText(data.had_quote.pair_gap_seconds)}
+									（分钟前；判定口径=价格未变 300s，其余仅记录；两源时差对 corpus 链=出版时滞口径可跨日，非实时钟）
+								</p>
+							) : null}
 						</header>
 
 						{/* 赔率明细：竞彩 + 逐书 H/D/A + 捕获时间；偏差 ≥5pp 琥珀高亮 + 方向 */}

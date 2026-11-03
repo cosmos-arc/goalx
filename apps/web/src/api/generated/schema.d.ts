@@ -2030,6 +2030,11 @@ export interface components {
         /**
          * HadQuoteStatus
          * @description 今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。
+         *
+         *     票 08 五时钟（只记录展示，stale_source 判定仍只看调盘龄）：
+         *     jc_source/jc_age=价格持续未变；jc_observed/_age=最近成功确认观测；
+         *     sale_observed/_age=销售状态最近确认；eu_age=国际参考最近观测；
+         *     pair_gap=两源配对时差。
          */
         HadQuoteStatus: {
             /** As Of */
@@ -2044,6 +2049,20 @@ export interface components {
             single_eligible?: boolean | null;
             /** Jc Source Updated At */
             jc_source_updated_at?: string | null;
+            /** Jc Age Seconds */
+            jc_age_seconds?: number | null;
+            /** Jc Observed At */
+            jc_observed_at?: string | null;
+            /** Jc Observed Age Seconds */
+            jc_observed_age_seconds?: number | null;
+            /** Sale Observed At */
+            sale_observed_at?: string | null;
+            /** Sale Age Seconds */
+            sale_age_seconds?: number | null;
+            /** Eu Age Seconds */
+            eu_age_seconds?: number | null;
+            /** Pair Gap Seconds */
+            pair_gap_seconds?: number | null;
             /**
              * Eu Books
              * @default 0
@@ -2052,7 +2071,7 @@ export interface components {
         };
         /**
          * HadQuoteVerdictView
-         * @description 某 as-of 时点的 had 报价判定（票 35 交接契约）。
+         * @description 某 as-of 时点的 had 报价判定（票 35 交接契约；票 08 五时钟）。
          */
         HadQuoteVerdictView: {
             /** Fixture Id */
@@ -2077,6 +2096,14 @@ export interface components {
             jc_source_updated_at?: string | null;
             /** Jc Age Seconds */
             jc_age_seconds?: number | null;
+            /** Jc Observed At */
+            jc_observed_at?: string | null;
+            /** Jc Observed Age Seconds */
+            jc_observed_age_seconds?: number | null;
+            /** Sale Observed At */
+            sale_observed_at?: string | null;
+            /** Sale Age Seconds */
+            sale_age_seconds?: number | null;
             /**
              * Eu Books
              * @default 0
@@ -2092,6 +2119,8 @@ export interface components {
             } | null;
             /** Eu Source Updated At */
             eu_source_updated_at?: string | null;
+            /** Eu Age Seconds */
+            eu_age_seconds?: number | null;
             /** Pair Gap Seconds */
             pair_gap_seconds?: number | null;
             /** Sources */
@@ -2238,6 +2267,12 @@ export interface components {
              * @default ok
              */
             corpus_reader: string;
+            /** Freshness Shadow */
+            freshness_shadow?: {
+                [key: string]: number;
+            } | null;
+            /** Freshness Shadow Date */
+            freshness_shadow_date?: string | null;
             /** Caliber */
             caliber: string;
         };

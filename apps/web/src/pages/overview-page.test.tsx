@@ -504,3 +504,12 @@ test("票 07 correctness：样本截断指示 + corpus 读面降级警示", asyn
 	await renderAt("/");
 	expect(await screen.findByTestId("attribution-reader-degraded")).toHaveTextContent("读面缺席");
 });
+
+test("票 08：归因面板显示 300s 双口径读数行（最新已拍日影子）", async () => {
+	await renderAt("/");
+	const shadow = await screen.findByTestId("attribution-freshness-shadow");
+	expect(shadow).toHaveTextContent("规则新鲜 2/3");
+	expect(shadow).toHaveTextContent("观测新鲜 3/3");
+	expect(shadow).toHaveTextContent("分歧（规则旧 /观测新）1");
+	expect(shadow).toHaveTextContent("仅记录不改规则");
+});

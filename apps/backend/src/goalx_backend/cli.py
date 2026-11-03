@@ -246,6 +246,13 @@ def _cmd_funnel_report(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_freshness_shadow(args: argparse.Namespace) -> None:
+    """新鲜度双口径影子日拍（票 08）：五时钟+双结论落库（可回放指定日）。"""
+    payload = tasks.freshness_shadow_day(business_date=args.date)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("freshness-shadow: {}", payload["counts"])
+
+
 def _cmd_sync_draw_results() -> None:
     """手动跑一次赛果自动同步（官方 uniform，与 flow 同一实现；票 44）。"""
     logger.info("draw sync: {}", tasks.draw_results_sync())
@@ -1808,6 +1815,15 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         help="冻结时点 ISO(缺省=当前时刻;重放历史日拍用)",
     )
     sub.add_parser(
+        "freshness-shadow-day",
+        help="新鲜度双口径影子日拍(票08:五时钟+规则/观测双结论,仅记录不改规则)",
+    ).add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="业务日 北京日期(缺省=今天;仅当日/未来日——过去日无冻结回放会销毁原始快照)",
+    )
+    sub.add_parser(
         "gold-build",
         help="gold特征面全量重算(票03起=market_quote保鲜+gold重建同一实现,幂等)",
     )
@@ -1926,6 +1942,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest-hist": _cmd_ingest_hist,
         "settle": _cmd_settle,
         "funnel-report": lambda: _cmd_funnel_report(args),
+        "freshness-shadow-day": lambda: _cmd_freshness_shadow(args),
         "multiline-bounds-report": _cmd_multiline_bounds,
         "frozen-reconcile": _cmd_frozen_reconcile,
         "guardian-news-funnel": lambda: _cmd_guardian_news_funnel(args),

@@ -34,7 +34,14 @@ from goalx_backend.betting.funnel import (
 )
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
-from goalx_backend.data import corpus_duckdb, gold, mapping, quote_evidence, reconcile
+from goalx_backend.data import (
+    corpus_duckdb,
+    gold,
+    mapping,
+    quote_evidence,
+    reconcile,
+    today,
+)
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs
 from goalx_backend.data.corpus_store import CorpusStore
@@ -960,6 +967,36 @@ def funnel_day() -> dict[str, object]:
         ).as_dict()
         report["liveness"] = funnel_liveness(conn)
     return report
+
+
+def freshness_shadow_day(business_date: str | None = None) -> dict[str, object]:
+    """
+    新鲜度双口径影子日拍（票 08）：五时钟+规则/观测双结论落库。
+
+    复用今日读模型（sid/corpus 同层解析）；观测口径窗宽=同 300s（人
+    裁决最尖对照）。仅记录——读数与票 09 预注册检查点对齐（11-13 首读）。
+    过去日拒绝重放（correctness F2）：无冻结 as_of 的回放会把当日读成
+    kickoff_passed→REPLACE 无声销毁原始快照——回放须带冻结时点另开
+    通道；未来日允许（预拍当日晚场）。
+    """
+    bdate = business_date or fx_store.beijing_business_date()
+    today_bdate = fx_store.beijing_business_date()
+    if bdate < today_bdate:
+        raise ValueError(
+            f"拒绝重放过去日 {bdate}：无冻结 as_of 的回放会销毁当日原始"
+            + "快照（REPLACE）；当日补拍直接跑不带 --date"
+        )
+    with task_conn() as conn, corpus_duckdb.reader() as duck_con:
+        rows = today.build_today_view(conn, bdate, duck_con=duck_con)
+        first_quote = rows[0].had_quote if rows else None
+        counts = quote_evidence.record_freshness_shadow(
+            conn, rows, bdate, as_of=first_quote.as_of if first_quote else utc_now_iso()
+        )
+        return {
+            "business_date": bdate,
+            "counts": counts,
+            "summary": quote_evidence.freshness_shadow_summary(conn, bdate),
+        }
 
 
 def frozen_reconcile() -> dict[str, object]:

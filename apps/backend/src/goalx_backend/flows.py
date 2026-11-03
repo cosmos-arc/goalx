@@ -120,7 +120,21 @@ def daily_capture_flow() -> dict[str, object]:
     """
     jingcai = jingcai_snapshot_flow()
     forecast = forecast_daily_flow()
-    return {"jingcai": jingcai, "forecast": forecast}
+    # 票 08：新鲜度双口径影子拍挂采集后（correctness F1：观测口径要量
+    # "价久未变但刚确认过"，必须紧跟竞彩采集拍（10:00/12:30/16:30/19:00
+    # 定拍）——23:30 wrap 拍的观测龄恒 4h+ 会把双口径读成常数；日拍
+    # REPLACE 最新一拍生效，wrap 不再拍。采集为体、影子为测量，影子
+    # 失败不拖采集。
+    try:
+        freshness_shadow = tasks.freshness_shadow_day()
+    except Exception as exc:
+        logger.warning("freshness shadow snap degraded: {}", exc)
+        freshness_shadow = {"error": str(exc)}
+    return {
+        "jingcai": jingcai,
+        "forecast": forecast,
+        "freshness_shadow": freshness_shadow,
+    }
 
 
 @flow(name="daily-wrap", log_prints=True)
@@ -149,7 +163,7 @@ def daily_wrap_flow() -> dict[str, object]:
         # 日终冻结汇总面（measure-08：含税前/税后 tax_face）
         frozen_face = frozen_mod.frozen_summary(conn, str(funnel["business_date"]))
     logger.info(
-        "daily wrap: settlement={}, funnel={}, clv={}, audit_findings={}, m3={}",
+        "daily wrap: settlement={}, funnel={}, clv={}," + " audit_findings={}, m3={}",
         settlement,
         funnel,
         clv_stats,
