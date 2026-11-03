@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -33,6 +34,8 @@ from penaltyblog.models import DixonColesGoalModel
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded
 from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
+
+logger = logging.getLogger(__name__)
 
 # Tier1 五大 fd 代码（票 26：五大主动；Tier2 如 N1 荷甲扩导列为可选项）
 TIER1_COMPETITIONS = ("E0", "SP1", "I1", "D1", "F1")
@@ -193,6 +196,10 @@ class TrainingRun:
         # 票 05：bootstrap=[] 与非空不同身份（v1 同身份互相覆盖的根因）。
         if self.stored_artifact_id is not None:
             return self.stored_artifact_id
+        return self._compute_artifact_id()
+
+    def _compute_artifact_id(self) -> str:
+        """现行公式重算身份（无视冻结短路——校验/守卫用）。"""
         canonical = json.dumps(
             {
                 "data_fingerprint": self.base.data_fingerprint,
@@ -209,8 +216,20 @@ class TrainingRun:
         """身份用版本：复载工件=训练环境冻结值；新建=当前环境。"""
         return self.versions if self.versions is not None else implementation_versions()
 
+    def _check_frozen_identity(self) -> None:
+        """复载工件的冻结身份必须仍与其内容一致——变更后原身份重存=写坏文件。"""
+        if self.stored_artifact_id is None:
+            return
+        if self.stored_schema == ARTIFACT_SCHEMA_VERSION:
+            ok = self._compute_artifact_id() == self.stored_artifact_id
+        else:
+            ok = self._v1_artifact_id() == self.stored_artifact_id
+        if not ok:
+            raise ValueError("复载工件内容已变更,冻结身份失效:不可原身份重存")
+
     def to_payload(self) -> dict[str, object]:
         """Serialize to the on-disk JSON payload shape."""
+        self._check_frozen_identity()
         schema = (
             self.stored_schema
             if self.stored_schema is not None
@@ -262,19 +281,24 @@ class TrainingRun:
         )
         run = cls(base=base, bootstrap=boots, seed=seed, versions=versions)
         stored = payload.get("artifact_id")
+        if stored is not None and not isinstance(stored, str):
+            raise ValueError(f"artifact_id 类型非法: {type(stored).__name__}")
         if isinstance(stored, str):
             schema = int(str(payload.get("schema_version", 1)))
             # 校验按工件时代的公式分发:当前公式(含 n_bootstrap)与 v1 公式
             # (票 34 形态,42/42 盘面工件实证匹配)各验各的——防篡改也防把
             # v2 文件降级 schema 绕过校验。未来公式再演进时在此加分支。
             if schema == ARTIFACT_SCHEMA_VERSION:
-                ok = run.artifact_id() == stored
-            elif versions is not None:
+                ok = run._compute_artifact_id() == stored
+            elif schema == 1 and versions is not None:
                 ok = run._v1_artifact_id() == stored
             else:
-                ok = False  # 有身份却无版本记录:盘面不存在这种真工件,拒载
+                raise ValueError(
+                    f"不支持的身份 schema: {schema}"
+                    + ("" if versions is not None else "(有身份却无版本记录)")
+                )
             if not ok:
-                recalc = run.artifact_id()
+                recalc = run._compute_artifact_id()
                 raise ValueError(
                     f"工件身份与内容不一致: 记 {stored[:16]} 算 {recalc[:16]}"
                 )
@@ -340,14 +364,22 @@ def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
 def list_runs(
     models_dir: str | Path, competition: str
 ) -> list[tuple[TrainingRun, Path]]:
-    """一个联赛的全部训练 run，按训练窗口上界排序（旧→新）。"""
+    """
+    一个联赛的全部训练 run，按训练窗口上界排序（旧→新）。
+
+    单个坏工件（损坏/篡改/未来 schema）跳过并告警,不毒化整目录——
+    其余联赛/工件的预测照常（票 05 correctness:读取路径不因个别文件收紧）。
+    """
     directory = Path(models_dir) / competition
     if not directory.exists():
         return []
     runs: list[tuple[TrainingRun, Path]] = []
     for path in sorted(directory.glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        runs.append((TrainingRun.from_payload(payload), path))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            runs.append((TrainingRun.from_payload(payload), path))
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("跳过坏工件 %s: %s", path, exc)
     runs.sort(key=lambda item: (item[0].base.train_window_end, item[0].base.fitted_at))
     return runs
 

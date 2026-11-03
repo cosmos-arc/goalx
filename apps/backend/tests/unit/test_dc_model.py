@@ -374,16 +374,6 @@ def test_from_payload_v1_tamper_and_schema_downgrade_rejected() -> None:
     with pytest.raises(ValueError, match="工件身份与内容不一致"):
         dcm.TrainingRun.from_payload(tampered)
 
-    # 有身份却无版本记录的拼装件:盘面不存在这种真工件,拒载
-    no_versions = {
-        **payload,
-        "schema_version": 1,
-        "artifact_id": "0" * 64,
-        "versions": None,
-    }
-    with pytest.raises(ValueError, match="工件身份与内容不一致"):
-        dcm.TrainingRun.from_payload(no_versions)
-
 
 def test_legacy_roundtrip_resave_stays_loadable(tmp_path) -> None:
     """v1 旧工件复载→重存:仍按 v1 schema/身份写出,再复载不自坏。"""
@@ -398,3 +388,63 @@ def test_legacy_roundtrip_resave_stays_loadable(tmp_path) -> None:
     assert on_disk["schema_version"] == 1  # 不因重存抬升 schema 时代
     again = dcm.TrainingRun.from_payload(on_disk)
     assert again.artifact_id() == legacy_id
+
+
+# --- 票 05 correctness 轴回归 ---
+
+
+def test_list_runs_skips_single_bad_artifact(tmp_path) -> None:
+    """单个坏工件不毒化整目录:其余照常可载,load_latest_run 不死。"""
+    rows = synthetic_rows(n=120, seed=5)
+    good = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    dcm.save_run(good, tmp_path)
+    # 毒文件:未来 schema(先用新版本训练再回滚的形态)
+    poisoned = good.to_payload()
+    poisoned["schema_version"] = 3
+    (tmp_path / "E0" / "E0-poison.json").write_text(
+        json.dumps(poisoned), encoding="utf-8"
+    )
+    # 篡改 id 的文件也跳过
+    tampered = good.to_payload()
+    tampered["artifact_id"] = "0" * 64
+    (tmp_path / "E0" / "E0-tamper.json").write_text(
+        json.dumps(tampered), encoding="utf-8"
+    )
+    runs = dcm.list_runs(tmp_path, "E0")
+    assert len(runs) == 1  # 只有合法件
+    latest = dcm.load_latest_run(tmp_path, "E0")
+    assert latest is not None
+    assert latest.artifact_id() == good.artifact_id()
+
+
+def test_from_payload_rejects_unknown_schema_and_non_str_id() -> None:
+    """未来 schema 显式报不支持(不落 v1 分支误报);非字符串身份拒绝。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    future = {**run.to_payload(), "schema_version": 3}
+    with pytest.raises(ValueError, match="不支持的身份 schema: 3"):
+        dcm.TrainingRun.from_payload(future)
+    # schema=1 有身份却无版本记录:拼装件,同报不支持
+    no_versions = {
+        **run.to_payload(),
+        "schema_version": 1,
+        "artifact_id": "0" * 64,
+        "versions": None,
+    }
+    with pytest.raises(ValueError, match="不支持的身份 schema"):
+        dcm.TrainingRun.from_payload(no_versions)
+    # 非字符串 artifact_id 不得静默当作无身份工件
+    with pytest.raises(ValueError, match="artifact_id 类型非法"):
+        dcm.TrainingRun.from_payload({**run.to_payload(), "artifact_id": 12345})
+
+
+def test_resave_after_mutation_rejected(tmp_path) -> None:
+    """复载后改内容再以冻结身份重存=写身份与内容不符的坏文件,拒绝。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    loaded = dcm.TrainingRun.from_payload(run.to_payload())
+    loaded.bootstrap.append(loaded.base)  # 内容变更,冻结身份过期
+    with pytest.raises(ValueError, match="冻结身份失效"):
+        loaded.to_payload()
+    with pytest.raises(ValueError, match="冻结身份失效"):
+        dcm.save_run(loaded, tmp_path)
