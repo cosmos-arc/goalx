@@ -1055,7 +1055,10 @@ export interface components {
         };
         /**
          * BetEvSnapshotView
-         * @description 注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。
+         * @description 注级 EV 快照（票 41）：建注时刻双口径概率与 EV；存量注无快照为 null。
+         *
+         *     票 04 注记：锁定价重验（allow_price_update）刷新 locked_odds 但 EV
+         *     快照不倒填——EV 口径恒为建注时刻，对照实绩时留意价已重绑。
          */
         BetEvSnapshotView: {
             /** Prob Consensus */
@@ -3106,7 +3109,23 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        message: string;
+                        current_quotes: {
+                            /** Fixture Id */
+                            fixture_id: number;
+                            /** Selection Code */
+                            selection_code: string;
+                            /** Server Odds */
+                            server_odds: number;
+                            /** Snapshot Id */
+                            snapshot_id: number;
+                            /** Observed At */
+                            observed_at: string;
+                        }[];
+                    };
+                };
             };
             /** @description Validation Error */
             422: {
@@ -3180,7 +3199,23 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        message: string;
+                        current_quotes: {
+                            /** Fixture Id */
+                            fixture_id: number;
+                            /** Selection Code */
+                            selection_code: string;
+                            /** Server Odds */
+                            server_odds: number;
+                            /** Snapshot Id */
+                            snapshot_id: number;
+                            /** Observed At */
+                            observed_at: string;
+                        }[];
+                    };
+                };
             };
             /** @description Validation Error */
             422: {

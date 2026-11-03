@@ -70,7 +70,13 @@ def decision_key(
 
 
 def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
-    """全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。"""
+    """
+    全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。
+
+    正式纸面成绩面闸门（boundary-hardening 票 04 范围④）：manual_research
+    纸面注排除（验证/CLV 共用本分母）；历史 NULL 不回溯排除（裁决③）。
+    live 注不受影响。
+    """
     rows = conn.execute(
         """
         SELECT b.id AS bet_id, b.mode, b.status, b.market_kind, b.placed_at,
@@ -81,6 +87,7 @@ def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
         FROM bets b
         JOIN bet_legs l ON l.bet_id = b.id
         WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
+          AND NOT (b.mode = 'paper' AND b.price_source IS 'manual_research')
         ORDER BY b.settled_at, b.id, l.id
         """
     ).fetchall()

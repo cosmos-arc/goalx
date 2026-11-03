@@ -273,6 +273,23 @@ class SnapshotInput(BaseModel):
     meta: dict[str, str] | None = None
 
 
+# 价格来源三分类（boundary-hardening 票 04）：system_paper=系统纸面决策
+# （服务器验证，正式纸面成绩面成员）；live_backfill=真实票据回录（按实际
+# 条款结算，不要求等于系统报价）；manual_research=手工研究假设（不进
+# 正式可执行性验证）。历史行 NULL=未分类（人裁决 2026-11-02 不回溯
+# 打标；消费侧维持既有面，仅排除 manual_research）。
+PRICE_SOURCE_SYSTEM_PAPER = "system_paper"
+PRICE_SOURCE_LIVE_BACKFILL = "live_backfill"
+PRICE_SOURCE_MANUAL_RESEARCH = "manual_research"
+PRICE_SOURCES = frozenset(
+    {
+        PRICE_SOURCE_SYSTEM_PAPER,
+        PRICE_SOURCE_LIVE_BACKFILL,
+        PRICE_SOURCE_MANUAL_RESEARCH,
+    }
+)
+
+
 class LegInput(BaseModel):
     """add_leg 的输入。"""
 

@@ -581,7 +581,60 @@
             "description": "非法串关(同场多腿)或 had 资格不满足(停售/已开赛/非单固)"
           },
           "409": {
-            "description": "纸面价与服务器当前有效报价不一致(返回新价; 按 server_odds 重提,或 allow_manual_price 走研究假设)"
+            "description": "纸面价与服务器当前有效报价不一致(返回新价; 按 server_odds 重提,或 allow_manual_price 走研究假设)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "current_quotes": {
+                      "type": "array",
+                      "items": {
+                        "description": "价变 409 载荷一腿：服务器当前有效报价（含快照身份）。",
+                        "properties": {
+                          "fixture_id": {
+                            "title": "Fixture Id",
+                            "type": "integer"
+                          },
+                          "selection_code": {
+                            "title": "Selection Code",
+                            "type": "string"
+                          },
+                          "server_odds": {
+                            "title": "Server Odds",
+                            "type": "number"
+                          },
+                          "snapshot_id": {
+                            "title": "Snapshot Id",
+                            "type": "integer"
+                          },
+                          "observed_at": {
+                            "title": "Observed At",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fixture_id",
+                          "selection_code",
+                          "server_odds",
+                          "snapshot_id",
+                          "observed_at"
+                        ],
+                        "title": "LegQuotePayload",
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "current_quotes"
+                  ]
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -718,7 +771,60 @@
             "description": "bet 不存在"
           },
           "409": {
-            "description": "system_paper 注锁定时服务器报价已变(返回新价; 确认按服务器价落库则 allow_price_update=true 重提)"
+            "description": "system_paper 注锁定时服务器报价已变(返回新价; 确认按服务器价落库则 allow_price_update=true 重提)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "current_quotes": {
+                      "items": {
+                        "properties": {
+                          "fixture_id": {
+                            "type": "integer",
+                            "title": "Fixture Id"
+                          },
+                          "selection_code": {
+                            "type": "string",
+                            "title": "Selection Code"
+                          },
+                          "server_odds": {
+                            "type": "number",
+                            "title": "Server Odds"
+                          },
+                          "snapshot_id": {
+                            "type": "integer",
+                            "title": "Snapshot Id"
+                          },
+                          "observed_at": {
+                            "type": "string",
+                            "title": "Observed At"
+                          }
+                        },
+                        "type": "object",
+                        "required": [
+                          "fixture_id",
+                          "selection_code",
+                          "server_odds",
+                          "snapshot_id",
+                          "observed_at"
+                        ],
+                        "title": "LegQuotePayload",
+                        "description": "价变 409 载荷一腿：服务器当前有效报价（含快照身份）。"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object",
+                  "required": [
+                    "message",
+                    "current_quotes"
+                  ]
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -2388,7 +2494,7 @@
         },
         "type": "object",
         "title": "BetEvSnapshotView",
-        "description": "注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。"
+        "description": "注级 EV 快照（票 41）：建注时刻双口径概率与 EV；存量注无快照为 null。\n\n票 04 注记：锁定价重验（allow_price_update）刷新 locked_odds 但 EV\n快照不倒填——EV 口径恒为建注时刻，对照实绩时留意价已重绑。"
       },
       "BetLegView": {
         "properties": {

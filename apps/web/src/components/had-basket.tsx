@@ -115,7 +115,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			if (quotes !== null && quotes.length > 0) {
 				setLegs([]);
 				setBasketOpen(false);
-				void queryClient.invalidateQueries({ queryKey: ["fixtures", "today"] });
+				// 前缀失效各日期页的今日场次查询（键形 ["today-fixtures", days]）——
+				// correctness F1：打错键=不刷新，页面停在旧价上确认流死循环
+				void queryClient.invalidateQueries({ queryKey: ["today-fixtures"] });
 				setMessage(
 					`报价已变（${quotes
 						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)

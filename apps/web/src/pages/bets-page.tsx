@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
 	type Bet,
 	fetchBets,
@@ -253,8 +253,11 @@ export function BetsPage() {
 	// 价变确认（票 04 裁决①）：锁定时服务器报价已变 → 409 展示新价，
 	// 用户确认后按服务器价落库（allow_price_update）。attempts 走 ref：
 	// onError 闭包里 mutation.variables 尚未提交本次值
-	const [priceConfirm, setPriceConfirm] = useState<{ betId: number; odds: number } | null>(null);
-	const lockAttemptRef = useRef<number | null>(null);
+	const [priceConfirm, setPriceConfirm] = useState<{
+		betId: number;
+		odds: number;
+		legCount: number;
+	} | null>(null);
 	const lockPaper = useMutation({
 		mutationFn: (input: { betId: number; allowPriceUpdate: boolean }) =>
 			recordPurchase({
@@ -266,12 +269,15 @@ export function BetsPage() {
 			setPriceConfirm(null);
 			refresh();
 		},
-		onError: (error) => {
+		onError: (error, variables) => {
 			const quotes = currentQuotes(error);
-			const attempted = lockAttemptRef.current;
 			const first = quotes?.[0];
-			if (quotes !== null && first !== undefined && attempted !== null) {
-				setPriceConfirm({ betId: attempted, odds: first.server_odds });
+			if (quotes !== null && first !== undefined) {
+				setPriceConfirm({
+					betId: variables.betId,
+					odds: first.server_odds,
+					legCount: quotes.length,
+				});
 				setMessage(
 					`报价已变（${quotes
 						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
@@ -283,6 +289,11 @@ export function BetsPage() {
 		},
 	});
 
+	function lockBet(betId: number, allowPriceUpdate: boolean) {
+		setPriceConfirm(null); // 换锁另一注时清旧确认按钮（残留可点）
+		lockPaper.mutate({ betId, allowPriceUpdate });
+	}
+
 	function handleLock(bet: Bet) {
 		const warning = kickoffWarning(bet);
 		if (warning && !warnedBets.has(bet.id)) {
@@ -290,8 +301,7 @@ export function BetsPage() {
 			setMessage(warning);
 			return;
 		}
-		lockAttemptRef.current = bet.id;
-		lockPaper.mutate({ betId: bet.id, allowPriceUpdate: false });
+		lockBet(bet.id, false);
 	}
 
 	// ---- 真实回录 Drawer（票 06：实际金额/逐腿赔率/时点 + 快照对照） ----
@@ -447,12 +457,11 @@ export function BetsPage() {
 								data-testid={`price-confirm-${priceConfirm.betId}`}
 								className="ml-3 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground"
 								disabled={lockPaper.isPending}
-								onClick={() => {
-									lockAttemptRef.current = priceConfirm.betId;
-									lockPaper.mutate({ betId: priceConfirm.betId, allowPriceUpdate: true });
-								}}
+								onClick={() => lockBet(priceConfirm.betId, true)}
 							>
-								按新价 {priceConfirm.odds.toFixed(2)} 确认锁定
+								{priceConfirm.legCount > 1
+									? `按服务器新价确认锁定（${priceConfirm.legCount} 腿已变）`
+									: `按新价 ${priceConfirm.odds.toFixed(2)} 确认锁定`}
 							</button>
 						) : null}
 					</p>

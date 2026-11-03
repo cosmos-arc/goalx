@@ -260,7 +260,8 @@ def test_review_forward_gates_on_price_source(tmp_path: Path) -> None:
         }
         assert forwards[system_id] == "missing_closing"  # 正常流入成绩面口径
         assert forwards[manual_id] == "excluded_price_source"
-        assert forwards[legacy_id] == "excluded_price_source"
+        # 裁决③：历史 NULL 不回溯排除——沿旧判定链（缺 closing 而非价源）
+        assert forwards[legacy_id] == "missing_closing"
     finally:
         client.__exit__(None, None, None)
         conn.close()
@@ -300,4 +301,54 @@ def test_pool_period_detail_exposes_stable_id(tmp_path: Path) -> None:
         del fixture_id
     finally:
         client.__exit__(None, None, None)
+        conn.close()
+
+
+def test_settled_denominator_gates_manual_research(tmp_path: Path) -> None:
+    """范围④成绩面闸门：manual_research 纸面注排除出验证/CLV 共用分母
+    （settled_purchased_bets）；system_paper 与历史 NULL 维持、live 不受影响。"""
+    from goalx_backend.betting.store import settled_purchased_bets
+    from goalx_backend.db import utc_now_iso
+
+    conn = connect(tmp_path / "denom.db")
+    try:
+        migrate(conn)
+        now = utc_now_iso()
+        # bet_legs FK 需要 fixture 父行（selections 目录由 v1 迁移播种）
+        conn.execute(
+            "INSERT INTO competitions (id, name, created_at) VALUES (1, '英超', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO teams (id, canonical_name, created_at)"
+            " VALUES (1, '主', ?), (2, '客', ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO fixtures (id, competition_id, kickoff_utc,"
+            " home_team_id, away_team_id) VALUES (1, 1, ?, 1, 2)",
+            (now,),
+        )
+        rows = [
+            (1, "paper", "system_paper"),
+            (2, "paper", "manual_research"),
+            (3, "paper", None),  # 历史未分类（裁决③不回溯）
+            (4, "live", "manual_research"),  # live 语义不受纸面闸门影响
+        ]
+        for bet_id, mode, source in rows:
+            conn.execute(
+                "INSERT INTO bets (id, mode, market_kind, purchased, stake,"
+                " created_at, status, profit, settled_at, price_source)"
+                " VALUES (?, ?, 'fixed', 1, 2, ?, 'won', 1, ?, ?)",
+                (bet_id, mode, now, now, source),
+            )
+            conn.execute(
+                "INSERT INTO bet_legs (bet_id, fixture_id, market_code,"
+                " selection_code, locked_odds) VALUES (?, 1, 'had', 'h', 2.0)",
+                (bet_id,),
+            )
+        conn.commit()
+        kept = {bet.bet_id for bet in settled_purchased_bets(conn)}
+        assert kept == {1, 3, 4}  # 2=manual_research 纸面注被闸门排除
+    finally:
         conn.close()

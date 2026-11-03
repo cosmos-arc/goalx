@@ -13,36 +13,37 @@ from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import adjudicate_had_quote
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.models import BetMode, LegInput, MarketKind
-
-# 价格来源三分类（boundary-hardening 票 04）：
-# - system_paper 系统纸面决策：服务器重取报价验证，腿级证据身份落
-#   bet_legs.snapshot_id——唯一进正式纸面成绩面的类；
-# - live_backfill 真实票据回录：按实际条款结算，不要求等于系统报价
-#   （live 路径不因本票收紧）；
-# - manual_research 手工研究假设：服务器报价不可得或明确改用手工价，
-#   不进正式可执行性验证。
-PRICE_SOURCE_SYSTEM_PAPER = "system_paper"
-PRICE_SOURCE_LIVE_BACKFILL = "live_backfill"
-PRICE_SOURCE_MANUAL_RESEARCH = "manual_research"
-PRICE_SOURCES = frozenset(
-    {
-        PRICE_SOURCE_SYSTEM_PAPER,
-        PRICE_SOURCE_LIVE_BACKFILL,
-        PRICE_SOURCE_MANUAL_RESEARCH,
-    }
+from goalx_backend.models import (
+    PRICE_SOURCE_MANUAL_RESEARCH,
+    PRICE_SOURCE_SYSTEM_PAPER,
+    PRICE_SOURCES,
+    BetMode,
+    LegInput,
+    MarketKind,
 )
-# 结算/CLV 侧消费口径（票 04 范围④）：正式纸面成绩面只认第一类——
-# 历史 NULL（人裁决 2026-11-02 不回溯打标）与非第一类一律排除。
-OFFICIAL_PAPER_PRICE_SOURCES = frozenset({PRICE_SOURCE_SYSTEM_PAPER})
+
+# 价格来源三分类词表在 models.py（store 与本用例层共用，ADR-0008 归属）；
+# 语义注释见彼处。OFFICIAL_PAPER 语义：
+# - system_paper 系统纸面决策：服务器重取报价验证，腿级证据身份落
+#   bet_legs.snapshot_id——正式纸面成绩面的完整成员；
+# - manual_research 手工研究假设：明确排除出正式可执行性验证/成绩面；
+# - 历史 NULL（人裁决 2026-11-02 不回溯打标）：维持既有面不追溯排除
+#   （"仅新记录生效"），只排除显式 manual_research。
 # 客户端价与服务器价相等容差（同一十进制字面量解析，只防浮点尾差）
 _ODDS_EPSILON = 1e-9
 
 
 def is_official_paper(row: sqlite3.Row) -> bool:
-    """该注是否进正式纸面成绩面（消费侧唯一判据：paper 且三分类第一类）。"""
-    official = row["price_source"] in OFFICIAL_PAPER_PRICE_SOURCES
-    return str(row["mode"]) == "paper" and official
+    """
+    该注是否进正式纸面成绩面（消费侧判据：paper 且非 manual_research）。
+
+    历史 NULL 注不回溯排除（裁决③"仅新记录生效"）；system_paper 完整
+    成员、NULL 维持既有面。manual_research 由 review_views 与
+    settled_purchased_bets 两处消费点强制排除。
+    """
+    return str(row["mode"]) == "paper" and (
+        row["price_source"] != PRICE_SOURCE_MANUAL_RESEARCH
+    )
 
 
 class SameFixtureParlayError(ValueError):
@@ -51,26 +52,6 @@ class SameFixtureParlayError(ValueError):
 
 class BetEligibilityError(ValueError):
     """had 选择/锁定不满足服务端共享证据资格（票 36；界面禁用不替代本判定）。"""
-
-
-class PriceMismatchError(ValueError):
-    """
-    纸面价与服务器当前有效报价不一致（票 04 裁决①：返回新价要求确认）。
-
-    current_quotes 每腿：fixture_id/selection_code/server_odds/snapshot_id/
-    observed_at——调用方（HTTP 层）以 409 呈现，客户端确认后按 server_odds
-    重提（或显式 allow_manual_price 走研究假设类）。
-    """
-
-    def __init__(self, current_quotes: list[dict[str, object]]) -> None:
-        self.current_quotes = current_quotes
-        parts = ", ".join(
-            "{} {}: {}（快照 #{}）".format(
-                q["fixture_id"], q["selection_code"], q["server_odds"], q["snapshot_id"]
-            )
-            for q in current_quotes
-        )
-        super().__init__(f"报价已变: {parts}")
 
 
 class LegQuoteView(BaseModel):
@@ -104,6 +85,25 @@ class ActualTerms(BaseModel):
 
     stake: float = Field(gt=0, allow_inf_nan=False)
     leg_odds: list[ActualLegOdds] = Field(default_factory=list)
+
+
+class PriceMismatchError(ValueError):
+    """
+    纸面价与服务器当前有效报价不一致（票 04 裁决①：返回新价要求确认）。
+
+    current_quotes=价变腿的服务器现价——调用方（HTTP 层）以 409 呈现，
+    客户端确认后按 server_odds 重提（或显式 allow_manual_price 走研究
+    假设类）。
+    """
+
+    def __init__(self, current_quotes: list[LegQuoteView]) -> None:
+        self.current_quotes = current_quotes
+
+        parts = ", ".join(
+            f"{q.fixture_id} {q.selection_code}: {q.server_odds}"
+            for q in current_quotes
+        )  # 快照身份在结构化 current_quotes 里，消息只给人读
+        super().__init__(f"报价已变: {parts}")
 
 
 def resolve_paper_price(
@@ -196,7 +196,7 @@ def rebind_paper_price(
                 )
             )
     if mismatches and not allow_update:
-        raise PriceMismatchError([m.model_dump() for m in mismatches])
+        raise PriceMismatchError(mismatches)
     return rebound
 
 

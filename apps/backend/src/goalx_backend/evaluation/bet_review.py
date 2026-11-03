@@ -64,10 +64,10 @@ def review_views(
             forward = "unknown"
         elif str(row["mode"]) == "live":
             forward = "live_separate"
-        elif not bets.is_official_paper(row):
-            # 消费口径(boundary-hardening 票 04 范围④):正式纸面成绩面只认
-            # system_paper(服务器验证价);manual_research 与历史未分类(NULL,
-            # 人裁决 2026-11-02 不回溯打标)排除
+        elif str(row["mode"]) == "paper" and not bets.is_official_paper(row):
+            # 消费口径(boundary-hardening 票 04 范围④):manual_research(手工
+            # 研究假设)排除出正式纸面成绩面;历史 NULL 不回溯排除(裁决③
+            # "仅新记录生效"),沿旧判定链走
             forward = "excluded_price_source"
         elif pre_kickoff is not True:
             forward = "excluded_post_kickoff"

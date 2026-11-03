@@ -563,28 +563,25 @@ test("create suggestion 409 price drift clears basket and surfaces new price (�
 	await user.click(screen.getByTestId("pick-1-h"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
 	server.use(
-		http.post(
-			"*/api/v1/bets",
-			() =>
-				HttpResponse.json(
-					{
-						detail: {
-							message: "报价已变: fixture 1 h: 5.8（快照 #147）",
-							current_quotes: [
-								{
-									fixture_id: 1,
-									selection_code: "h",
-									server_odds: 5.8,
-									snapshot_id: 147,
-									observed_at: "2026-11-03T10:00:00+00:00",
-								},
-							],
-						},
+		http.post("*/api/v1/bets", () =>
+			HttpResponse.json(
+				{
+					detail: {
+						message: "报价已变: fixture 1 h: 5.8（快照 #147）",
+						current_quotes: [
+							{
+								fixture_id: 1,
+								selection_code: "h",
+								server_odds: 5.8,
+								snapshot_id: 147,
+								observed_at: "2026-11-03T10:00:00+00:00",
+							},
+						],
 					},
-					{ status: 409 },
-				),
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		) as any,
+				},
+				{ status: 409 },
+			),
+		),
 	);
 	await user.click(screen.getByTestId("basket-open"));
 	await user.click(screen.getByTestId("basket-submit"));

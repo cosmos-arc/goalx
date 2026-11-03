@@ -308,6 +308,14 @@ def pool_period_id(
     return int(row["id"]) if row is not None else None
 
 
+def pool_period_exists(conn: sqlite3.Connection, pool_period_id: int) -> bool:
+    """期次身份是否存在（池票落库前校验，票 04 范围③）。"""
+    row = conn.execute(
+        "SELECT 1 FROM pool_periods WHERE id = ?", (pool_period_id,)
+    ).fetchone()
+    return row is not None
+
+
 def pool_period_count(conn: sqlite3.Connection) -> int:
     """已采集期次总数（同步状态端点用）。"""
     row = conn.execute("SELECT COUNT(*) AS n FROM pool_periods").fetchone()

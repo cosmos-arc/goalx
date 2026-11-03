@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
-    PRICE_SOURCE_LIVE_BACKFILL,
     ActualLegOdds,
     ActualTerms,
     BetDraft,
@@ -25,9 +24,10 @@ from goalx_backend.betting.bets import (
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
 from goalx_backend.data import corpus_duckdb
+from goalx_backend.data.pool import pool_period_exists
 from goalx_backend.db import atomic
 from goalx_backend.evaluation.bet_review import BetReviewView, review_views
-from goalx_backend.models import BetMode, LegInput
+from goalx_backend.models import PRICE_SOURCE_LIVE_BACKFILL, BetMode, LegInput
 
 router = APIRouter(tags=["bets"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -111,7 +111,12 @@ class BetLegView(BaseModel):
 
 
 class BetEvSnapshotView(BaseModel):
-    """注级 EV 快照（票 41）：建注锁定时刻双口径概率与 EV；存量注无快照为 null。"""
+    """
+    注级 EV 快照（票 41）：建注时刻双口径概率与 EV；存量注无快照为 null。
+
+    票 04 注记：锁定价重验（allow_price_update）刷新 locked_odds 但 EV
+    快照不倒填——EV 口径恒为建注时刻，对照实绩时留意价已重绑。
+    """
 
     prob_consensus: float | None = None
     prob_model: float | None = None
@@ -156,6 +161,37 @@ class SlipView(BaseModel):
     bet_count: int
     stake_total: float
     profit_total: float
+
+
+class LegQuotePayload(BaseModel):
+    """价变 409 载荷一腿：服务器当前有效报价（含快照身份）。"""
+
+    fixture_id: int
+    selection_code: str
+    server_odds: float
+    snapshot_id: int
+    observed_at: str
+
+
+def _price_mismatch_schema() -> dict[str, object]:
+    """
+    价变 409 载荷 schema（契约建模，票 04 裁决①）。
+
+    由 LegQuotePayload 自建（无嵌套模型、无 $defs）——FastAPI 0.13x 的
+    openapi() 不接受 responses content 内的 model 类，嵌套 $defs 又无法
+    在响应路径下解析。
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "message": {"type": "string"},
+            "current_quotes": {
+                "type": "array",
+                "items": LegQuotePayload.model_json_schema(),
+            },
+        },
+        "required": ["message", "current_quotes"],
+    }
 
 
 class StakeAdviceRequest(BaseModel):
@@ -242,7 +278,8 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
             "description": (
                 "纸面价与服务器当前有效报价不一致(返回新价; "
                 "按 server_odds 重提,或 allow_manual_price 走研究假设)"
-            )
+            ),
+            "content": {"application/json": {"schema": _price_mismatch_schema()}},
         },
     },
 )
@@ -274,7 +311,7 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
             else:
                 bound, price_source, mismatches = resolve_paper_price(db, legs)
                 if mismatches and not payload.allow_manual_price:
-                    raise PriceMismatchError([m.model_dump() for m in mismatches])
+                    raise PriceMismatchError(mismatches)
                 if mismatches:
                     # 显式手工价通道：客户端价保留，类标签③
                     price_source = "manual_research"
@@ -292,7 +329,10 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     except PriceMismatchError as exc:
         raise HTTPException(
             status_code=409,
-            detail={"message": str(exc), "current_quotes": exc.current_quotes},
+            detail={
+                "message": str(exc),
+                "current_quotes": [q.model_dump() for q in exc.current_quotes],
+            },
         ) from exc
     except BetEligibilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -332,7 +372,8 @@ async def list_bets(
             "description": (
                 "system_paper 注锁定时服务器报价已变(返回新价; "
                 "确认按服务器价落库则 allow_price_update=true 重提)"
-            )
+            ),
+            "content": {"application/json": {"schema": _price_mismatch_schema()}},
         },
     },
 )
@@ -388,7 +429,10 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
     except PriceMismatchError as exc:
         raise HTTPException(
             status_code=409,
-            detail={"message": str(exc), "current_quotes": exc.current_quotes},
+            detail={
+                "message": str(exc),
+                "current_quotes": [q.model_dump() for q in exc.current_quotes],
+            },
         ) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -438,6 +482,14 @@ async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
     if payload.mode is BetMode.LIVE:
         raise HTTPException(
             status_code=400, detail="奖池奖金未实现, 暂不支持 live 池票"
+        )
+    if (
+        payload.pool_period_id is not None
+        and pool_period_exists(db, payload.pool_period_id) is False
+    ):
+        # 前后端贯穿并校验（票 04 范围③）：非法期次身份 4xx 而非 FK 裸 500
+        raise HTTPException(
+            status_code=404, detail=f"pool period {payload.pool_period_id} 不存在"
         )
     with atomic(db):
         slip = bt_store.create_slip(
