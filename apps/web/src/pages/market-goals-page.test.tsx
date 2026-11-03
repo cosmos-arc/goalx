@@ -213,7 +213,7 @@ test("basket drawer submits multiple singles and surfaces server rejection", asy
 	await user.click(screen.getByTestId("goals-basket-submit"));
 	const rejection = await screen.findByTestId("goals-market-message");
 	expect(rejection).toHaveTextContent("第 1 笔（周六002 2）失败：fixture 2 不可投: sale_stopped");
-	expect(rejection).toHaveTextContent("成功 0/失败 1，失败腿留篮可重试");
+	expect(rejection).toHaveTextContent("成功 0 · 失败 1 · 未提交 0，失败/未提交腿留篮可重试");
 	// 失败腿留篮（草稿不丢）
 	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3");
 	await user.click(screen.getByText("继续浏览"));

@@ -190,7 +190,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 					const quotes = currentQuotes(error);
 					if (quotes !== null && quotes.length > 0) {
 						// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
-						// 路径同流；已建成的注保留账面（消息与列表可见）
+						// 路径同流；已建成的注保留账面（消息与列表可见）。
+						// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
+						// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
 						setLegs([]);
 						setBasketOpen(false);
 						if (created.length > 0) {

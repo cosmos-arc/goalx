@@ -77,9 +77,11 @@ export function MarketGoalsPage() {
 	} as const;
 
 	/** 选注规则：同选项再点=移除；上限=行内提示；独立单关允许同场多注。
-	 * request_id 生成于 pick（票 06）：重试同键，服务端不落双行。 */
+	 * request_id 生成于 pick（票 06）：重试同键，服务端不落双行。
+	 * 提交中篮内容冻结（correctness F1）：逐腿派发期间 pick/移除/带入
+	 * 全禁——失败处理按提交时快照留篮，中途变更会被快照覆写复活。 */
 	function pick(fixture: GoalsFixture, pickedMarket: GoalsMarket, selection: GoalsSelection) {
-		if (selection.odds === null || selection.odds === undefined) {
+		if (selection.odds === null || selection.odds === undefined || createSuggestion.isPending) {
 			return;
 		}
 		const existing = legs.find(
@@ -114,13 +116,16 @@ export function MarketGoalsPage() {
 	}
 
 	function removeLeg(index: number) {
+		if (createSuggestion.isPending) {
+			return; // 同 pick：飞行中锁定编辑
+		}
 		basketActions.setGoalsLegs(legs.filter((_, i) => i !== index));
 		setMessage(null);
 	}
 
 	/** 一键带入：组合腿就地进本页选注篮（每注独立单关，注额预填）。 */
 	function applyCombo() {
-		if (combo === null || combo.picks.length === 0) {
+		if (combo === null || combo.picks.length === 0 || createSuggestion.isPending) {
 			return;
 		}
 		basketActions.setGoalsLegs(
@@ -169,14 +174,15 @@ export function MarketGoalsPage() {
 					});
 					created.push(bet.id);
 				} catch (error) {
-					// 失败腿起整段留篮（前面的已成注保留账面）
+					// 失败腿起整段留篮（前面的已成注保留账面）；未提交 ≠ 失败，
+					// 分开计数（correctness F3）
 					basketActions.setGoalsLegs(legs.slice(created.length));
 					if (created.length > 0) {
 						invalidateBets(queryClient);
 					}
 					setMessage(
 						`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）失败：${errorText(error)}` +
-							`——成功 ${created.length}/失败 ${legs.length - created.length}，失败腿留篮可重试`,
+							`——成功 ${created.length} · 失败 1 · 未提交 ${legs.length - index - 1}，失败/未提交腿留篮可重试`,
 					);
 					return { created, failedAt: index };
 				}

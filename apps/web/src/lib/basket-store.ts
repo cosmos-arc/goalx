@@ -31,8 +31,19 @@ const EMPTY: BasketState = {
 	mode: "paper",
 };
 
+/** 恢复形状守卫（correctness F4）：字段级校验——畸形腿直接过滤，
+ * 不让 odds.toFixed 之类的渲染期崩溃混进恢复路径。 */
 function isPersistableLeg(leg: unknown): boolean {
-	return typeof leg === "object" && leg !== null && typeof (leg as { request_id?: unknown }).request_id === "string";
+	if (typeof leg !== "object" || leg === null) {
+		return false;
+	}
+	const candidate = leg as Record<string, unknown>;
+	return (
+		typeof candidate["request_id"] === "string" &&
+		typeof candidate["fixture_id"] === "number" &&
+		typeof candidate["odds"] === "number" &&
+		typeof candidate["kickoff_utc"] === "string"
+	);
 }
 
 let state: BasketState = loadInitial();
