@@ -3,7 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { bankrollFixture, poolListTodayFixture, todayFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
@@ -14,6 +14,11 @@ import { router } from "../router";
  * 沉底按开赛时间、非可投卡禁用 + 资格徽章、跨日标签）、组合空窗诚实占位、
  * 三态空状态。引擎约束与档位边界的穷举见 lib/combo-engine.test.ts。
  */
+
+// 票 02：票型记忆走 localStorage——逐测清场，默认回到"首次访问 = 单关合计"
+beforeEach(() => {
+	localStorage.clear();
+});
 
 async function renderAt(path: string) {
 	await router.navigate({ to: path });
@@ -148,7 +153,7 @@ test("apply combo loads legs into the in-page basket with the flat stake prefill
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
 });
 
-test("two positive-EV picks fill the combo: totals aggregate and apply warns the 2串1 caliber", async () => {
+test("two positive-EV picks: slip form explicit (default singles), preview == submitted caliber", async () => {
 	const user = userEvent.setup();
 	// fixture 4 也给正向 EV（books 5 → 置信 1 → score 0.06 > fixture 1 的 0.053×0.4）
 	server.use(
@@ -158,23 +163,184 @@ test("two positive-EV picks fill the combo: totals aggregate and apply warns the
 			),
 		),
 	);
+	const bodies: Array<Record<string, unknown>> = [];
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			bodies.push((await request.json()) as Record<string, unknown>);
+			return HttpResponse.json({ id: 90 + bodies.length, legs: [] }, { status: 201 });
+		}),
+	);
 	await renderAt("/markets/had");
 
 	const combo = await screen.findByTestId("market-combo");
 	expect(await within(combo).findByTestId("market-combo-pick-4")).toHaveTextContent("主胜");
 	expect(within(combo).getByTestId("market-combo-pick-1")).toBeInTheDocument();
 	expect(within(combo).getByTestId("market-combo-count")).toHaveTextContent("2");
-	// 合计 = 两条单关之和（共识口径线性合计）
-	expect(within(combo).getByTestId("market-combo-total")).toHaveTextContent(`总注额 ¥${(F1_STAKE * 2).toFixed(2)}`);
-	expect(within(combo).getByTestId("market-combo-total")).toHaveTextContent("预期收益");
 
+	// 票 02：两口径预览并列（slipFormPlan 单源）；默认 = 单关合计（引擎本义，人裁决）
+	const forms = within(combo).getByTestId("market-combo-forms");
+	expect(within(forms).getByTestId("market-combo-form-singles")).toBeChecked();
+	expect(within(forms).getByTestId("market-combo-form-plan-singles")).toHaveTextContent(
+		`两笔单关：2 注 · 总注 ¥${(F1_STAKE * 2).toFixed(2)} · 预期 +¥11.31`,
+	);
+	// 2串1 口径：联合 EV = 1.053×1.06−1 ≈ +11.6%，预期 +¥11.63（路线 C）
+	expect(within(forms).getByTestId("market-combo-form-plan-parlay")).toHaveTextContent("联合 EV 11.6%");
+	expect(within(forms).getByTestId("market-combo-form-plan-parlay")).toHaveTextContent("全部命中才赢");
+	expect(within(combo).getByTestId("market-combo-total")).toHaveTextContent("两笔单关");
+
+	// 带入（默认单关）→ 篮内同一票型状态（卡/篮两选择器同源），票级预览同数
 	await user.click(within(combo).getByTestId("market-combo-apply"));
 	expect(screen.getByTestId("market-message")).toHaveTextContent("已带入 2 条推荐");
-	expect(screen.getByTestId("market-message")).toHaveTextContent("独立单关口径");
+	expect(screen.getByTestId("market-message")).toHaveTextContent("按两笔单关提交");
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
-	// 引擎保证同场不重复 + ≤2 腿：两条腿来自不同场次
-	const drawerLegs = screen.getAllByTestId("basket-leg");
-	expect(drawerLegs).toHaveLength(2);
+	const basketForms = screen.getByTestId("basket-forms");
+	expect(within(basketForms).getByTestId("basket-form-singles")).toBeChecked();
+	expect(within(basketForms).getByTestId("basket-form-plan-singles")).toHaveTextContent(
+		`总注 ¥${(F1_STAKE * 2).toFixed(2)}`,
+	);
+
+	// 提交 = 两笔独立单关（各 F1_STAKE）；预览数 == 落库口径（票级单源）
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #91、#92（2 笔单关）");
+	expect(bodies).toHaveLength(2);
+	for (const body of bodies) {
+		expect(body).toMatchObject({ mode: "paper", stake: F1_STAKE, legs: [expect.anything()] });
+	}
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+});
+
+test("slip form explicitly switched to parlay: one 2串1 bet at the parlay caliber", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json(
+				todayFixture.map((row) => (row.fixture_id === 4 ? { ...row, ev: { h: 0.06, d: -0.109, a: -0.076 } } : row)),
+			),
+		),
+	);
+	const captured: { body: unknown } = { body: null };
+	mockCreatedBet(93, captured);
+	await renderAt("/markets/had");
+
+	const combo = await screen.findByTestId("market-combo");
+	await within(combo).findByTestId("market-combo-pick-4");
+	// 显式切换 2串1（人裁决：2串1 为显式动作）；头部合计随之换口径
+	await user.click(within(combo).getByTestId("market-combo-form-parlay"));
+	expect(within(combo).getByTestId("market-combo-total")).toHaveTextContent(`总注额 ¥${F1_STAKE.toFixed(2)}`);
+	expect(within(combo).getByTestId("market-combo-total")).toHaveTextContent("联合 EV 口径");
+
+	await user.click(within(combo).getByTestId("market-combo-apply"));
+	expect(screen.getByTestId("market-message")).toHaveTextContent("按一注 2串1提交");
+	expect(screen.getByTestId("market-message")).toHaveTextContent("联合 EV 11.6%");
+	expect(screen.getByTestId("basket-form-parlay")).toBeChecked();
+
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #93（2串1）");
+	expect(captured.body).toMatchObject({ mode: "paper", stake: F1_STAKE, legs: [expect.anything(), expect.anything()] });
+});
+
+test("singles submit partial failure: created bets stay booked, failed leg stays in basket", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json(
+				todayFixture.map((row) => (row.fixture_id === 4 ? { ...row, ev: { h: 0.06, d: -0.109, a: -0.076 } } : row)),
+			),
+		),
+	);
+	// 第一笔 201、第二笔 400（部分失败路径）
+	let calls = 0;
+	server.use(
+		http.post("*/api/v1/bets", async () => {
+			calls += 1;
+			if (calls === 1) {
+				return HttpResponse.json({ id: 95, legs: [] }, { status: 201 });
+			}
+			return HttpResponse.json({ detail: "fixture 4 不可投: sale_stopped" }, { status: 400 });
+		}),
+	);
+	await renderAt("/markets/had");
+	const combo = await screen.findByTestId("market-combo");
+	await within(combo).findByTestId("market-combo-pick-4");
+	await user.click(within(combo).getByTestId("market-combo-apply"));
+	await user.click(screen.getByTestId("basket-submit"));
+
+	// 第一笔成账可见、第二笔失败留篮（1/2）可重试——不静默丢也不重复建
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("第 2 笔失败");
+	expect(screen.getByTestId("market-message")).toHaveTextContent("已建 #95");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
+});
+
+test("singles submit mid-loop price drift clears basket (票 04 裁决① 同流)", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json(
+				todayFixture.map((row) => (row.fixture_id === 4 ? { ...row, ev: { h: 0.06, d: -0.109, a: -0.076 } } : row)),
+			),
+		),
+	);
+	let calls = 0;
+	server.use(
+		http.post("*/api/v1/bets", async () => {
+			calls += 1;
+			if (calls === 1) {
+				return HttpResponse.json({ id: 96, legs: [] }, { status: 201 });
+			}
+			return HttpResponse.json(
+				{
+					detail: {
+						message: "报价已变: fixture 4 h: 3.1（快照 #147）",
+						current_quotes: [
+							{
+								fixture_id: 4,
+								selection_code: "h",
+								server_odds: 3.1,
+								snapshot_id: 147,
+								observed_at: "2026-11-03T10:00:00+00:00",
+							},
+						],
+					},
+				},
+				{ status: 409 },
+			);
+		}),
+	);
+	await renderAt("/markets/had");
+	const combo = await screen.findByTestId("market-combo");
+	await within(combo).findByTestId("market-combo-pick-4");
+	await user.click(within(combo).getByTestId("market-combo-apply"));
+	await user.click(screen.getByTestId("basket-submit"));
+
+	// 价变 = 清篮按新价重选（不残留旧价腿）；已建成的第一笔在消息与账面可见
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("第 2 笔报价已变");
+	expect(screen.getByTestId("market-message")).toHaveTextContent("已建 #96");
+	expect(screen.getByTestId("market-message")).toHaveTextContent("请按新价重新选注");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+});
+
+test("slip form choice persists across visits (记住上次选择)", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json(
+				todayFixture.map((row) => (row.fixture_id === 4 ? { ...row, ev: { h: 0.06, d: -0.109, a: -0.076 } } : row)),
+			),
+		),
+	);
+	const firstView = await renderAt("/markets/had");
+	const combo = await screen.findByTestId("market-combo");
+	await within(combo).findByTestId("market-combo-pick-4");
+	expect(within(combo).getByTestId("market-combo-form-singles")).toBeChecked();
+	await user.click(within(combo).getByTestId("market-combo-form-parlay"));
+	expect(localStorage.getItem("goalx:slip-form")).toBe("parlay");
+
+	// 二次访问：默认 = 上次选择（parlay），非首试引擎本义值
+	firstView.unmount();
+	await renderAt("/markets/had");
+	const comboAgain = await screen.findByTestId("market-combo");
+	await within(comboAgain).findByTestId("market-combo-pick-4");
+	expect(within(comboAgain).getByTestId("market-combo-form-parlay")).toBeChecked();
 });
 
 test("feed picks follow the shared basket rules (same-fixture replace, deselect, cap)", async () => {
@@ -230,6 +396,10 @@ test("basket drawer manages legs, non-single hint, and surfaces server rejection
 	await user.click(screen.getByTestId("market-pick-1-h"));
 	await user.click(screen.getByTestId("market-pick-4-a"));
 	await user.click(screen.getByTestId("basket-open"));
+	// 票 02：双腿默认票型 = 记忆值（清场后 singles）→ 建议仓位按单关注额口径
+	expect(screen.getByTestId("basket-stake-advice")).toHaveTextContent("单关注额口径");
+	// 显式切 2串1 → 串关联合口径（票 wb-06：整注一个 Kelly，不分腿）
+	await user.click(screen.getByTestId("basket-form-parlay"));
 	await user.clear(screen.getByTestId("basket-stake"));
 	await user.type(screen.getByTestId("basket-stake"), "50");
 	await user.type(screen.getByTestId("basket-strategy"), "combo-v1");

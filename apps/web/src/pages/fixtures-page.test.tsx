@@ -3,7 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { poolListTodayFixture, todayFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
@@ -19,6 +19,11 @@ import { router } from "../router";
 function todayBd(): string {
 	return new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
 }
+
+// 票 02：票型记忆走 localStorage——逐测清场，双腿默认回到单关
+beforeEach(() => {
+	localStorage.clear();
+});
 
 async function renderAt(path: string) {
 	await router.navigate({ to: path });
@@ -239,11 +244,14 @@ test("quick pick adds, replaces on same fixture, deselects, and caps at two legs
 	await user.click(screen.getByTestId("pick-card-1-d"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
 
-	// 两腿后展示组合赔率（表格钮同样可选）
+	// 两腿（票 02：默认单关——常驻条不显组合赔率；切 2串1 后 1.92 × 2.2）
 	await user.click(await screen.findByTestId("pick-1-h"));
 	await user.click(screen.getByTestId("pick-2-a"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
-	expect(screen.getByTestId("basket-summary")).toHaveTextContent("组合赔率 4.22"); // 1.92 × 2.2
+	expect(screen.getByTestId("basket-summary")).not.toHaveTextContent("组合赔率");
+	await user.click(screen.getByTestId("basket-open"));
+	await user.click(screen.getByTestId("basket-form-parlay"));
+	expect(screen.getByTestId("basket-summary")).toHaveTextContent("组合赔率 4.22");
 
 	// 票 08①：腿满时点击已选场的另一方向=换选替换而非上限拦截
 	//（旧断言把换选当上限拦——正是本票修的缺陷；第三场上限拦截的
@@ -276,12 +284,14 @@ test("basket drawer manages legs and creates the suggestion through the real API
 	mockCreatedBet(77, captured);
 	await renderAt("/fixtures");
 
-	// 2串1 提交：腿、模式、金额、策略版本一起进请求体
+	// 2串1 提交：腿、模式、金额、策略版本一起进请求体（票 02：双腿票型默认
+	// 单关——显式切 2串1 再提交，无静默组串）
 	await user.click(await screen.findByTestId("pick-1-h"));
 	await user.click(screen.getByTestId("pick-2-a"));
 	await user.click(screen.getByTestId("basket-open"));
 	const drawerLegs = await screen.findAllByTestId("basket-leg");
 	expect(drawerLegs).toHaveLength(2);
+	await user.click(screen.getByTestId("basket-form-parlay"));
 	await user.clear(screen.getByTestId("basket-stake"));
 	await user.type(screen.getByTestId("basket-stake"), "50");
 	await user.type(screen.getByTestId("basket-strategy"), "manual-v1");

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
+import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
 import { invalidateBets } from "../lib/query-keys";
 import { currentQuotes, errorText, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import { isPickable, type Leg, MAX_LEGS, makeLeg, type PickableFixture, type Selection } from "./had-quote-ui";
@@ -22,11 +23,33 @@ import {
  * - useHadBasket：6 状态 + 规则前置（同场替换/MAX_LEGS/单固首腿）+ 建议仓位
  *   输入 + createBet mutation（invalidate ["bets"]）；建议仓位的 leg EV 经
  *   第三参注入（缺省 = 列表页 fixture.ev 字段口径，研究页注入共识口径）；
+ * - 票型（report-audit 票 02）：篮内 ≥2 腿时显式票型——两笔单关（逐腿独立
+ *   建注）/一注 2串1（整注）；预览与提交同走 ticketPlan 单源，无静默切换；
  * - BasketBar：底部常驻条（已选摘要 + 组合赔率）；
- * - BasketDrawer：右侧抽屉（腿列表/建议仓位/模式/金额/策略版本/提交）。
+ * - BasketDrawer：右侧抽屉（腿列表/票型/建议仓位/模式/金额/策略版本/提交）。
  * 两页文本差异（空态提示）经 emptyHint prop 注入；进球玩法页是独立单关
  * 变体（同场多注/独立提交/goals-* testid），不进本共享件。
  */
+
+/** 票型记忆键（票 02 人裁决：记住上次选择，首次默认单关合计=引擎本义；
+ * 卡上选择与篮内选择同一份记忆——带入与手选共用一个默认，无分叉）。 */
+const SLIP_FORM_STORAGE_KEY = "goalx:slip-form";
+
+function readStoredSlipForm(): SlipForm {
+	try {
+		return globalThis.localStorage?.getItem(SLIP_FORM_STORAGE_KEY) === "parlay" ? "parlay" : "singles";
+	} catch {
+		return "singles"; // 隐私模式/禁存储：回默认（theme.ts 同款降级）
+	}
+}
+
+function persistSlipForm(form: SlipForm): void {
+	try {
+		globalThis.localStorage?.setItem(SLIP_FORM_STORAGE_KEY, form);
+	} catch {
+		// 存不进就算了——本次会话内状态仍生效
+	}
+}
 
 export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverride?: (leg: Leg) => number | null) {
 	const [legs, setLegs] = useState<Leg[]>([]);
@@ -35,33 +58,57 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 	const [strategyVersion, setStrategyVersion] = useState("");
 	const [mode, setMode] = useState<"paper" | "live">("paper");
 	const [message, setMessage] = useState<string | null>(null);
+	// 票型状态 = 全 app 一份记忆（读 localStorage，缺省单关合计）；卡/篮
+	// 两处选择器都是这份状态的视图（票 02：带入什么票型就提交什么票型）
+	const [slipForm, setSlipForm] = useState<SlipForm>(readStoredSlipForm);
+
+	function chooseSlipForm(form: SlipForm) {
+		setSlipForm(form);
+		persistSlipForm(form);
+	}
 	const queryClient = useQueryClient();
 
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
 
-	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿=串关联合口径（整注一个 Kelly，不分腿）
+	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿按票型——单关=逐注独立
+	// 口径（示例第一腿），2串1=联合口径（整注一个 Kelly，不分腿）
 	const legEv =
 		legEvOverride ??
 		((leg: Leg): number | null => {
 			const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
 			return fixture?.ev?.[leg.selection] ?? null;
 		});
+	const multiLeg = legs.length >= 2;
+	const firstLeg = legs[0];
 	const basketAdvice =
-		legs.length === 2
+		multiLeg && slipForm === "singles" && firstLeg !== undefined
 			? {
-					...parlayAdviceInput(legs.map((leg) => ({ ev: legEv(leg), odds: leg.odds }))),
-					note: "串关注额=单关口径：联合 EV/联合赔率整注计算（腿间独立性假设），不分腿",
+					ev: legEv(firstLeg),
+					odds: firstLeg.odds,
+					note: "单关注额口径：每注独立（示例第一腿，第二腿同法各算各的）",
 				}
-			: legs.length === 1 && legs[0] !== undefined
-				? { ev: legEv(legs[0]), odds: legs[0].odds, note: "单关口径：共识 EV（欧共识×竞彩价−1）" }
-				: null;
+			: multiLeg
+				? {
+						...parlayAdviceInput(legs.map((leg) => ({ ev: legEv(leg), odds: leg.odds }))),
+						note: "串关注额=单关口径：联合 EV/联合赔率整注计算（腿间独立性假设），不分腿",
+					}
+				: legs.length === 1 && legs[0] !== undefined
+					? { ev: legEv(legs[0]), odds: legs[0].odds, note: "单关口径：共识 EV（欧共识×竞彩价−1）" }
+					: null;
+
+	/** 票级预览（票 02 单源）：抽屉展示的数字与提交结果同一函数；提交循环
+	 * 的载荷（legs + 金额输入）即此处输入——预览与落库不各算各的。 */
+	const planTicketLegs =
+		legs.length === 0 ? null : legs.map((leg) => ({ ev: legEv(leg) ?? 0, stake: Number(stake) || 0 }));
+	// EV 缺失的腿按 0 估（诚实降级提示，不静默）：预览标注而非谎称精确
+	const planMissingEv = legs.length > 0 && legs.some((leg) => legEv(leg) === null);
 
 	/** 规则前置（票 04；票 08① 调序）：同场换选=替换+提示（先于 2串1 上限——
 	 * 换选不占新名额，腿满时可直接切换已选场的方向）；再点同选项=取消；
 	 * 非单固首腿=提示；停售/已开赛=忽略。 */
 	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
-		if (!isPickable(fixture, now)) {
-			return;
+		if (!isPickable(fixture, now) || createSuggestion.isPending) {
+			return; // 提交中篮内容冻结（票 02：逐腿派发期间所见即所提交）
 		}
 		const existing = legs.find((leg) => leg.fixture_id === fixture.fixture_id);
 		if (existing && existing.selection === selection) {
@@ -87,25 +134,76 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 	}
 
 	function removeLeg(fixtureId: number) {
+		if (createSuggestion.isPending) {
+			return; // 同 pick：飞行中锁定编辑
+		}
 		setLegs(legs.filter((leg) => leg.fixture_id !== fixtureId));
 		setMessage(null);
 	}
 
 	const createSuggestion = useMutation({
-		mutationFn: () =>
-			createBet({
-				mode,
-				stake: Number(stake),
-				strategy_version: strategyVersion.trim() === "" ? null : strategyVersion.trim(),
-				legs: legs.map((leg) => ({
-					fixture_id: leg.fixture_id,
-					market_code: "had",
-					selection_code: leg.selection,
-					locked_odds: leg.odds,
-				})),
-			}),
-		onSuccess: (bet) => {
-			setMessage(`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : "2串1"}）— 去投注页锁定`);
+		mutationFn: async () => {
+			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
+			const legPayload = (leg: Leg) => ({
+				fixture_id: leg.fixture_id,
+				market_code: "had",
+				selection_code: leg.selection,
+				locked_odds: leg.odds,
+			});
+			const post = (betLegs: Leg[]) =>
+				createBet({
+					mode,
+					stake: Number(stake),
+					strategy_version: strategy,
+					legs: betLegs.map(legPayload),
+				});
+			// 票型分叉（票 02）：parlay/单腿 = 一注整提（现行路径）；
+			// singles 且 ≥2 腿 = 逐腿独立建注（同一注额），提交即票型，无静默切换
+			if (!(slipForm === "singles" && legs.length >= 2)) {
+				const bet = await post(legs);
+				setMessage(`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}）— 去投注页锁定`);
+				setLegs([]);
+				setBasketOpen(false);
+				invalidateBets(queryClient);
+				return;
+			}
+			const created: number[] = [];
+			for (const [index, leg] of legs.entries()) {
+				try {
+					const bet = await post([leg]);
+					created.push(bet.id);
+				} catch (error) {
+					const quotes = currentQuotes(error);
+					if (quotes !== null && quotes.length > 0) {
+						// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
+						// 路径同流；已建成的注保留账面（消息与列表可见）
+						setLegs([]);
+						setBasketOpen(false);
+						if (created.length > 0) {
+							invalidateBets(queryClient);
+						}
+						void queryClient.invalidateQueries({ queryKey: ["today-fixtures"] });
+						setMessage(
+							`第 ${index + 1} 笔报价已变（${quotes
+								.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
+								.join(
+									"、",
+								)}）——已刷新列表${created.length > 0 ? `，已建 #${created.join("、#")}` : ""}；请按新价重新选注`,
+						);
+						return;
+					}
+					// 非价变失败：已成注保留账面、失败腿留在篮内可重试
+					setLegs(legs.slice(created.length));
+					if (created.length > 0) {
+						invalidateBets(queryClient); // 部分成注也要刷新列表（对账可见）
+					}
+					setMessage(
+						`第 ${index + 1} 笔失败：${errorText(error)}${created.length > 0 ? `（已建 #${created.join("、#")}，失败腿留篮可重试）` : ""}`,
+					);
+					return;
+				}
+			}
+			setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关）— 去投注页锁定`);
 			setLegs([]);
 			setBasketOpen(false);
 			invalidateBets(queryClient);
@@ -144,9 +242,13 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 		setMode,
 		message,
 		setMessage,
+		slipForm,
+		chooseSlipForm,
 		combinedOdds,
 		legEv,
 		basketAdvice,
+		planTicketLegs,
+		planMissingEv,
 		pick,
 		removeLeg,
 		createSuggestion,
@@ -210,9 +312,71 @@ export function BasketFormFields({
 
 export type HadBasket = ReturnType<typeof useHadBasket>;
 
+/** 票型选择器（票 02，卡/篮两用）：两票型预览并列（单源摘要），当前票型可选。 */
+export function SlipFormChooser({
+	form,
+	onChoose,
+	singlesPlan,
+	parlayPlan,
+	testidPrefix,
+	missingEvNote = false,
+}: {
+	form: SlipForm;
+	onChoose: (form: SlipForm) => void;
+	singlesPlan: SlipFormPlan | null;
+	parlayPlan: SlipFormPlan | null;
+	testidPrefix: string;
+	missingEvNote?: boolean;
+}) {
+	return (
+		<div className="space-y-2 rounded-md border border-border p-3" data-testid={`${testidPrefix}-forms`}>
+			<div className="flex gap-2" role="radiogroup" aria-label="票型">
+				<label className="flex flex-1 cursor-pointer items-center gap-2 rounded border border-border px-2 py-1.5 text-sm has-[:checked]:border-primary">
+					<input
+						type="radio"
+						name={`${testidPrefix}-slip-form`}
+						data-testid={`${testidPrefix}-form-singles`}
+						checked={form === "singles"}
+						onChange={() => onChoose("singles")}
+					/>
+					两笔单关
+				</label>
+				<label className="flex flex-1 cursor-pointer items-center gap-2 rounded border border-border px-2 py-1.5 text-sm has-[:checked]:border-primary">
+					<input
+						type="radio"
+						name={`${testidPrefix}-slip-form`}
+						data-testid={`${testidPrefix}-form-parlay`}
+						checked={form === "parlay"}
+						onChange={() => onChoose("parlay")}
+					/>
+					一注 2串1
+				</label>
+			</div>
+			{singlesPlan ? (
+				<p
+					className={`${TABULAR_NUMS} text-xs text-muted-foreground`}
+					data-testid={`${testidPrefix}-form-plan-singles`}
+				>
+					两笔单关：{slipFormSummary(singlesPlan)}
+				</p>
+			) : null}
+			{parlayPlan ? (
+				<p className={`${TABULAR_NUMS} text-xs text-muted-foreground`} data-testid={`${testidPrefix}-form-plan-parlay`}>
+					一注 2串1：{slipFormSummary(parlayPlan)}
+				</p>
+			) : null}
+			{missingEvNote ? (
+				<p className="text-xs text-warning" data-testid={`${testidPrefix}-form-plan-missing-ev`}>
+					部分腿 EV 缺失，预期按 0 估——结构预览，非精确口径
+				</p>
+			) : null}
+		</div>
+	);
+}
+
 /** 底部常驻选注条：浏览全程可见已选腿摘要 + 组合赔率。 */
 export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint: string }) {
-	const { legs, combinedOdds, setBasketOpen } = basket;
+	const { legs, combinedOdds, setBasketOpen, slipForm } = basket;
 	return (
 		<div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
 			<div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
@@ -228,7 +392,7 @@ export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint:
 						data-testid="basket-summary"
 					>
 						{legs.map((leg) => `${leg.match_code} ${SELECTION_LABELS[leg.selection]}`).join(" × ")}
-						{legs.length === MAX_LEGS ? ` · 组合赔率 ${combinedOdds.toFixed(2)}` : ""}
+						{legs.length === MAX_LEGS && slipForm === "parlay" ? ` · 组合赔率 ${combinedOdds.toFixed(2)}` : ""}
 					</span>
 				) : (
 					<span className="hidden text-xs text-muted-foreground sm:inline">{emptyHint}</span>
@@ -247,7 +411,7 @@ export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint:
 	);
 }
 
-/** 右侧选注篮抽屉：腿列表 + 建议仓位 + 模式/金额/策略版本 + 提交。 */
+/** 右侧选注篮抽屉：腿列表 + 票型（≥2 腿）+ 建议仓位 + 模式/金额/策略版本 + 提交。 */
 export function BasketDrawer({
 	basket,
 	bankroll,
@@ -257,7 +421,24 @@ export function BasketDrawer({
 	bankroll: number | null;
 	emptyHint: string;
 }) {
-	const { legs, basketOpen, setBasketOpen, mode, basketAdvice, removeLeg, createSuggestion } = basket;
+	const {
+		legs,
+		basketOpen,
+		setBasketOpen,
+		mode,
+		basketAdvice,
+		removeLeg,
+		createSuggestion,
+		slipForm,
+		chooseSlipForm,
+		planTicketLegs,
+		planMissingEv,
+	} = basket;
+	// 票级预览（票 02 单源）：抽屉里看到的数字 == 提交后落库口径
+	const planSingles = planTicketLegs !== null ? slipFormPlan(planTicketLegs, "singles") : null;
+	const planParlay = planTicketLegs !== null && legs.length >= 2 ? slipFormPlan(planTicketLegs, "parlay") : null;
+	const stakeLabel =
+		legs.length >= 2 && slipForm === "singles" ? "单关金额(¥/注)" : legs.length >= 2 ? "整注金额(¥)" : "金额(¥)";
 	return (
 		<Drawer open={basketOpen} onOpenChange={setBasketOpen} swipeDirection="right">
 			<DrawerContent className="mx-0 w-full sm:max-w-md">
@@ -300,6 +481,19 @@ export function BasketDrawer({
 							))}
 						</ul>
 					)}
+					{/* 票型显式化（票 02）：≥2 腿必须选票型，预览/命中条件并列，无静默切换 */}
+					{legs.length >= 2 ? (
+						<div className="mt-3">
+							<SlipFormChooser
+								form={slipForm}
+								onChoose={chooseSlipForm}
+								singlesPlan={planSingles}
+								parlayPlan={planParlay}
+								testidPrefix="basket"
+								missingEvNote={planMissingEv}
+							/>
+						</div>
+					) : null}
 					{basketAdvice ? (
 						<div className="mt-3">
 							<StakeAdviceNote
@@ -314,7 +508,7 @@ export function BasketDrawer({
 					) : null}
 				</div>
 				<DrawerFooter>
-					<BasketFormFields testid="basket" state={basket} stakeLabel="金额(¥)" stakeMin={1} />
+					<BasketFormFields testid="basket" state={basket} stakeLabel={stakeLabel} stakeMin={1} />
 					<button
 						type="button"
 						data-testid="basket-submit"
@@ -322,7 +516,7 @@ export function BasketDrawer({
 						disabled={createSuggestion.isPending || legs.length === 0}
 						onClick={() => createSuggestion.mutate()}
 					>
-						建立建议
+						{legs.length >= 2 && slipForm === "singles" ? `建 ${legs.length} 笔单关` : "建立建议"}
 					</button>
 					<div className="flex items-center justify-between text-xs">
 						<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">

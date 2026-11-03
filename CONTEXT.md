@@ -101,6 +101,10 @@ _Avoid_: Pick
 一张纸面锁定记录或实际投注票，可汇集多个 Bet；票据数量不等于 Bet 数量。对任9复式可包含多个 Combination。
 _Avoid_: Ticket（与 MatchCode 混淆）
 
+**SlipForm**:
+一张 BetSlip 的落注形态（票型）：独立单关（singles，每注独立结算、预期为 EV×注额 线性合计）或一注串关（parlay，联合 EV = Π(1+EV)−1，全中才赢）。选择显式、默认记忆上次（首次单关）；预览与提交同口径。
+_Avoid_: TicketType, PlayType
+
 **Combination**:
 复式票中的一个具体组合（如任9 的 9 场各一选）；注数为各场选项数的乘积。
 _Avoid_: 注（单独使用）

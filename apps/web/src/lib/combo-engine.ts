@@ -82,6 +82,77 @@ export type ComboResult = {
 	bankrollNote: string | null;
 };
 
+// ---- 票型票级计算（report-audit 票 02：预览 == 提交落库，同一函数两用）----
+
+/**
+ * 票型（BetSlip 落注形态；CONTEXT.md 词条 SlipForm，_Avoid_ Ticket/PlayType）：
+ * 独立单关（引擎本义）或一注串关。
+ */
+export type SlipForm = "singles" | "parlay";
+
+export type SlipFormPlan = {
+	form: SlipForm;
+	/** 注数（singles = 腿数；parlay = 1）。 */
+	bets: number;
+	/** 总注额（¥）。 */
+	totalStake: number;
+	/** 预期收益（¥，票型口径）。 */
+	expectedProfit: number;
+	/** 联合 EV = Π(1+EV)−1（路线 C，两腿 = (1+EV₁)(1+EV₂)−1）；singles = null。 */
+	jointEv: number | null;
+	/** 命中条件（人话，带入/提交两处同文案）。 */
+	hitCondition: string;
+};
+
+/**
+ * 票型票级计算单源（票 02）：组合卡预览、选注篮预览、提交消息共用——
+ * 所见即所落库。
+ *
+ * 口径语义（两口径并列，勿混）：
+ * - singles：N 注独立单关，总注 = Σstake、预期 = Σ(EV×stake)——EV 线性
+ *   合计，每注独立结算，一场命中该注即赢；
+ * - parlay：一注 N 串 1，注金 = 首腿注额（flat 档各腿同额），联合 EV =
+ *   Π(1+EV)−1（腿间独立假设下期望按联合概率连乘，报告路线 C），预期 =
+ *   注金 × 联合EV，所选场次全部命中才赢。
+ */
+export function slipFormPlan(legs: Array<{ ev: number; stake: number }>, form: SlipForm): SlipFormPlan {
+	if (legs.length === 0) {
+		throw new Error("slipFormPlan 需至少一腿");
+	}
+	if (form === "singles") {
+		const totalStake = legs.reduce((sum, leg) => sum + leg.stake, 0);
+		return {
+			form,
+			bets: legs.length,
+			totalStake: Math.round(totalStake * 100) / 100,
+			expectedProfit: Math.round(legs.reduce((sum, leg) => sum + leg.ev * leg.stake, 0) * 100) / 100,
+			jointEv: null,
+			hitCondition: legs.length === 1 ? "该场命中即赢" : "每场独立结算，一场命中该注即赢",
+		};
+	}
+	const first = legs[0];
+	if (first === undefined) {
+		throw new Error("slipFormPlan 需至少一腿");
+	}
+	const stake = first.stake;
+	const jointEv = legs.reduce((acc, leg) => acc * (1 + leg.ev), 1) - 1;
+	return {
+		form,
+		bets: 1,
+		totalStake: Math.round(stake * 100) / 100,
+		expectedProfit: Math.round(stake * jointEv * 100) / 100,
+		jointEv: Math.round(jointEv * 10000) / 10000,
+		hitCondition: legs.length === 1 ? "该场命中即赢" : `所选 ${legs.length} 场全部命中才赢`,
+	};
+}
+
+/** 票型摘要行（票 02）：组合卡两行预览、带入消息、篮内预览同一文案单源。 */
+export function slipFormSummary(plan: SlipFormPlan): string {
+	return plan.form === "singles"
+		? `${plan.bets} 注 · 总注 ¥${plan.totalStake.toFixed(2)} · 预期 +¥${plan.expectedProfit.toFixed(2)}（EV 线性合计） · ${plan.hitCondition}`
+		: `注金 ¥${plan.totalStake.toFixed(2)} · 联合 EV ${plan.jointEv !== null ? `${(plan.jointEv * 100).toFixed(1)}%` : "—"} · 预期 +¥${plan.expectedProfit.toFixed(2)} · ${plan.hitCondition}`;
+}
+
 /** 置信 = 样本厚度（books 线性放大，截断 1；无 book 无共识 → 0 不入组合）。 */
 function confidenceFor(books: number, confidenceBooks: number): number {
 	if (confidenceBooks <= 0) {
@@ -212,7 +283,7 @@ export function buildHadCombo(input: {
 		`单注注额：flat 档 = bankroll ${(config.stake.flatFraction * 100).toFixed(0)}%（区间 ${(config.stake.minFraction * 100).toFixed(0)}–${(config.stake.maxFraction * 100).toFixed(0)}%，竞彩最低 ¥${config.stake.minStakeCny}）——纸面期一律 flat，仓位细化随票 06`,
 		"同场不重复；EV≤0 不入选；单关须单固（非单固场的正 EV 见下方推荐流自行研判）",
 		`串关 ≤${config.maxPicks} 腿（竞彩仅 2串1）`,
-		"预期收益 = EV × 注额（共识口径）——EV 是诊断量非机会信号，见词典",
+		"预期口径随票型：单关 = EV×注额 线性合计；2串1 = 注金×联合EV（见票型区）——EV 是诊断量非机会信号，见词典",
 	];
 
 	return {
