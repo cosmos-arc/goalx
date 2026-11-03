@@ -239,13 +239,18 @@ test("quick pick adds, replaces on same fixture, deselects, and caps at two legs
 	await user.click(screen.getByTestId("pick-card-1-d"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
 
-	// 两腿后展示组合赔率（表格钮同样可选）；第三选被上限提示拦下（到不了提交）
+	// 两腿后展示组合赔率（表格钮同样可选）
 	await user.click(await screen.findByTestId("pick-1-h"));
 	await user.click(screen.getByTestId("pick-2-a"));
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 	expect(screen.getByTestId("basket-summary")).toHaveTextContent("组合赔率 4.22"); // 1.92 × 2.2
+
+	// 票 08①：腿满时点击已选场的另一方向=换选替换而非上限拦截
+	//（旧断言把换选当上限拦——正是本票修的缺陷；第三场上限拦截的
+	// 断言在 market-had 页，该页有第三场可投）
 	await user.click(screen.getByTestId("pick-2-h"));
-	expect(screen.getByTestId("fixtures-message")).toHaveTextContent("已达 2串1 上限");
+	expect(screen.getByTestId("fixtures-message")).toHaveTextContent("同场只能选一腿");
+	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周六002 主胜");
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 });
 

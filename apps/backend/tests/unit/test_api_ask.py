@@ -61,6 +61,11 @@ class _FakeUsage:
 class _FakeResult:
     def __init__(self) -> None:
         self.context_wrapper = SimpleNamespace(usage=_FakeUsage())
+        self.is_complete = False
+        self.cancelled = 0
+
+    def cancel(self) -> None:
+        self.cancelled += 1
 
     async def stream_events(self):  # type: ignore[no-untyped-def]
         yield SimpleNamespace(
@@ -87,6 +92,7 @@ class _FakeResult:
                 logprobs=[],
             ),
         )
+        self.is_complete = True
 
 
 @pytest.fixture
@@ -235,3 +241,58 @@ def test_extract_question_handles_content_parts() -> None:
         ),
     ]
     assert extract_question(messages) == "分段\n提问"
+
+
+def test_ask_stream_close_cancels_upstream(
+    ask_client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 08②：客户端断开（生成器在 yield 上被关闭）→ 未完成的上游
+    GLM 流主动取消不再空转；正常完成路径零取消。"""
+    import asyncio
+
+    _client, db_path = ask_client
+    import goalx_backend.llm.ask as ask_mod
+
+    result_holder: dict[str, _FakeResult] = {}
+
+    class _HangingResult(_FakeResult):
+        async def stream_events(self):  # type: ignore[no-untyped-def]
+            yield SimpleNamespace(
+                type="raw_response_event",
+                data=ResponseTextDeltaEvent(
+                    type="response.output_text.delta",
+                    delta="第一段",
+                    item_id="i1",
+                    output_index=0,
+                    content_index=0,
+                    sequence_number=1,
+                    logprobs=[],
+                ),
+            )
+            await asyncio.sleep(30)  # 模拟上游继续生成
+            self.is_complete = True
+
+    def _fake_run_streamed(*args: object, **kwargs: object) -> _HangingResult:
+        result_holder["r"] = _HangingResult()
+        return result_holder["r"]
+
+    monkeypatch.setattr(ask_mod.Runner, "run_streamed", _fake_run_streamed)
+
+    conn = connect(db_path)
+    settings = Settings(db_path=db_path, glm_api_key="test-key")
+    try:
+
+        async def _drive() -> None:
+            gen = ask_mod.ask_analyst_events(
+                conn, settings, 1, "问题", thread_id="fixture-1"
+            )
+            # 消费到首个 delta 后关闭生成器 = 客户端断开落在 yield 上
+            async for chunk in gen:
+                if "第一段" in chunk:
+                    break
+            await gen.aclose()
+
+        asyncio.run(_drive())
+    finally:
+        conn.close()
+    assert result_holder["r"].cancelled == 1  # 断开即取消上游

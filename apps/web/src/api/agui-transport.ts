@@ -10,6 +10,10 @@ import { apiBaseUrl } from "./client";
  * 事件流 → UIMessageChunk（start/text-start/text-delta/text-end/finish，
  * RUN_ERROR → error chunk）。fetch 取调用时 thunk——msw 拦截才生效
  * （同 client.ts 的坑）。
+ *
+ * 票 08② 取消接线：外部 abortSignal → 本地 AbortController → 真正传进
+ * fetch（HTTP 流随断）；订阅句柄保存并在流关闭/取消时退订（rxjs 订阅
+ * 不悬空）；用户取消不冒充 error chunk（区别于网络失败）。
  */
 
 /** ai 消息 → AG-UI 消息（文本 parts 拼接为 content）。 */
@@ -31,13 +35,16 @@ interface AgUiObservable {
 export function createAskTransport(fixtureId: number): ChatTransport<UIMessage> {
 	return {
 		async sendMessages({ messages, abortSignal }) {
-			const agent = new HttpAgent({
-				url: `${apiBaseUrl}/api/v1/fixtures/${fixtureId}/ask`,
-				fetch: (url, init) => globalThis.fetch(url, init),
-			});
+			// 本地取消控制器先于 agent 构造：fetch 接它的 signal（票 08②）
 			const controller = new AbortController();
 			const onAbort = () => controller.abort();
 			abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+			const agent = new HttpAgent({
+				url: `${apiBaseUrl}/api/v1/fixtures/${fixtureId}/ask`,
+				fetch: (url, init) => globalThis.fetch(url, { ...init, signal: controller.signal }),
+			});
+			let subscription: { unsubscribe(): void } | null = null;
 
 			return new ReadableStream<UIMessageChunk>({
 				async start(stream) {
@@ -52,7 +59,7 @@ export function createAskTransport(fixtureId: number): ChatTransport<UIMessage> 
 							context: [],
 						}) as unknown as AgUiObservable;
 						await new Promise<void>((resolve, reject) => {
-							events.subscribe({
+							subscription = events.subscribe({
 								next: (event) => {
 									switch (event.type) {
 										case "TEXT_MESSAGE_START":
@@ -77,17 +84,24 @@ export function createAskTransport(fixtureId: number): ChatTransport<UIMessage> 
 						});
 						stream.enqueue({ type: "finish" });
 					} catch (error) {
-						stream.enqueue({
-							type: "error",
-							errorText: error instanceof Error ? error.message : "追问失败（网络不可达）",
-						});
+						// 用户主动取消不冒充失败（后端随断流取消生成，票 08②）
+						if (!controller.signal.aborted) {
+							stream.enqueue({
+								type: "error",
+								errorText: error instanceof Error ? error.message : "追问失败（网络不可达）",
+							});
+						}
 					} finally {
 						abortSignal?.removeEventListener("abort", onAbort);
+						subscription?.unsubscribe();
 					}
 					stream.close();
 				},
 				cancel() {
+					// ai-sdk 流取消：三层收尾——上游 run 取消 + fetch 真断流 + 退订
 					agent.abortRun();
+					controller.abort();
+					subscription?.unsubscribe();
 				},
 			});
 		},
