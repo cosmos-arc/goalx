@@ -5402,6 +5402,20 @@
             "title": "Corpus Reader",
             "default": "ok"
           },
+          "freshness_shadow": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Shadow"
+          },
           "caliber": {
             "type": "string",
             "title": "Caliber"

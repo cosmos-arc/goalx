@@ -979,9 +979,13 @@ def _adjudicate_eu(
     verdict.eu_fair_odds = {
         s: round(1.0 / p, 4) for s, p in zip(SELECTIONS, probs, strict=True)
     }
-    # 时钟④国际参考最近观测（票 08：只记录展示，不参与判定）
-    if verdict.eu_source_updated_at is not None:
-        verdict.eu_age_seconds = seconds_between(as_of, verdict.eu_source_updated_at)
+    # 时钟④国际参考最近观测（票 08）：观测时基（本机 effective_observed_at，
+    # 与 EU 段 60min 观测龄闸同时基）——非书源自报时间；只记录不参与判定
+    eu_observed_times = [
+        t for t in (effective_observed_at(r) for r in eligible) if t is not None
+    ]
+    if eu_observed_times:
+        verdict.eu_age_seconds = seconds_between(as_of, max(eu_observed_times))
     verdict.sources.extend(sorted(valid_books))
 
 
@@ -1382,25 +1386,37 @@ def record_freshness_shadow(
         "rule_stale_observed_fresh": 0,
         "rule_fresh": 0,
         "observed_fresh": 0,
+        "n_comparable": 0,
     }
     for row in rows:
         quote = row.had_quote
         rule_stale = quote is not None and "stale_source" in quote.reasons
-        observed_age = quote.jc_observed_age_seconds if quote else None
+        price_age: float | None = quote.jc_age_seconds if quote else None
+        observed_age: float | None = quote.jc_observed_age_seconds if quote else None
         observed_stale = observed_age is not None and observed_age > freshness_seconds
+        # 可比行=两钟都可算（无 JC 证据的行两种口径都无法判——计入 n
+        # 可见但不进覆盖分子，防 unknown 混充 fresh）
+        # gap=观测龄−价格龄（差值入库）；可比=两钟都可算（无 JC 证据行
+        # 计入 n 可见但不进覆盖分子，防 unknown 混充 fresh）
+        gap: float | None = None
+        if price_age is not None and observed_age is not None:
+            gap = observed_age - price_age
+        comparable = gap is not None
         counts["n"] += 1
         counts["rule_stale"] += int(rule_stale)
         counts["observed_stale"] += int(observed_stale)
         counts["rule_stale_observed_fresh"] += int(rule_stale and not observed_stale)
-        counts["rule_fresh"] += int(not rule_stale)
-        counts["observed_fresh"] += int(not observed_stale)
+        counts["rule_fresh"] += int(comparable and not rule_stale)
+        counts["observed_fresh"] += int(comparable and not observed_stale)
+        counts["n_comparable"] += int(comparable)
         conn.execute(
             """
             INSERT OR REPLACE INTO freshness_shadow
                 (fixture_id, business_date, as_of, rule_stale_source,
                  observed_stale, price_age_seconds, observed_age_seconds,
-                 sale_age_seconds, eu_age_seconds, pair_gap_seconds)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 clock_gap_seconds, sale_age_seconds, eu_age_seconds,
+                 pair_gap_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.fixture_id,
@@ -1408,8 +1424,9 @@ def record_freshness_shadow(
                 as_of,
                 int(rule_stale),
                 int(observed_stale),
-                quote.jc_age_seconds if quote else None,
+                price_age,
                 observed_age,
+                gap,
                 quote.sale_age_seconds if quote else None,
                 quote.eu_age_seconds if quote else None,
                 quote.pair_gap_seconds if quote else None,
@@ -1431,13 +1448,15 @@ def freshness_shadow_summary(
     conn: sqlite3.Connection, business_date: str
 ) -> dict[str, int] | None:
     """
-    一日影子读数（晨检只读消费）：双口径新鲜覆盖 + 分歧计数。
+    一日影子读数（晨检/面板只读消费）：双口径新鲜覆盖 + 分歧计数。
 
+    覆盖分母=可比行（两钟都可算；无 JC 证据行计入 n 可见但不进分子）。
     无当日行返回 None（未拍不硬判）。
     """
     rows = conn.execute(
         """
-        SELECT rule_stale_source, observed_stale, observed_age_seconds
+        SELECT rule_stale_source, observed_stale, price_age_seconds,
+               observed_age_seconds
         FROM freshness_shadow WHERE business_date = ?
         """,
         (business_date,),
@@ -1445,6 +1464,12 @@ def freshness_shadow_summary(
     if not rows:
         return None
     n = len(rows)
+    comparable = [
+        r
+        for r in rows
+        if r["price_age_seconds"] is not None and r["observed_age_seconds"] is not None
+    ]
+    n_comparable = len(comparable)
     rule_stale = sum(int(r["rule_stale_source"]) for r in rows)
     observed_stale = sum(int(r["observed_stale"]) for r in rows)
     divergent = sum(
@@ -1452,8 +1477,9 @@ def freshness_shadow_summary(
     )
     return {
         "n": n,
-        "rule_fresh": n - rule_stale,
-        "observed_fresh": n - observed_stale,
+        "n_comparable": n_comparable,
+        "rule_fresh": sum(1 for r in comparable if not int(r["rule_stale_source"])),
+        "observed_fresh": sum(1 for r in comparable if not int(r["observed_stale"])),
         "rule_stale": rule_stale,
         "observed_stale": observed_stale,
         "divergent_rule_stale_observed_fresh": divergent,

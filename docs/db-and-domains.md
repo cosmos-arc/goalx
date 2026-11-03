@@ -516,6 +516,7 @@ append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 | `observed_stale` | INTEGER | NOT NULL |
 | `price_age_seconds` | REAL | — |
 | `observed_age_seconds` | REAL | — |
+| `clock_gap_seconds` | REAL | — |
 | `sale_age_seconds` | REAL | — |
 | `eu_age_seconds` | REAL | — |
 | `pair_gap_seconds` | REAL | — |

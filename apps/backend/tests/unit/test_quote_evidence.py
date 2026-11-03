@@ -381,7 +381,8 @@ def test_five_clocks_populated(db) -> None:
     assert verdict.sale_age_seconds is not None
     assert verdict.sale_age_seconds >= 0
     assert verdict.eu_source_updated_at is not None
-    assert verdict.eu_age_seconds == 240.0  # 书源时=SOURCE_TIME
+    # 观测时基（本机 effective_observed_at=OBSERVED 14:03）——非书源自报时间
+    assert verdict.eu_age_seconds == 60.0
     assert verdict.pair_gap_seconds == 0.0  # 两源同刻
 
 

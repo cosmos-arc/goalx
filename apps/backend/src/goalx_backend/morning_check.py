@@ -1,5 +1,5 @@
 """
-09:05 晨检代码化（ingest-orchestration 票 01）：13 项只读红绿面。
+09:05 晨检代码化（ingest-orchestration 票 01；票 08 加第 14 项）：14 项只读红绿面。
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -268,16 +268,15 @@ def check_bets(conn: sqlite3.Connection) -> CheckItem:
     return CheckItem("bets", OK, f"累计 {bets_store.bets_total(conn)} 注")
 
 
-def check_freshness_shadow(
-    conn: sqlite3.Connection, *, business_date: str
-) -> CheckItem:
+def check_freshness_shadow(conn: sqlite3.Connection) -> CheckItem:
     """
     项 14 新鲜度双口径影子读数（票 08 观察项：只报数不判红）。
 
     规则口径=300s 调盘龄（现行 stale_source）；观测口径=同 300s 观测龄
     （最尖对照）。读最新已拍业务日的双口径新鲜覆盖与分歧计数——分歧=
-    规则判旧而观测判新（"价久未变但刚确认过"）。当日未拍显示未拍不硬判
-    （daily-wrap 落拍；读数时点与票 09 预注册检查点对齐，11-13 首读）。
+    规则判旧而观测判新（"价久未变但刚确认过"）；覆盖分母=可比行（两钟
+    都可算）。未拍显示未拍不硬判（daily-wrap 落拍；读数时点与票 09
+    预注册检查点对齐，11-13 首读）。
     """
     latest = quote_evidence.latest_freshness_shadow_date(conn)
     if latest is None:
@@ -285,12 +284,14 @@ def check_freshness_shadow(
     summary = quote_evidence.freshness_shadow_summary(conn, latest)
     if summary is None:
         return CheckItem("freshness_shadow", OK, f"{latest} 未拍")
+    comparable = summary["n_comparable"]
     return CheckItem(
         "freshness_shadow",
         OK,
-        f"{latest} 规则新鲜 {summary['rule_fresh']}/{summary['n']}"
-        + f" · 观测新鲜 {summary['observed_fresh']}/{summary['n']}"
-        + f" · 分歧(规则旧/观测新) {summary['divergent_rule_stale_observed_fresh']}",
+        f"{latest} 规则新鲜 {summary['rule_fresh']}/{comparable}"
+        + f" · 观测新鲜 {summary['observed_fresh']}/{comparable}"
+        + f" · 分歧(规则旧/观测新) {summary['divergent_rule_stale_observed_fresh']}"
+        + f" · 已拍 {summary['n']}",
     )
 
 
@@ -399,7 +400,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 13 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 14 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -421,9 +422,7 @@ def run_morning_check(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
                 check_bets(conn),
-                check_freshness_shadow(
-                    conn, business_date=fx_store.beijing_business_date(resolved_now)
-                ),
+                check_freshness_shadow(conn),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

@@ -71,6 +71,7 @@ def test_recorder_writes_dual_conclusions_and_idempotent(
         "rule_stale_observed_fresh": 1,
         "rule_fresh": 1,
         "observed_fresh": 2,
+        "n_comparable": 2,
     }
     stored = db.execute(
         "SELECT * FROM freshness_shadow WHERE fixture_id = 1"
@@ -82,6 +83,7 @@ def test_recorder_writes_dual_conclusions_and_idempotent(
     assert stored["sale_age_seconds"] == 30.0
     assert stored["eu_age_seconds"] == 120.0
     assert stored["pair_gap_seconds"] == 5.0
+    assert stored["clock_gap_seconds"] == 10.0 - 3600.0  # 差值入库：观测龄−价格龄
     # 同日重拍：REPLACE 不双行（日拍最新一拍生效）
     qe.record_freshness_shadow(
         db, rows, "2026-11-04", as_of="2026-11-04T13:00:00+00:00"
@@ -127,14 +129,14 @@ def test_morning_check_item_reports_and_tolerates_empty(db: sqlite3.Connection) 
     """票 08：晨检项只读消费——未拍不硬判；有拍报双口径覆盖+分歧。"""
     from goalx_backend.morning_check import check_freshness_shadow
 
-    empty = check_freshness_shadow(db, business_date="2026-11-04")
+    empty = check_freshness_shadow(db)
     assert empty.status == "ok"
     assert "未拍" in empty.detail
     rows = [_row(1, "valid", [], jc_age_seconds=60.0, jc_observed_age_seconds=60.0)]
     qe.record_freshness_shadow(
         db, rows, "2026-11-04", as_of="2026-11-04T12:00:00+00:00"
     )
-    item = check_freshness_shadow(db, business_date="2026-11-04")
+    item = check_freshness_shadow(db)
     assert item.status == "ok"  # 观察项不判红
     assert "规则新鲜 1/1" in item.detail
     assert "观测新鲜 1/1" in item.detail

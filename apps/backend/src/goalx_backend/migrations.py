@@ -1909,7 +1909,8 @@ def _apply_v38(conn: sqlite3.Connection) -> None:
     300s 规则（调盘龄）与观测口径（观测龄，同 300s 窗宽=最尖对照）双结论
     并行落库——仅记录供读数（读数时点与票 09 预注册检查点对齐，11-13
     首读），不改 stale_source 判定。独立表不污染正式判决字段；日拍
-    INSERT OR REPLACE（同场同日最新一拍生效）。
+    INSERT OR REPLACE（同场同日最新一拍生效）。clock_gap_seconds=
+    观测龄−价格龄（负=观测比调盘新，即"价久未变刚确认"类）。
     """
     conn.execute(
         """
@@ -1922,6 +1923,7 @@ def _apply_v38(conn: sqlite3.Connection) -> None:
             observed_stale INTEGER NOT NULL,
             price_age_seconds REAL,
             observed_age_seconds REAL,
+            clock_gap_seconds REAL,
             sale_age_seconds REAL,
             eu_age_seconds REAL,
             pair_gap_seconds REAL,

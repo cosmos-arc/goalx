@@ -408,6 +408,17 @@ export function OverviewPage() {
 											/>
 										))}
 									</div>
+									{attributionQuery.data.freshness_shadow ? (
+										<p className="mt-2 text-xs text-muted-foreground" data-testid="attribution-freshness-shadow">
+											300s 双口径读数（票 08 并行测量，最新已拍日）：规则新鲜{" "}
+											{attributionQuery.data.freshness_shadow["rule_fresh"]}/
+											{attributionQuery.data.freshness_shadow["n_comparable"]} · 观测新鲜{" "}
+											{attributionQuery.data.freshness_shadow["observed_fresh"]}/
+											{attributionQuery.data.freshness_shadow["n_comparable"]} · 分歧（规则旧 /观测新）
+											{attributionQuery.data.freshness_shadow["divergent_rule_stale_observed_fresh"]}
+											——仅记录不改规则，读数与票 09 检查点对齐（11-13 首读）。
+										</p>
+									) : null}
 									<div className="mt-2 grid gap-2 sm:grid-cols-2">
 										{/* 候选对照面：有候选时"没有候选"前提不成立——如实亮出 */}
 										<BucketCard

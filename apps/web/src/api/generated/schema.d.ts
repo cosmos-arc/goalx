@@ -2267,6 +2267,10 @@ export interface components {
              * @default ok
              */
             corpus_reader: string;
+            /** Freshness Shadow */
+            freshness_shadow?: {
+                [key: string]: number;
+            } | null;
             /** Caliber */
             caliber: string;
         };
