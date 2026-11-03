@@ -56,7 +56,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 				? { ev: legEv(legs[0]), odds: legs[0].odds, note: "单关口径：共识 EV（欧共识×竞彩价−1）" }
 				: null;
 
-	/** 规则前置（票 04）：同场换选=替换+提示；2串1 上限=行内提示；非单固首腿=提示；停售/已开赛=忽略。 */
+	/** 规则前置（票 04；票 08① 调序）：同场换选=替换+提示（先于 2串1 上限——
+	 * 换选不占新名额，腿满时可直接切换已选场的方向）；再点同选项=取消；
+	 * 非单固首腿=提示；停售/已开赛=忽略。 */
 	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
 		if (!isPickable(fixture, now)) {
 			return;
@@ -67,13 +69,13 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			setMessage(null);
 			return;
 		}
-		if (legs.length >= MAX_LEGS) {
-			setMessage(`已达 ${MAX_LEGS}串1 上限——先在选注篮移除一腿`);
-			return;
-		}
 		if (existing) {
 			setLegs(legs.map((leg) => (leg.fixture_id === fixture.fixture_id ? makeLeg(fixture, selection, odds) : leg)));
 			setMessage("同场只能选一腿（竞彩禁同场串关），已替换原选择");
+			return;
+		}
+		if (legs.length >= MAX_LEGS) {
+			setMessage(`已达 ${MAX_LEGS}串1 上限——先在选注篮移除一腿`);
 			return;
 		}
 		if (legs.length === 0 && fixture.had_quote && fixture.had_quote.single_eligible !== true) {

@@ -867,8 +867,8 @@ export interface paths {
          *     schema 由 ag-ui-protocol 1.0 规范定义，不在本契约内复制；响应 =
          *     AG-UI 1.0 事件 SSE。prompt 只注入该场已存证情报（回答只引存证
          *     条目）；无情报场次走诚实降级话术（不调模型，零成本）；每次调用
-         *     按 usage 记 cost_ledger（用途标签 ask）。追问是增量交互面——不落
-         *     任何预测/证据工件。
+         *     按 usage 记 cost_ledger（用途标签 ask；断开/失败路径 usage 未定不
+         *     记账，票 08②）。追问是增量交互面——不落任何预测/证据工件。
          */
         post: operations["ask_analyst_api_v1_fixtures__fixture_id__ask_post"];
         delete?: never;

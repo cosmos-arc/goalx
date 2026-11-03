@@ -199,6 +199,16 @@ test("feed picks follow the shared basket rules (same-fixture replace, deselect,
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 	await user.click(screen.getByTestId("market-pick-2-a"));
 	expect(screen.getByTestId("market-message")).toHaveTextContent("已达 2串1 上限");
+
+	// 票 08①：腿满时点击已选场的另一方向=换选替换而非上限拦截；
+	// 真第三场（未选过）仍被上限拦下
+	await user.click(screen.getByTestId("market-pick-1-d"));
+	expect(screen.getByTestId("market-message")).toHaveTextContent("同场只能选一腿");
+	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周六001 平");
+	expect(screen.getByTestId("basket-summary")).toHaveTextContent("周日004 客胜");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
+	await user.click(screen.getByTestId("market-pick-2-a"));
+	expect(screen.getByTestId("market-message")).toHaveTextContent("已达 2串1 上限");
 });
 
 test("basket drawer manages legs, non-single hint, and surfaces server rejection", async () => {

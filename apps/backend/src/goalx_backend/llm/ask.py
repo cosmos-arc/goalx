@@ -5,7 +5,8 @@
 RUN_FINISHED；失败 RUN_ERROR 收尾），经 openai-agents Runner 流式调
 GLM（ADR-0004），prompt 只注入该场已存证情报。无情报场次不调模型，
 直接走诚实降级话术（零成本）。每次调用按 usage 记 cost_ledger
-（用途标签 ask）。追问不落任何预测/证据工件（advisory 层）。
+（用途标签 ask；断开/失败路径 usage 未定不记账——上游取消后无完成
+事件，票 08②）。追问不落任何预测/证据工件（advisory 层）。
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from ag_ui.core.events import (
 )
 from ag_ui.encoder import EventEncoder
 from agents import Agent, ModelSettings, Runner
+from loguru import logger
 from openai.types.responses import ResponseTextDeltaEvent
 
 from goalx_backend.config import Settings
@@ -157,19 +159,29 @@ async def ask_analyst_events(
         if info is None:
             raise ValueError(f"fixture {fixture_id} 无对阵信息")
         result = Runner.run_streamed(agent, _user_prompt(info, intels, question))
-        yield encoder.encode(
-            TextMessageStartEvent(message_id=message_id, role="assistant")
-        )
-        async for event in result.stream_events():
-            if event.type == "raw_response_event" and isinstance(
-                event.data, ResponseTextDeltaEvent
-            ):
-                delta = event.data.delta or ""
-                if delta:
-                    yield encoder.encode(
-                        TextMessageContentEvent(message_id=message_id, delta=delta)
-                    )
-        yield encoder.encode(TextMessageEndEvent(message_id=message_id))
+        try:
+            yield encoder.encode(
+                TextMessageStartEvent(message_id=message_id, role="assistant")
+            )
+            async for event in result.stream_events():
+                if event.type == "raw_response_event" and isinstance(
+                    event.data, ResponseTextDeltaEvent
+                ):
+                    delta = event.data.delta or ""
+                    if delta:
+                        yield encoder.encode(
+                            TextMessageContentEvent(message_id=message_id, delta=delta)
+                        )
+            yield encoder.encode(TextMessageEndEvent(message_id=message_id))
+        finally:
+            # 票 08②：客户端断开（GeneratorExit/Cancelled 落在本生成器的
+            # yield 上）或流中途异常时，未完成的上游 GLM 流主动取消——
+            # 不再空转烧 token；正常完成 is_complete=True 无动作
+            if not result.is_complete:
+                result.cancel()
+                logger.warning(
+                    "ask-analyst 流中断：上游生成已取消（fixture={}）", fixture_id
+                )
         usage = result.context_wrapper.usage
         record_cost(
             conn,
