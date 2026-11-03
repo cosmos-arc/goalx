@@ -209,7 +209,7 @@ def _cmd_settle() -> None:
 
 
 def _cmd_multiline_bounds() -> None:
-    """OU 约束求界 + AH 联合一致性报告（measure-10，B 线可行性）。"""
+    """OU 端点敏感性分析 + AH 联合一致性报告（measure-10，B 线可行性）。"""
     with _corpus_handles() as (duck_con, store), task_conn() as conn:
         haircut, source, _n = hc.calibrated_haircut(conn)
         payload = mlb.run_bounds_study(duck_con, store, haircut=haircut)
@@ -1792,7 +1792,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "multiline-bounds-report",
-        help="OU 约束求界+AH 联合一致性(measure-10:B线可行性,抽样口径)",
+        help="OU 端点敏感性分析+AH 联合一致性(measure-10:B线可行性,抽样口径)",
     )
     sub.add_parser(
         "frozen-reconcile",
