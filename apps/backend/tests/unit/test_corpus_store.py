@@ -260,7 +260,10 @@ def test_remat_lock_legacy_row_without_token_still_occupies(tmp_path: Path) -> N
 
 def test_ingest_raw_concurrent_same_key_ledger_matches_disk(tmp_path: Path) -> None:
     """票 03 验收：双进程并发写同 key 任意交叉——终态盘上 gunzip-sha ==
-    台账 sha256（发布段按数据集目录 flock 同序互斥）。"""
+    台账 sha256（发布段按数据集目录 flock 同序互斥）。定位=soak/跨进程
+    机制冒烟：旧实现竞态窗口小、本测试对旧代码也常绿——回归判据以
+    test_ingest_raw_publish_crossing_prevented 的确定性判例为准
+    （correctness F2）。"""
     import hashlib
 
     root = tmp_path / "corpus"
@@ -318,26 +321,27 @@ def test_ingest_raw_publish_crossing_prevented(tmp_path: Path) -> None:
     real_checkpoint = CorpusStore._checkpoint
     a_past_replace = threading.Event()
     a_may_finish = threading.Event()
-    ident = {"a": -1, "fired": False}
+    fired = {"a": False}
 
     def hooked_checkpoint(self: CorpusStore) -> object:
-        # 只拦 A 线程首次走到台账步（= replace 已完成、记账未开始）
-        if threading.get_ident() == ident["a"] and not ident["fired"]:
-            ident["fired"] = True
+        # 门控按实例不按线程 ident（ident 在 start 后赋值存在抢占窗口，
+        # correctness F1）：补丁窗口内只有 store_a/store_b 会调，拦
+        # store_a 首次到台账步（= replace 已完成、记账未开始）
+        if self is store_a and not fired["a"]:
+            fired["a"] = True
             a_past_replace.set()
             assert a_may_finish.wait(timeout=10)
         return real_checkpoint(self)
 
     CorpusStore._checkpoint = hooked_checkpoint  # type: ignore[method-assign]
+    store_a = CorpusStore(root)
     try:
-        store_a = CorpusStore(root)
 
         def run_a() -> None:
             store_a.ingest_raw("p", "d", "k", b"AAA")
 
         thread_a = threading.Thread(target=run_a)
         thread_a.start()
-        ident["a"] = thread_a.ident
         assert a_past_replace.wait(timeout=10)  # A 恰在 replace 与记账之间
 
         store_b = CorpusStore(root)
@@ -349,6 +353,7 @@ def test_ingest_raw_publish_crossing_prevented(tmp_path: Path) -> None:
         thread_b.start()
         # 给 B 到达 flock 的机会（fix 下阻塞；旧实现下整轮完成）
         time.sleep(0.2)
+        b_started_at = datetime.now(UTC).isoformat(timespec="seconds")
         a_may_finish.set()  # 放 A 收口（记账+释放锁）
         thread_a.join(timeout=10)
         thread_b.join(timeout=10)
@@ -357,11 +362,22 @@ def test_ingest_raw_publish_crossing_prevented(tmp_path: Path) -> None:
     finally:
         CorpusStore._checkpoint = real_checkpoint  # type: ignore[method-assign]
 
+    assert fired["a"]  # 钩子必达（否则编排失效变假绿）
     check = CorpusStore(root)  # 主线程新连接做终态断言（线程亲和）
     try:
         body = check.read_raw("p", "d", "k")
         assert hashlib.sha256(body).hexdigest() == check.raw_sha("p", "d", "k")
         assert check.verify_raw("p", "d", "k")
+        # 台账时间跟最新体（B）：B 的 stamp 晚于放行时刻（取证不回档）
+        row = (
+            check._checkpoint()
+            .execute(
+                "SELECT fetched_at FROM raw_artifacts"
+                " WHERE provider='p' AND dataset='d' AND key='k'"
+            )
+            .fetchone()
+        )
+        assert str(row["fetched_at"]) >= b_started_at
         # fix 语义：B 在 A 之后整轮发布——终态是 B 的体（后写胜出），
         # 台账跟 B；盘/账不一致的旧交叉形态在此断言下必炸
     finally:

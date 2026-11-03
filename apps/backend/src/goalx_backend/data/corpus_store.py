@@ -490,7 +490,10 @@ class CorpusStore:
         path = self.raw_path(provider, dataset, key, ext=ext)
         path.parent.mkdir(parents=True, exist_ok=True)
         # flock 目录用 fd（数据集目录稳定存在，目标文件每次 replace 换
-        # inode 不能锁本体）；kernel 在持锁进程死亡时自动释放，无过期治理
+        # inode 不能锁本体）；kernel 在持锁进程死亡时自动释放，无过期治理。
+        # 同进程勿嵌套/并发调同数据集 ingest_raw——flock 按 open file
+        # description 计，同进程两个 fd 互斥会自死锁（correctness F3；
+        # 现有调用方全是逐 key 串行循环）
         lock_fd = os.open(path.parent, os.O_RDONLY)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
