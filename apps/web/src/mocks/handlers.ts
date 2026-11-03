@@ -174,6 +174,83 @@ export const todayFixture = [
 	},
 ] as const satisfies readonly DeepReadonly<TodayFixture>[];
 
+/** 票 07：六桶归因样例——与 todayFixture 单日三行同口径推导（映射见注）。 */
+export const attributionFixture = {
+	business_date: beijingBusinessDate(Date.now()),
+	market_code: "had",
+	as_of: minutesAgoIso(1),
+	total: 3,
+	buckets: [
+		{ key: "not_on_sale", label: "未开售", count: 0, samples: [], reasons_seen: [] },
+		{ key: "not_collected", label: "数据没采到", count: 0, samples: [], reasons_seen: [] },
+		{ key: "eu_cut", label: "国际参考断供", count: 0, samples: [], reasons_seen: [] },
+		{
+			key: "evidence_unqualified",
+			label: "有价但证据不合格",
+			count: 0,
+			samples: [],
+			reasons_seen: [],
+		},
+		{
+			key: "no_edge",
+			label: "信息齐确实无优势",
+			count: 1,
+			samples: [
+				{
+					fixture_id: 2,
+					match_code: "周六002",
+					home_team: "利物浦",
+					away_team: "曼城",
+					kickoff_utc: hoursFromNow(1.5),
+					reasons: [],
+				},
+			],
+			reasons_seen: [],
+		},
+		{
+			key: "missed_deadline",
+			label: "有候选来不及执行",
+			count: 0,
+			samples: [],
+			reasons_seen: [],
+		},
+	],
+	window_closed: {
+		key: "window_closed",
+		label: "已停售/已开赛",
+		count: 1,
+		samples: [
+			{
+				fixture_id: 3,
+				match_code: "周六003",
+				home_team: "A 队",
+				away_team: "B 队",
+				kickoff_utc: minutesAgoIso(150),
+				reasons: ["sale_stopped"],
+			},
+		],
+		reasons_seen: ["sale_stopped"],
+	},
+	positive_candidates: {
+		key: "positive_candidates",
+		label: "信息齐且有正 EV 候选",
+		count: 1,
+		samples: [
+			{
+				fixture_id: 1,
+				match_code: "周六001",
+				home_team: "阿森纳",
+				away_team: "切尔西",
+				kickoff_utc: hoursFromNow(2.5),
+				reasons: [],
+			},
+		],
+		reasons_seen: [],
+	},
+	board_coverage: [3, 3],
+	caliber: "六桶=报告措辞；桶判定与 quote_evidence 裁决原因一一对应。",
+} as const satisfies DeepReadonly<components["schemas"]["NoCandidateAttribution"]>;
+
 /**
  * 票 38 poolList 口径样例：比赛级 bettingSingle=0（is_single=false）但
  * poolList HAD 池 single=1 → 修正后 had_quote.single_eligible=true。
@@ -379,6 +456,9 @@ export const handlers = [
 		const rows = days > 1 ? todayFixture : todayFixture.filter((row) => row.business_date === today);
 		return HttpResponse.json(rows);
 	}),
+	// 票 07：六桶归因 mock——与 todayFixture 单日行同口径推导
+	// （1=valid 正 EV 候选面；2=valid 无正 EV→无优势；3=停售→脚注面）
+	http.get("*/api/v1/fixtures/today/attribution", () => HttpResponse.json(attributionFixture)),
 	// 票 wb-06：建议仓位端点 mock——与后端 betting/staking.py 同规则的最小镜像
 	// （EV≤0→¥0；paper flat 2% 截断 1–5% 下限 ¥2；live ¼Kelly 截断 1–cap%；
 	//   特殊场景用 server.use 覆盖）。bankroll 恒用请求值（mock 无账本）。

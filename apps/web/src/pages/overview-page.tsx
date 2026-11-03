@@ -1,13 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
-import { fetchBankroll, fetchBets, fetchDrawResults, fetchTodayFixtures, fetchValidationProgress } from "../api/goalx";
+import { type ReactNode, useState } from "react";
+import {
+	type AttributionBucket,
+	fetchBankroll,
+	fetchBets,
+	fetchDrawResults,
+	fetchNoCandidateAttribution,
+	fetchTodayFixtures,
+	fetchValidationProgress,
+} from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
-import { isPickable } from "../components/had-quote-ui";
+import { isPickable, localTime } from "../components/had-quote-ui";
 import { Badge } from "../components/ui/badge";
-import { bankrollKey, betsKey, drawResultsKey, todayFixturesKey, validationProgressKey } from "../lib/query-keys";
+import {
+	attributionKey,
+	bankrollKey,
+	betsKey,
+	drawResultsKey,
+	todayFixturesKey,
+	validationProgressKey,
+} from "../lib/query-keys";
 import { earliestKickoffMs, openBetFixtureIds, pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
 
 /**
@@ -74,12 +89,76 @@ function TodoRow({ item }: { item: TodoItem }) {
 	);
 }
 
+/**
+ * 票 07 六桶归因桶卡：计数 + 点击下钻展开桶内场次（样本含裁决原因）。
+ * label/判定来自后端单一映射（与 quote_evidence 裁决原因一一对应）。
+ */
+function BucketCard({
+	bucket,
+	footnote = false,
+	open,
+	onToggle,
+}: {
+	bucket: AttributionBucket;
+	footnote?: boolean;
+	open: boolean;
+	onToggle: () => void;
+}) {
+	const hasSamples = bucket.count > 0;
+	const samples = bucket.samples ?? [];
+	const reasonsSeen = bucket.reasons_seen ?? [];
+	return (
+		<div
+			className={`rounded-lg border p-3 ${footnote ? "border-dashed" : "border-border"} ${hasSamples ? "" : "opacity-70"}`}
+			data-testid={`attribution-bucket-${bucket.key}`}
+		>
+			<button
+				type="button"
+				className="flex w-full items-baseline justify-between gap-2 text-left disabled:cursor-default"
+				disabled={!hasSamples}
+				onClick={onToggle}
+				aria-expanded={open}
+				data-testid={`attribution-bucket-toggle-${bucket.key}`}
+			>
+				<span className="text-xs text-muted-foreground">
+					{bucket.label}
+					{footnote ? "（脚注，不入六桶）" : ""}
+				</span>
+				<span className={`${TABULAR_NUMS} text-xl font-semibold`}>{bucket.count}</span>
+			</button>
+			{bucket.count > 0 && reasonsSeen.length > 0 ? (
+				<p className="mt-1 text-xs text-muted-foreground">裁决原因：{reasonsSeen.join("、")}</p>
+			) : null}
+			{open && hasSamples ? (
+				<ul className="mt-2 space-y-1" data-testid={`attribution-bucket-samples-${bucket.key}`}>
+					{samples.map((sample) => (
+						<li key={sample.fixture_id} className="border-t border-border pt-1 text-xs">
+							<span className="text-muted-foreground">{sample.match_code}</span> {sample.home_team} vs{" "}
+							{sample.away_team}
+							<span className="ml-1 text-muted-foreground">· 开球 {localTime(sample.kickoff_utc)}</span>
+							{(sample.reasons ?? []).length > 0 ? (
+								<span className="ml-1 text-muted-foreground">（{(sample.reasons ?? []).join("、")}）</span>
+							) : null}
+						</li>
+					))}
+				</ul>
+			) : null}
+		</div>
+	);
+}
+
 export function OverviewPage() {
 	const todayQuery = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
 	const betsQuery = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
 	const drawQuery = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
 	const progressQuery = useQuery({ queryKey: validationProgressKey, queryFn: () => fetchValidationProgress() });
+	// 票 07：无候选六桶归因（独立查询——缺席不拖垮核心三路，失败诚实降级）
+	const attributionQuery = useQuery({
+		queryKey: attributionKey(1),
+		queryFn: () => fetchNoCandidateAttribution(undefined, 1),
+	});
+	const [openBucket, setOpenBucket] = useState<string | null>(null);
 	const now = Date.now();
 
 	const fixtures = todayQuery.data ?? [];
@@ -279,6 +358,60 @@ export function OverviewPage() {
 									</p>
 								))}
 							</div>
+						</section>
+
+						<section aria-labelledby="overview-attribution-heading" className="mb-8" data-testid="overview-attribution">
+							<h2 id="overview-attribution-heading" className="mb-1 text-sm font-medium">
+								今日为何没有候选 <span className="font-normal text-muted-foreground">六桶归因</span>
+							</h2>
+							<p className="mb-3 text-xs text-muted-foreground">
+								每场只进一桶（首匹配）；桶判定与报价证据裁决原因一一对应——点击计数下钻场次。
+								{attributionQuery.data ? (
+									<>
+										今日板覆盖 {attributionQuery.data.board_coverage[1]}/{attributionQuery.data.board_coverage[0]}{" "}
+										已链（与晨检同源）。
+									</>
+								) : null}
+							</p>
+							{attributionQuery.isError ? (
+								<p
+									className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"
+									data-testid="attribution-unavailable"
+								>
+									归因面暂不可用（端点较新或后端不可达）——六桶读数暂缺，不硬判。
+								</p>
+							) : attributionQuery.data ? (
+								<>
+									<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+										{attributionQuery.data.buckets.map((bucket) => (
+											<BucketCard
+												key={bucket.key}
+												bucket={bucket}
+												open={openBucket === bucket.key}
+												onToggle={() => setOpenBucket(openBucket === bucket.key ? null : bucket.key)}
+											/>
+										))}
+									</div>
+									<div className="mt-2 grid gap-2 sm:grid-cols-2">
+										{/* 候选对照面：有候选时"没有候选"前提不成立——如实亮出 */}
+										<BucketCard
+											bucket={attributionQuery.data.positive_candidates}
+											open={openBucket === "positive_candidates"}
+											onToggle={() =>
+												setOpenBucket(openBucket === "positive_candidates" ? null : "positive_candidates")
+											}
+										/>
+										<BucketCard
+											bucket={attributionQuery.data.window_closed}
+											footnote
+											open={openBucket === "window_closed"}
+											onToggle={() => setOpenBucket(openBucket === "window_closed" ? null : "window_closed")}
+										/>
+									</div>
+								</>
+							) : (
+								<div data-testid="attribution-loading" className="h-24 animate-pulse rounded-lg bg-muted" />
+							)}
 						</section>
 
 						<section aria-labelledby="overview-snapshot-heading" className="mb-8" data-testid="overview-snapshot">

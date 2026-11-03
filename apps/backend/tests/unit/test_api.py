@@ -681,6 +681,31 @@ def test_bet_replay_short_circuits_before_eligibility(demo_client: TestClient) -
     assert replay.json()["id"] == created.json()["id"]
 
 
+def test_no_candidate_attribution_endpoint(demo_client: TestClient) -> None:
+    """票 07：六桶归因端点——demo 种子下停售场入脚注面、valid 无优势
+    场入无优势桶、六桶恒在（空桶占位）+ 晨检同源覆盖数。"""
+    response = demo_client.get("/api/v1/fixtures/today/attribution")
+    assert response.status_code == 200
+    payload = response.json()
+    keys = [bucket["key"] for bucket in payload["buckets"]]
+    assert keys == [
+        "not_on_sale",
+        "not_collected",
+        "eu_cut",
+        "evidence_unqualified",
+        "no_edge",
+        "missed_deadline",
+    ]
+    assert payload["window_closed"]["count"] == 1  # 周六003 停售
+    assert payload["window_closed"]["reasons_seen"] == ["sale_stopped"]
+    # demo 三场 EV 全负：001/002 valid → 无优势；候选面 0
+    assert payload["buckets"][4]["count"] == 2
+    assert payload["positive_candidates"]["count"] == 0
+    assert payload["total"] == 3
+    assert payload["board_coverage"] == [3, 0]  # 晨检第 8 项同源（demo 无 srct 链）
+    assert "quote_evidence" in payload["caliber"]
+
+
 def test_bet_creation_eligibility_rules(demo_client: TestClient) -> None:
     """票 36 选择入口：单固校验、串关共同可购买、停售/开赛拒绝（服务端）。"""
     single_ok, parlay_ok, stopped = _demo_ids(demo_client)

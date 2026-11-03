@@ -422,3 +422,42 @@ test("shows the backend-unavailable state when every core endpoint fails, and re
 	await user.click(within(state).getByRole("button", { name: "重试" }));
 	await waitFor(() => expect(screen.getByTestId("overview-todos")).toBeInTheDocument());
 });
+
+test("票 07：六桶归因面板渲染 + 点击桶下钻场次；断供失败诚实降级", async () => {
+	const user = userEvent.setup();
+	await renderAt("/");
+
+	// 六桶恒渲染（空桶 0 占位）+ 候选对照面 + 脚注面 + 晨检同源覆盖
+	const section = await screen.findByTestId("overview-attribution");
+	expect(within(section).getByTestId("attribution-bucket-no_edge")).toHaveTextContent("信息齐确实无优势");
+	expect(within(section).getByTestId("attribution-bucket-no_edge")).toHaveTextContent("1");
+	expect(within(section).getByTestId("attribution-bucket-missed_deadline")).toHaveTextContent("0");
+	expect(within(section).getByTestId("attribution-bucket-positive_candidates")).toHaveTextContent("1");
+	expect(within(section).getByTestId("attribution-bucket-window_closed")).toHaveTextContent("sale_stopped");
+	expect(within(section).getByText(/今日板覆盖 3\/3/)).toBeInTheDocument();
+
+	// 点击下钻：无优势桶展开周六002；再点收起
+	await user.click(within(section).getByTestId("attribution-bucket-toggle-no_edge"));
+	const samples = within(section).getByTestId("attribution-bucket-samples-no_edge");
+	expect(samples).toHaveTextContent("周六002");
+	expect(samples).toHaveTextContent("利物浦 vs 曼城");
+	await user.click(within(section).getByTestId("attribution-bucket-toggle-no_edge"));
+	expect(within(section).queryByTestId("attribution-bucket-samples-no_edge")).toBeNull();
+
+	// 脚注桶下钻带裁决原因
+	await user.click(within(section).getByTestId("attribution-bucket-toggle-window_closed"));
+	expect(within(section).getByTestId("attribution-bucket-samples-window_closed")).toHaveTextContent("sale_stopped");
+});
+
+test("票 07：归因端点失败 → 面板诚实降级不硬判，核心区不受影响", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/today/attribution", () =>
+			HttpResponse.json({ detail: "not available" }, { status: 404 }),
+		),
+	);
+	await renderAt("/");
+
+	expect(await screen.findByTestId("attribution-unavailable")).toHaveTextContent("归因面暂不可用");
+	expect(screen.getByTestId("overview-todos")).toBeInTheDocument();
+	expect(screen.getByTestId("overview-snapshot")).toBeInTheDocument();
+});
