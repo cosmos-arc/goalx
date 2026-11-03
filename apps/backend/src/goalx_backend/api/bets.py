@@ -475,7 +475,14 @@ async def list_slips(db: DbDep) -> list[SlipView]:
     summary="创建待结算的 paper 池票草稿",
     responses={
         400: {"description": "暂不支持 live 奖池票"},
-        422: {"description": "复式组合数超上限(10万);载荷校验失败"},
+        422: {
+            "description": "复式组合数超上限(10万);载荷校验失败",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/HTTPValidationError"}
+                }
+            },
+        },
     },
     status_code=201,
     response_model=SlipView,
@@ -514,8 +521,9 @@ async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
             bt_store.materialize_combinations(
                 db, slip, stake_per_combination=payload.stake_per_combination
             )
-    except ValueError as exc:
-        # 票 07④：组合数超上限=4xx 拒绝（atomic 回滚,不落半截票）
+    except bt_store.CombinationLimitExceeded as exc:
+        # 票 07④：组合数超上限=4xx 拒绝（atomic 回滚,不落半截票）。
+        # 专用异常而非裸 ValueError——同块其他来源的 ValueError 不被误标
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     row = bt_store.get_slip(db, slip)
     if row is None:

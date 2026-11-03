@@ -1,4 +1,9 @@
-"""API 共享依赖：请求级 SQLite 连接（迁移由部署方/CLI 执行）。"""
+"""
+API 共享依赖：请求级 SQLite 连接。
+
+运行面库迁移由部署方/CLI 执行；研究库纯幂等 CREATE 链，连接时即席
+迁移——票 07②。
+"""
 
 from __future__ import annotations
 

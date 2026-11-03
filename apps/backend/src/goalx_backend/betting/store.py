@@ -23,6 +23,10 @@ from goalx_backend.models import (
 MAX_MATERIALIZED_COMBINATIONS = 100_000
 
 
+class CombinationLimitExceeded(ValueError):
+    """复式组合数超上限（票 07④）：API 层据此精确映射 422。"""
+
+
 @dataclass(frozen=True)
 class LegSummary:
     """已结注的一腿投影（决策身份与报表用）。"""
@@ -428,8 +432,9 @@ ORDER BY
     for seq in seqs:
         total *= len(by_match[seq])
         if total > MAX_MATERIALIZED_COMBINATIONS:
-            raise ValueError(
-                f"组合数 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
+            # total 是连乘中途值（真实组合数 ≥ total），消息按"已连乘至"如实
+            raise CombinationLimitExceeded(
+                f"组合数已连乘至 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
                 + f"（{len(seqs)} 场复式）；缩小复式面后重试"
             )
     conn.execute("DELETE FROM combinations WHERE slip_id = ?", (slip_id,))

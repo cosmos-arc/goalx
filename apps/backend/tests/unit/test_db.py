@@ -577,3 +577,47 @@ def test_research_backfill_copies_rows_id_preserving(tmp_path) -> None:
         assert n_again == 1
     finally:
         rconn.close()
+
+
+def test_research_backfill_refuses_id_collision(tmp_path) -> None:
+    """票 07② review 修复：研究库已有非历史 run（先跑过新回测）时
+    拒绝搬运——INSERT OR IGNORE 会静默吞历史行。"""
+    from goalx_backend.config import Settings
+    from goalx_backend.evaluation import backtest as bt_mod
+
+    ops = db.connect(tmp_path / "ops.db")
+    db.migrate(ops)
+    ops.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('legacy', '{}', 'done', '2026-01-01T00:00:00+00:00')"
+    )
+    ops.commit()
+    ops.close()
+
+    settings = Settings(
+        db_path=tmp_path / "ops.db", research_db_path=tmp_path / "research.db"
+    )
+    # 研究库先落一条"新回测"（id=1，与运行面 legacy id=1 撞号但内容不同）
+    rconn = db.connect_research(settings.research_db_path)
+    rconn.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('new-run', '{}', 'done', '2026-11-03T00:00:00+00:00')"
+    )
+    rconn.commit()
+    rconn.close()
+
+    ops2 = db.connect(settings.db_path)
+    try:
+        with pytest.raises(RuntimeError, match="撞号"):
+            bt_mod.backfill_research(ops2, settings.research_db_path)
+    finally:
+        ops2.close()
+    # 拒绝时零搬运：legacy 行未进研究库（新 run 行原样保留）
+    check = db.connect_research(settings.research_db_path)
+    try:
+        labels = {
+            str(r["label"]) for r in check.execute("SELECT label FROM backtest_runs")
+        }
+        assert labels == {"new-run"}
+    finally:
+        check.close()

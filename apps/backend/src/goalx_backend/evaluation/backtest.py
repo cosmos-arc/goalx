@@ -1625,10 +1625,27 @@ def backfill_research(
     引用的 run id 不漂移）；INSERT OR IGNORE 幂等可重跑。搬运后运行面库
     旧行只读留存。列形漂移（运行面新列而研究库 DDL 未跟）会在此处
     声性地报错而非静默截断。
+
+    撞号守卫（review 修复）：若研究库已有与运行面库不同源的 run（先跑过
+    新回测——自增 id 与历史 id 重叠但内容不同，或 id 不在历史集内），
+    INSERT OR IGNORE 会静默吞历史行——此形态直接拒绝，提示清空研究库
+    重跑（一次性迁移，正常路径先 backfill 后回测；纯重跑的镜像行放行）。
     """
     conn.execute("ATTACH ? AS research", (str(research_db_path),))
     copied: dict[str, int] = {}
     try:
+        foreign = conn.execute(
+            "SELECT COUNT(*) FROM research.backtest_runs AS r"  # noqa: S608
+            + " WHERE NOT EXISTS (SELECT 1 FROM backtest_runs AS s"
+            + " WHERE s.id = r.id AND s.label = r.label"
+            + " AND s.created_at = r.created_at)"
+        ).fetchone()
+        if int(foreign[0]) > 0:
+            raise RuntimeError(
+                f"研究库存在 {int(foreign[0])} 条与运行面库不同源的 run——"
+                + "先跑过新回测会与历史 id 撞号静默丢行；"
+                + "请清空研究库后重跑本命令，再跑新回测"
+            )
         for table, sql in _RESEARCH_BACKFILL_SQL:
             cur = conn.execute(sql)
             copied[table] = max(cur.rowcount, 0)

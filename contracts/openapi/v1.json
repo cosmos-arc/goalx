@@ -872,7 +872,14 @@
             "description": "暂不支持 live 奖池票"
           },
           "422": {
-            "description": "复式组合数超上限(10万);载荷校验失败"
+            "description": "复式组合数超上限(10万);载荷校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
