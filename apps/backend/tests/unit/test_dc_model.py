@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 
@@ -259,10 +260,13 @@ def test_artifact_id_distinguishes_config_and_versions(monkeypatch) -> None:
         lambda: {
             "goalx-backend": "9.9.9",
             "penaltyblog": "1.6.2",
-            "artifact_schema": "1",
+            "artifact_schema": "2",
         },
     )
     assert run_a.artifact_id() != diff_seed.artifact_id()  # 版本参与身份
+    # 票 05：显式版本字段（复载冻结形态）同样参与身份
+    frozen = dcm.TrainingRun(base=base, seed=42, versions={"goalx-backend": "0.0.1"})
+    assert frozen.artifact_id() != run_a.artifact_id()
     monkeypatch.undo()
 
 
@@ -281,3 +285,65 @@ def test_run_filename_uses_artifact_id_no_overwrite(tmp_path) -> None:
     payload = json.loads(runs[0][1].read_text())
     assert payload["artifact_id"]  # 落盘身份可追溯
     assert payload["versions"]["artifact_schema"]
+
+
+# --- 票 05：bootstrap 进身份 + 复载冻结版本 + 篡改拒绝 ---
+
+
+def test_artifact_id_distinguishes_bootstrap_two_files(tmp_path) -> None:
+    """同数据同 half-life 同 seed：bootstrap=[] vs 非空 → 不同身份,两文件互不覆盖。"""
+    rows = synthetic_rows(n=120, seed=5)
+    base = dcm.fit_dc_model(rows, competition="E0", half_life_days=365.0)
+    plain = dcm.TrainingRun(base=base, seed=42)
+    booted = dcm.TrainingRun(base=base, bootstrap=[base], seed=42)
+    assert plain.artifact_id() != booted.artifact_id()
+    dcm.save_run(plain, tmp_path)
+    dcm.save_run(booted, tmp_path)
+    runs = dcm.list_runs(tmp_path, "E0")
+    assert len(runs) == 2  # v1 会同身份互相覆盖,这里必须两个文件
+
+
+def test_from_payload_freezes_versions_and_rejects_tamper(
+    tmp_path, monkeypatch
+) -> None:
+    """环境(implementation_versions)升级后复载:身份与落盘时一致;篡改身份被拒。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    path = dcm.save_run(run, tmp_path)
+    original_id = run.artifact_id()
+
+    monkeypatch.setattr(
+        dcm,
+        "implementation_versions",
+        lambda: {"goalx-backend": "99.0.0", "artifact_schema": "99"},
+    )
+    loaded = dcm.TrainingRun.from_payload(json.loads(path.read_text(encoding="utf-8")))
+    assert loaded.artifact_id() == original_id  # 冻结训练环境版本,不随环境漂移
+
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["artifact_id"] = "0" * 64
+    with pytest.raises(ValueError, match="工件身份与内容不一致"):
+        dcm.TrainingRun.from_payload(tampered)
+
+
+def test_from_payload_legacy_schema1_keeps_stored_id(tmp_path) -> None:
+    """v1 旧工件（身份公式不含 bootstrap 数量）按落盘 artifact_id 寻址,不强校验。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    payload = run.to_payload()
+    legacy_canonical = json.dumps(
+        {
+            "data_fingerprint": run.base.data_fingerprint,
+            "half_life_days": run.base.half_life_days,
+            "seed": run.seed,
+            "versions": payload["versions"],
+        },
+        sort_keys=True,
+    )
+    legacy_id = hashlib.sha256(legacy_canonical.encode()).hexdigest()
+    payload["schema_version"] = 1
+    payload["artifact_id"] = legacy_id
+    loaded = dcm.TrainingRun.from_payload(payload)
+    assert loaded.artifact_id() == legacy_id  # 旧工件身份=落盘值,不重算漂移
+    # 环境升级后复载 v1 工件仍稳定（versions 冻结自 payload）
+    assert loaded.versions == payload["versions"]

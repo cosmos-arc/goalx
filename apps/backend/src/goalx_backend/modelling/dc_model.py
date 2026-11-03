@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -36,7 +37,9 @@ from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
 # Tier1 五大 fd 代码（票 26：五大主动；Tier2 如 N1 荷甲扩导列为可选项）
 TIER1_COMPETITIONS = ("E0", "SP1", "I1", "D1", "F1")
 DEFAULT_HALF_LIFE_DAYS = 365.0
-ARTIFACT_SCHEMA_VERSION = 1
+# 票 05：身份公式纳入 bootstrap 数量（v1 不含,[] 与非空同身份互相覆盖）。
+# v1 旧工件按落盘 artifact_id 寻址,不做重扫迁移。
+ARTIFACT_SCHEMA_VERSION = 2
 _MIN_TEAMS = 2
 
 
@@ -172,24 +175,36 @@ class TrainingRun:
     base: DCArtifact
     bootstrap: list[DCArtifact] = field(default_factory=list)
     seed: int = 0
+    # 训练环境版本：训练时 None=取当前环境；复载后= payload 冻结值,
+    # 环境升级不改旧工件身份（票 05）。
+    versions: dict[str, str] | None = None
+    # 落盘身份：from_payload 冻结,artifact_id() 直接返回——旧工件（含
+    # v1 公式产物）按落盘身份寻址,不因公式演进而漂移。
+    stored_artifact_id: str | None = None
 
     def artifact_id(self) -> str:
-        """
-        工件身份 = 数据指纹 + 训练配置(half-life) + seed + 实现/依赖版本。
-
-        票 34 验收 6：同数据不同 half-life/seed/实现版本必须生成不同身份；
-        身份决定文件名（内容寻址、不互相覆盖，旧工件可追溯）。
-        """
+        """内容寻址工件身份（决定文件名,不同配置不互相覆盖）。"""
+        # 身份 = 数据指纹 + 训练配置(half-life/bootstrap 数量) + seed
+        # + 实现/依赖版本。
+        # 票 34 验收 6：同数据不同 half-life/seed/实现版本必须生成不同身份；
+        # 票 05：bootstrap=[] 与非空不同身份（v1 同身份互相覆盖的根因）。
+        if self.stored_artifact_id is not None:
+            return self.stored_artifact_id
         canonical = json.dumps(
             {
                 "data_fingerprint": self.base.data_fingerprint,
                 "half_life_days": self.base.half_life_days,
+                "n_bootstrap": len(self.bootstrap),
                 "seed": self.seed,
-                "versions": implementation_versions(),
+                "versions": self._effective_versions(),
             },
             sort_keys=True,
         )
         return hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _effective_versions(self) -> dict[str, str]:
+        """身份用版本：复载工件=训练环境冻结值；新建=当前环境。"""
+        return self.versions if self.versions is not None else implementation_versions()
 
     def to_payload(self) -> dict[str, object]:
         """Serialize to the on-disk JSON payload shape."""
@@ -199,16 +214,40 @@ class TrainingRun:
             "base": asdict(self.base),
             "bootstrap": [asdict(boot) for boot in self.bootstrap],
             "seed": self.seed,
-            "versions": implementation_versions(),
+            "versions": self._effective_versions(),
         }
 
     @classmethod
     def from_payload(cls, payload: dict[str, object]) -> TrainingRun:
-        """Rebuild a run from its on-disk JSON payload."""
+        """
+        Rebuild a run from its on-disk JSON payload.
+
+        versions 取 payload 冻结值（训练环境身份);当前 schema 的工件重算
+        身份必须与落盘一致——篡改身份字段被拒。v1 旧工件公式不同,按落盘
+        artifact_id 寻址不强校验。
+        """
         base = DCArtifact(**payload["base"])  # type: ignore[arg-type]
         boots = [DCArtifact(**item) for item in payload["bootstrap"]]  # type: ignore[arg-type]
         seed = int(str(payload.get("seed", 0)))
-        return cls(base=base, bootstrap=boots, seed=seed)
+        raw_versions = payload.get("versions")
+        versions = (
+            {str(k): str(v) for k, v in raw_versions.items()}
+            if isinstance(raw_versions, dict)
+            else None
+        )
+        run = cls(base=base, bootstrap=boots, seed=seed, versions=versions)
+        stored = payload.get("artifact_id")
+        if isinstance(stored, str):
+            schema = int(str(payload.get("schema_version", 1)))
+            # 严格校验只对当前公式时代（schema==当前版）:未来公式再演进时
+            # 在此处显式分发,而不是拿新公式验旧时代工件。
+            if schema == ARTIFACT_SCHEMA_VERSION and run.artifact_id() != stored:
+                recalc = run.artifact_id()
+                raise ValueError(
+                    f"工件身份与内容不一致: 记 {stored[:16]} 算 {recalc[:16]}"
+                )
+            run.stored_artifact_id = stored
+        return run
 
 
 def bootstrap_dc_models(
@@ -249,14 +288,16 @@ def run_filename(run: TrainingRun) -> str:
 
 
 def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
-    """把训练 run 落盘（JSON，幂等覆盖同指纹文件）；返回文件路径。"""
+    """把训练 run 原子落盘（tmp+replace,读侧不见半写文件）；返回文件路径。"""
     directory = Path(models_dir) / run.base.competition
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / run_filename(run)
-    path.write_text(
+    tmp = directory / f".{path.name}.tmp-{os.getpid()}"
+    tmp.write_text(
         json.dumps(run.to_payload(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    tmp.replace(path)
     return path
 
 

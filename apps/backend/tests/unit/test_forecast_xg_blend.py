@@ -278,6 +278,36 @@ def test_generate_forecasts_blends_big5_falls_back_tier2(db, tmp_path) -> None:
     assert n1_payload["xg_blend"] is None
 
 
+def test_generate_forecasts_xg_alias_at_index_zero_blends(db, tmp_path) -> None:
+    """票 05：别名命中 title 位置 0 是合法命中——不退纯 DC,λ 含 xG 项。
+
+    旧实现 ``resolve(alias) or resolve(canonical)`` 把 0 当失败吞掉,静默
+    退纯 goal-DC（ Arsenal 排序恰为 titles[0] 时必现）。
+    """
+    _seed_fd_history(db, "E0", FD_TEAMS)
+    dcm.train_competition(db, "E0", models_dir=tmp_path, n_boot=4, seed=3)
+    # 两队语料:titles 排序后 Arsenal=位置 0
+    _seed_understat(db, "epl", ["Arsenal", "Chelsea"])
+    fid = _seed_fixture(
+        db, "英超", "周一004", "阿森纳", "切尔西", "Arsenal", "Chelsea", "2026-09-21"
+    )
+    stats = fc.generate_forecasts(
+        db, business_date="2026-09-21", models_dir=str(tmp_path)
+    )
+    assert stats.generated == 1
+    assert stats.xg_blended == 1  # 位置 0 命中:blend 落库而非纯 DC
+    assert stats.xg_unresolved == 0
+    row = db.execute("SELECT * FROM forecasts WHERE fixture_id = ?", (fid,)).fetchone()
+    payload = json.loads(row["payload"])
+    assert payload["xg_blend"] is not None
+    assert payload["xg_blend"]["xg_home"] == "Arsenal"  # 命中的是别名位置 0
+    # λ 含 xG 项:blend λ = 纯 goal λ 与 xG λ 的几何均值 ≠ 纯 goal λ
+    run = dcm.load_latest_run(tmp_path, "E0")
+    assert run is not None
+    pure_lam = run.base.lambdas("Arsenal", "Chelsea")
+    assert payload["lambda_home"] != pure_lam[0]
+
+
 def test_generate_forecasts_xg_title_unresolved_falls_back(db, tmp_path) -> None:
     """understat 有数据但 fixture 别名解析不到 → 纯 goal-DC + xg_unresolved。"""
     _seed_fd_history(db, "E0", FD_TEAMS)

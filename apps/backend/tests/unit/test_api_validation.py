@@ -285,6 +285,14 @@ def test_market_skill_deploys_latest_version(
             " content_hash, payload) VALUES (?, 'ml', ?, ?, ?, '{}')",
             (fixture, version, issued, f"h-{version}"),
         )
+    # 票 05：fused 预测晚于 ml 发出——部署版本仍限 track='ml'（dc-v2）,
+    # 不被融合版顶掉（不限轨道会误报「无前瞻样本(部署版本)」）。
+    conn.execute(
+        "INSERT INTO forecasts (fixture_id, track, model_version, issued_at,"
+        " content_hash, payload) VALUES (?, 'fused', 'fused-dc-v2',"
+        " '2026-10-01T00:00:00+00:00', 'h-fused', '{}')",
+        (fixture,),
+    )
     conn.commit()
     conn.close()
 
@@ -320,6 +328,9 @@ def test_market_skill_deploys_latest_version(
     assert condition["achieved"] is False
     assert "dc-v2" in condition["current"]
     assert "部署" in condition["current"]
+    # 部署版本匹配到 ML 组 dc-v2,而非被 fused 版顶掉
+    assert "无前瞻样本" not in condition["current"]
+    assert "fused" not in condition["current"]
 
     groups["dc-v2"].skill_rps = 0.01
     with TestClient(create_app(settings=Settings(db_path=db_path))) as client:

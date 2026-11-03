@@ -257,10 +257,19 @@ def insert_forecast(
     return None
 
 
-def latest_model_version(conn: sqlite3.Connection) -> str | None:
-    """最新发出的 Forecast 的 model_version（= 当前部署版本；票 09 裁决口径）。"""
+def latest_model_version(conn: sqlite3.Connection, track: str = "ml") -> str | None:
+    """
+    最新发出的 Forecast 的 model_version（= 当前部署版本；票 09 裁决口径）。
+
+    票 05：限 track——fused/llm 预测通常晚于 ml 发出,不限轨道会把融合版
+    当 ML 部署版本,前瞻页分组匹配落空误报「无前瞻样本」。
+    """
     row = conn.execute(
-        "SELECT model_version FROM forecasts ORDER BY issued_at DESC, id DESC LIMIT 1"
+        """
+        SELECT model_version FROM forecasts
+        WHERE track = ? ORDER BY issued_at DESC, id DESC LIMIT 1
+        """,
+        (track,),
     ).fetchone()
     return str(row["model_version"]) if row is not None else None
 
@@ -448,6 +457,20 @@ def _resolve_model_teams(
     )
 
 
+def _first_xg_position(index: NameIndex, names: list[str]) -> int | None:
+    """
+    Fixture 侧名字 → understat title 位置；别名优先、canonical 兜底。
+
+    显式判 ``is not None``——位置 0 是合法命中,``or`` 会把它当失败吞掉
+    （票 05：静默退纯 DC 的根因）。
+    """
+    for name in names[1:]:
+        pos = index.resolve(name)
+        if pos is not None:
+            return pos
+    return index.resolve(names[0])
+
+
 def _resolve_xg_side(
     xg_pack: tuple[DCArtifact, NameIndex, list[str]] | None,
     home_names: list[str],
@@ -455,7 +478,7 @@ def _resolve_xg_side(
     stats: ForecastStats,
 ) -> XGSide | None:
     """
-    把 fixture 双方解析到 understat title（英别名优先，canonical 兜底）。
+    把 fixture 双方解析到 understat title（别名优先，canonical 兜底）。
 
     任一侧解析不到 → None（纯 goal-DC 落库，xg_unresolved 计数）。索引值
     为 titles 列表位置（NameIndex 值类型约定 int）。
@@ -463,8 +486,8 @@ def _resolve_xg_side(
     if xg_pack is None:
         return None
     artifact, index, titles = xg_pack
-    home_pos = index.resolve(home_names[1]) or index.resolve(home_names[0])
-    away_pos = index.resolve(away_names[1]) or index.resolve(away_names[0])
+    home_pos = _first_xg_position(index, home_names)
+    away_pos = _first_xg_position(index, away_names)
     if home_pos is None or away_pos is None:
         stats.xg_unresolved += 1
         return None
