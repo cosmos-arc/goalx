@@ -33,6 +33,9 @@ export const poolSyncStatusKey = ["pool-sync-status"] as const;
  */
 export const todayFixturesKey = (days: number) => ["today-fixtures", days] as const;
 
+/** 首页无候选六桶归因（票 07，GET /fixtures/today/attribution 按窗参）。 */
+export const attributionKey = (days: number) => ["no-candidate-attribution", days] as const;
+
 /** 进球玩法读模型（GET /markets/goals）按窗口缓存。 */
 export const goalsMarketKey = (days: number) => ["goals-market", days] as const;
 

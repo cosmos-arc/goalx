@@ -230,3 +230,216 @@ def board_coverage(conn: sqlite3.Connection, business_date: str) -> tuple[int, i
         (business_date,),
     ).fetchone()[0]
     return int(total), int(joined)
+
+
+# ---- 票 07：首页无候选六桶归因（report-audit-20261103） ----
+# 桶判定规则与 quote_evidence 裁决原因一一对应——单一真相不新造第二套
+# 健康口径；报告六类措辞 = 桶 label。可执行映射 = 下列 frozensets（原因
+# →桶），完整映射表文本见 ATTRIBUTION_CALIBER（进契约描述，勿在此
+# 复写第三份）。未映射新原因兜底进"有价但证据不合格"并经 reasons_seen
+# 浮出；已停售/已开赛入 window_closed 脚注面（不入六桶但必须可见）；
+# positive_candidates=valid 且有正 EV 的对照面（"没有候选"前提不成立时
+# 如实亮出）。
+WINDOW_CLOSED_REASONS = frozenset({"sale_stopped", "kickoff_passed"})
+NOT_ON_SALE_REASONS = frozenset({"sale_not_on_sale", "sale_window_closed"})
+NOT_COLLECTED_REASONS = frozenset(
+    {"jc_no_quote", "sale_status_unknown", "sale_status_unknown_value"}
+)
+EU_CUT_REASONS = frozenset(
+    {"eu_no_quote", "eu_no_valid_books", "eu_observed_at_unknown"}
+)
+EVIDENCE_UNQUALIFIED_REASONS = frozenset(
+    {
+        "stale_source",
+        "jc_observed_at_unknown",
+        "jc_source_time_unknown",
+        "jc_three_way_incomplete",
+        "single_eligibility_unknown",
+    }
+)
+MAX_BUCKET_SAMPLES = 50  # 桶样本上限（下钻展示用，非全量清单）
+
+ATTRIBUTION_CALIBER = (
+    "六桶=report-audit-20261103 报告措辞；桶判定与 quote_evidence 裁决原因"
+    "一一对应（未开售←sale_not_on_sale/sale_window_closed；数据没采到←"
+    "jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/"
+    "eu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source"
+    "/jc 观测与三向类，未映射新原因兜底进此桶并经 reasons_seen 浮出；"
+    "信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位）。"
+    "已停售/已开赛入 window_closed 脚注面不入六桶；positive_candidates="
+    "valid 且有正 EV（今日确实有候选的对照面）。对账：board_coverage 与"
+    "晨检第 8 项同函数同数；eu_cut 桶按判定原因计（已链但无有效书也入），"
+    "与晨检链覆盖为间接对账（eu_cut ≥ 未链差额）。days>1 时窗口合并为一组桶。"
+)
+
+
+class AttributionSample(BaseModel):
+    """桶内一场样本（下钻列表行）。"""
+
+    fixture_id: int
+    match_code: str
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class AttributionBucket(BaseModel):
+    """一个归因桶：计数 + 样本 + 本日出现过的裁决原因（对账用）。"""
+
+    key: str
+    label: str
+    count: int = 0
+    samples: list[AttributionSample] = Field(default_factory=list)
+    reasons_seen: list[str] = Field(default_factory=list)
+
+
+class NoCandidateAttribution(BaseModel):
+    """首页六桶归因（票 07）：今日（按玩法/业务日）为何没有候选。"""
+
+    business_date: str
+    market_code: str
+    as_of: str
+    total: int
+    buckets: list[AttributionBucket]  # 恒六桶（空桶=0 计数占位）
+    window_closed: AttributionBucket  # 已停售/已开赛（脚注面，不入六桶）
+    positive_candidates: AttributionBucket  # valid 且有正 EV（候选对照面）
+    # [总场数, 已链场数]——晨检第 8 项同函数同数（days>1 时跨窗口日求和）
+    board_coverage: list[int]
+    # ok | degraded：degraded=corpus 读面缺席（被写方锁占/库缺席）——
+    # 此时 eu_cut 桶可能混入"读面缺席"而非真断供，对账先看本字段
+    corpus_reader: str = "ok"
+    caliber: str
+
+
+def _reasons_of(row: TodayFixtureView) -> list[str]:
+    return list(row.had_quote.reasons) if row.had_quote else []
+
+
+def _has_any(reasons: list[str], wanted: frozenset[str]) -> bool:
+    return any(reason in wanted for reason in reasons)
+
+
+def _has_positive_ev(row: TodayFixtureView) -> bool:
+    return row.ev is not None and any(
+        value is not None and value > 0 for value in (row.ev.h, row.ev.d, row.ev.a)
+    )
+
+
+def _reason_bucket_key(reasons: list[str]) -> str | None:
+    """
+    裁决原因 → 五桶 key（无命中返回 None 交给 valid/EV 分流）。
+
+    evidence_unqualified 显式消费其 frozenset（correctness F7）：防未来
+    新原因与 valid 状态共现时被兜底误吞——映射权威与路由一致。
+    """
+    for wanted, key in (
+        (WINDOW_CLOSED_REASONS, "window_closed"),
+        (NOT_ON_SALE_REASONS, "not_on_sale"),
+        (NOT_COLLECTED_REASONS, "not_collected"),
+        (EU_CUT_REASONS, "eu_cut"),
+        (EVIDENCE_UNQUALIFIED_REASONS, "evidence_unqualified"),
+    ):
+        if _has_any(reasons, wanted):
+            return key
+    return None
+
+
+def _bucket_key_for(row: TodayFixtureView) -> str:
+    """一场 → 桶 key（固定优先级首匹配；映射表见模块 docstring 注记）。"""
+    reason_key = _reason_bucket_key(_reasons_of(row))
+    if reason_key is not None:
+        return reason_key
+    status = row.had_quote.status if row.had_quote else "unknown"
+    if status != "valid":
+        # 有价但证据不合格：stale/观测未知/三向不全/单固未知 + 未映射
+        # 新原因兜底（经 reasons_seen 浮出，不静默不误归他桶）
+        return "evidence_unqualified"
+    if _has_positive_ev(row):
+        return "positive_candidates"
+    return "no_edge"
+
+
+def no_candidate_attribution(
+    conn: sqlite3.Connection,
+    rows: list[TodayFixtureView],
+    business_date: str,
+    *,
+    as_of: str,
+    market_code: str = "had",
+    days: int = 1,
+    corpus_reader: str = "ok",
+) -> NoCandidateAttribution:
+    """
+    六桶归因聚合：``build_today_view`` 行 → 桶计数与样本（纯派生只读）。
+
+    分类按固定优先级首匹配（一场只进一桶，``_bucket_key_for``）：停售/
+    开赛 → 未开售 → 数据没采到 → 国际参考断供 → 有价但证据不合格 →
+    valid 按 EV 分无优势/有候选。未映射的新裁决原因兜底进"有价但证据
+    不合格"并经 reasons_seen 浮出。同一 fixture 多 match_code 只计一次
+    （与 board_coverage 的 DISTINCT 同口径）；board_coverage 跨窗口日
+    求和（days>1 时 total==coverage[0] 可对账）。
+    """
+    definitions: list[tuple[str, str]] = [
+        ("not_on_sale", "未开售"),
+        ("not_collected", "数据没采到"),
+        ("eu_cut", "国际参考断供"),
+        ("evidence_unqualified", "有价但证据不合格"),
+        ("no_edge", "信息齐确实无优势"),
+        ("missed_deadline", "有候选来不及执行"),
+    ]
+    buckets_by_key: dict[str, AttributionBucket] = {
+        key: AttributionBucket(key=key, label=label)
+        for key, label in [
+            *definitions,
+            ("window_closed", "已停售/已开赛"),
+            ("positive_candidates", "信息齐且有正 EV 候选"),
+        ]
+    }
+
+    def admit(row: TodayFixtureView) -> None:
+        bucket = buckets_by_key[_bucket_key_for(row)]
+        bucket.count += 1
+        if len(bucket.samples) < MAX_BUCKET_SAMPLES:
+            bucket.samples.append(
+                AttributionSample(
+                    fixture_id=row.fixture_id,
+                    match_code=row.match_code,
+                    home_team=row.home_team,
+                    away_team=row.away_team,
+                    kickoff_utc=row.kickoff_utc,
+                    reasons=_reasons_of(row),
+                )
+            )
+        for reason in _reasons_of(row):
+            if reason not in bucket.reasons_seen:
+                bucket.reasons_seen.append(reason)
+
+    # match_codes 唯一键不含 fixture 维（correctness F4）：同场同日双码
+    # 双计会破坏 total 与 board_coverage(DISTINCT) 的同源对账——按
+    # fixture_id 去重，一场只进桶一次
+    deduped = {row.fixture_id: row for row in rows}
+    for row in deduped.values():
+        admit(row)
+    coverage = [
+        sum(part)
+        for part in zip(
+            *(
+                board_coverage(conn, day)
+                for day in business_dates_from(business_date, days)
+            ),
+            strict=True,
+        )
+    ]
+    return NoCandidateAttribution(
+        business_date=business_date,
+        market_code=market_code,
+        as_of=as_of,
+        total=len(deduped),
+        buckets=[buckets_by_key[key] for key, _ in definitions],
+        window_closed=buckets_by_key["window_closed"],
+        positive_candidates=buckets_by_key["positive_candidates"],
+        board_coverage=coverage,
+        corpus_reader=corpus_reader,
+        caliber=ATTRIBUTION_CALIBER,
+    )

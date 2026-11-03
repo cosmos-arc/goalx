@@ -89,6 +89,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/today/attribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 首页无候选六桶归因(按玩法/业务日,票 07)
+         * @description 今日"为什么没有候选"六桶归因（报告措辞桶 + 裁决原因映射表）。
+         *
+         *     桶判定与 ``quote_evidence`` 裁决原因一一对应（单一真相，不新造第二
+         *     套健康口径）：未开售←sale_not_on_sale/sale_window_closed；数据没采到
+         *     ←jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/
+         *     eu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source/
+         *     jc 观测与三向类（未映射新原因兜底进此桶并经 reasons_seen 浮出）；
+         *     信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位
+         *     （人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed
+         *     脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；
+         *     board_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检
+         *     链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨
+         *     窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），
+         *     此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。
+         */
+        get: operations["get_no_candidate_attribution_api_v1_fixtures_today_attribution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fixtures/{fixture_id}/odds": {
         parameters: {
             query?: never;
@@ -959,6 +992,43 @@ export interface components {
             payout_projected: number | null;
             /** Delta Payout */
             delta_payout: number | null;
+        };
+        /**
+         * AttributionBucket
+         * @description 一个归因桶：计数 + 样本 + 本日出现过的裁决原因（对账用）。
+         */
+        AttributionBucket: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /** Samples */
+            samples?: components["schemas"]["AttributionSample"][];
+            /** Reasons Seen */
+            reasons_seen?: string[];
+        };
+        /**
+         * AttributionSample
+         * @description 桶内一场样本（下钻列表行）。
+         */
+        AttributionSample: {
+            /** Fixture Id */
+            fixture_id: number;
+            /** Match Code */
+            match_code: string;
+            /** Home Team */
+            home_team: string;
+            /** Away Team */
+            away_team: string;
+            /** Kickoff Utc */
+            kickoff_utc: string;
+            /** Reasons */
+            reasons?: string[];
         };
         /**
          * BacktestRunDetailView
@@ -2145,6 +2215,33 @@ export interface components {
             ev?: components["schemas"]["SelectionTriple"] | null;
         };
         /**
+         * NoCandidateAttribution
+         * @description 首页六桶归因（票 07）：今日（按玩法/业务日）为何没有候选。
+         */
+        NoCandidateAttribution: {
+            /** Business Date */
+            business_date: string;
+            /** Market Code */
+            market_code: string;
+            /** As Of */
+            as_of: string;
+            /** Total */
+            total: number;
+            /** Buckets */
+            buckets: components["schemas"]["AttributionBucket"][];
+            window_closed: components["schemas"]["AttributionBucket"];
+            positive_candidates: components["schemas"]["AttributionBucket"];
+            /** Board Coverage */
+            board_coverage: number[];
+            /**
+             * Corpus Reader
+             * @default ok
+             */
+            corpus_reader: string;
+            /** Caliber */
+            caliber: string;
+        };
+        /**
          * OddsSnapshotView
          * @description 一条赔率快照。
          */
@@ -2894,6 +2991,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TodayFixtureView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_no_candidate_attribution_api_v1_fixtures_today_attribution_get: {
+        parameters: {
+            query?: {
+                /** @description 起始业务日(北京日期, 默认今天) */
+                date?: string | null;
+                /** @description 窗口天数(默认1=单日) */
+                days?: number;
+                /** @description 玩法(现仅 had 有判定链,其他玩法后续) */
+                market_code?: "had";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoCandidateAttribution"];
                 };
             };
             /** @description Validation Error */

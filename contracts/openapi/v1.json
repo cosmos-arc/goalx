@@ -160,6 +160,85 @@
         }
       }
     },
+    "/api/v1/fixtures/today/attribution": {
+      "get": {
+        "tags": [
+          "fixtures"
+        ],
+        "summary": "首页无候选六桶归因(按玩法/业务日,票 07)",
+        "description": "今日\"为什么没有候选\"六桶归因（报告措辞桶 + 裁决原因映射表）。\n\n桶判定与 ``quote_evidence`` 裁决原因一一对应（单一真相，不新造第二\n套健康口径）：未开售←sale_not_on_sale/sale_window_closed；数据没采到\n←jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/\neu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source/\njc 观测与三向类（未映射新原因兜底进此桶并经 reasons_seen 浮出）；\n信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位\n（人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed\n脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；\nboard_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检\n链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨\n窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），\n此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。",
+        "operationId": "get_no_candidate_attribution_api_v1_fixtures_today_attribution_get",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "起始业务日(北京日期, 默认今天)",
+              "title": "Date"
+            },
+            "description": "起始业务日(北京日期, 默认今天)"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 7,
+              "minimum": 1,
+              "description": "窗口天数(默认1=单日)",
+              "default": 1,
+              "title": "Days"
+            },
+            "description": "窗口天数(默认1=单日)"
+          },
+          {
+            "name": "market_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "const": "had",
+              "type": "string",
+              "description": "玩法(现仅 had 有判定链,其他玩法后续)",
+              "default": "had",
+              "title": "Market Code"
+            },
+            "description": "玩法(现仅 had 有判定链,其他玩法后续)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoCandidateAttribution"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fixtures/{fixture_id}/odds": {
       "get": {
         "tags": [
@@ -2092,6 +2171,85 @@
         ],
         "title": "AffectedBetPreviewView",
         "description": "预览里一注受影响注的当前 vs 投影结算。"
+      },
+      "AttributionBucket": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/AttributionSample"
+            },
+            "type": "array",
+            "title": "Samples"
+          },
+          "reasons_seen": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons Seen"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label"
+        ],
+        "title": "AttributionBucket",
+        "description": "一个归因桶：计数 + 样本 + 本日出现过的裁决原因（对账用）。"
+      },
+      "AttributionSample": {
+        "properties": {
+          "fixture_id": {
+            "type": "integer",
+            "title": "Fixture Id"
+          },
+          "match_code": {
+            "type": "string",
+            "title": "Match Code"
+          },
+          "home_team": {
+            "type": "string",
+            "title": "Home Team"
+          },
+          "away_team": {
+            "type": "string",
+            "title": "Away Team"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "title": "Kickoff Utc"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixture_id",
+          "match_code",
+          "home_team",
+          "away_team",
+          "kickoff_utc"
+        ],
+        "title": "AttributionSample",
+        "description": "桶内一场样本（下钻列表行）。"
       },
       "BacktestRunDetailView": {
         "properties": {
@@ -5068,6 +5226,69 @@
         ],
         "title": "ModelForecastView",
         "description": "该场最新 ML Forecast 的三向概率与模型 EV（模型概率 × 竞彩价 − 1）。"
+      },
+      "NoCandidateAttribution": {
+        "properties": {
+          "business_date": {
+            "type": "string",
+            "title": "Business Date"
+          },
+          "market_code": {
+            "type": "string",
+            "title": "Market Code"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/AttributionBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          },
+          "window_closed": {
+            "$ref": "#/components/schemas/AttributionBucket"
+          },
+          "positive_candidates": {
+            "$ref": "#/components/schemas/AttributionBucket"
+          },
+          "board_coverage": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Board Coverage"
+          },
+          "corpus_reader": {
+            "type": "string",
+            "title": "Corpus Reader",
+            "default": "ok"
+          },
+          "caliber": {
+            "type": "string",
+            "title": "Caliber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_date",
+          "market_code",
+          "as_of",
+          "total",
+          "buckets",
+          "window_closed",
+          "positive_candidates",
+          "board_coverage",
+          "caliber"
+        ],
+        "title": "NoCandidateAttribution",
+        "description": "首页六桶归因（票 07）：今日（按玩法/业务日）为何没有候选。"
       },
       "OddsSnapshotView": {
         "properties": {

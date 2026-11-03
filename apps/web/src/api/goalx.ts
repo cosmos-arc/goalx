@@ -3,6 +3,8 @@ import type { components } from "./generated/schema";
 
 type Schemas = components["schemas"];
 export type TodayFixture = Schemas["TodayFixtureView"];
+export type NoCandidateAttribution = Schemas["NoCandidateAttribution"];
+export type AttributionBucket = Schemas["AttributionBucket"];
 export type HadQuoteStatus = Schemas["HadQuoteStatus"];
 export type FixtureResearch = Schemas["FixtureResearchView"];
 export type GoalsFixture = Schemas["GoalsFixtureView"];
@@ -63,6 +65,15 @@ async function unwrap<T>(call: Promise<FetchResult<T>>): Promise<T> {
 export function fetchTodayFixtures(date?: string, days?: number): Promise<TodayFixture[]> {
 	return unwrap(
 		client.GET("/api/v1/fixtures/today", {
+			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
+		}),
+	);
+}
+
+/** 首页无候选六桶归因（票 07）：桶=报告措辞，判定与 quote_evidence 裁决原因一一对应。 */
+export function fetchNoCandidateAttribution(date?: string, days?: number): Promise<NoCandidateAttribution> {
+	return unwrap(
+		client.GET("/api/v1/fixtures/today/attribution", {
 			params: { query: { date: date ?? null, ...(days === undefined ? {} : { days }) } },
 		}),
 	);

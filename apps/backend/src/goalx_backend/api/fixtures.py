@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from goalx_backend import odds_math as om
 from goalx_backend.api.deps import get_db
-from goalx_backend.data import corpus_duckdb, mapping, quote_evidence
+from goalx_backend.data import corpus_duckdb, mapping, quote_evidence, today
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.fixtures import beijing_business_date
 from goalx_backend.data.quote_evidence import (
@@ -22,6 +22,7 @@ from goalx_backend.data.quote_evidence import (
 )
 from goalx_backend.data.today import (
     HadQuoteStatus,
+    NoCandidateAttribution,
     SelectionTriple,
     TodayFixtureView,
     build_today_view,
@@ -74,6 +75,55 @@ def get_today_fixtures(
         bucket_face.attach_review_faces(db, duck_con, rows, now=moment)
         bucket_face.attach_live_faces(db, duck_con, rows, now=moment)
         return rows
+
+
+@router.get(
+    "/today/attribution",
+    summary="首页无候选六桶归因(按玩法/业务日,票 07)",
+    response_model=NoCandidateAttribution,
+)
+def get_no_candidate_attribution(
+    db: DbDep,
+    date: Annotated[
+        str | None, Query(description="起始业务日(北京日期, 默认今天)")
+    ] = None,
+    days: Annotated[
+        int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
+    ] = 1,
+    market_code: Annotated[
+        Literal["had"], Query(description="玩法(现仅 had 有判定链,其他玩法后续)")
+    ] = "had",
+) -> NoCandidateAttribution:
+    """
+    今日"为什么没有候选"六桶归因（报告措辞桶 + 裁决原因映射表）。
+
+    桶判定与 ``quote_evidence`` 裁决原因一一对应（单一真相，不新造第二
+    套健康口径）：未开售←sale_not_on_sale/sale_window_closed；数据没采到
+    ←jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/
+    eu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source/
+    jc 观测与三向类（未映射新原因兜底进此桶并经 reasons_seen 浮出）；
+    信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位
+    （人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed
+    脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；
+    board_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检
+    链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨
+    窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），
+    此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。
+    """
+    start = date or beijing_business_date()
+    # 单一时间戳贯穿（correctness F3）：戳与行内裁决 cutoff 同刻
+    moment = datetime.now(tz=UTC).isoformat(timespec="seconds")
+    with corpus_duckdb.reader() as duck_con:
+        rows = build_today_view(db, start, days=days, as_of=moment, duck_con=duck_con)
+        return today.no_candidate_attribution(
+            db,
+            rows,
+            start,
+            as_of=moment,
+            market_code=market_code,
+            days=days,
+            corpus_reader="ok" if duck_con is not None else "degraded",
+        )
 
 
 class OddsSnapshotView(BaseModel):
