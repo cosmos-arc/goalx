@@ -6,6 +6,8 @@ import gzip
 import json
 import subprocess
 import sys
+import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from goalx_backend.data.corpus_store import CorpusStore
@@ -108,5 +110,134 @@ def test_ingest_raw_overwrite_updates_ledger(tmp_path: Path) -> None:
             == hashlib.sha256(b"body-two").hexdigest()
         )
         assert store.verify_raw("srct", "bfdata", "@gap-20261102")
+    finally:
+        store.close()
+
+
+# ---- remat 锁原子性（boundary-hardening 票 02，P1-2） ----
+
+
+def _contend(
+    tag: str,
+    store: CorpusStore,
+    token: str,
+    barrier: threading.Barrier,
+    acquired: threading.Event,
+    release: threading.Event,
+    results: dict[str, object | None],
+) -> None:
+    """一个竞争者：barrier 同拍获锁，持锁至主线程放行（连接线程亲和：
+    acquire/release/close 全在本线程）。"""
+    barrier.wait()
+    results[tag] = store.try_acquire_remat_lock(
+        stale_after_seconds=3600.0, run_token=token
+    )
+    acquired.set()
+    release.wait()
+    store.release_remat_lock(token)
+    store.close()
+
+
+def test_remat_lock_concurrent_acquire_single_winner(tmp_path: Path) -> None:
+    """票 02 验收①：两线程各持独立连接 barrier 同拍 acquire——恰一个
+    成功，另一个拿到持锁行（含胜者 token）。连跑多轮钉死检查+写入
+    原子性（SELECT/UPSERT 分离的旧实现下两连接可双双获锁）。"""
+    root = tmp_path / "corpus"
+    seed = CorpusStore(root)
+    seed.ensure_tree()
+    seed.close()
+    for round_no in range(25):
+        stores = {tag: CorpusStore(root) for tag in ("a", "b")}
+        tokens = {tag: f"r{round_no}-{tag}" for tag in ("a", "b")}
+        barrier = threading.Barrier(2)
+        acquired = {tag: threading.Event() for tag in ("a", "b")}
+        release = threading.Event()
+        results: dict[str, object | None] = {}
+        threads = [
+            threading.Thread(
+                target=_contend,
+                args=(
+                    tag,
+                    stores[tag],
+                    tokens[tag],
+                    barrier,
+                    acquired[tag],
+                    release,
+                    results,
+                ),
+            )
+            for tag in ("a", "b")
+        ]
+        for t in threads:
+            t.start()
+        for evt in acquired.values():
+            assert evt.wait(timeout=10)
+        winners = [tag for tag in ("a", "b") if results[tag] is None]
+        assert len(winners) == 1, f"第 {round_no} 轮获锁胜者数 {len(winners)}≠1"
+        winner = winners[0]
+        loser_tag = "b" if winner == "a" else "a"
+        holder = results[loser_tag]
+        assert holder is not None  # 败者拿到持锁行而非异常
+        assert holder["run_token"] == tokens[winner]  # 指向胜者那轮
+        assert holder["holder_pid"] > 0
+        release.set()  # 胜者持锁已罩住败者尝试，现在放行释放
+        for t in threads:
+            t.join()
+
+
+def test_remat_lock_stale_takeover_late_release_harmless(tmp_path: Path) -> None:
+    """票 02 验收②：过期夺取后，迟到的旧持有者 release（token 不匹配）
+    删 0 行——新持有者的锁不受影响；旧 token 再取锁拿到新持有行。"""
+    root = tmp_path / "corpus"
+    old = CorpusStore(root)
+    new = CorpusStore(root)
+    try:
+        got = old.try_acquire_remat_lock(stale_after_seconds=60.0, run_token="old")
+        assert got is None
+        # 模拟持锁进程已死（started_at 超窗）→ 新一轮夺取
+        stale = (datetime.now(UTC) - timedelta(hours=2)).isoformat(timespec="seconds")
+        old._checkpoint().execute("UPDATE srct_remat_lock SET started_at = ?", (stale,))
+        old._checkpoint().commit()
+        got = new.try_acquire_remat_lock(stale_after_seconds=3600.0, run_token="new")
+        assert got is None
+        old.release_remat_lock("old")  # 迟到的旧持有者 finally 到达
+        row = (
+            new._checkpoint()
+            .execute("SELECT run_token FROM srct_remat_lock WHERE id = 1")
+            .fetchone()
+        )
+        assert row["run_token"] == "new"  # 新锁原封不动
+        holder = old.try_acquire_remat_lock(
+            stale_after_seconds=3600.0, run_token="other"
+        )
+        assert holder is not None
+        assert holder["run_token"] == "new"
+        new.release_remat_lock("new")
+        count = (
+            new._checkpoint()
+            .execute("SELECT COUNT(*) AS n FROM srct_remat_lock")
+            .fetchone()
+        )
+        assert count["n"] == 0
+    finally:
+        old.close()
+        new.close()
+
+
+def test_remat_lock_legacy_row_without_token_still_occupies(tmp_path: Path) -> None:
+    """老库锁行（run_token NULL，ALTER 补列前写入）仍按占用拒新轮。"""
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store._checkpoint().execute(
+            "INSERT INTO srct_remat_lock (id, holder_pid, started_at)"
+            " VALUES (1, 4242, ?)",
+            (datetime.now(UTC).isoformat(timespec="seconds"),),
+        )
+        store._checkpoint().commit()
+        holder = store.try_acquire_remat_lock(
+            stale_after_seconds=3600.0, run_token="fresh"
+        )
+        assert holder is not None
+        assert holder["holder_pid"] == 4242
     finally:
         store.close()

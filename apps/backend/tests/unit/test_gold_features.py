@@ -713,6 +713,43 @@ def test_gold_rebuild_defers_low_headroom(
     assert "market" not in payload  # 零写入让位，不是半程降级
 
 
+def test_gold_rebuild_defers_on_silver_build_lock(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """boundary-hardening 票 02：与 srct-remat/手工构建共用 silver 锁——
+    撞锁（如 08:10 全量未收班）deferred 让位，零写入不并行重建。"""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from goalx_backend import tasks as tasks_mod
+
+    store, settings, _report = built
+    store.close()
+    # 余量充足，隔离出锁路径（CI 小盒不因 headroom 误deferred）
+    monkeypatch.setattr(
+        tasks_mod.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(available=8 * 1024**3),
+    )
+    monkeypatch.setattr(
+        tasks_mod.psutil, "swap_memory", lambda: SimpleNamespace(free=0)
+    )
+    holder = CorpusStore(settings.corpus_root)
+    try:
+        holder._checkpoint().execute(
+            "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+            " VALUES (1, 424242, ?, 'remat-run')",
+            (datetime.now(UTC).isoformat(timespec="seconds"),),
+        )
+        holder._checkpoint().commit()
+    finally:
+        holder.close()
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_silver_build_lock_busy:")
+    assert "424242" in str(payload["deferred"])
+    assert "market" not in payload  # 让位而非并行重建
+
+
 def test_gold_rebuild_view_refresh_lock_degrades(
     built: Built, monkeypatch: pytest.MonkeyPatch
 ) -> None:

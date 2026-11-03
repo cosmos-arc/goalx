@@ -45,6 +45,7 @@ import json
 import re
 import shutil
 import statistics
+import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -1151,7 +1152,7 @@ def _spill_selected(
             idx = chunk_of[sid]
             fh = handles.get(idx)
             if fh is None:
-                # 追加模式：odds/hdp 两遍共用块文件（目录已先清空，首写即建）
+                # 追加模式：odds/hdp 两遍共用块文件（本轮独立目录，首写即建）
                 fh = (spill_root / _spill_name(idx)).open("a", encoding="utf-8")
                 handles[idx] = fh
             fh.write(line + "\n")
@@ -1190,6 +1191,26 @@ def _resolve_ledgers(
     }
 
 
+def _prepare_spill_root(store: CorpusStore) -> Path:
+    """
+    本轮独立 spill 子目录（票 02）：并发构建不共用/互删同一目录。
+
+    启动清扫上轮异常残留（文件或目录形态都清）；返回的子目录由调用方
+    finally 删除、基目录空则一并退场。
+    """
+    spill_base = store.root / "tmp" / "srct_odds_spill"
+    spill_base.mkdir(parents=True, exist_ok=True)
+    for stale in spill_base.iterdir():
+        if stale.is_dir():
+            shutil.rmtree(stale, ignore_errors=True)
+        else:
+            with contextlib.suppress(OSError):
+                stale.unlink()
+    spill_root = spill_base / uuid.uuid4().hex[:12]
+    spill_root.mkdir()
+    return spill_root
+
+
 def build_odds_change_events(
     store: CorpusStore,
     *,
@@ -1211,8 +1232,8 @@ def build_odds_change_events(
     全局序**（排序契约不破），单次流过 bronze 把选中行按块 spill 树内
     暂存 NDJSON；③ 逐块加载→现有转换逻辑逐场执行→分区 writer 跨块追加
     →释放→下一块。内存峰值=单块，与语料总量无关；分块参数对输出完全
-    透明（字节级）。孤儿场排序垫后，天然归末块。暂存目录处理完即删，
-    异常残留由下次重建先行清空（重跑幂等）。
+    透明（字节级）。孤儿场排序垫后，天然归末块。spill 按轮独立子目录
+    （票 02）：处理完即删，异常残留由下次重建先行清空（重跑幂等）。
 
     流出序=文件终序：sid 按 (kickoff, sid)（孤儿垫后），场内先 1x2（cid
     升序）后 ah（撤采留档）再 ah 矩阵、ou 矩阵（各 cid 升序），书内
@@ -1250,10 +1271,9 @@ def build_odds_change_events(
     chunks = [list(part) for part in batched(sids, size, strict=False)]
     chunk_of = {sid: idx for idx, part in enumerate(chunks) for sid in part}
 
-    spill_root = store.root / "tmp" / "srct_odds_spill"
-    if spill_root.exists():  # 上次异常退出的残留：先清再跑
-        shutil.rmtree(spill_root)
-    spill_root.mkdir(parents=True)
+    # 每轮独立 spill 子目录（票 02）：并发构建不再共用/互删同一目录；
+    # 上轮异常残留由本轮启动清扫（文件或目录形态都清）
+    spill_root = _prepare_spill_root(store)
     try:
         for dataset, ledger in ledgers.items():
             _spill_selected(store, dataset, ledger, chunk_of, spill_root)
@@ -1273,6 +1293,8 @@ def build_odds_change_events(
         raise
     finally:
         shutil.rmtree(spill_root, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            spill_root.parent.rmdir()  # 无残留时整目录退场；仍有他轮残留留给下轮
     partitions, stale = out.close(prune=clean_stale)
     report.partitions = partitions
     report.stale_partitions_removed = stale

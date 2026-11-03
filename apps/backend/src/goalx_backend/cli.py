@@ -77,6 +77,7 @@ from goalx_backend.data.ingest import (
     srct,
     srct_market,
     srct_odds,
+    srct_remat,
     srct_results,
     srct_silver,
     uniform,
@@ -711,15 +712,21 @@ def _cmd_srct_silver(
 
     fixture_universe + xg_observation 从 bronze 幂等重建（分区/排序/版本
     戳），corpus.duckdb 视图刷新（archive_538 已入库则一并挂视图），附跨面
-    冒烟（运行面 hist_matches 经 ATTACH 只读计数）。settings 注入口只服务
-    测试接缝。
+    冒烟（运行面 hist_matches 经 ATTACH 只读计数）。构建走
+    silver_build_lock（票 02）：与 srct-remat 定时构建互斥，撞锁立即退出
+    报持锁信息。settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
     try:
-        report = srct_silver.build_fixture_universe(store)
-        xg_report = srct_silver.build_xg_observations(store)
-        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+        with srct_remat.silver_build_lock(store):
+            report = srct_silver.build_fixture_universe(store)
+            xg_report = srct_silver.build_xg_observations(store)
+            duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    except srct_remat.RematLockBusy as exc:
+        raise SystemExit(
+            f"srct-silver: silver 构建锁被占（{exc}），另一构建进行中，退出"
+        ) from exc
     finally:
         store.close()
     hist_count: int | None = None
@@ -751,14 +758,21 @@ def _cmd_srct_odds(
     bookmaker 字典（数据派生全量，无 tier/is_core）+ odds_change_event
     （1x2+亚盘变化事件流）从 bronze 幂等重建，corpus.duckdb 视图刷新
     （含两新视图）。报告含门④转换完整性记账（unexplained_gap 须为 0）。
+    构建走 silver_build_lock（票 02）：与 srct-remat/gold-rebuild 定时
+    构建互斥，撞锁立即退出报持锁信息（人裁决 2026-11-02）。
     settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
     try:
-        book_report = srct_odds.build_bookmakers(store)
-        odds_report = srct_odds.build_odds_change_events(store)
-        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+        with srct_remat.silver_build_lock(store):
+            book_report = srct_odds.build_bookmakers(store)
+            odds_report = srct_odds.build_odds_change_events(store)
+            duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    except srct_remat.RematLockBusy as exc:
+        raise SystemExit(
+            f"srct-odds: silver 构建锁被占（{exc}），另一构建进行中，退出"
+        ) from exc
     finally:
         store.close()
     payload = {
@@ -779,15 +793,22 @@ def _cmd_srct_market(
 
     market_quote（asian_odds+over_down 两 bronze → 初/即时/终报价表）、
     match_detail / match_analysis 按场摘要从 bronze 幂等重建，
-    corpus.duckdb 视图刷新（含三新视图）。settings 注入口只服务测试接缝。
+    corpus.duckdb 视图刷新（含三新视图）。构建走 silver_build_lock
+    （票 02）：与 gold-rebuild 定拍/其余手工构建互斥，撞锁立即退出报
+    持锁信息。settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
     try:
-        market_report = srct_market.build_market_quotes(store)
-        detail_report = srct_market.build_detail_faces(store)
-        analysis_report = srct_market.build_analysis_faces(store)
-        duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+        with srct_remat.silver_build_lock(store):
+            market_report = srct_market.build_market_quotes(store)
+            detail_report = srct_market.build_detail_faces(store)
+            analysis_report = srct_market.build_analysis_faces(store)
+            duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
+    except srct_remat.RematLockBusy as exc:
+        raise SystemExit(
+            f"srct-market: silver 构建锁被占（{exc}），另一构建进行中，退出"
+        ) from exc
     finally:
         store.close()
     payload = {

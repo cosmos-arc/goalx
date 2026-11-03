@@ -471,6 +471,10 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     ~3.2GB，余量不足时整轮 deferred 零写入让位（与手工跑/其他重载并发
     会 OOM Crashed，remat 票 13 同款防线）——明日定拍自愈，晨检 gold
     新鲜度面（36h 绿）兜底可见。
+
+    构建互斥（boundary-hardening 票 02）：market_quote 面与手工
+    srct-market/srct-odds 同走 silver_build_lock（同一把 srct_remat_lock）
+    ——撞锁（如 08:10 全量 remat 未收班）即 deferred 让位，不并行重建。
     """
     resolved = settings if settings is not None else get_settings()
     headroom = psutil.virtual_memory().available + psutil.swap_memory().free
@@ -482,30 +486,35 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
         raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
     store = CorpusStore(resolved.corpus_root)
     try:
-        market_report = srct_market.build_market_quotes(store)
-        face = connect(resolved.db_path)
-        try:
-            migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
-            duck_con = corpus_duckdb.connect(resolved)
+        with srct_remat.silver_build_lock(store):
+            market_report = srct_market.build_market_quotes(store)
+            face = connect(resolved.db_path)
             try:
-                report = gold.build_match_features(store, face, duck_con)
+                migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
+                duck_con = corpus_duckdb.connect(resolved)
+                try:
+                    report = gold.build_match_features(store, face, duck_con)
+                finally:
+                    duck_con.close()
             finally:
-                duck_con.close()
-        finally:
-            face.close()
-        # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
-        # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
-        # 短重试后仍占则记账跳过（明日自愈），不让日频面假红
-        duckdb_note = "view_refresh_skipped:duck-lock"
-        for attempt in range(3):
-            try:
-                duckdb_note = str(corpus_duckdb.build_corpus_duckdb(store))
-                break
-            except duckdb.Error as exc:
-                logger.warning(
-                    "corpus.duckdb 视图刷新锁占（第 {} 次）：{}", attempt + 1, exc
-                )
-                time.sleep(10)
+                face.close()
+            # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
+            # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
+            # 短重试后仍占则记账跳过（明日自愈），不让日频面假红
+            duckdb_note = "view_refresh_skipped:duck-lock"
+            for attempt in range(3):
+                try:
+                    duckdb_note = str(corpus_duckdb.build_corpus_duckdb(store))
+                    break
+                except duckdb.Error as exc:
+                    logger.warning(
+                        "corpus.duckdb 视图刷新锁占（第 {} 次）：{}", attempt + 1, exc
+                    )
+                    time.sleep(10)
+    except srct_remat.RematLockBusy as exc:
+        note = f"deferred_silver_build_lock_busy: {exc}"
+        logger.warning("gold-rebuild {}", note)
+        return {"deferred": note}
     finally:
         store.close()
     return {

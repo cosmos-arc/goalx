@@ -165,6 +165,9 @@ _GUARDIAN_BOUNDARY_ALTER_SQL = (
 # 2026-11-01 追加列（票 05 发现面补缺）：JC 当期拍行带竞彩编号——bfdata
 # 编号直连的本地侧键（编号是 JC 侧身份，matchId 是 calculator 内部 id）
 _JC_CODE_ALTER_SQL = "ALTER TABLE jc_shift_matches ADD COLUMN code TEXT"
+# 2026-11-03 追加列（boundary-hardening 票 02）：锁行带 run_token——
+# release 只删自己那轮（迟到旧持有者误删新持有者的锁=P1-2 第二半）
+_REMAT_RUN_TAG_ALTER_SQL = "ALTER TABLE srct_remat_lock ADD COLUMN run_token TEXT"
 
 
 def _ensure_boundary_column(conn: sqlite3.Connection) -> None:
@@ -179,6 +182,13 @@ def _ensure_jc_code_column(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(jc_shift_matches)")}
     if "code" not in cols:
         conn.execute(_JC_CODE_ALTER_SQL)
+
+
+def _ensure_remat_token_column(conn: sqlite3.Connection) -> None:
+    """幂等补齐 srct_remat_lock.run_token 列（票 02；老 checkpoint 库升级）。"""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(srct_remat_lock)")}
+    if "run_token" not in cols:
+        conn.execute(_REMAT_RUN_TAG_ALTER_SQL)
 
 
 _GUARDIAN_REQUEST_DAYS_SQL = """
@@ -207,12 +217,14 @@ CREATE TABLE IF NOT EXISTS srct_remat_state (
 # remat 互斥锁（odds-read-switch 票 03 correctness F1）：单行持锁——拍后
 # 增量钩子与 08:10 全量并发时，护栏全量 ~3h 内每 30min 拍都会再起全量
 # （水位只随整轮成功推进），N×并发全量互删分区；started_at 超窗视为
-# 持锁进程已死（全量实测 ~3h，天花板 6h）
+# 持锁进程已死（全量实测 ~3h，天花板 6h）。run_token（票 02）=本轮
+# 身份，release 匹配才删——过期夺取后迟到的旧持有者删不掉新锁
 _SRCT_REMAT_LOCK_SQL = """
 CREATE TABLE IF NOT EXISTS srct_remat_lock (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     holder_pid INTEGER NOT NULL,
-    started_at TEXT NOT NULL
+    started_at TEXT NOT NULL,
+    run_token TEXT
 )
 """
 # live 锚定 sid 的末次发射分区（票 03 correctness F2）：当期班行跨拍改档
@@ -288,6 +300,7 @@ def _create_checkpoint_tables(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
     _ensure_boundary_column(conn)
     _ensure_jc_code_column(conn)
+    _ensure_remat_token_column(conn)
     conn.commit()
 
 
@@ -978,41 +991,66 @@ class CorpusStore:
         self._checkpoint().commit()
 
     def try_acquire_remat_lock(
-        self, *, stale_after_seconds: float
+        self, *, stale_after_seconds: float, run_token: str
     ) -> dict[str, object] | None:
         """
-        Remat 互斥锁（票 03 F1）：空闲/过期则持锁并返回 None，占用返回持锁行。
+        Remat 互斥锁：空闲/过期则持锁并返回 None，占用返回持锁行。
 
-        过期判据=started_at 距今超 ``stale_after_seconds``（持锁进程已死
-        假设；天花板须大于全量实测时长）。fail-closed：锁表读写异常向上
-        抛——锁态未知不放行（批二口径）。
+        原子性（boundary-hardening 票 02，P1-2）：检查+写入同在一条
+        BEGIN IMMEDIATE 短事务内——SELECT 与 UPSERT 分离时两个连接可
+        同时读到无锁并双双获锁。过期判据=started_at 距今超
+        ``stale_after_seconds``（持锁进程已死假设；天花板须大于全量实测
+        时长）。run_token=本轮身份，release 匹配才删。fail-closed：锁表
+        读写异常向上抛——锁态未知不放行。
         """
         now = datetime.now(UTC)
         conn = self._checkpoint()
-        row = conn.execute(
-            "SELECT holder_pid, started_at FROM srct_remat_lock WHERE id = 1"
-        ).fetchone()
-        if row is not None:
-            started = datetime.fromisoformat(str(row["started_at"]))
-            age = (now - started).total_seconds()
-            if age <= stale_after_seconds:
-                return dict(row)
-        conn.execute(
-            """
-            INSERT INTO srct_remat_lock (id, holder_pid, started_at)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                holder_pid=excluded.holder_pid, started_at=excluded.started_at
-            """,
-            (os.getpid(), now.isoformat(timespec="seconds")),
-        )
-        conn.commit()
-        return None
+        # BEGIN IMMEDIATE 抢写锁（默认 5s busy 等待）；失败即向上抛（fail-closed）
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                """
+                SELECT holder_pid, started_at, run_token
+                FROM srct_remat_lock WHERE id = 1
+                """
+            ).fetchone()
+            if row is not None and row["run_token"] != run_token:
+                started = datetime.fromisoformat(str(row["started_at"]))
+                if (now - started).total_seconds() <= stale_after_seconds:
+                    conn.rollback()
+                    return dict(row)
+            conn.execute(
+                """
+                INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    holder_pid=excluded.holder_pid,
+                    started_at=excluded.started_at,
+                    run_token=excluded.run_token
+                """,
+                (os.getpid(), now.isoformat(timespec="seconds"), run_token),
+            )
+            conn.commit()
+            return None
+        except BaseException:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass  # 回滚失败不掩盖原始异常
+            raise
 
-    def release_remat_lock(self) -> None:
-        """释放 remat 锁（幂等；调用方 finally 必达）。"""
+    def release_remat_lock(self, run_token: str) -> None:
+        """
+        释放本轮 remat 锁（幂等；调用方 finally 必达）。
+
+        只删 run_token 匹配的行：过期夺取后迟到的旧持有者 release 删 0
+        行，新持有者的锁不受影响（票 02）。
+        """
         conn = self._checkpoint()
-        conn.execute("DELETE FROM srct_remat_lock WHERE id = 1")
+        conn.execute(
+            "DELETE FROM srct_remat_lock WHERE id = 1 AND run_token = ?",
+            (run_token,),
+        )
         conn.commit()
 
     def live_sid_partitions(self) -> dict[str, tuple[str, str]]:

@@ -692,6 +692,30 @@ def test_cli_srct_odds_payload(
     assert Path(payload["duckdb"]).exists()
 
 
+def test_cli_srct_odds_busy_lock_exits_with_holder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """票 02 人裁决（2026-11-02）：手工 CLI 撞锁=立即退出并报持锁信息，
+    不等待不并行构建——正式区零触碰。"""
+    import argparse
+    from datetime import UTC, datetime
+
+    store, settings = _collect_bronze(tmp_path)
+    odds_root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET
+    store._checkpoint().execute(
+        "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+        " VALUES (1, 999999, ?, 'peer-run')",
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+    store._checkpoint().commit()
+    store.close()
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_srct_odds(argparse.Namespace(), settings=settings)
+    assert "999999" in str(excinfo.value)  # 持锁信息直达
+    assert not odds_root.exists()  # 零构建
+    assert capsys.readouterr().out == ""  # 无成功路径 payload
+
+
 def test_no_pre_kickoff_quote_returns_missing(tmp_path: Path) -> None:
     """验收框 4：无赛前行 → 赛前末可见价为 NULL（不取赛中值顶替）。"""
     routes: dict[str, httpx.Response] = {
@@ -791,9 +815,12 @@ def test_spill_dir_cleaned_and_crash_leftover_safe_rerun(tmp_path: Path) -> None
     try:
         srct_odds.build_odds_change_events(store, chunk_sids=1)
         digest = _tree_digest(root)
-        leftover = spill_root / "000000.ndjson"  # 模拟异常退出残留
+        leftover = spill_root / "000000.ndjson"  # 模拟异常退出残留（文件态）
         leftover.parent.mkdir(parents=True)
         leftover.write_text("garbage\n")
+        stale_dir = spill_root / "deadbeef0000"  # 票 02 起残留按轮子目录（目录态）
+        stale_dir.mkdir()
+        (stale_dir / "chunk.ndjson").write_text("garbage\n")
         srct_odds.build_odds_change_events(store, chunk_sids=2)
     finally:
         store.close()

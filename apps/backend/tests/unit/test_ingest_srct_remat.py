@@ -753,8 +753,9 @@ def test_day_page_takes_over_live_anchor_partition(tmp_path: Path) -> None:
         store.close()
 
 
-def test_remat_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
-    """F1 回归：互斥锁被占零动作早退；过期锁可夺。"""
+def test_remat_lock_occupied_rejects_and_stale_takeover(tmp_path: Path) -> None:
+    """F1 回归：互斥锁被占零动作早退；过期锁可夺。真并发双连接获锁
+    钉死在 test_corpus_store（票 02）——本测试只钉占用/过期夺取语义。"""
     from datetime import UTC, datetime, timedelta
 
     settings = _settings(tmp_path)
