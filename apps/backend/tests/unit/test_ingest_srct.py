@@ -1526,28 +1526,29 @@ def test_bronze_sids_index_write_path_and_lazy_backfill(tmp_path) -> None:
     assert fresh.bronze_sids("srct", "match_stats", v1) == {"1001", "1002", "1004"}
 
 
-def test_ingest_raw_race_tolerant(tmp_path, monkeypatch) -> None:
-    """双班竞态:对端先 replace 同名 .part → 本端 FileNotFoundError 当成功。"""
+def test_ingest_raw_tmp_names_unique_per_publish(tmp_path, monkeypatch) -> None:
+    """boundary-hardening 票 03：同名 .part 双班竞态根除——每轮发布 tmp
+    名带随机后缀互不碰撞（发布段另按数据集目录 flock 同序互斥，见
+    test_corpus_store）；旧"对端抢走 .part 当成功"容忍分支随竞态删除。"""
     from pathlib import Path
 
     from goalx_backend.data.corpus_store import CorpusStore
 
     store = CorpusStore(_settings(tmp_path).corpus_root)
-    ref = store.ingest_raw("srct", "match_stats", "1", b"first")
-    path = Path(ref.path)
-
+    captured: list[str] = []
     real_replace = Path.replace
 
-    def racing_replace(self, target):
+    def spy_replace(self, target):
         if str(self).endswith(".part"):
-            (path.parent / "1.gz.part").unlink(missing_ok=True)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(path.read_bytes() if path.exists() else b"")
-            raise FileNotFoundError(str(self))
+            captured.append(Path(self).name)
         return real_replace(self, target)
 
-    monkeypatch.setattr(Path, "replace", racing_replace)
-    store.ingest_raw("srct", "match_stats", "1", b"again")  # 不炸=过
+    monkeypatch.setattr(Path, "replace", spy_replace)
+    store.ingest_raw("srct", "match_stats", "1", b"one")
+    store.ingest_raw("srct", "match_stats", "1", b"two")
+    assert len(captured) == 2
+    assert captured[0] != captured[1]  # 随机后缀：两轮互不碰撞
+    assert all(n.startswith("1.gz.") and n.endswith(".part") for n in captured)
 
 
 # —— 票 03 缺账：日页形状漂移不得零痕迹（zucai 断供同族） ——
