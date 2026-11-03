@@ -102,7 +102,7 @@ def test_envelope_extremes_come_from_endpoint_fits() -> None:
 
 def test_constraint_conflict_row_reported_not_enveloped() -> None:
     """约束冲突（report-audit-20261027 票 04）：eps=0.015 下该收盘自洽行
-    的 OU 端点拟合越带（NLS 折中解）→ 冲突计数、不进认证面（界/保守 EV
+    的 OU 端点拟合越带（NLS 折中解）→ 冲突计数、不进 OU 带内面（界/保守 EV
     零入账），残差账如实输出。"""
     row = dict(_ROW)
     row.pop("close1x2_a_cons")
@@ -112,7 +112,7 @@ def test_constraint_conflict_row_reported_not_enveloped() -> None:
     assert study.fitted == 1
     assert study.conflicts == 1
     assert study.certified == 0
-    assert not study.width_sums  # 冲突行不产生认证界
+    assert not study.width_sums  # 冲突行不产生端点敏感性界
     assert not study.ev_lower_total
     assert study.ou_resids  # 残差账在（诊断面）
     assert study.x12_resids
