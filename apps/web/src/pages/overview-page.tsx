@@ -130,18 +130,25 @@ function BucketCard({
 				<p className="mt-1 text-xs text-muted-foreground">裁决原因：{reasonsSeen.join("、")}</p>
 			) : null}
 			{open && hasSamples ? (
-				<ul className="mt-2 space-y-1" data-testid={`attribution-bucket-samples-${bucket.key}`}>
-					{samples.map((sample) => (
-						<li key={sample.fixture_id} className="border-t border-border pt-1 text-xs">
-							<span className="text-muted-foreground">{sample.match_code}</span> {sample.home_team} vs{" "}
-							{sample.away_team}
-							<span className="ml-1 text-muted-foreground">· 开球 {localTime(sample.kickoff_utc)}</span>
-							{(sample.reasons ?? []).length > 0 ? (
-								<span className="ml-1 text-muted-foreground">（{(sample.reasons ?? []).join("、")}）</span>
-							) : null}
-						</li>
-					))}
-				</ul>
+				<>
+					<ul className="mt-2 space-y-1" data-testid={`attribution-bucket-samples-${bucket.key}`}>
+						{samples.map((sample) => (
+							<li key={sample.fixture_id} className="border-t border-border pt-1 text-xs">
+								<span className="text-muted-foreground">{sample.match_code}</span> {sample.home_team} vs{" "}
+								{sample.away_team}
+								<span className="ml-1 text-muted-foreground">· 开球 {localTime(sample.kickoff_utc)}</span>
+								{(sample.reasons ?? []).length > 0 ? (
+									<span className="ml-1 text-muted-foreground">（{(sample.reasons ?? []).join("、")}）</span>
+								) : null}
+							</li>
+						))}
+					</ul>
+					{bucket.count > samples.length ? (
+						<p className="mt-1 text-xs text-muted-foreground" data-testid={`attribution-bucket-more-${bucket.key}`}>
+							还有 {bucket.count - samples.length} 场未展示（样本封顶，非全量清单）
+						</p>
+					) : null}
+				</>
 			) : null}
 		</div>
 	);
@@ -373,6 +380,15 @@ export function OverviewPage() {
 									</>
 								) : null}
 							</p>
+							{attributionQuery.data?.corpus_reader === "degraded" ? (
+								<p
+									className="mb-3 rounded bg-warning/10 px-2 py-1 text-xs text-foreground"
+									data-testid="attribution-reader-degraded"
+								>
+									欧赔读面本请求缺席（被物化锁占或库缺席）——"国际参考断供"桶可能混入读面缺席
+									而非真断供，对账以晨检为准。
+								</p>
+							) : null}
 							{attributionQuery.isError ? (
 								<p
 									className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"

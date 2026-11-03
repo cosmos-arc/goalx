@@ -106,17 +106,23 @@ def get_no_candidate_attribution(
     （人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed
     脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；
     board_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检
-    链覆盖为间接对账）。days>1 时窗口合并为一组桶。
+    链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨
+    窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），
+    此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。
     """
     start = date or beijing_business_date()
+    # 单一时间戳贯穿（correctness F3）：戳与行内裁决 cutoff 同刻
+    moment = datetime.now(tz=UTC).isoformat(timespec="seconds")
     with corpus_duckdb.reader() as duck_con:
-        rows = build_today_view(db, start, days=days, duck_con=duck_con)
+        rows = build_today_view(db, start, days=days, as_of=moment, duck_con=duck_con)
         return today.no_candidate_attribution(
             db,
             rows,
             start,
-            as_of=datetime.now(tz=UTC).isoformat(timespec="seconds"),
+            as_of=moment,
             market_code=market_code,
+            days=days,
+            corpus_reader="ok" if duck_con is not None else "degraded",
         )
 
 

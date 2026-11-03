@@ -248,6 +248,7 @@ export const attributionFixture = {
 		reasons_seen: [],
 	},
 	board_coverage: [3, 3],
+	corpus_reader: "ok",
 	caliber: "六桶=报告措辞；桶判定与 quote_evidence 裁决原因一一对应。",
 } as const satisfies DeepReadonly<components["schemas"]["NoCandidateAttribution"]>;
 

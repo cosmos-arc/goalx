@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Bet, DrawResultView, TodayFixture } from "../api/goalx";
+import { attributionFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -460,4 +461,46 @@ test("票 07：归因端点失败 → 面板诚实降级不硬判，核心区不
 	expect(await screen.findByTestId("attribution-unavailable")).toHaveTextContent("归因面暂不可用");
 	expect(screen.getByTestId("overview-todos")).toBeInTheDocument();
 	expect(screen.getByTestId("overview-snapshot")).toBeInTheDocument();
+});
+
+test("票 07 correctness：样本截断指示 + corpus 读面降级警示", async () => {
+	const user = userEvent.setup();
+	// 样本 50 封顶但 count=60 → 下钻展开"还有 10 场未展示"
+	server.use(
+		http.get("*/api/v1/fixtures/today/attribution", () =>
+			HttpResponse.json({
+				...attributionFixture,
+				buckets: attributionFixture.buckets.map((bucket) =>
+					bucket.key === "no_edge"
+						? {
+								...bucket,
+								count: 60,
+								samples: Array.from({ length: 50 }, (_, i) => ({
+									fixture_id: 100 + i,
+									match_code: `周六${String(100 + i).padStart(3, "0")}`,
+									home_team: "主",
+									away_team: "客",
+									kickoff_utc: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+									reasons: [],
+								})),
+							}
+						: bucket,
+				),
+			}),
+		),
+	);
+	await renderAt("/");
+	const section = await screen.findByTestId("overview-attribution");
+	await user.click(within(section).getByTestId("attribution-bucket-toggle-no_edge"));
+	expect(within(section).getByTestId("attribution-bucket-more-no_edge")).toHaveTextContent("还有 10 场未展示");
+
+	// corpus_reader=degraded → 欧赔读面缺席警示（eu_cut 可能混入读面缺席）
+	server.resetHandlers();
+	server.use(
+		http.get("*/api/v1/fixtures/today/attribution", () =>
+			HttpResponse.json({ ...attributionFixture, corpus_reader: "degraded" }),
+		),
+	);
+	await renderAt("/");
+	expect(await screen.findByTestId("attribution-reader-degraded")).toHaveTextContent("读面缺席");
 });

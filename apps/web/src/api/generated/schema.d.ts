@@ -109,7 +109,9 @@ export interface paths {
          *     （人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed
          *     脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；
          *     board_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检
-         *     链覆盖为间接对账）。days>1 时窗口合并为一组桶。
+         *     链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨
+         *     窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），
+         *     此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。
          */
         get: operations["get_no_candidate_attribution_api_v1_fixtures_today_attribution_get"];
         put?: never;
@@ -2231,6 +2233,11 @@ export interface components {
             positive_candidates: components["schemas"]["AttributionBucket"];
             /** Board Coverage */
             board_coverage: number[];
+            /**
+             * Corpus Reader
+             * @default ok
+             */
+            corpus_reader: string;
             /** Caliber */
             caliber: string;
         };

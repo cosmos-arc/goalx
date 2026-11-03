@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from goalx_backend.data import today
 from goalx_backend.data.today import (
+    EVIDENCE_UNQUALIFIED_REASONS,
     HadQuoteStatus,
     SelectionTriple,
     TodayFixtureView,
@@ -139,3 +141,49 @@ def test_total_and_samples_capped(db: sqlite3.Connection) -> None:
     bucket = next(b for b in result.buckets if b.key == "evidence_unqualified")
     assert bucket.count == 60
     assert len(bucket.samples) == 50  # MAX_BUCKET_SAMPLES
+
+
+def test_evidence_frozenset_members_route_explicitly(db: sqlite3.Connection) -> None:
+    """票 07 correctness F7：EVIDENCE_UNQUALIFIED_REASONS 逐成员显式路由
+    （防未来原因与 valid 共现时被兜底误吞）。"""
+    for reason in sorted(EVIDENCE_UNQUALIFIED_REASONS):
+        bucket = _bucket(db, [_row(1, "rejected", [reason])], "evidence_unqualified")
+        assert bucket.count == 1, f"{reason} 应显式进证据不合格桶"
+
+
+def test_duplicate_match_code_fixture_counted_once(db: sqlite3.Connection) -> None:
+    """票 07 correctness F4：同 fixture 双行（同场同日双码形状）只计一次
+    ——total 与 board_coverage 的 DISTINCT 同口径。"""
+    rows = [
+        _row(1, "rejected", ["stale_source"]),
+        _row(1, "rejected", ["stale_source"]),
+    ]
+    result = _attribution(db, rows)
+    assert result.total == 1
+    bucket = next(b for b in result.buckets if b.key == "evidence_unqualified")
+    assert bucket.count == 1
+
+
+def test_board_coverage_sums_window_days(db: sqlite3.Connection) -> None:
+    """票 07 correctness F1：days>1 时 board_coverage 跨窗口日求和，
+    total==coverage[0] 可对账（用 monkeypatch 钉住逐日覆盖函数）。"""
+    calls: list[str] = []
+
+    def fake_coverage(conn: sqlite3.Connection, day: str) -> tuple[int, int]:
+        calls.append(day)
+        return (2, 1)
+
+    original = today.board_coverage
+    today.board_coverage = fake_coverage  # type: ignore[assignment]
+    try:
+        result = no_candidate_attribution(
+            db,
+            [_row(1), _row(2)],
+            "2026-11-04",
+            as_of="2026-11-04T10:00:00+00:00",
+            days=2,
+        )
+    finally:
+        today.board_coverage = original  # type: ignore[assignment]
+    assert calls == ["2026-11-04", "2026-11-05"]
+    assert result.board_coverage == [4, 2]

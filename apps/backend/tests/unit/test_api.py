@@ -706,6 +706,23 @@ def test_no_candidate_attribution_endpoint(demo_client: TestClient) -> None:
     assert "quote_evidence" in payload["caliber"]
 
 
+def test_attribution_marks_degraded_corpus_reader(
+    demo_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 07 correctness F2：corpus 读面缺席（锁占/库缺）→ corpus_reader=
+    degraded 标记透传——eu_cut 桶可能混入读面缺席，对账先看本字段。"""
+    from goalx_backend.data import corpus_duckdb
+
+    def _unavailable(settings: object) -> None:
+        raise OSError("corpus file missing")
+
+    monkeypatch.setattr(corpus_duckdb, "connect", _unavailable)
+    response = demo_client.get("/api/v1/fixtures/today/attribution")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["corpus_reader"] == "degraded"
+
+
 def test_bet_creation_eligibility_rules(demo_client: TestClient) -> None:
     """票 36 选择入口：单固校验、串关共同可购买、停售/开赛拒绝（服务端）。"""
     single_ok, parlay_ok, stopped = _demo_ids(demo_client)

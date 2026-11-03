@@ -166,7 +166,7 @@
           "fixtures"
         ],
         "summary": "首页无候选六桶归因(按玩法/业务日,票 07)",
-        "description": "今日\"为什么没有候选\"六桶归因（报告措辞桶 + 裁决原因映射表）。\n\n桶判定与 ``quote_evidence`` 裁决原因一一对应（单一真相，不新造第二\n套健康口径）：未开售←sale_not_on_sale/sale_window_closed；数据没采到\n←jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/\neu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source/\njc 观测与三向类（未映射新原因兜底进此桶并经 reasons_seen 浮出）；\n信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位\n（人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed\n脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；\nboard_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检\n链覆盖为间接对账）。days>1 时窗口合并为一组桶。",
+        "description": "今日\"为什么没有候选\"六桶归因（报告措辞桶 + 裁决原因映射表）。\n\n桶判定与 ``quote_evidence`` 裁决原因一一对应（单一真相，不新造第二\n套健康口径）：未开售←sale_not_on_sale/sale_window_closed；数据没采到\n←jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/\neu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source/\njc 观测与三向类（未映射新原因兜底进此桶并经 reasons_seen 浮出）；\n信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位\n（人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed\n脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；\nboard_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检\n链覆盖为间接对账）。days>1 时窗口合并为一组桶（board_coverage 跨\n窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），\n此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。",
         "operationId": "get_no_candidate_attribution_api_v1_fixtures_today_attribution_get",
         "parameters": [
           {
@@ -5264,6 +5264,11 @@
             },
             "type": "array",
             "title": "Board Coverage"
+          },
+          "corpus_reader": {
+            "type": "string",
+            "title": "Corpus Reader",
+            "default": "ok"
           },
           "caliber": {
             "type": "string",
