@@ -12,10 +12,10 @@ import { TABULAR_NUMS } from "../lib/ui";
  * 由 analyst 在回答末尾明说。无情报场次走后端诚实降级话术。
  *
  * 票 04：徽章按各条回答的决策时刻过滤（面板级时点边界）——本栈
- * useChat 不给消息打 createdAt，组件在助手消息首次进入消息列表
- * （≈提问时刻，即后端 as_of 的 moment）时渲染体盖戳（幂等首胜）；
- * 晚于决策时刻采集的情报不回溯挂徽章（refetch 进来的新情报不会
- * 假装当时已可知）。
+ * useChat 不给消息打 createdAt，提交时（=后端 ask 的 moment）入队
+ * 盖戳，助手消息按到达顺序领戳；晚于决策时刻采集的情报不回溯挂
+ * 徽章（refetch 进来的新情报不会假装当时已可知）。残余：客户端与
+ * 服务端时钟偏差会平移戳点（面板级容忍，不追服务端 recorded_at）。
  */
 
 type ChatMessage = { id: string; role: string };
@@ -25,9 +25,12 @@ export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; inte
 	const chat = useChat({ id: `ask-${fixtureId}`, transport });
 	const [input, setInput] = useState("");
 	const decidedAt = useRef(new Map<string, number>());
+	const pendingMoments = useRef<number[]>([]);
 	for (const message of chat.messages as ChatMessage[]) {
 		if (message.role === "assistant" && !decidedAt.current.has(message.id)) {
-			decidedAt.current.set(message.id, Date.now());
+			// 提交时入队的决策时刻按序领取；队空（无对应提交）= 零徽章 fail-closed
+			const moment = pendingMoments.current.shift();
+			if (moment !== undefined) decidedAt.current.set(message.id, moment);
 		}
 	}
 
@@ -43,6 +46,7 @@ export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; inte
 		if (!text || chat.status === "submitted" || chat.status === "streaming") {
 			return;
 		}
+		pendingMoments.current.push(Date.now()); // 决策时刻 = 提问时，非回答渲染时
 		void chat.sendMessage({ text });
 		setInput("");
 	}

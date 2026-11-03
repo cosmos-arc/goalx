@@ -250,6 +250,35 @@ def test_analyst_replay_excludes_future_intel(
     assert "未来情报" not in str(row["payload"])
 
 
+def test_latest_scout_id_bounded_by_moment(db: sqlite3.Connection) -> None:
+    """票 04 correctness I2：revision_of 目标按 moment 时点取——回放不
+    指向决策时刻之后才出现的 analyst 修订行。"""
+    from goalx_backend.llm.gate import _latest_scout_id
+
+    fixture_id = _seed_fixture(db)
+    _seed_forecasts(
+        db, fixture_id, _ml_triple(_ml_matrix_payload()), (0.25, 0.30, 0.45)
+    )
+    insert_forecast(
+        db,
+        fixture_id=fixture_id,
+        track="llm",
+        model_version="glm:glm-5.3",
+        content_hash=f"analyst-{fixture_id}",
+        payload={"h": 0.4, "d": 0.3, "a": 0.3, "analyst": True},
+        issued_at="2026-09-19T11:30:00+00:00",  # 决策时刻之后才出现的修订
+    )
+    llm_rows = db.execute(
+        "SELECT id FROM forecasts WHERE fixture_id = ? AND track = 'llm' ORDER BY id",
+        (fixture_id,),
+    ).fetchall()
+    scout_id, analyst_id = str(llm_rows[0]["id"]), str(llm_rows[1]["id"])
+    # moment=11:00 → scout 原行（10:50），不是 11:30 的修订行
+    assert _latest_scout_id(db, fixture_id, "2026-09-19T11:00:00+00:00") == scout_id
+    # moment=12:00 → 修订行
+    assert _latest_scout_id(db, fixture_id, "2026-09-19T12:00:00+00:00") == analyst_id
+
+
 def test_gate_small_divergence_records_without_analyst(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

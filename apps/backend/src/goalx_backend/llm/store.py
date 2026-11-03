@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
@@ -39,7 +40,15 @@ class IntelDraft:
 def insert_intel_observation(
     conn: sqlite3.Connection, fixture_id: int, draft: IntelDraft
 ) -> int | None:
-    """追加一条情报观测；同内容已存在时静默跳过（返回 None）。"""
+    """
+    追加一条情报观测；同内容已存在时静默跳过（返回 None）。
+
+    collected_at 写入前规范化为秒精度 +00:00 ISO（票 04 as_of 谓词按
+    字典序比较的前提；非 ISO 输入 fail-loud 拒绝，不静默误界）。
+    """
+    normalized = datetime.fromisoformat(draft.collected_at).isoformat(
+        timespec="seconds"
+    )
     digest = raw_hash(draft.raw_payload)
     cursor = conn.execute(
         """
@@ -53,7 +62,7 @@ def insert_intel_observation(
             draft.kind,
             draft.text,
             draft.source,
-            draft.collected_at,
+            normalized,
             draft.collector,
             json.dumps(draft.raw_payload, ensure_ascii=False, sort_keys=True),
             digest,

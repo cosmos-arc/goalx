@@ -216,6 +216,42 @@ def test_intel_reads_asof_boundary(db: sqlite3.Connection) -> None:
     assert [t for _, t in summary[fixture_id]] == ["2026-09-19T22:00:00+00:00"]
 
 
+def test_intel_collected_at_normalized_on_write(db: sqlite3.Connection) -> None:
+    """票 04 correctness I1：collected_at 写入规范化为秒精度 +00:00——
+    字典序 as_of 谓词的前提；非 ISO fail-loud 拒绝。"""
+    fixture_id = _seed_fixture(db, sport_key="soccer_epl", home="阿森纳", away="切尔西")
+    insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="form",
+            text="Z 格式带毫秒",
+            source="t",
+            collected_at="2026-09-19T22:00:00.123456Z",
+            collector="t",
+            raw_payload={"i": 1},
+        ),
+    )
+    row = db.execute(
+        "SELECT collected_at FROM intel_observations WHERE fixture_id = ?",
+        (fixture_id,),
+    ).fetchone()
+    assert str(row["collected_at"]) == "2026-09-19T22:00:00+00:00"
+    with pytest.raises(ValueError, match="2026-09-19"):
+        insert_intel_observation(
+            db,
+            fixture_id,
+            IntelDraft(
+                kind="form",
+                text="非 ISO",
+                source="t",
+                collected_at="2026-09-19 晚上十点",
+                collector="t",
+                raw_payload={"i": 2},
+            ),
+        )
+
+
 def test_match_intels_dropped(db: sqlite3.Connection) -> None:
     row = db.execute(
         "SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'match_intels'"
