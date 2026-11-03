@@ -31,7 +31,7 @@ _ROW = {
 
 
 def test_study_row_fits_and_bounds() -> None:
-    """单场全链（认证行）：1X2 与 OU 自洽（源出同一 λ）→ 全端点在带内，
+    """单场全链（OU 带内行）：1X2 与 OU 自洽（源出同一 λ）→ 全端点在带内，
     TTG/hhad 界入账。AH 面缺席照常（ah_joint_total=0）。"""
     row = {
         "era": "psc_proxy",
@@ -70,16 +70,20 @@ def test_study_row_fits_and_bounds() -> None:
 
 
 def test_conclusion_line_both_ways() -> None:
-    """结论行：保守 EV 命中决定转正判词。"""
+    """结论行：保守 EV 命中决定转正判词（票 05 措辞=端点敏感性分析口径）。"""
     study = mlb.BoundsStudy(built_at="2026-10-20", eps=mlb.EPS, sample_n=1)
     study.ev_lower_total["ttg:3"] = 10
     payload = mlb._payload(study)
     assert payload["conclusion"] == (
-        "认证面（约束可行行）保守界下无正 EV 候选——B 线按界口径不可转正"
+        "端点敏感性分析（OU 带内面，非严格联合可行界）保守下界下"
+        "无正 EV 候选——B 线按此口径不可转正"
     )
     study.ev_lower_hits["ttg:3"] = 1
     payload2 = mlb._payload(study)
-    assert payload2["conclusion"] == "认证面（约束可行行）保守界下仍有非零正 EV 候选"
+    assert (
+        payload2["conclusion"]
+        == "端点敏感性分析（OU 带内面，非严格联合可行界）保守下界下仍有非零正 EV 候选"
+    )
     assert payload2["ev_lower_total_hits"] == 1
 
 
@@ -116,6 +120,24 @@ def test_constraint_conflict_row_reported_not_enveloped() -> None:
     assert payload["sample"]["conflicts"] == 1
     assert payload["sample"]["certified"] == 0
     assert payload["constraint_feasibility"]["ou_resid_max"] is not None
+
+
+def test_certified_semantics_ou_band_only_x12_disclosed() -> None:
+    """票 05 语义黄金样例：OU 在带 + 主胜差 50pp → 判定仍 certified
+    （语义钉死=OU 带内，1X2 残差不设闸），残差 ≥0.5 升显著披露位。"""
+    mat = ScoreMatrix.from_lambdas(2.8, 0.3)
+    over = sum(p for b, p in mat.ttg().items() if float(b) > 2.5)
+    h = mat.had()["h"]
+    fair = {"h": h - 0.5, "d": 0.25, "a": 0.75 - h + 0.5}  # 主胜差恰 50pp
+    study = mlb.BoundsStudy(built_at="2026-11-04", eps=mlb.EPS, sample_n=1)
+    in_band = mlb._constraint_feasibility(study, (mat, mat, mat), fair, 2.5, over)
+    assert in_band is True  # 1X2 差 50pp 不翻转——certified 仅凭 OU 带内
+    assert study.x12_resids[0] >= 0.5 - 1e-9  # 披露位如实入账
+    payload = mlb._payload(study)
+    assert payload["x12_disclosure"]["resid_max"] >= 0.5
+    assert payload["x12_disclosure"]["n"] == 1
+    assert "OU 带内" in payload["semantics"]
+    assert "非严格联合可行界" in payload["semantics"]
 
 
 def test_report_synthetic_case_unreachable_band_is_conflict() -> None:

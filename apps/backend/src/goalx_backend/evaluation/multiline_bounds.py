@@ -1,12 +1,21 @@
 """
-OU 多盘口约束求界 + AH 联合一致性（measure-integrity 票 10：B 线可行性）。
+OU 多盘口端点敏感性分析 + AH 联合一致性（B 线可行性，票 05 语义收口）。
+
+开线 measure-integrity 票 10；语义裁决 report-audit-20261103 票 05。
 
 问题：单点市场侧定价（market-λ 联合反推）给中心估计，但去水/水位噪声
 带不确定性——本模块在"满足 1X2 + OU 半线 P(over)∈[p±eps] 约束"的可行
 分布族（双 Poisson λ 参数化）上，对竞彩 TTG 八档与让球整数线三向求
-**min/max 界**（约束端点重拟包络——可行域在该参数化下沿 P(over) 单
-调，端点即包络），并回答研究判据：**保守下界（买方最不利）下模拟竞彩
-价是否仍有非零正 EV 候选**。
+**min/max 端点敏感性界**（约束端点重拟包络——可行域在该参数化下沿
+P(over) 单调，端点即包络），并回答研究判据：**保守下界（买方最不利）
+下模拟竞彩价是否仍有非零正 EV 候选**。
+
+语义钉死（票 05 人裁决：改名 + 披露，不加残差闸）：``certified`` 保留
+但**仅凭 OU 带内**（拟合端点落 [p±eps]）——1X2 残差不设闸，升为显著
+披露位（x12_disclosure）。本产物自居**端点敏感性分析**，非"严格联合
+可行界"：主胜概率差 50pp 的行只要 OU 在带仍计入 certified 面；严格
+联合上下界（显式约束 + min/max 求解）是研究线（map fog，与票 09
+基准读数后合并裁决）。
 
 AH 半线作**联合一致性诊断**：中心拟合的模型 P(主赢盘) vs 市场 AH 水位
 去水值的缺口分布——多盘口"联合约束"的可行性直接证据（缺口普遍越带=
@@ -64,9 +73,11 @@ class BoundsStudy:
     n_matches: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
     fitted: int = 0
-    certified: int = 0  # 约束可行（票 04：拟合端点全落声明区间内）
+    # certified 语义钉死 = OU 带内（票 05）：仅 OU 端点落 [p±eps] 一闸；
+    # 1X2 残差披露不门控（x12_disclosure），主胜差 50pp 行仍计入本面
+    certified: int = 0
     conflicts: int = 0  # 约束冲突：端点落带外——报冲突不造概率
-    endpoint_collapse: int = 0  # 认证行中端点塌缩（带内未达目标>eps/2，correctness I2）
+    endpoint_collapse: int = 0  # 带内行中端点塌缩（未达目标>eps/2，correctness I2）
     ou_resids: list[float] = field(default_factory=list)
     x12_resids: list[float] = field(default_factory=list)
     ah_joint_total: int = 0
@@ -141,8 +152,9 @@ def _constraint_feasibility(
     逐拟合约束可行性（report-audit-20261027 票 04）。
 
     无约束 NLS 的折中解可能把端点拟到声明区间 [p_over±eps] 外——此时
-    端点不是认证的可行族极值。OU 残差（vs 各自目标）与 1X2 贴合度入
-    账；返回全端点是否在带内（可行）。
+    端点不是 OU 带内面的可行族极值。OU 残差（vs 各自目标）与 1X2 贴合
+    度入账；返回全端点是否在带内（certified 语义，票 05：仅此一闸，
+    1X2 残差不参与判定）。
     """
     targets = (p_over, p_over - study.eps, p_over + study.eps)
     in_band_all = True
@@ -158,7 +170,7 @@ def _constraint_feasibility(
             in_band_all = False
         if resid > study.eps / 2:
             # 端点塌缩（correctness I2）：在带内但未达自身目标——包络
-            # 窄于声明的可行族；认证保留但披露计数（不门控）
+            # 窄于声明的可行族；计入 certified 面但披露计数（不门控）
             collapse = True
         had = mat.had()
         row_x12 = max(abs(had[s] - fair[s]) for s in ("h", "d", "a"))
@@ -206,7 +218,8 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         return
     study.fitted += 1
     # AH 半线联合一致性诊断（cid8 正=主让 → 矩阵 goal_line=−ah_line）；
-    # 认证门前入账——冲突行的 AH 缺口正是"约束族不可联合满足"的直接证据
+    # OU 带内判定前入账——冲突行的 AH 缺口正是"约束族不可联合满足"的
+    # 直接证据
     ah_line = half_line_only(row.get("ah_close_line_med"))
     ah_home_w = row.get("ah_close_home_water_med")
     ah_away_w = row.get("ah_close_away_water_med")
@@ -222,7 +235,8 @@ def _study_row(row: dict[str, Any], study: BoundsStudy, haircut: float) -> None:
         study.ah_gaps.append(gap)
         if gap <= AH_TOL:
             study.ah_joint_ok += 1
-    # 可行/冲突分开计数，冲突行不进认证面（包络与保守 EV 不可信）
+    # 可行/冲突分开计数，冲突行不进 OU 带内面（端点敏感性界与保守 EV
+    # 均不入账——该行包络不可信）
     if not _constraint_feasibility(
         study, (center, lo_mat, hi_mat), fair, ou_line, p_over
     ):
@@ -306,10 +320,21 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
         if study.ah_joint_total
         else None
     )
+    scope = "端点敏感性分析（OU 带内面，非严格联合可行界）保守下界下"
+    if total_hits > 0:
+        conclusion = f"{scope}仍有非零正 EV 候选"
+    else:
+        conclusion = f"{scope}无正 EV 候选——B 线按此口径不可转正"
     return {
         "built_at": study.built_at,
         "eps": study.eps,
         "ah_tol": AH_TOL,
+        "semantics": (
+            "端点敏感性分析（票 05 语义收口）：certified 仅凭 OU 带内"
+            "（拟合端点落 [p±eps]），非严格联合可行界；1X2 残差升显著"
+            "披露位不门控（见 x12_disclosure）——主胜差 50pp 行只要 OU"
+            " 在带仍计入 certified 面"
+        ),
         "sample": {
             "n": study.n_matches,
             "fitted": study.fitted,
@@ -325,18 +350,25 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
             if study.ou_resids
             else None,
             "ou_resid_max": round(max(study.ou_resids), 4) if study.ou_resids else None,
-            "x12_resid_median": round(_median(study.x12_resids), 4)
-            if study.x12_resids
-            else None,
-            "x12_resid_max": round(max(study.x12_resids), 4)
-            if study.x12_resids
-            else None,
             "note": (
                 "冲突=拟合端点落 OU 声明区间 [p±eps] 外（约束族不可联合满足"
-                "或 NLS 折中越带）——该行不进界/保守 EV 认证面；faces 分母"
-                "=certified 行（非 fitted）；endpoint_collapse=认证行中端点"
-                "在带内但未达自身目标（>eps/2）——包络窄于声明可行族的披露"
+                "或 NLS 折中越带）——该行不进端点敏感性界/保守 EV 面；faces"
+                " 分母=certified 行（非 fitted）；endpoint_collapse=带内行"
+                "中端点未达自身目标（>eps/2）——包络窄于声明可行族的披露"
                 "计数（不门控）"
+            ),
+        },
+        "x12_disclosure": {
+            "n": len(study.x12_resids),
+            "resid_median": round(_median(study.x12_resids), 4)
+            if study.x12_resids
+            else None,
+            "resid_max": round(max(study.x12_resids), 4) if study.x12_resids else None,
+            "note": (
+                "1X2 残差（|拟合三向−fair| 的逐行最大向，显著披露位）："
+                "certified 仅凭 OU 带内，本残差不设闸——resid_max 大（如"
+                "主胜差 50pp=0.50）说明端点族对 1X2 约束贴合差，读界时"
+                "须连同本披露判读，不得当作严格联合可行界"
             ),
         },
         "ah_joint": {
@@ -349,11 +381,7 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
         "faces": faces,
         "ev_lower_total_hits": total_hits,
         "ev_lower_total_faces": total_face,
-        "conclusion": (
-            "认证面（约束可行行）保守界下仍有非零正 EV 候选"
-            if total_hits > 0
-            else "认证面（约束可行行）保守界下无正 EV 候选——B 线按界口径不可转正"
-        ),
+        "conclusion": conclusion,
     }
 
 
@@ -366,17 +394,23 @@ def _write_report(store: CorpusStore, payload: dict[str, Any]) -> None:
     )
     ah = payload["ah_joint"]
     feas = payload["constraint_feasibility"]
+    x12 = payload["x12_disclosure"]
     lines = [
-        "# OU 多盘口约束求界 + AH 联合一致性（measure-10，B 线可行性）",
+        "# OU 多盘口端点敏感性分析 + AH 联合一致性（measure-10，B 线可行性）",
+        "",
+        "语义（票 05）：本产物为**端点敏感性分析**，非严格联合可行界"
+        + "——certified 仅凭 OU 带内；1X2 残差为显著披露位，不设闸。",
         "",
         f"抽样 {payload['sample']['n']} 场（era×联赛分层，seed 固定）"
         + f"｜拟合 {payload['sample']['fitted']}"
-        + f"｜认证 {feas['certified']}｜约束冲突 {feas['conflicts']}"
+        + f"｜OU 带内（certified）{feas['certified']}"
+        + f"｜约束冲突 {feas['conflicts']}"
         + f"｜eps={payload['eps']}",
         f"跳过：{payload['sample']['skipped']}",
-        f"约束可行性：OU 残差中位 {feas['ou_resid_median']}"
-        + f"/max {feas['ou_resid_max']}，1X2 残差中位 "
-        + f"{feas['x12_resid_median']}/max {feas['x12_resid_max']}",
+        f"OU 约束残差：中位 {feas['ou_resid_median']}" + f"/max {feas['ou_resid_max']}",
+        f"**1X2 残差（显著披露位，不门控）：中位 {x12['resid_median']}"
+        + f"/max {x12['resid_max']}（n={x12['n']}）**"
+        + "——主胜差 50pp 级行只要 OU 在带仍入面，读界须连同本行判读",
         f"AH 联合一致性：{ah['ok']}/{ah['n']}"
         + f"（rate={ah['rate']}，gap 中位 {ah['gap_median']},max {ah['gap_max']}）",
         "",
@@ -398,10 +432,12 @@ def _write_report(store: CorpusStore, payload: dict[str, Any]) -> None:
             (
                 "判读注意：界=双 Poisson 族内 OU 约束端点近似包络（Poisson pmf",
                 "单峰，峰值邻桶上界可能低估；非分布无关界）；拟合端点落声明",
-                "区间外=约束冲突行，不进认证面（faces 分母=certified）；模拟价",
-                "=1X2-only 反推定价×(1−haircut)（与约束族信息分离）；",
-                "no_ou_half_line 跳过且缺向随 era/联赛而异（拟合面非随机",
-                "子样）；抽样口径非全量。",
+                "区间外=约束冲突行，不进 OU 带内面（faces 分母=certified）；",
+                "certified 仅凭 OU 带内、1X2 残差披露不门控——本产物自居",
+                "端点敏感性分析而非严格联合可行界（严格联合上下界为研究线，",
+                "与票 09 基准读数后合并裁决）；模拟价=1X2-only 反推定价×",
+                "(1−haircut)（与约束族信息分离）；no_ou_half_line 跳过且缺向",
+                "随 era/联赛而异（拟合面非随机子样）；抽样口径非全量。",
             )
         ),
     ]
