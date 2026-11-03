@@ -327,10 +327,11 @@ def test_from_payload_freezes_versions_and_rejects_tamper(
 
 
 def test_from_payload_legacy_schema1_keeps_stored_id(tmp_path) -> None:
-    """v1 旧工件（身份公式不含 bootstrap 数量）按落盘 artifact_id 寻址,不强校验。"""
+    """v1 旧工件（身份公式不含 bootstrap 数量）按落盘 artifact_id 寻址。"""
     rows = synthetic_rows(n=120, seed=5)
     run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
     payload = run.to_payload()
+    # v1 公式快照（历史形态,勿与现行公式同步）——盘面 42/42 v1 工件实证匹配
     legacy_canonical = json.dumps(
         {
             "data_fingerprint": run.base.data_fingerprint,
@@ -347,3 +348,53 @@ def test_from_payload_legacy_schema1_keeps_stored_id(tmp_path) -> None:
     assert loaded.artifact_id() == legacy_id  # 旧工件身份=落盘值,不重算漂移
     # 环境升级后复载 v1 工件仍稳定（versions 冻结自 payload）
     assert loaded.versions == payload["versions"]
+
+
+def test_from_payload_v1_tamper_and_schema_downgrade_rejected() -> None:
+    """v1 严校验:篡改 v1 身份、把 v2 文件降级 schema 绕过校验,都被拒。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    payload = run.to_payload()
+
+    # 降级攻击:v2 内容贴 schema=1 标签——v1 公式重算对不上 v2 身份
+    downgraded = {**payload, "schema_version": 1}
+    with pytest.raises(ValueError, match="工件身份与内容不一致"):
+        dcm.TrainingRun.from_payload(downgraded)
+
+    # 直接篡改一个合法 v1 工件的身份字段
+    loaded = dcm.TrainingRun.from_payload(
+        {
+            **payload,
+            "schema_version": 1,
+            "artifact_id": run._v1_artifact_id(),
+        }
+    )
+    assert loaded.artifact_id() == run._v1_artifact_id()
+    tampered = {**payload, "schema_version": 1, "artifact_id": "0" * 64}
+    with pytest.raises(ValueError, match="工件身份与内容不一致"):
+        dcm.TrainingRun.from_payload(tampered)
+
+    # 有身份却无版本记录的拼装件:盘面不存在这种真工件,拒载
+    no_versions = {
+        **payload,
+        "schema_version": 1,
+        "artifact_id": "0" * 64,
+        "versions": None,
+    }
+    with pytest.raises(ValueError, match="工件身份与内容不一致"):
+        dcm.TrainingRun.from_payload(no_versions)
+
+
+def test_legacy_roundtrip_resave_stays_loadable(tmp_path) -> None:
+    """v1 旧工件复载→重存:仍按 v1 schema/身份写出,再复载不自坏。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    legacy_id = run._v1_artifact_id()
+    loaded = dcm.TrainingRun.from_payload(
+        {**run.to_payload(), "schema_version": 1, "artifact_id": legacy_id}
+    )
+    path = dcm.save_run(loaded, tmp_path)
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["schema_version"] == 1  # 不因重存抬升 schema 时代
+    again = dcm.TrainingRun.from_payload(on_disk)
+    assert again.artifact_id() == legacy_id

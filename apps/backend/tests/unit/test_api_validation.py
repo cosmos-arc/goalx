@@ -285,12 +285,18 @@ def test_market_skill_deploys_latest_version(
             " content_hash, payload) VALUES (?, 'ml', ?, ?, ?, '{}')",
             (fixture, version, issued, f"h-{version}"),
         )
-    # 票 05：fused 预测晚于 ml 发出——部署版本仍限 track='ml'（dc-v2）,
-    # 不被融合版顶掉（不限轨道会误报「无前瞻样本(部署版本)」）。
+    # 票 05：fused/llm 预测晚于 ml 发出——部署版本仍限 track='ml'（dc-v2）,
+    # 不被融合/LLM 版顶掉（不限轨道会误报「无前瞻样本(部署版本)」）。
     conn.execute(
         "INSERT INTO forecasts (fixture_id, track, model_version, issued_at,"
         " content_hash, payload) VALUES (?, 'fused', 'fused-dc-v2',"
         " '2026-10-01T00:00:00+00:00', 'h-fused', '{}')",
+        (fixture,),
+    )
+    conn.execute(
+        "INSERT INTO forecasts (fixture_id, track, model_version, issued_at,"
+        " content_hash, payload) VALUES (?, 'llm', 'llm-dc-v2',"
+        " '2026-10-02T00:00:00+00:00', 'h-llm', '{}')",
         (fixture,),
     )
     conn.commit()

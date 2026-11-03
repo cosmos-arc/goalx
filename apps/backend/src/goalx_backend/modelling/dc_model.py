@@ -181,6 +181,9 @@ class TrainingRun:
     # 落盘身份：from_payload 冻结,artifact_id() 直接返回——旧工件（含
     # v1 公式产物）按落盘身份寻址,不因公式演进而漂移。
     stored_artifact_id: str | None = None
+    # 身份所属 schema 时代:from_payload 记录,重存时按原 schema 写出,
+    # v1 旧工件复载→重存→复载不因 schema 抬升而自坏。
+    stored_schema: int | None = None
 
     def artifact_id(self) -> str:
         """内容寻址工件身份（决定文件名,不同配置不互相覆盖）。"""
@@ -208,8 +211,13 @@ class TrainingRun:
 
     def to_payload(self) -> dict[str, object]:
         """Serialize to the on-disk JSON payload shape."""
+        schema = (
+            self.stored_schema
+            if self.stored_schema is not None
+            else ARTIFACT_SCHEMA_VERSION
+        )
         return {
-            "schema_version": ARTIFACT_SCHEMA_VERSION,
+            "schema_version": schema,
             "artifact_id": self.artifact_id(),
             "base": asdict(self.base),
             "bootstrap": [asdict(boot) for boot in self.bootstrap],
@@ -217,14 +225,31 @@ class TrainingRun:
             "versions": self._effective_versions(),
         }
 
+    def _v1_artifact_id(self) -> str:
+        """
+        票 34 时代(v1)身份公式快照(不含 n_bootstrap)。
+
+        仅用于旧工件加载校验——历史公式按当时形态保留,勿与现行公式同步。
+        """
+        canonical = json.dumps(
+            {
+                "data_fingerprint": self.base.data_fingerprint,
+                "half_life_days": self.base.half_life_days,
+                "seed": self.seed,
+                "versions": self._effective_versions(),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
     @classmethod
     def from_payload(cls, payload: dict[str, object]) -> TrainingRun:
         """
         Rebuild a run from its on-disk JSON payload.
 
-        versions 取 payload 冻结值（训练环境身份);当前 schema 的工件重算
-        身份必须与落盘一致——篡改身份字段被拒。v1 旧工件公式不同,按落盘
-        artifact_id 寻址不强校验。
+        versions 取 payload 冻结值（训练环境身份);落盘身份按其时代公式
+        严校验——篡改身份字段（含降级 schema 绕过）被拒。票 34 前无
+        artifact_id 字段的更老工件无身份可校,按现行重算寻址。
         """
         base = DCArtifact(**payload["base"])  # type: ignore[arg-type]
         boots = [DCArtifact(**item) for item in payload["bootstrap"]]  # type: ignore[arg-type]
@@ -239,14 +264,22 @@ class TrainingRun:
         stored = payload.get("artifact_id")
         if isinstance(stored, str):
             schema = int(str(payload.get("schema_version", 1)))
-            # 严格校验只对当前公式时代（schema==当前版）:未来公式再演进时
-            # 在此处显式分发,而不是拿新公式验旧时代工件。
-            if schema == ARTIFACT_SCHEMA_VERSION and run.artifact_id() != stored:
+            # 校验按工件时代的公式分发:当前公式(含 n_bootstrap)与 v1 公式
+            # (票 34 形态,42/42 盘面工件实证匹配)各验各的——防篡改也防把
+            # v2 文件降级 schema 绕过校验。未来公式再演进时在此加分支。
+            if schema == ARTIFACT_SCHEMA_VERSION:
+                ok = run.artifact_id() == stored
+            elif versions is not None:
+                ok = run._v1_artifact_id() == stored
+            else:
+                ok = False  # 有身份却无版本记录:盘面不存在这种真工件,拒载
+            if not ok:
                 recalc = run.artifact_id()
                 raise ValueError(
                     f"工件身份与内容不一致: 记 {stored[:16]} 算 {recalc[:16]}"
                 )
             run.stored_artifact_id = stored
+            run.stored_schema = schema
         return run
 
 
@@ -293,11 +326,14 @@ def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / run_filename(run)
     tmp = directory / f".{path.name}.tmp-{os.getpid()}"
-    tmp.write_text(
-        json.dumps(run.to_payload(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    tmp.replace(path)
+    try:
+        tmp.write_text(
+            json.dumps(run.to_payload(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)  # replace 成功后已不存在;失败清残留
     return path
 
 
