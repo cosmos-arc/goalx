@@ -1195,8 +1195,10 @@ def _prepare_spill_root(store: CorpusStore) -> Path:
     """
     本轮独立 spill 子目录（票 02）：并发构建不共用/互删同一目录。
 
-    启动清扫上轮异常残留（文件或目录形态都清）；返回的子目录由调用方
-    finally 删除、基目录空则一并退场。
+    前提：全部写入口经 silver_build_lock 串行——启动清扫（文件/目录
+    形态都清）删掉的兄弟条目按构造只可能是上轮异常残留；绕锁直接并发
+    调用不受保护（与 StreamingPartitions 互写同前提）。返回的子目录由
+    调用方 finally 删除、基目录空则一并退场。
     """
     spill_base = store.root / "tmp" / "srct_odds_spill"
     spill_base.mkdir(parents=True, exist_ok=True)

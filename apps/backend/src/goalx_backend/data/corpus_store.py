@@ -165,9 +165,6 @@ _GUARDIAN_BOUNDARY_ALTER_SQL = (
 # 2026-11-01 追加列（票 05 发现面补缺）：JC 当期拍行带竞彩编号——bfdata
 # 编号直连的本地侧键（编号是 JC 侧身份，matchId 是 calculator 内部 id）
 _JC_CODE_ALTER_SQL = "ALTER TABLE jc_shift_matches ADD COLUMN code TEXT"
-# 2026-11-03 追加列（boundary-hardening 票 02）：锁行带 run_token——
-# release 只删自己那轮（迟到旧持有者误删新持有者的锁=P1-2 第二半）
-_REMAT_RUN_TAG_ALTER_SQL = "ALTER TABLE srct_remat_lock ADD COLUMN run_token TEXT"
 
 
 def _ensure_boundary_column(conn: sqlite3.Connection) -> None:
@@ -185,10 +182,15 @@ def _ensure_jc_code_column(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_remat_token_column(conn: sqlite3.Connection) -> None:
-    """幂等补齐 srct_remat_lock.run_token 列（票 02；老 checkpoint 库升级）。"""
+    """
+    幂等补齐 srct_remat_lock.run_token 列（票 02；老 checkpoint 库升级）。
+
+    锁行带 run_token：release 只删自己那轮——过期夺取后迟到的旧持有者
+    误删不了新持有者的锁（P1-2 第二半）。DDL 字面量非密钥。
+    """
     cols = {row[1] for row in conn.execute("PRAGMA table_info(srct_remat_lock)")}
     if "run_token" not in cols:
-        conn.execute(_REMAT_RUN_TAG_ALTER_SQL)
+        conn.execute("ALTER TABLE srct_remat_lock ADD COLUMN run_token TEXT")
 
 
 _GUARDIAN_REQUEST_DAYS_SQL = """

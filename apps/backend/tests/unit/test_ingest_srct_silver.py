@@ -590,3 +590,30 @@ def test_cli_srct_silver_seam(
     assert payload["xg"]["has_xg_rows"] == 3
     assert Path(payload["duckdb"]).is_file()
     assert payload["cross_face_smoke"]["goalx_hist_matches"] == 2
+
+
+def test_cli_srct_silver_busy_lock_exits_with_holder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """boundary-hardening 票 02 人裁决：手工 CLI 撞锁=立即退出报持锁
+    信息（锁在构建之前，空 corpus 即可钉住零构建早退路径）。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend import cli
+    from goalx_backend.data.corpus_store import CorpusStore
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    store._checkpoint().execute(  # 测试摆数：模拟他轮持锁
+        "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+        " VALUES (1, 999999, ?, 'peer-run')",
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+    store._checkpoint().commit()
+    store.close()
+    args = cli.build_parser().parse_args(["srct-silver"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli._cmd_srct_silver(args, settings=settings)
+    assert "999999" in str(excinfo.value)
+    assert capsys.readouterr().out == ""  # 无成功路径 payload

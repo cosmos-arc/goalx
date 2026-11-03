@@ -724,9 +724,7 @@ def _cmd_srct_silver(
             xg_report = srct_silver.build_xg_observations(store)
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
-        raise SystemExit(
-            f"srct-silver: silver 构建锁被占（{exc}），另一构建进行中，退出"
-        ) from exc
+        raise _silver_lock_busy_exit("srct-silver", exc) from exc
     finally:
         store.close()
     hist_count: int | None = None
@@ -745,6 +743,11 @@ def _cmd_srct_silver(
         "cross_face_smoke": {"goalx_hist_matches": hist_count},
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _silver_lock_busy_exit(cmd: str, exc: srct_remat.RematLockBusy) -> SystemExit:
+    """手工 silver 构建撞锁（票 02 人裁决）：立即退出并报持锁信息。"""
+    return SystemExit(f"{cmd}: silver 构建锁被占（{exc}），另一构建进行中，退出")
 
 
 def _cmd_srct_odds(
@@ -770,9 +773,7 @@ def _cmd_srct_odds(
             odds_report = srct_odds.build_odds_change_events(store)
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
-        raise SystemExit(
-            f"srct-odds: silver 构建锁被占（{exc}），另一构建进行中，退出"
-        ) from exc
+        raise _silver_lock_busy_exit("srct-odds", exc) from exc
     finally:
         store.close()
     payload = {
@@ -806,9 +807,7 @@ def _cmd_srct_market(
             analysis_report = srct_market.build_analysis_faces(store)
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
-        raise SystemExit(
-            f"srct-market: silver 构建锁被占（{exc}），另一构建进行中，退出"
-        ) from exc
+        raise _silver_lock_busy_exit("srct-market", exc) from exc
     finally:
         store.close()
     payload = {
