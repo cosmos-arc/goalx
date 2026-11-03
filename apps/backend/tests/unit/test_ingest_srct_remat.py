@@ -790,6 +790,27 @@ def test_remat_lock_occupied_rejects_and_stale_takeover(tmp_path: Path) -> None:
         store.close()
 
 
+def test_silver_build_lock_release_failure_does_not_mask_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """correctness F1（票 02）：释放侧 sqlite 故障只告警——正体异常原样
+    上抛，不被 finally 的释放异常替换（锁行留驻由 6h 过期兜底）。"""
+    import sqlite3
+
+    store = CorpusStore(_settings(tmp_path).corpus_root)
+    try:
+
+        def _boom(_token: str) -> None:
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(store, "release_remat_lock", _boom)
+        with pytest.raises(KeyError, match="body"):
+            with srct_remat.silver_build_lock(store):
+                raise KeyError("body")
+    finally:
+        store.close()
+
+
 def test_live_anchor_drift_migrates_old_partition(tmp_path: Path) -> None:
     """F2 回归：当期班行跨拍改档（league 空→德乙）旧分区成对清驻留。"""
     settings = _settings(tmp_path)

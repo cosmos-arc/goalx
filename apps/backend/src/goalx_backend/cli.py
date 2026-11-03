@@ -725,6 +725,8 @@ def _cmd_srct_silver(
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
         raise _silver_lock_busy_exit("srct-silver", exc) from exc
+    except sqlite3.OperationalError as exc:
+        raise _silver_lock_unavailable_exit("srct-silver", exc) from exc
     finally:
         store.close()
     hist_count: int | None = None
@@ -748,6 +750,18 @@ def _cmd_srct_silver(
 def _silver_lock_busy_exit(cmd: str, exc: srct_remat.RematLockBusy) -> SystemExit:
     """手工 silver 构建撞锁（票 02 人裁决）：立即退出并报持锁信息。"""
     return SystemExit(f"{cmd}: silver 构建锁被占（{exc}），另一构建进行中，退出")
+
+
+def _silver_lock_unavailable_exit(
+    cmd: str, exc: sqlite3.OperationalError
+) -> SystemExit:
+    """
+    获锁短事务撞锁表写锁忙（BEGIN IMMEDIATE 超时）。
+
+    持锁方不可读，同样立即退出不构建（correctness F2，票 02）——裸栈
+    不给人读信息。
+    """
+    return SystemExit(f"{cmd}: remat 锁表繁忙/不可读（{exc}），退出不构建")
 
 
 def _cmd_srct_odds(
@@ -774,6 +788,8 @@ def _cmd_srct_odds(
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
         raise _silver_lock_busy_exit("srct-odds", exc) from exc
+    except sqlite3.OperationalError as exc:
+        raise _silver_lock_unavailable_exit("srct-odds", exc) from exc
     finally:
         store.close()
     payload = {
@@ -808,6 +824,8 @@ def _cmd_srct_market(
             duckdb_path = corpus_duckdb.build_corpus_duckdb(store)
     except srct_remat.RematLockBusy as exc:
         raise _silver_lock_busy_exit("srct-market", exc) from exc
+    except sqlite3.OperationalError as exc:
+        raise _silver_lock_unavailable_exit("srct-market", exc) from exc
     finally:
         store.close()
     payload = {

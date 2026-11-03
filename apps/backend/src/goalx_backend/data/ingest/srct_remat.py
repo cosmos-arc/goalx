@@ -40,6 +40,7 @@ duckdb 桥视图为路径绑定（分区重写即时可见，无需重建）。
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -376,7 +377,24 @@ def run_remat(
     try:
         return _run_remat_locked(store, report, full=full, headroom_fn=headroom_fn)
     finally:
+        _release_quietly(store, run_token)
+
+
+def _release_quietly(store: CorpusStore, run_token: str) -> None:
+    """
+    释放锁但不让释放故障掩盖正体异常（correctness F1，票 02）。
+
+    释放侧 sqlite 故障只告警：锁行留驻由 6h 过期兜底（fail-safe 方向，
+    互斥性不破），根因异常原样上抛。
+    """
+    try:
         store.release_remat_lock(run_token)
+    except sqlite3.Error as exc:
+        logger.warning(
+            "remat 锁释放失败（留驻由 {}h 过期兜底）：{}",
+            REMAT_LOCK_STALE_SECONDS // 3600,
+            exc,
+        )
 
 
 class RematLockBusy(Exception):
@@ -406,7 +424,7 @@ def silver_build_lock(store: CorpusStore) -> Generator[None]:
     try:
         yield
     finally:
-        store.release_remat_lock(run_token)
+        _release_quietly(store, run_token)
 
 
 def _run_remat_locked(

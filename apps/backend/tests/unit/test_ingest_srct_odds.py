@@ -716,6 +716,25 @@ def test_cli_srct_odds_busy_lock_exits_with_holder(
     assert capsys.readouterr().out == ""  # 无成功路径 payload
 
 
+def test_cli_srct_odds_lock_table_busy_exits_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """correctness F2（票 02）：获锁短事务 BEGIN IMMEDIATE 撞锁表写锁忙
+    （OperationalError）同样立即退出给人读信息，不出裸栈。"""
+    import argparse
+    import sqlite3
+
+    def _busy(*_args: object, **_kwargs: object) -> dict[str, object] | None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(CorpusStore, "try_acquire_remat_lock", _busy)
+    settings = _settings(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        _cmd_srct_odds(argparse.Namespace(), settings=settings)
+    assert "锁表繁忙" in str(excinfo.value)
+    assert capsys.readouterr().out == ""
+
+
 def test_no_pre_kickoff_quote_returns_missing(tmp_path: Path) -> None:
     """验收框 4：无赛前行 → 赛前末可见价为 NULL（不取赛中值顶替）。"""
     routes: dict[str, httpx.Response] = {
