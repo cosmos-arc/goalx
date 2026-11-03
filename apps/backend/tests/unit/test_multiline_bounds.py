@@ -114,12 +114,14 @@ def test_constraint_conflict_row_reported_not_enveloped() -> None:
     assert study.certified == 0
     assert not study.width_sums  # 冲突行不产生端点敏感性界
     assert not study.ev_lower_total
-    assert study.ou_resids  # 残差账在（诊断面）
-    assert study.x12_resids
+    assert study.ou_resids  # OU 残差账在（诊断面，含冲突行）
+    # 1X2 披露位口径=certified 行（票 05 correctness F1）：冲突行不进
+    assert not study.x12_resids
     payload = mlb._payload(study)
     assert payload["sample"]["conflicts"] == 1
     assert payload["sample"]["certified"] == 0
     assert payload["constraint_feasibility"]["ou_resid_max"] is not None
+    assert payload["x12_disclosure"]["n"] == 0
 
 
 def test_certified_semantics_ou_band_only_x12_disclosed() -> None:
@@ -133,11 +135,53 @@ def test_certified_semantics_ou_band_only_x12_disclosed() -> None:
     in_band = mlb._constraint_feasibility(study, (mat, mat, mat), fair, 2.5, over)
     assert in_band is True  # 1X2 差 50pp 不翻转——certified 仅凭 OU 带内
     assert study.x12_resids[0] >= 0.5 - 1e-9  # 披露位如实入账
+    # 副作用显式钉死（correctness F2）：同矩阵三份未达 ±eps 端点目标，
+    # 该金样例同时是端点塌缩行（带内但 resid>eps/2，披露计数不门控）
+    assert study.endpoint_collapse == 1
     payload = mlb._payload(study)
     assert payload["x12_disclosure"]["resid_max"] >= 0.5
     assert payload["x12_disclosure"]["n"] == 1
+    assert payload["constraint_feasibility"]["endpoint_collapse"] == 1
     assert "OU 带内" in payload["semantics"]
     assert "非严格联合可行界" in payload["semantics"]
+
+
+def test_x12_disclosure_population_is_certified_rows() -> None:
+    """票 05 correctness F1：一 certified + 一冲突行 → 1X2 披露位只含
+    certified 行（n 与 certified 计数一致，不被冲突行驱动）。"""
+    study = mlb.BoundsStudy(built_at="2026-11-04", eps=mlb.EPS, sample_n=2)
+    # 冲突行（_ROW 同款构造：OU 端点越带）
+    conflict_row = dict(_ROW)
+    conflict_row.pop("close1x2_a_cons")
+    conflict_row["close1x2_cons_a"] = 3.56
+    mlb._study_row(conflict_row, study, haircut=0.11)
+    assert study.conflicts == 1
+    assert not study.x12_resids  # 冲突行不入披露位
+    # certified 行（自洽收盘）
+    ok_row = {
+        "era": "psc_proxy",
+        "league": "E0",
+        "psc_home": 2.28,
+        "psc_draw": 4.11,
+        "psc_away": 3.81,
+        "avgc_home": 2.33,
+        "avgc_draw": 4.16,
+        "avgc_away": 3.86,
+        "close1x2_h": 2.28,
+        "close1x2_d": 4.11,
+        "close1x2_a": 3.81,
+        "close1x2_cons_h": 2.29,
+        "close1x2_cons_d": 4.12,
+        "close1x2_cons_a": 3.82,
+        "ou_close_line_med": 2.5,
+        "ou_close_over_water_med": 0.95,
+        "ou_close_under_water_med": 0.8824,
+    }
+    mlb._study_row(ok_row, study, haircut=0.11)
+    assert study.certified == 1
+    payload = mlb._payload(study)
+    assert payload["x12_disclosure"]["n"] == 1 == study.certified
+    assert payload["sample"]["conflicts"] == 1  # 冲突行仍在冲突账，不混入披露
 
 
 def test_report_synthetic_case_unreachable_band_is_conflict() -> None:

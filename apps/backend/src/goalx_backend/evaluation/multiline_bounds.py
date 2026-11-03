@@ -175,9 +175,12 @@ def _constraint_feasibility(
         had = mat.had()
         row_x12 = max(abs(had[s] - fair[s]) for s in ("h", "d", "a"))
         x12_resid_max = max(x12_resid_max, row_x12)
-    study.x12_resids.append(x12_resid_max)
-    if in_band_all and collapse:
-        study.endpoint_collapse += 1
+    if in_band_all:
+        # 1X2 披露位口径 = certified 行（票 05 correctness F1）：本披露为
+        # 读 OU 带内面的界服务；冲突行不进而，其贴合度看 OU 残差诊断
+        study.x12_resids.append(x12_resid_max)
+        if collapse:
+            study.endpoint_collapse += 1
     return in_band_all
 
 
@@ -365,7 +368,8 @@ def _payload(study: BoundsStudy) -> dict[str, Any]:
             else None,
             "resid_max": round(max(study.x12_resids), 4) if study.x12_resids else None,
             "note": (
-                "1X2 残差（|拟合三向−fair| 的逐行最大向，显著披露位）："
+                "1X2 残差（|拟合三向−fair| 的逐行最大向，显著披露位，"
+                "口径=certified 行——冲突行不进而，看 OU 残差诊断）："
                 "certified 仅凭 OU 带内，本残差不设闸——resid_max 大（如"
                 "主胜差 50pp=0.50）说明端点族对 1X2 约束贴合差，读界时"
                 "须连同本披露判读，不得当作严格联合可行界"
@@ -408,7 +412,8 @@ def _write_report(store: CorpusStore, payload: dict[str, Any]) -> None:
         + f"｜eps={payload['eps']}",
         f"跳过：{payload['sample']['skipped']}",
         f"OU 约束残差：中位 {feas['ou_resid_median']}" + f"/max {feas['ou_resid_max']}",
-        f"**1X2 残差（显著披露位，不门控）：中位 {x12['resid_median']}"
+        "**1X2 残差（显著披露位，不门控，口径=certified 行）："
+        + f"中位 {x12['resid_median']}"
         + f"/max {x12['resid_max']}（n={x12['n']}）**"
         + "——主胜差 50pp 级行只要 OU 在带仍入面，读界须连同本行判读",
         f"AH 联合一致性：{ah['ok']}/{ah['n']}"
