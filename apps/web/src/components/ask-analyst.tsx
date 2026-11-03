@@ -18,7 +18,7 @@ import { TABULAR_NUMS } from "../lib/ui";
  * 假装当时已可知）。
  */
 
-type ChatMessage = { id: string; role: string; createdAt?: Date };
+type ChatMessage = { id: string; role: string };
 
 export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; intels: IntelItem[] }) {
 	const transport = useMemo(() => createAskTransport(fixtureId), [fixtureId]);
@@ -31,10 +31,10 @@ export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; inte
 		}
 	}
 
-	// 决策时刻 as_of 过滤；无戳兜底 = 全量现行为
-	const intelsAsOf = (message: ChatMessage): IntelItem[] => {
-		const moment = message.createdAt?.getTime() ?? decidedAt.current.get(message.id);
-		return moment === undefined ? intels : intels.filter((intel) => new Date(intel.collected_at).getTime() <= moment);
+	// 决策时刻 as_of 过滤；无戳兜底 = 零徽章（泄漏边界 fail-closed）
+	const intelsAsOf = (messageId: string): IntelItem[] => {
+		const moment = decidedAt.current.get(messageId);
+		return moment === undefined ? [] : intels.filter((intel) => new Date(intel.collected_at).getTime() <= moment);
 	};
 
 	function submit(event: FormEvent) {
@@ -53,40 +53,45 @@ export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; inte
 				回答只引用上方已存证情报（来源/时点随徽章）；证据覆盖不足处 analyst 会明说——advisory 参考，不改注策。
 			</p>
 			<div className="mt-2 space-y-2" data-testid="ask-messages">
-				{chat.messages.map((message) => (
-					<div
-						key={message.id}
-						className={
-							message.role === "user"
-								? "ml-auto w-fit max-w-[85%] rounded-lg bg-info/10 px-3 py-1.5 text-sm"
-								: "max-w-[90%] rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-						}
-						data-testid={`ask-msg-${message.role}`}
-					>
-						<span>
-							{message.parts
-								.filter((part): part is { type: "text"; text: string } => part.type === "text")
-								.map((part) => part.text)
-								.join("")}
-						</span>
-						{message.role === "assistant" && chat.status === "streaming" && chat.messages.at(-1)?.id === message.id ? (
-							<span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-info align-middle" aria-hidden />
-						) : null}
-						{message.role === "assistant" && chat.status !== "streaming" && intelsAsOf(message).length > 0 ? (
-							<span className="mt-1.5 flex flex-wrap gap-1" data-testid="ask-citations">
-								{intelsAsOf(message).map((intel) => (
-									<span
-										key={`${intel.kind}-${intel.collected_at}-${intel.text}`}
-										className="rounded bg-info/10 px-1 text-xs text-info"
-										title={intel.text}
-									>
-										{intel.source} · {intel.collected_at.slice(5, 16).replace("T", " ")}
-									</span>
-								))}
+				{chat.messages.map((message) => {
+					const cited = message.role === "assistant" && chat.status !== "streaming" ? intelsAsOf(message.id) : [];
+					return (
+						<div
+							key={message.id}
+							className={
+								message.role === "user"
+									? "ml-auto w-fit max-w-[85%] rounded-lg bg-info/10 px-3 py-1.5 text-sm"
+									: "max-w-[90%] rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+							}
+							data-testid={`ask-msg-${message.role}`}
+						>
+							<span>
+								{message.parts
+									.filter((part): part is { type: "text"; text: string } => part.type === "text")
+									.map((part) => part.text)
+									.join("")}
 							</span>
-						) : null}
-					</div>
-				))}
+							{message.role === "assistant" &&
+							chat.status === "streaming" &&
+							chat.messages.at(-1)?.id === message.id ? (
+								<span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-info align-middle" aria-hidden />
+							) : null}
+							{cited.length > 0 ? (
+								<span className="mt-1.5 flex flex-wrap gap-1" data-testid="ask-citations">
+									{cited.map((intel) => (
+										<span
+											key={`${intel.kind}-${intel.collected_at}-${intel.text}`}
+											className="rounded bg-info/10 px-1 text-xs text-info"
+											title={intel.text}
+										>
+											{intel.source} · {intel.collected_at.slice(5, 16).replace("T", " ")}
+										</span>
+									))}
+								</span>
+							) : null}
+						</div>
+					);
+				})}
 			</div>
 			{chat.error ? (
 				<p className="mt-1 text-xs text-destructive" data-testid="ask-error">

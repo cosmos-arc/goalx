@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation.forward_validation import (
     ForwardSample,
     ForwardSkillReport,
@@ -250,7 +251,10 @@ def intel_quality(conn: sqlite3.Connection) -> IntelQuality:
             median_hours_to_kickoff=None,
             avg_sources=None,
         )
-    summaries = intel_summary_by_fixture(conn, sorted(fixtures_with_forecast))
+    # 票 04：as_of = 报告生成时刻（情报质量列以报告时点为界，不读未来）
+    summaries = intel_summary_by_fixture(
+        conn, sorted(fixtures_with_forecast), as_of=utc_now_iso()
+    )
     covered = 0
     hours: list[float] = []
     sources_per_fixture: list[int] = []
