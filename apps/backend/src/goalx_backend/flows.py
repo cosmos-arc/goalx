@@ -128,6 +128,8 @@ def daily_wrap_flow() -> dict[str, object]:
     """日终收尾：结算批跑 + 漏斗/冻结决策日拍 + 冻结对账 + CLV 对账 + 账务核查。"""
     settlement = settlement_flow()
     funnel = tasks.funnel_day()
+    # 票 08：新鲜度双口径影子日拍（仅记录；读数与票 09 预注册检查点对齐）
+    freshness_shadow = tasks.freshness_shadow_day()
     m3 = tasks.m3_evaluation()
     frozen_recon = tasks.frozen_reconcile()
     with tasks.task_conn() as conn:
@@ -149,9 +151,11 @@ def daily_wrap_flow() -> dict[str, object]:
         # 日终冻结汇总面（measure-08：含税前/税后 tax_face）
         frozen_face = frozen_mod.frozen_summary(conn, str(funnel["business_date"]))
     logger.info(
-        "daily wrap: settlement={}, funnel={}, clv={}, audit_findings={}, m3={}",
+        "daily wrap: settlement={}, funnel={}, freshness_shadow={}, clv={},"
+        + " audit_findings={}, m3={}",
         settlement,
         funnel,
+        freshness_shadow,
         clv_stats,
         findings,
         m3,
@@ -159,6 +163,7 @@ def daily_wrap_flow() -> dict[str, object]:
     return {
         "settlement": settlement,
         "funnel": funnel,
+        "freshness_shadow": freshness_shadow,
         "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
         "audit_findings": findings,

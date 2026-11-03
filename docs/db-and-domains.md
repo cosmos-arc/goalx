@@ -177,6 +177,9 @@ erDiagram
     forecasts {
         INTEGER id PK
     }
+    freshness_shadow {
+        INTEGER id PK
+    }
     frozen_decision_divergences {
         INTEGER id PK
     }
@@ -500,6 +503,25 @@ append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_
 
 append-only 触发器：`sale_statuses_no_delete`、`sale_statuses_no_update`
 <!-- schema-doc:END:table:sale_statuses -->
+<!-- schema-doc:BEGIN:table:freshness_shadow -->
+#### `freshness_shadow`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `fixture_id` | INTEGER | NOT NULL |
+| `business_date` | TEXT | NOT NULL |
+| `as_of` | TEXT | NOT NULL |
+| `rule_stale_source` | INTEGER | NOT NULL |
+| `observed_stale` | INTEGER | NOT NULL |
+| `price_age_seconds` | REAL | — |
+| `observed_age_seconds` | REAL | — |
+| `sale_age_seconds` | REAL | — |
+| `eu_age_seconds` | REAL | — |
+| `pair_gap_seconds` | REAL | — |
+
+唯一键 `UNIQUE(`fixture_id`, `business_date`)`
+<!-- schema-doc:END:table:freshness_shadow -->
 <!-- schema-doc:BEGIN:table:draw_results -->
 #### `draw_results`
 

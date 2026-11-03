@@ -1902,6 +1902,35 @@ def _apply_v37(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v38(conn: sqlite3.Connection) -> None:
+    """
+    v38（report-audit-20261103 票 08）：新鲜度影子测量表。
+
+    300s 规则（调盘龄）与观测口径（观测龄，同 300s 窗宽=最尖对照）双结论
+    并行落库——仅记录供读数（读数时点与票 09 预注册检查点对齐，11-13
+    首读），不改 stale_source 判定。独立表不污染正式判决字段；日拍
+    INSERT OR REPLACE（同场同日最新一拍生效）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS freshness_shadow (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL,
+            business_date TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            rule_stale_source INTEGER NOT NULL,
+            observed_stale INTEGER NOT NULL,
+            price_age_seconds REAL,
+            observed_age_seconds REAL,
+            sale_age_seconds REAL,
+            eu_age_seconds REAL,
+            pair_gap_seconds REAL,
+            UNIQUE(fixture_id, business_date)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1940,6 +1969,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (35, _apply_v35),
     (36, _apply_v36),
     (37, _apply_v37),
+    (38, _apply_v38),
 )
 
 

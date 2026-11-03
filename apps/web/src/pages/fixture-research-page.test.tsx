@@ -359,3 +359,14 @@ test("ask panel surfaces RUN_ERROR honestly (票 15)", async () => {
 
 	expect(await within(panel).findByTestId("ask-error")).toHaveTextContent("GLM 不可达");
 });
+
+test("票 08：五时钟分离展示（判定口径只标价格未变一只钟）", async () => {
+	await renderAt("/fixtures/1");
+	const clocks = await screen.findByTestId("research-clocks");
+	expect(clocks).toHaveTextContent("确认观测 2分钟前");
+	expect(clocks).toHaveTextContent("价格未变 8分钟前");
+	expect(clocks).toHaveTextContent("销售确认 5分钟前");
+	expect(clocks).toHaveTextContent("欧赔观测 4分钟前");
+	expect(clocks).toHaveTextContent("两源时差 0s");
+	expect(clocks).toHaveTextContent("判定口径=价格未变 300s");
+});

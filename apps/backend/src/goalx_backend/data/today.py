@@ -34,7 +34,14 @@ class SelectionTriple(BaseModel):
 
 
 class HadQuoteStatus(BaseModel):
-    """今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。"""
+    """
+    今日行内嵌的 had 资格摘要（票 35 判定，票 36 消费）。
+
+    票 08 五时钟（只记录展示，stale_source 判定仍只看调盘龄）：
+    jc_source/jc_age=价格持续未变；jc_observed/_age=最近成功确认观测；
+    sale_observed/_age=销售状态最近确认；eu_age=国际参考最近观测；
+    pair_gap=两源配对时差。
+    """
 
     as_of: str
     status: str  # valid | unknown | rejected
@@ -42,6 +49,13 @@ class HadQuoteStatus(BaseModel):
     sale_state: str | None = None
     single_eligible: bool | None = None
     jc_source_updated_at: str | None = None
+    jc_age_seconds: float | None = None
+    jc_observed_at: str | None = None
+    jc_observed_age_seconds: float | None = None
+    sale_observed_at: str | None = None
+    sale_age_seconds: float | None = None
+    eu_age_seconds: float | None = None
+    pair_gap_seconds: float | None = None
     eu_books: int = 0
 
 
@@ -170,6 +184,13 @@ def build_today_view(
             sale_state=verdict.sale_state,
             single_eligible=verdict.single_eligible,
             jc_source_updated_at=verdict.jc_source_updated_at,
+            jc_age_seconds=verdict.jc_age_seconds,
+            jc_observed_at=verdict.jc_observed_at,
+            jc_observed_age_seconds=verdict.jc_observed_age_seconds,
+            sale_observed_at=verdict.sale_observed_at,
+            sale_age_seconds=verdict.sale_age_seconds,
+            eu_age_seconds=verdict.eu_age_seconds,
+            pair_gap_seconds=verdict.pair_gap_seconds,
             eu_books=verdict.eu_books,
         )
         assembled = om.consensus_probs(books, SELECTIONS)

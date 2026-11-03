@@ -12,6 +12,8 @@ OWNERS: dict[str, set[str]] = {
         "source_match_links",
         "odds_snapshots",
         "sale_statuses",
+        # 票 08：新鲜度双口径影子测量（data/quote_evidence.py）
+        "freshness_shadow",
         # measure-07：同步报价账本（data/price_ledger.py，A 线仪器）
         "price_deviation_ledger",
         "quote_observations",

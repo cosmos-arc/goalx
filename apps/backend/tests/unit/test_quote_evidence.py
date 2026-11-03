@@ -366,3 +366,39 @@ def test_had_quote_endpoint(tmp_path) -> None:
         )
         assert strict.json()["status"] == "rejected"
         assert "stale_source" in strict.json()["reasons"]
+
+
+def test_five_clocks_populated(db) -> None:
+    """票 08：五时钟分离记录——确认观测/价格未变/销售确认/欧赔观测/
+    两源时差（判定仍只看价格未变一只钟）。"""
+    fixture = seed_valid(db)
+    verdict = qe.adjudicate_had_quote(db, fixture, AS_OF)
+    # AS_OF 14:04；观测 14:03 → 观测龄 60s；调盘 14:00 → 价格龄 240s
+    assert verdict.jc_observed_at == OBSERVED
+    assert verdict.jc_observed_age_seconds == 60.0
+    assert verdict.jc_age_seconds == 240.0
+    assert verdict.sale_observed_at is not None
+    assert verdict.sale_age_seconds is not None
+    assert verdict.sale_age_seconds >= 0
+    assert verdict.eu_source_updated_at is not None
+    assert verdict.eu_age_seconds == 240.0  # 书源时=SOURCE_TIME
+    assert verdict.pair_gap_seconds == 0.0  # 两源同刻
+
+
+def test_observation_clock_fresh_while_rule_stale(db) -> None:
+    """票 08 隔离黄金样例：10 秒前刚确认观测、价格 1 小时未变——
+    规则口径判 stale_source（行为零改动），观测口径龄 10s（影子口径放）。"""
+    fixture = seed_fixture(db)
+    add_jc(
+        db,
+        fixture,
+        {"h": 2.10, "d": 3.40, "a": 3.20},
+        captured="2026-09-13T13:05:00+00:00",
+        observed="2026-09-13T14:03:50+00:00",
+    )
+    add_sale(db, fixture)
+    verdict = qe.adjudicate_had_quote(
+        db, fixture, "2026-09-13T14:04:00+00:00", freshness_seconds=300
+    )
+    assert "stale_source" in verdict.reasons  # 价格龄 3540s > 300——规则不动
+    assert verdict.jc_observed_age_seconds == 10.0  # 观测口径新鲜
