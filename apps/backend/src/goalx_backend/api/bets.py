@@ -487,8 +487,13 @@ async def list_slips(db: DbDep) -> list[SlipView]:
     status_code=201,
     response_model=SlipView,
 )
-async def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
-    """按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。"""
+def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
+    """
+    按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
+
+    组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
+    线程池不占事件循环（correctness F6，同票 07①）。
+    """
     if payload.mode is BetMode.LIVE:
         raise HTTPException(
             status_code=400, detail="奖池奖金未实现, 暂不支持 live 池票"

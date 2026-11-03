@@ -621,3 +621,83 @@ def test_research_backfill_refuses_id_collision(tmp_path) -> None:
         assert labels == {"new-run"}
     finally:
         check.close()
+
+
+def test_connect_research_concurrent_first_open(tmp_path) -> None:
+    """票 07② correctness F2：全新研究库并发首开（如前端首屏两请求各开
+    一连接）不因 journal_mode 切换/即席迁移竞态报 database is locked。"""
+    import threading
+
+    path = tmp_path / "research.db"
+    barrier = threading.Barrier(2, timeout=10)
+    errors: list[Exception] = []
+
+    def opener() -> None:
+        try:
+            barrier.wait()  # 两线程同时进入首开路径
+            conn = db.connect_research(path)
+            conn.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()
+            conn.close()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=opener) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not errors, errors
+
+
+def test_research_backfill_constraint_violation_is_loud_and_atomic(tmp_path) -> None:
+    """票 07② correctness F4/F5：历史行违反研究库 CHECK 时声性报错（不
+    静默吞行），且单事务回滚——无半截搬运。"""
+    from goalx_backend.evaluation import backtest as bt_mod
+
+    # 伪造"约束更松的旧时代"运行面库：predictions 无 fair_source CHECK
+    ops_path = tmp_path / "ops-loose.db"
+    ops = sqlite3.connect(ops_path)
+    ops.execute(
+        "CREATE TABLE backtest_runs (id INTEGER PRIMARY KEY, label TEXT,"
+        " params TEXT, status TEXT, created_at TEXT, finished_at TEXT, summary TEXT)"
+    )
+    ops.execute(
+        "CREATE TABLE backtest_predictions (id INTEGER PRIMARY KEY,"
+        " run_id INTEGER, match_key TEXT, competition TEXT, season TEXT,"
+        " match_date TEXT, home_team TEXT, away_team TEXT, era TEXT, ftr TEXT,"
+        " had_probs TEXT, fair_probs TEXT, fair_source TEXT,"
+        " model_fingerprint TEXT, train_window_end TEXT)"
+    )
+    ops.execute(
+        "INSERT INTO backtest_runs VALUES (1, 'legacy', '{}', 'done', 't', NULL, NULL)"
+    )
+    ops.execute(
+        "INSERT INTO backtest_predictions VALUES (1, 1, 'k1', 'E0', '2020-21',"
+        " '2020-10-01', 'H', 'A', NULL, 'H', '[]', '[]', 'bogus_source', 'fp', 't')"
+    )
+    ops.commit()
+    ops.close()
+
+    research_path = tmp_path / "research.db"
+    warm = db.connect_research(research_path)
+    warm.close()
+
+    ops2 = db.connect(ops_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            bt_mod.backfill_research(ops2, research_path)
+    finally:
+        ops2.close()
+    # 单事务回滚：runs 行不残留（守卫过后搬运整体失败）
+    check = db.connect_research(research_path)
+    try:
+        n_runs = check.execute("SELECT COUNT(*) AS n FROM backtest_runs").fetchone()[
+            "n"
+        ]
+        n_preds = check.execute(
+            "SELECT COUNT(*) AS n FROM backtest_predictions"
+        ).fetchone()["n"]
+    finally:
+        check.close()
+    assert n_runs == 0
+    assert n_preds == 0

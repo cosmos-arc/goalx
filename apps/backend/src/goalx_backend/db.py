@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+from loguru import logger
 
 from goalx_backend.config import get_settings
 from goalx_backend.migrations import MIGRATIONS, RESEARCH_MIGRATIONS, MigrationFn
@@ -36,6 +39,14 @@ def connect(db_path: str | Path = "", *, readonly: bool = False) -> sqlite3.Conn
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    """表存在探测（sqlite_master 系统目录查询归 infra，票 07②）。"""
+    hit = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (name,)
+    ).fetchone()
+    return hit is not None
 
 
 def current_version(conn: sqlite3.Connection) -> int:
@@ -85,7 +96,8 @@ version INTEGER PRIMARY KEY,
             continue
         apply_fn(conn)
         conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO schema_migrations (version, applied_at)"  # noqa: S608
+            + " VALUES (?, ?)",
             (version, utc_now_iso()),
         )
         conn.commit()
@@ -93,12 +105,27 @@ version INTEGER PRIMARY KEY,
 
 
 def connect_research(db_path: str | Path = "") -> sqlite3.Connection:
-    """打开研究库连接（WAL + 自动迁移，票 07②）。"""
+    """
+    打开研究库连接（WAL + 自动迁移，票 07②）。
+
+    全新库并发首开（如前端首屏两个请求各开一连接）时，journal_mode
+    切换可能瞬时报 database is locked（correctness F2）——短退避重试，
+    另一连接通常已把模式置为 WAL；迁移记账 OR IGNORE + CREATE 幂等使
+    双开最终一致。
+    """
     resolved = Path(db_path) if db_path else get_settings().research_db_path
     resolved.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(resolved, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    _wal_attempts = 3
+    for attempt in range(_wal_attempts):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError:
+            if attempt == _wal_attempts - 1:
+                logger.warning("研究库 WAL 设置让位（并发首开）：{}", resolved)
+            time.sleep(0.1)
     conn.execute("PRAGMA foreign_keys=ON")
     migrate_research(conn)
     return conn

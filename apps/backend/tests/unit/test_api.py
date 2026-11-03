@@ -61,7 +61,11 @@ def _payload() -> dict[str, object]:
 
 
 def _make_client(db_path: Path) -> TestClient:
-    settings = Settings(db_path=db_path)
+    # research 路径同指临时区（票 07②）：验证页回测读面不得在 CWD 落
+    # data/goalx-research.db 跨 run 残留共享
+    settings = Settings(
+        db_path=db_path, research_db_path=db_path.parent / "research.db"
+    )
     return TestClient(create_app(settings=settings))
 
 

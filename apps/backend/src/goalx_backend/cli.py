@@ -84,7 +84,7 @@ from goalx_backend.data.ingest import (
 )
 from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
-from goalx_backend.db import connect, connect_research, migrate
+from goalx_backend.db import connect, connect_research, migrate, table_exists
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import bucket_reaudit as bkt
@@ -344,6 +344,11 @@ def _cmd_research_backfill() -> None:
     warm.close()
     ops = connect(settings.db_path)
     try:
+        if not table_exists(ops, "backtest_runs"):
+            raise SystemExit(
+                f"运行面库无 backtest 表（未迁移？）：{settings.db_path}"
+                + "——先跑 goalx-backend migrate"
+            )
         copied = bt.backfill_research(ops, settings.research_db_path)
     finally:
         ops.close()
@@ -500,8 +505,10 @@ def _cmd_decade_skill(args: argparse.Namespace) -> None:
     """十年分时代技能报告（票 19：era×联赛×玩法，预测面+下注面+EV 实现率）。"""
     store = CorpusStore(get_settings().corpus_root)
     try:
-        with _research_conn() as rconn:
-            payload = dsk.build_decade_skill_report(rconn, store, run_id=args.run_id)
+        with task_conn() as conn, _research_conn() as rconn:
+            payload = dsk.build_decade_skill_report(
+                rconn, store, run_id=args.run_id, fingerprint_conn=conn
+            )
     finally:
         store.close()
     sys.stdout.write(
@@ -518,9 +525,13 @@ def _cmd_decade_skill(args: argparse.Namespace) -> None:
 
 def _cmd_clv_decade(args: argparse.Namespace) -> None:
     """CLV 十年仪表盘（票 20：结构校验+早锁价值+线漂移，观察性不回写）。"""
-    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         payload = clvd.build_clv_decade_report(
-            rconn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id, fingerprint_conn=conn
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -536,9 +547,13 @@ def _cmd_clv_decade(args: argparse.Namespace) -> None:
 
 def _cmd_news_signal(args: argparse.Namespace) -> None:
     """事件信号 PIT 回放（票 05：事件×残差×price-in，观察性）。"""
-    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         payload = nsw.build_news_signal_report(
-            rconn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id, fingerprint_conn=conn
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -604,9 +619,13 @@ def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
 
 def _cmd_bucket_reaudit(args: argparse.Namespace) -> None:
     """错价桶方向映射限定复核（票 03：一次性，结论上限=探索性）。"""
-    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         payload = bkt.build_bucket_reaudit_report(
-            rconn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id, fingerprint_conn=conn
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -623,9 +642,13 @@ def _cmd_bucket_reaudit(args: argparse.Namespace) -> None:
 
 def _cmd_signal_attribution(args: argparse.Namespace) -> None:
     """信号级归因（票 21：残差×收盘族特征分桶，观察性探索报告）。"""
-    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         payload = sig.build_signal_attribution_report(
-            rconn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id, fingerprint_conn=conn
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -652,12 +675,13 @@ def _cmd_model_layers(args: argparse.Namespace) -> None:
         raise SystemExit("至少一个 --treatment label:run_id")
     store = CorpusStore(get_settings().corpus_root)
     try:
-        with _research_conn() as rconn:
+        with task_conn() as conn, _research_conn() as rconn:
             payload = mlp.build_model_layers_report(
                 rconn,
                 store,
                 treatments=treatments,
                 baseline_run_id=args.baseline_run_id,
+                fingerprint_conn=conn,
             )
     finally:
         store.close()

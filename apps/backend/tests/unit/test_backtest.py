@@ -393,6 +393,24 @@ def test_run_backtest_marks_failed_run(gold_env, monkeypatch) -> None:
         assert str(row["status"]) == "failed"
 
 
+def test_run_backtest_interrupt_marks_failed(gold_env, monkeypatch) -> None:
+    """票 07② correctness F3：running 先提交后，Ctrl-C（KeyboardInterrupt）
+    也必须把 run 落到 failed——不留永久 running 僵尸行。"""
+    with gold_env(seed_rows()) as (face, duck_con, store):
+
+        def _interrupt(*args: object, **kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(bt, "_walk_competition", _interrupt)
+        params = bt.BacktestParams(competitions=("E0",), min_train_matches=9)
+        with pytest.raises(KeyboardInterrupt):
+            bt.run_backtest(face, duck_con, store, params, label="ctrl-c")
+        row = face.execute(
+            "SELECT status FROM backtest_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert str(row["status"]) == "failed"
+
+
 def test_run_backtest_research_split_and_short_transactions(
     gold_env, tmp_path, monkeypatch
 ) -> None:

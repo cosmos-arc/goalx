@@ -347,6 +347,7 @@ def build_decade_skill_report(
     *,
     run_id: int | None = None,
     today: date | None = None,
+    fingerprint_conn: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
     """十年技能报告：run 数据四轴分层 → reports/ 双视图。"""
     rid, label, params, run_status = load_backtest_run(conn, run_id)
@@ -394,7 +395,12 @@ def build_decade_skill_report(
         "era_contrast": _era_contrast(pred_faces, bet_faces),
     }
     # 票 06：工件自证身份（git/deps/db/corpus）
-    payload["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
+    # 票 07②：报告读研究库,指纹 db 面仍描述运行面库(fingerprint_conn 透传,
+    # 缺省回退 conn——同库形态如旧)
+    payload["run_fingerprint"] = rfp.build_run_fingerprint(
+        conn=fingerprint_conn if fingerprint_conn is not None else conn,
+        store=store,
+    )
     reports = store.root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     # md 先写、json 最后写（json 为真源，落成即成对完整）

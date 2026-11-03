@@ -294,6 +294,9 @@ export interface paths {
         /**
          * 创建待结算的 paper 池票草稿
          * @description 按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
+         *
+         *     组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
+         *     线程池不占事件循环（correctness F6，同票 07①）。
          */
         post: operations["create_pool_slip_api_v1_pool_slips_post"];
         delete?: never;

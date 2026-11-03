@@ -1579,9 +1579,12 @@ def run_backtest(
             ),
         )
         conn.commit()
-    except Exception:
+    except BaseException:
         # 中途失败：已提交的逐联赛行保留（与既有语义一致——失败前从未回滚
-        # 过），run 标 failed 由读者判不完整
+        # 过），run 标 failed 由读者判不完整。BaseException（correctness F3）：
+        # running 先提交后，Ctrl-C（KeyboardInterrupt）也必须把 run 落到
+        # failed——否则留下永久 running 僵尸行（SIGKILL 仍不可拦，读面按
+        # created_at 陈旧度识别）
         conn.execute(
             "UPDATE backtest_runs SET status = 'failed', finished_at = ? WHERE id = ?",
             (utc_now_iso(), run_id),
@@ -1592,25 +1595,32 @@ def run_backtest(
 
 
 # 研究库历史回填（票 07②）：四表保 id 搬运；表名字面量（归属闸）；
-# 字面量拼接只为行宽（同 model_layers 先例）
+# 字面量拼接只为行宽（同 model_layers 先例）。ON CONFLICT(id) DO NOTHING
+# 只忽略主键撞号（correctness F5：OR IGNORE 会连 CHECK/NOT NULL 违反一并
+# 静默吞）——SELECT 侧 WHERE true 是 SQLite 对带 SELECT 的 upsert 的
+# 解析要求
 _RESEARCH_BACKFILL_SQL: tuple[tuple[str, str], ...] = (
     (
         "backtest_runs",
-        "INSERT OR IGNORE INTO research.backtest_runs SELECT * FROM backtest_runs",
+        "INSERT INTO research.backtest_runs SELECT * FROM backtest_runs"  # noqa: S608
+        + " WHERE true ON CONFLICT(id) DO NOTHING",
     ),
     (
         "backtest_predictions",
-        "INSERT OR IGNORE INTO research.backtest_predictions"  # noqa: S608
-        + " SELECT * FROM backtest_predictions",
+        "INSERT INTO research.backtest_predictions"  # noqa: S608
+        + " SELECT * FROM backtest_predictions WHERE true"
+        + " ON CONFLICT(id) DO NOTHING",
     ),
     (
         "backtest_bets",
-        "INSERT OR IGNORE INTO research.backtest_bets SELECT * FROM backtest_bets",
+        "INSERT INTO research.backtest_bets SELECT * FROM backtest_bets"  # noqa: S608
+        + " WHERE true ON CONFLICT(id) DO NOTHING",
     ),
     (
         "backtest_metrics",
-        "INSERT OR IGNORE INTO research.backtest_metrics"  # noqa: S608
-        + " SELECT * FROM backtest_metrics",
+        "INSERT INTO research.backtest_metrics"  # noqa: S608
+        + " SELECT * FROM backtest_metrics WHERE true"
+        + " ON CONFLICT(id) DO NOTHING",
     ),
 )
 
@@ -1622,18 +1632,25 @@ def backfill_research(
     运行面库 backtest 历史一次性搬入研究库（票 07② 人裁决①）。
 
     conn = 运行面库连接；研究库 ATTACH 为 research。id 保序（报告/工件
-    引用的 run id 不漂移）；INSERT OR IGNORE 幂等可重跑。搬运后运行面库
-    旧行只读留存。列形漂移（运行面新列而研究库 DDL 未跟）会在此处
-    声性地报错而非静默截断。
+    引用的 run id 不漂移）；ON CONFLICT(id) 幂等可重跑。搬运后运行面库
+    旧行只读留存。列形漂移（运行面新列而研究库 DDL 未跟）与历史行违反
+    研究库 CHECK/NOT NULL 都会在此处声性报错而非静默截断（F5）。
 
-    撞号守卫（review 修复）：若研究库已有与运行面库不同源的 run（先跑过
-    新回测——自增 id 与历史 id 重叠但内容不同，或 id 不在历史集内），
-    INSERT OR IGNORE 会静默吞历史行——此形态直接拒绝，提示清空研究库
-    重跑（一次性迁移，正常路径先 backfill 后回测；纯重跑的镜像行放行）。
+    撞号守卫：研究库已有与运行面库不同源的 run（先跑过新回测——自增
+    id 与历史 id 重叠但内容不同，或 id 不在历史集内）时直接拒绝，提示
+    清空研究库重跑（一次性迁移，正常路径先 backfill 后回测；纯重跑的
+    镜像行放行）。
+
+    原子性（correctness F4）：守卫与四表搬运同处一个 BEGIN IMMEDIATE
+    事务（对全部 attached 库取写锁）——并发新回测要么在守卫前落
+    running 行（守卫看到不同源行→拒绝），要么 busy 等待清晰报错；
+    守卫 SELECT 与搬运 INSERT 之间无窗口。代价：搬运期间并发回测会
+    撞写锁报错——一次性迁移时段属可接受（清晰失败优于静默丢行）。
     """
     conn.execute("ATTACH ? AS research", (str(research_db_path),))
     copied: dict[str, int] = {}
     try:
+        conn.execute("BEGIN IMMEDIATE")
         foreign = conn.execute(
             "SELECT COUNT(*) FROM research.backtest_runs AS r"  # noqa: S608
             + " WHERE NOT EXISTS (SELECT 1 FROM backtest_runs AS s"
@@ -1649,8 +1666,10 @@ def backfill_research(
         for table, sql in _RESEARCH_BACKFILL_SQL:
             cur = conn.execute(sql)
             copied[table] = max(cur.rowcount, 0)
-            conn.commit()
+        conn.commit()
     finally:
+        if conn.in_transaction:
+            conn.rollback()
         conn.execute("DETACH research")
     return copied
 
