@@ -749,6 +749,11 @@ export interface paths {
          *
          *     （票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格
          *     三条件只读 ML 轨（票 04 冻结）。
+         *
+         *     票 03 判词语义：Tier A 的 ECE 检查为三键按样本数（场次数）加权真算（原桩恒 None
+         *     已修）；Tier B 增方向核验——判词三态：达标候选（须用户显式裁决
+         *     切换）/ 未达标 / 方向反向（融合显著更差）——未达标（DM 双侧只测
+         *     有差异，显著更差不再误判达标候选）。
          */
         get: operations["get_m3_protocol_api_v1_validation_m3_protocol_get"];
         put?: never;

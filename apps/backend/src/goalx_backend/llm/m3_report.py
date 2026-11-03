@@ -7,8 +7,9 @@ M3 评测协议（票 13，票 05 冻结阈值的工程化）。
 **冻结阈值（票 05 用户裁决，2026-09-19）——代码内不得放宽**：
 - Tier A（融合线去留）：≥200 配对场 + ≥6 周窗口 + 配对 RPS 胜率
   ≥52% + LLM 轨 ECE 无劣化（vs ML 同期）；DM p 值如实报告不设门槛。
-- Tier B（真钱切换）：整赛季 + ≥500 配对场 + DM p<0.05 + 复核无
-  系统性错误 + 盲评定性不负面；缺一不可。
+- Tier B（真钱切换）：整赛季 + ≥500 配对场 + DM p<0.05 且融合方向更优
+  （票 03 方向核验：DM 双侧只测"有差异"，显著更差与显著更好曾同判
+  "达标候选"）+ 复核无系统性错误 + 盲评定性不负面；缺一不可。
 
 真钱资格三条件只读 ML 轨（票 04 冻结）——本报告 LLM/Fused 永远是
 参考列；样本不足 = 未证明，如实展示。
@@ -168,19 +169,33 @@ def _tier_a(paired: PairedFusedVsMl, ece_clean: bool | None) -> TierStatus:
 
 
 def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
-    """Tier B 达标状态行（真钱切换；缺一不可）。"""
+    """
+    Tier B 达标状态行（真钱切换；缺一不可）。
+
+    票 03 方向核验：DM 检验双侧（metrics.diebold_mariano 显式双侧），
+    显著只代表"有差异"不代表"更好"——此前 600 场融合显著更差也会判
+    "达标候选"。现在融合更优（mean_rps_delta<0 且 dm_stat<0 同向；二者
+    按构造同号，双查防口径漂移）为必要条件，判词三态：达标候选 /
+    未达标 / 方向反向（融合显著更差）——未达标。
+    """
     checks = {
         "full_season": paired.span_weeks >= _SEASON_MIN_WEEKS,
         "pairs_ge_500": paired.pairs >= TIER_B_MIN_PAIRS,
         "dm_p_lt_005": paired.dm_p < TIER_B_MAX_DM_P,
+        "fused_better_direction": paired.mean_rps_delta is not None
+        and paired.mean_rps_delta < 0
+        and paired.dm_stat < 0,
         "review_no_systematic_error": review_clean is True,
     }
     sufficient = checks["pairs_ge_500"]
-    verdict = (
-        _INSUFFICIENT
-        if not sufficient
-        else ("达标候选（须用户显式裁决切换）" if all(checks.values()) else "未达标")
-    )
+    if not sufficient:
+        verdict = _INSUFFICIENT
+    elif all(checks.values()):
+        verdict = "达标候选（须用户显式裁决切换）"
+    elif checks["dm_p_lt_005"] and not checks["fused_better_direction"]:
+        verdict = "方向反向（融合显著更差）——未达标"
+    else:
+        verdict = "未达标"
     return TierStatus(checks=checks, verdict=verdict)
 
 
@@ -201,15 +216,26 @@ def _ece_clean(conn: sqlite3.Connection) -> bool | None:
 
 def _mean_ece(report: ForwardSkillReport) -> float | None:
     """
-    报告组内 ECE 加权平均（缺指标 None）。
+    报告组内 ECE 加权平均（票 03 已修复：原桩恒 None 不再）。
 
-    票 06 记录（类型化揭出）：组指标自 ece 拆为 ece_h/ece_d/ece_a 后，
-    本函数取 'ece' 恒缺 → 恒 None（Tier A 的 ece_no_degradation 检查
-    长期为 False）。显式返回 None 保历史行为；重建该检查（如三键加权）
-    属另票——勿在此静默复活。
+    口径（人裁决 2026-11-03"按 pair 对数加权"，票 06 docstring 自荐
+    同向）：组内三键（ece_h/ece_d/ece_a，各已是组内样本加权）等权
+    平均 → 组间按样本数（场次数 n_fixtures）加权——整体期望校准误差
+    口径。跨组无法还原原始样本流，以组级指标按场次数权重构整体口径。
+
+    样本不足组（insufficient_samples，forward_validation 冻结
+    MIN_GROUP_SAMPLES=30 以下"不作通过依据"）不计权——correctness F1：
+    两个各 25 场的不足组不可聚合成 50 场的通过证据；无充分组返回
+    None（未知，fail-closed）。
     """
-    _ = report
-    return None
+    weighted = 0.0
+    total = 0
+    for group in report.groups.values():
+        if group.insufficient_samples or group.n_fixtures <= 0:
+            continue
+        weighted += group.n_fixtures * (group.ece_h + group.ece_d + group.ece_a) / 3
+        total += group.n_fixtures
+    return weighted / total if total else None
 
 
 def intel_quality(conn: sqlite3.Connection) -> IntelQuality:
