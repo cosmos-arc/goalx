@@ -331,6 +331,30 @@ def _manual_sid(conn: sqlite3.Connection, fixture_id: int) -> str | None:
     return str(row["source_match_id"])
 
 
+def link_fixture_sid(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    sid: str,
+    *,
+    method: str,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """
+    显式落一条 linked 映射（e2e 夹具/运维手工链；票 06）。
+
+    与两步法匹配器同表同状态语义,绕过自动匹配直接指定——消费端
+    ``srct_sid_for_fixture`` 只认 status=linked。
+    """
+    _upsert_link(
+        conn,
+        fixture_id,
+        source_match_id=sid,
+        method=method,
+        status=STATUS_LINKED,
+        meta=meta or {"note": method},
+    )
+
+
 def _upsert_link(
     conn: sqlite3.Connection,
     fixture_id: int,

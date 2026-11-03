@@ -171,6 +171,12 @@ tasks:
       - bun run e2e:loop {{.CLI_ARGS}}
     dir: apps/web
 
+  web-e2e-corpus:
+    desc: corpus 主链 e2e(四场制式语料夹具, boundary-hardening 票 06)
+    cmds:
+      - bun run e2e:corpus {{.CLI_ARGS}}
+    dir: apps/web
+
   check-web:
     desc: Everything the web app must pass
     cmds:
@@ -187,6 +193,7 @@ tasks:
       - task: web-build
       - task: web-e2e
       - task: web-e2e-loop
+      - task: web-e2e-corpus
 
   browser-install:
     desc: Install the Playwright chromium browser

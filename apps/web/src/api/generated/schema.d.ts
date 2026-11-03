@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Liveness probe
-         * @description Report whether the process is alive.
+         * @description Report whether the process is alive (with startup runtime fingerprint).
          */
         get: operations["health_check_healthz_get"];
         put?: never;

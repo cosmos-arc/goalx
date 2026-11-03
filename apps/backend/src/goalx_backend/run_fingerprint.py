@@ -19,6 +19,7 @@ run_params 同名键。口径升级（表清单/哈希法变化）须递增 ``SC
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from goalx_backend.betting import fingerprint as betting_fp
+from goalx_backend.config import Settings
 from goalx_backend.data import fingerprint as data_fp
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.gold_reader import read_gold_meta
@@ -141,3 +143,42 @@ def build_run_fingerprint(
     fingerprint["db"] = _db_face(conn) if conn is not None else None
     fingerprint["corpus"] = _corpus_face(store) if store is not None else None
     return fingerprint
+
+
+def process_face(
+    settings: Settings, *, conn: sqlite3.Connection | None = None
+) -> dict[str, str]:
+    """
+    进程运行指纹（boundary-hardening 票 06）：serve/调度启动身份。
+
+    进程加载代码的 git_sha + dirty 旗 + 生效配置哈希 + 库 schema 版本,
+    全字符串面（/healthz 契约 dict[str,str] 不变形）。进程内取一次、
+    启动时算——探针不得每请求起子进程。dirty=True 照跑不拒（人裁决
+    2026-11-02①），消费方（晨检）亮黄。conn 缺席时 schema_version=
+    unknown（不假装）。
+
+    config_hash = 生效 Settings 全字段（Path→str）规范 JSON 的 sha256——
+    只出摘要不出值（srct 端点真值不落码库,代称红线同样护运行面）。
+    """
+    root = _repo_root()
+    git = _git_face(root) if _is_repo_root(root) else {"sha": None, "dirty": None}
+    config = settings.model_dump(mode="json")
+    config_hash = hashlib.sha256(
+        json.dumps(config, sort_keys=True).encode()
+    ).hexdigest()
+    schema_version: str
+    if conn is not None:
+        try:
+            schema_version = str(current_version(conn))
+        except sqlite3.Error:
+            schema_version = "unknown"
+    else:
+        schema_version = "unknown"
+    gd = git["dirty"]
+    dirty = "unknown" if gd is None else f"{bool(gd)}".lower()
+    return {
+        "git_sha": git["sha"] or "unknown",
+        "git_dirty": dirty,
+        "config_hash": config_hash,
+        "schema_version": schema_version,
+    }

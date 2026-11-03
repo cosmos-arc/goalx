@@ -19,7 +19,51 @@ def test_healthz_reports_ok(client: TestClient) -> None:
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+
+
+def test_healthz_carries_runtime_fingerprint(tmp_path: Path) -> None:
+    """票 06 运行隔离:/healthz 报进程加载代码的 git 身份+配置/库指纹。
+
+    自建已迁移库(共享 client fixture 不迁移库——那一路 schema=unknown
+    是正确降级,不在此断言)。
+    """
+    from goalx_backend.db import connect, migrate
+
+    db_path = tmp_path / "fp-healthz.db"
+    conn = connect(db_path)
+    migrate(conn)
+    conn.close()
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=db_path))
+    ) as test_client:
+        response = test_client.get("/healthz")
+
+    assert response.status_code == 200
+    body = response.json()
+    # 全字符串面(契约 dict[str,str] 不变形);测试跑在 git 仓库内
+    assert set(body) >= {
+        "status",
+        "git_sha",
+        "git_dirty",
+        "config_hash",
+        "schema_version",
+    }
+    assert len(body["git_sha"]) == 40  # 真仓库内=完整 sha
+    assert body["git_dirty"] in {"true", "false"}
+    assert len(body["config_hash"]) == 64
+    assert body["schema_version"].isdigit()  # 已迁移库
+
+
+def test_healthz_schema_version_unknown_without_db(tmp_path: Path) -> None:
+    """库文件缺席/未迁移:healthz 仍 200,schema_version=unknown(不假装)。"""
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=tmp_path / "absent.db"))
+    ) as test_client:
+        body = test_client.get("/healthz").json()
+    assert body["status"] == "ok"
+    assert body["schema_version"] == "unknown"
 
 
 def test_readyz_reports_ready(client: TestClient) -> None:

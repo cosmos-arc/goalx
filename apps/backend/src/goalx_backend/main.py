@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -17,6 +18,8 @@ from goalx_backend.api import pool as pool_api
 from goalx_backend.api import results as results_api
 from goalx_backend.api import validation as validation_api
 from goalx_backend.config import Environment, Settings, get_settings
+from goalx_backend.db import connect as db_connect
+from goalx_backend.run_fingerprint import process_face
 
 OPENAPI_DESCRIPTION = (
     "GoalX backend API. The contract under `contracts/openapi/v1.json` is the "
@@ -35,6 +38,17 @@ class StatusResponse(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the GoalX ASGI application."""
     resolved = settings if settings is not None else get_settings()
+    # 运行指纹启动时算一次（票 06）：git_sha/dirty/config_hash/schema。
+    # git 子进程只在启动跑一次;schema 探测走只读连接,库未迁移/缺席=
+    # unknown——healthz 探针路径零子进程零库访问。
+    try:
+        fp_conn = db_connect(resolved.db_path, readonly=True)
+        try:
+            runtime_face = process_face(resolved, conn=fp_conn)
+        finally:
+            fp_conn.close()
+    except sqlite3.Error:
+        runtime_face = process_face(resolved)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -82,11 +96,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
     )
     app.state.settings = resolved
+    app.state.runtime_face = runtime_face
 
     @app.get("/healthz", tags=["system"], summary="Liveness probe")
     async def health_check() -> dict[str, str]:
-        """Report whether the process is alive."""
-        return {"status": "ok"}
+        """Report whether the process is alive (with startup runtime fingerprint)."""
+        # 指纹字段见 run_fingerprint.process_face（票 06 运行隔离）:
+        # git_sha/git_dirty/config_hash/schema_version——dirty=true 时
+        # 晨检亮黄（人裁决①:照跑不拒）。
+        return {"status": "ok", **app.state.runtime_face}
 
     @app.get("/readyz", tags=["system"], summary="Readiness probe")
     async def readiness_check() -> dict[str, str]:

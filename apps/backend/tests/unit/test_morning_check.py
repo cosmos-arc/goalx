@@ -345,3 +345,53 @@ def test_check_jc_waiting_overnight_residual_is_red(db: sqlite3.Connection) -> N
     assert item.status == FAIL
     assert "昨夜残差 1" in item.detail
     assert "周六015" in item.detail
+
+
+# --- boundary-hardening 票 06：运行指纹项（第 13 项） ---
+
+
+def test_check_runtime_fingerprint_dirty_is_yellow(tmp_path: Path) -> None:
+    """dirty=黄不红(裁决①照跑);healthz 不可读只缺面不算红(栈死归项 1)。"""
+    log = tmp_path / "serve.log"
+
+    def clean_probe() -> dict[str, str]:
+        return {"git_sha": "a" * 40, "git_dirty": "false"}
+
+    log.write_text(
+        "runtime fingerprint: git_sha=aaa git_dirty=false\n", encoding="utf-8"
+    )
+    item = mc.check_runtime_fingerprint(log, probe=clean_probe)
+    assert item.status == mc.OK
+
+    def dirty_probe() -> dict[str, str]:
+        return {"git_sha": "a" * 40, "git_dirty": "true"}
+
+    item = mc.check_runtime_fingerprint(log, probe=dirty_probe)
+    assert item.status == mc.DEGRADED  # 亮黄不红
+
+    # 调度日志:最近一次启动指纹后带 WORKTREE DIRTY → 黄
+    log.write_text(
+        "runtime fingerprint: git_sha=old\nWORKTREE DIRTY x\n"
+        "restart\nruntime fingerprint: git_sha=bbb\n",
+        encoding="utf-8",
+    )
+    item = mc.check_runtime_fingerprint(log, probe=clean_probe)
+    assert item.status == mc.OK  # dirty 行在旧班次,本班次干净
+
+    log.write_text(
+        "runtime fingerprint: git_sha=bbb\nWORKTREE DIRTY — 照跑\n",
+        encoding="utf-8",
+    )
+    item = mc.check_runtime_fingerprint(log, probe=clean_probe)
+    assert item.status == mc.DEGRADED
+
+    # healthz 不可读:不红(栈活性项 1 覆盖);日志无指纹行:如实注明
+    def broken_probe() -> dict[str, str]:
+        raise httpx.ConnectError("down")
+
+    empty_log = tmp_path / "empty.log"
+    empty_log.write_text("", encoding="utf-8")
+    item = mc.check_runtime_fingerprint(empty_log, probe=broken_probe)
+    assert item.status == mc.OK
+    assert "healthz 不可读" in item.detail
+    assert "指纹行缺" in item.detail
