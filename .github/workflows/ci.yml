@@ -124,6 +124,8 @@ jobs:
         run: task web-e2e
       - name: Paper-loop e2e (isolated real API/DB)
         run: task web-e2e-loop
+      - name: Corpus mainline e2e (fixture corpus tree, boundary-hardening 06)
+        run: task web-e2e-corpus
       - name: Upload e2e evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

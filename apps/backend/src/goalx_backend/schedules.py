@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 from typing import cast
 
 from loguru import logger
@@ -58,6 +59,7 @@ from prefect.schedules import Schedule
 
 from goalx_backend import datasets
 from goalx_backend.config import get_settings
+from goalx_backend.db import connect as db_connect
 from goalx_backend.flows import (
     daily_capture_flow,
     daily_wrap_flow,
@@ -143,17 +145,27 @@ def log_startup_fingerprint() -> None:
     """
     启动指纹一行（boundary-hardening 票 06 运行隔离）。
 
-    晨检 grep 此行即知调度进程加载代码的 git 身份;dirty=true 属亮黄
-    照跑（人裁决 2026-11-02①:不拒跑——10-31 票01 实录的未提交代码触
-    主库风险靠可见性兜底,而非拒绝服务）。schema_version 缺省打不出
-    （调度进程无常驻连接,库身份由各 flow 自报）。
+    晨检 grep 此行即知调度进程加载代码的 git 身份与库 schema;dirty=true
+    属亮黄照跑（人裁决 2026-11-02①:不拒跑——10-31 票01 实录的未提交代码
+    触主库风险靠可见性兜底,而非拒绝服务）。
     """
-    face = process_face(get_settings())
+    settings = get_settings()
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = db_connect(settings.db_path, readonly=True)
+    except sqlite3.Error:
+        pass  # 库缺席/未迁移=unknown,不假装(票 06)
+    try:
+        face = process_face(settings, conn=conn)
+    finally:
+        if conn is not None:
+            conn.close()
     logger.info(
-        "runtime fingerprint: git_sha={} git_dirty={} config_hash={}",
+        "runtime fingerprint: git_sha={} git_dirty={} config_hash={} schema_version={}",
         face["git_sha"],
         face["git_dirty"],
         face["config_hash"],
+        face["schema_version"],
     )
     if face["git_dirty"] == "true":
         logger.warning("WORKTREE DIRTY — 调度在未提交代码上运行(晨检亮黄,照跑不拒)")

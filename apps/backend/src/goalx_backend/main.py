@@ -39,7 +39,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the GoalX ASGI application."""
     resolved = settings if settings is not None else get_settings()
     # 运行指纹启动时算一次（票 06）：git_sha/dirty/config_hash/schema。
-    # 只读连库探 schema,库未迁移/缺席=unknown——探针路径零子进程零副作用。
+    # git 子进程只在启动跑一次;schema 探测走只读连接,库未迁移/缺席=
+    # unknown——healthz 探针路径零子进程零库访问。
     try:
         fp_conn = db_connect(resolved.db_path, readonly=True)
         try:

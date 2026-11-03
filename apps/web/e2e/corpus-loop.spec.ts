@@ -22,7 +22,11 @@ type FixtureMeta = {
 
 const manifest = JSON.parse(
 	readFileSync(path.join(import.meta.dirname, "../test-results/e2e-corpus-manifest.json"), "utf8"),
-) as { fixtures: FixtureMeta[]; jc_had: Record<string, number> };
+) as {
+	fixtures: FixtureMeta[];
+	jc_had: Record<string, number>;
+	business_date_today: string;
+};
 
 const byScenario = (scenario: FixtureMeta["scenario"]) =>
 	manifest.fixtures.find((f) => f.scenario === scenario) as FixtureMeta;
@@ -60,7 +64,16 @@ test("今日页按 sid 链接分叉：corpus 三书/改期单书/缺源空面/le
 
 test("场次页与研究页：corpus 行渲染逐书三行与共识", async ({ page }) => {
 	await page.goto("/fixtures");
-	// 场次页默认单业务日:今日三场(S1/S3/S4);改期场 S2 在明日,直连研究页覆盖
+	// 夹具业务日=base+3h 的北京日,深夜生成时跨到明天——切到该日 tab 再数行
+	// (默认 tab=客户端今天;correctness F2 跨午夜 flake 防护)
+	const manifestDay = manifest.business_date_today;
+	const beijingToday = new Intl.DateTimeFormat("en-CA", {
+		timeZone: "Asia/Shanghai",
+	}).format(new Date());
+	if (manifestDay !== beijingToday) {
+		await page.getByTestId(`fixtures-day-tab-${manifestDay}`).click();
+	}
+	// 该业务日三场(S1/S3/S4);改期场 S2 在再下一日,直连研究页覆盖
 	await expect(page.getByTestId("fixtures-row")).toHaveCount(3);
 
 	const mainline = byScenario("mainline");

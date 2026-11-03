@@ -121,7 +121,7 @@ def test_today_view_splits_corpus_and_legacy_faces(built) -> None:
 
 
 def test_isolated_db_guard(tmp_path: Path) -> None:
-    """红线:库中存在真实来源竞彩行时拒绝生成。"""
+    """红线:库中存在真实来源竞彩行时拒绝生成(NULL 旧行同拒,correctness F3)。"""
     from goalx_backend.data import fixtures as fx_store
     from goalx_backend.models import MatchCodeInput, Tier
 
@@ -135,6 +135,16 @@ def test_isolated_db_guard(tmp_path: Path) -> None:
         fixture = fx_store.upsert_fixture(
             conn, competition, "2026-01-01T20:00:00+00:00", home, away
         )
+        # NULL 来源旧行(真实采集早期)不逃守卫
+        conn.execute(
+            "INSERT INTO match_codes (fixture_id, kind, business_date, code,"
+            " source_match_id, is_single)"
+            " VALUES (?, 'jingcai', '2026-01-01', '周二001', NULL, 1)",
+            (fixture,),
+        )
+        with pytest.raises(RuntimeError, match="真实竞彩数据"):
+            e2e_corpus.ensure_isolated_db(conn)
+        conn.execute("DELETE FROM match_codes")
         fx_store.upsert_match_code(
             conn,
             MatchCodeInput(
@@ -151,3 +161,18 @@ def test_isolated_db_guard(tmp_path: Path) -> None:
             e2e_corpus.ensure_isolated_db(conn)
     finally:
         conn.close()
+
+
+def test_require_isolated_paths_guard(tmp_path: Path) -> None:
+    """裸跑守卫:缺省 db_path/corpus_root(主库/真实语料树)拒绝,显式隔离路径放行。"""
+    from goalx_backend.config import Settings
+
+    with pytest.raises(RuntimeError, match="db_path"):
+        e2e_corpus.require_isolated_paths(Settings(_env_file=None))
+    only_db = Settings(_env_file=None, db_path=tmp_path / "iso.db")  # corpus_root 缺省
+    with pytest.raises(RuntimeError, match="corpus_root"):
+        e2e_corpus.require_isolated_paths(only_db)
+    isolated = Settings(
+        _env_file=None, db_path=tmp_path / "iso.db", corpus_root=tmp_path / "tree"
+    )
+    e2e_corpus.require_isolated_paths(isolated)  # 双显式隔离路径通过

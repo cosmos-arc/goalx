@@ -120,7 +120,7 @@ def check_runtime_fingerprint(
     probe: Callable[[], dict[str, str]] | None = None,
 ) -> CheckItem:
     """
-    项 13 运行指纹（boundary-hardening 票 06）。
+    运行指纹项（boundary-hardening 票 06;装配位次序见 run_morning_check）。
 
     serve /healthz dirty 旗 + 调度日志最近一次启动指纹的 WORKTREE DIRTY
     行。dirty=黄不红（人裁决 2026-11-02①：照跑不拒,晨检亮黄——未提交

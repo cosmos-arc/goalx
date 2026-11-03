@@ -15,8 +15,11 @@ corpus.duckdb→sid 映射→欧共识→报价资格→纸面锁定），替代
   S1 的 corpus 读径同页共存。
 
 页时间相对 ``base``（北京钟面分钟粒度，与真实源同精度）；collect 单拍
-浅深（日页+1x2 轨迹），语料树 ingest 幂等、运行面 upsert 幂等，重跑
-安全。cid/书名全假占位（代称红线，同 test_ingest_srct_odds 先例）。
+浅深（日页+1x2 轨迹）。重跑语义：语料树侧幂等（ingest/silver 重建）；
+运行面侧为**增量再 seed**——kickoff=当次 base+3h，重跑新建当班四场、
+旧场留库成历史行（不清理）；e2e 每轮由 global-setup 清库重建，单测用
+tmp 目录，二者均一轮一库。
+cid/书名全假占位（代称红线，同 test_ingest_srct_odds 先例）。
 """
 
 from __future__ import annotations
@@ -43,25 +46,50 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 SID_MAIN = "91001"
 SID_MOVED = "91002"
 JC_HAD = {"h": 2.05, "d": 3.40, "a": 3.60}
-LEGACY_BOOKS = ("odds_api:pin", "odds_api:avg")  # legacy 读径只认 odds_api:% 命名空间
+LEGACY_BOOKS = (
+    "odds_api:testa",
+    "odds_api:testb",
+)  # legacy 读径只认 odds_api:% 命名空间(代称红线:占位名)
 LEGACY_HAD = {"h": 2.10, "d": 3.30, "a": 3.55}
 MANIFEST_NAME = "e2e-corpus-manifest.json"
 # 运行面竞彩行来源 tag（隔离守卫的合法痕迹集=demo + 本前缀）
 FIXTURE_SOURCE_PREFIX = "e2e-corpus-"
 
 
+def require_isolated_paths(settings: Settings) -> None:
+    """
+    裸跑守卫（correctness F1）：db_path/corpus_root 任一为缺省值即拒。
+
+    空主库过得了 ``ensure_isolated_db``（无真实行）,但缺省 corpus_root
+    就是真实语料树 ~/goalx-data——夹具页/物化会污染生产数据。要求两个
+    路径都显式指向隔离位置（env 注入）。
+    """
+    # model_construct 跳过 env/.env 加载,拿到纯字段缺省值——对比基准不能
+    # 随进程 env 漂移(否则显式注入的隔离路径会被误判成缺省)
+    defaults = Settings.model_construct()
+    if settings.db_path == defaults.db_path:
+        raise RuntimeError(
+            "e2e-corpus 拒绝缺省 db_path(主库): 须显式 GOALX_DB_PATH 指向隔离库"
+        )
+    if settings.corpus_root == defaults.corpus_root:
+        raise RuntimeError(
+            "e2e-corpus 拒绝缺省 corpus_root(真实语料树): 须显式 GOALX_CORPUS_ROOT"
+        )
+
+
 def ensure_isolated_db(conn: sqlite3.Connection) -> None:
     """
     同 seed-demo 红线（票 36）：只写隔离/夹具库，拒绝主库伪造实采。
 
-    合法痕迹=demo tag 或本夹具前缀；出现其他来源（真实采集）即拒绝。
+    合法痕迹=demo tag 或本夹具前缀；出现其他来源（真实采集,含 NULL
+    来源旧行——COALESCE 口径与 demo 守卫同严）即拒绝。
     """
     row = conn.execute(
         """
         SELECT COUNT(*) AS n FROM match_codes
         WHERE kind = 'jingcai'
           AND COALESCE(source_match_id, '') != 'demo'
-          AND source_match_id NOT LIKE ?
+          AND COALESCE(source_match_id, '') NOT LIKE ?
         """,
         (f"{FIXTURE_SOURCE_PREFIX}%",),
     ).fetchone()
@@ -139,14 +167,15 @@ def _routes(kickoff_bj: datetime, base_bj: datetime) -> dict[str, httpx.Response
         _game_row("7007", "717007", "TestLate", "测试迟", kickoff_bj),
     ]
     sharp_details = [
-        # 新→旧：最新 m-2（临场价,与 JC 价同窗）；同分钟异价对 m-4
-        # （同发布时刻不同记录）；A→B→A 回摆段 m-6/m-8
+        # 新→旧严格降序：最新 m-2（临场价,与 JC 价同窗）；同分钟异价对 m-4
+        # （同发布时刻不同记录）；A→B→A 回摆段按时间旧→新读 m-10(A)→
+        # m-8(B)→m-6(A)
         _detail_row("719001", "1.75", "3.70", "4.40", minutes_ago(2)),
         _detail_row("719001", "1.80", "3.65", "4.30", minutes_ago(4)),
         _detail_row("719001", "1.78", "3.68", "4.35", minutes_ago(4)),
-        _detail_row("719001", "1.82", "3.62", "4.25", minutes_ago(6)),
-        _detail_row("719001", "1.76", "3.72", "4.45", minutes_ago(8)),
-        _detail_row("719001", "1.82", "3.62", "4.25", minutes_ago(6)),
+        _detail_row("719001", "1.76", "3.72", "4.45", minutes_ago(6)),
+        _detail_row("719001", "1.82", "3.62", "4.25", minutes_ago(8)),
+        _detail_row("719001", "1.76", "3.72", "4.45", minutes_ago(10)),
     ]
     lottery_details = [
         _detail_row("711129", "2.02", "3.30", "3.75", minutes_ago(2)),

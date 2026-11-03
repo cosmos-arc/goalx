@@ -39,7 +39,7 @@ cat > /tmp/goalx-ruleset.json <<'EOF'
       "parameters": {
         "strict": false,
         "required_status_checks": [
-          { "context": "CI / ci-gate" },
+          { "context": "CI / CI gate" },
           { "context": "PR base guard / base-must-be-main" }
         ]
       }
@@ -47,7 +47,7 @@ cat > /tmp/goalx-ruleset.json <<'EOF'
     { "type": "non_fast_forward" },
     { "type": "deletion" }
   ],
-  "bypass_mode": []
+  "bypass_actors": []
 }
 EOF
 gh api -X POST repos/cosmos-arc/goalx/rulesets --input /tmp/goalx-ruleset.json
@@ -55,14 +55,14 @@ gh api -X POST repos/cosmos-arc/goalx/rulesets --input /tmp/goalx-ruleset.json
 
 说明：
 
-- `required_status_checks` 的 context = `<workflow name> / <job name>`，当前两道：
-  `CI / ci-gate`（聚合门，内部已含 backend/web/contract/e2e 全部 job）与
-  `PR base guard / base-must-be-main`（叠层 base 红叉）。票板合入新 workflow
-  时按同名格式追加。
+- `required_status_checks` 的 context = `<workflow name> / <job display name>`：
+  `CI gate` job 在 ci.yml 里带 `name: CI gate`（key 是 `ci-gate`，context 用
+  显示名）；`base-must-be-main` job 无 name，用 key。写错 context 会表现为
+  required check 永不满足——配置后用一个 PR 验证 check 名被正确匹配。
 - 个人单人仓库：`required_approving_review_count=0`（第二人审批明确出局），
   但"必须 PR"仍强制——历史不经 PR 的直推路径被关死。
-- 绕过：本配置无人可绕。如需 owner 紧急通道，网页 Rules → main-protection →
-  Bypass list 加 owner 本人，日常不开。
+- 绕过：`bypass_actors` 空=无人可绕。如需 owner 紧急通道，网页 Rules →
+  main-protection → Bypass list 加 owner 本人，日常不开。
 - 等价网页路径：Settings → Rules → Rulesets → New branch ruleset，逐项对应
   上面 rules 列表（同名同参数）。
 
@@ -72,8 +72,9 @@ gh api -X POST repos/cosmos-arc/goalx/rulesets --input /tmp/goalx-ruleset.json
 # ① ruleset 已挂
 gh api repos/cosmos-arc/goalx/rulesets --jq '.[] | {name, enforcement, rules: [.rules[].type]}'
 
-# ② 直接 push main 被拒（建一个一次性提交验证,预期 remote 拒绝）
-git commit --allow-empty -m "chore: ruleset verification push" && git push origin main
+# ② 直接 push main 被拒（建一个一次性提交验证,预期 remote 拒绝;
+#    --no-verify 跳过本地 no-commit-to-branch hook——否则先被本地拦住到不了远端）
+git commit --no-verify --allow-empty -m "chore: ruleset verification push" && git push origin main
 # 预期: remote: error: GH013: Ruleset violation ... pull_request
 git reset --hard origin/main   # 清理本地验证提交
 

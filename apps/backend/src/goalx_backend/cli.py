@@ -1324,8 +1324,10 @@ def _cmd_e2e_corpus() -> None:
     from goalx_backend.data.ingest.e2e_corpus import (  # noqa: PLC0415
         build,
         ensure_isolated_db,
+        require_isolated_paths,
     )
 
+    require_isolated_paths(get_settings())  # 裸跑守卫:缺省路径=主库/真实语料树,拒
     conn = connect()
     try:
         migrate(conn)
