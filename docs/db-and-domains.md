@@ -1062,6 +1062,7 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `selections` | TEXT | NOT NULL |
 | `hit` | INTEGER | — |
 | `payout` | REAL | — |
+| `quarantine_reason` | TEXT | — |
 
 唯一键 `UNIQUE(`slip_id`, `seq`)`
 <!-- schema-doc:END:table:combinations -->

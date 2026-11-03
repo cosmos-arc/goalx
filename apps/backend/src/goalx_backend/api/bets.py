@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -89,13 +89,39 @@ class PoolPickPayload(BaseModel):
 
 
 class PoolSlipCreate(BaseModel):
-    """创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。"""
+    """
+    创建池票（任9/14 场复式）；market_code 为票级 Market 口径（票 01）。
+
+    market_code=pick9：组合 = 全部 9 场子集 × 各子集内逐场 picks 之积
+    （需 ≥9 场）；market_code=ttt14：整体所选场连乘（14 腿不动）。缺省
+    pick9——任9 页是唯一池票 UI；期次（ttt14 期）承载的是 14 场赛程，
+    任9 从同场程选 9 场，Market 归票不归期次。
+    """
 
     mode: BetMode
     pool_period_id: int | None = None
+    market_code: Literal["pick9", "ttt14"] = "pick9"
     note: str | None = None
     stake_per_combination: float = Field(default=2.0, gt=0)
     picks: list[PoolPickPayload] = Field(min_length=1)
+
+
+class PoolSlipPreviewRequest(BaseModel):
+    """复式组合预览输入（票 01）：与创建同载荷减 mode/note/期次（只读）。"""
+
+    market_code: Literal["pick9", "ttt14"] = "pick9"
+    stake_per_combination: float = Field(default=2.0, gt=0)
+    picks: list[PoolPickPayload] = Field(min_length=1)
+
+
+class PoolSlipPreview(BaseModel):
+    """复式组合预览（票 01）：注数/总金额/组合流摘要——展示与落库同源。"""
+
+    market_code: str
+    combination_count: int
+    stake_per_combination: float
+    total_stake: float
+    combinations_sha256: str
 
 
 class BetLegView(BaseModel):
@@ -161,6 +187,11 @@ class SlipView(BaseModel):
     bet_count: int
     stake_total: float
     profit_total: float
+    # 池票复式组合回读（票 01）：活口径计数/金额（隔离史行已排除）+
+    # 隔离行计数（对账注记，人裁决：原行保留不改写）；固定票恒 0。
+    combination_count: int
+    pool_stake_total: float
+    quarantined_combinations: int
 
 
 class LegQuotePayload(BaseModel):
@@ -457,6 +488,10 @@ def _slip_view(row: sqlite3.Row) -> SlipView:
         bet_count=int(row["bet_count"]),
         stake_total=float(row["stake_total"]),
         profit_total=float(row["profit_total"]),
+        combination_count=int(row["combination_count"]),
+        # 与预览端点同舍入口径（票 01 三方一致；SUM 浮点尾差不外漏）
+        pool_stake_total=round(float(row["pool_stake_total"]), 2),
+        quarantined_combinations=int(row["quarantined_combinations"]),
     )
 
 
@@ -471,10 +506,61 @@ async def list_slips(db: DbDep) -> list[SlipView]:
 
 
 @router.post(
+    "/api/v1/pool-slips/preview",
+    summary="复式组合预览(任9 9选子积/14场整体连乘): 注数/总金额/组合流摘要",
+    response_model=PoolSlipPreview,
+    responses={
+        422: {
+            "description": "复式组合数超上限(10万);载荷校验失败",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/HTTPValidationError"}
+                }
+            },
+        },
+    },
+)
+def preview_pool_slip(payload: PoolSlipPreviewRequest, db: DbDep) -> PoolSlipPreview:
+    """
+    只读组合预览（票 01）：与创建同源——三方一致。
+
+    同一套矩阵/计数/展开：前端展示、落库组合、SlipView 回读共用；
+    超上限同创建口径 422 拒绝；任9 已选 <9 场 → 组合数 0（未成票的
+    诚实读数，非错误；创建端点对 <9 场直接 400）。
+    """
+    by_match = bt_store.pool_pick_matrix(
+        (pick.match_seq, pick.selection_code) for pick in payload.picks
+    )
+    if payload.market_code == "pick9" and len(by_match) < bt_store.PICK9_LEGS:
+        return PoolSlipPreview(
+            market_code=payload.market_code,
+            combination_count=0,
+            stake_per_combination=payload.stake_per_combination,
+            total_stake=0.0,
+            combinations_sha256=bt_store.EMPTY_SELECTIONS_SHA256,
+        )
+    try:
+        count = bt_store.count_pool_combinations(by_match, payload.market_code)
+    except bt_store.CombinationLimitExceeded as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return PoolSlipPreview(
+        market_code=payload.market_code,
+        combination_count=count,
+        stake_per_combination=payload.stake_per_combination,
+        total_stake=round(count * payload.stake_per_combination, 2),
+        combinations_sha256=bt_store.pool_selections_sha256(
+            by_match, payload.market_code
+        ),
+    )
+
+
+@router.post(
     "/api/v1/pool-slips",
     summary="创建待结算的 paper 池票草稿",
     responses={
-        400: {"description": "暂不支持 live 奖池票"},
+        400: {
+            "description": ("暂不支持 live 奖池票; 任9 已选不足 9 场; 玩法/载荷非法")
+        },
         422: {
             "description": "复式组合数超上限(10万);载荷校验失败",
             "content": {
@@ -490,6 +576,10 @@ async def list_slips(db: DbDep) -> list[SlipView]:
 def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
     """
     按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
+
+    组合按票级 Market 展开（票 01）：pick9 = 全部 9 场子集 × 各子集内
+    picks 之积（<9 场 400）；ttt14 = 整体连乘。超上限 422 整票拒绝
+    （人裁决：拒绝不截断）。
 
     组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
     线程池不占事件循环（correctness F6，同票 07①）。
@@ -524,12 +614,18 @@ def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
                     fixture_id=pick.fixture_id,
                 )
             bt_store.materialize_combinations(
-                db, slip, stake_per_combination=payload.stake_per_combination
+                db,
+                slip,
+                stake_per_combination=payload.stake_per_combination,
+                market_code=payload.market_code,
             )
     except bt_store.CombinationLimitExceeded as exc:
         # 票 07④：组合数超上限=4xx 拒绝（atomic 回滚,不落半截票）。
         # 专用异常而非裸 ValueError——同块其他来源的 ValueError 不被误标
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        # 票 01：任9 <9 场 / 未知 Market = 400（atomic 回滚）
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = bt_store.get_slip(db, slip)
     if row is None:
         raise HTTPException(status_code=500, detail="slip vanished after insert")

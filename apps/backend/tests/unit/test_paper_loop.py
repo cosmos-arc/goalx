@@ -323,15 +323,19 @@ def test_pool_slip_settlement_flow(db: sqlite3.Connection) -> None:
     from goalx_backend.models import BetMode
 
     slip = bt.create_slip(db, BetMode.PAPER, pool_period_id=None)
+    # 任9 口径（票 01）：9 场、场 1 复式双选 → 1 子集 × 2 = 2 组合
     bt.add_pool_pick(db, slip, 1, "3", fixture_id=arsenal)
     bt.add_pool_pick(db, slip, 1, "1", fixture_id=arsenal)  # 复式双选
     bt.add_pool_pick(db, slip, 2, "0", fixture_id=liverpool)
+    for seq in range(3, 10):
+        bt.add_pool_pick(db, slip, seq, "3")  # 未映射场次（无 fixture_id）
     n = bt.materialize_combinations(db, slip)
     assert n == 2
 
     # 场次未映射 → open
     unmapped = bt.create_slip(db, BetMode.PAPER)
-    bt.add_pool_pick(db, unmapped, 1, "3")  # 无 fixture_id
+    for seq in range(1, 10):
+        bt.add_pool_pick(db, unmapped, seq, "3")  # 无 fixture_id
     stats = run_settlement(db)
     assert stats["still_open"] >= 1
 

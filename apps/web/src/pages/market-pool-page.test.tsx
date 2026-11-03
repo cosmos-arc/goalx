@@ -7,7 +7,6 @@ import { expect, test } from "vitest";
 import { poolPeriodDetailFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
-import { combinations } from "./market-pool-page";
 
 /**
  * 票 43 14场任9 页点亮测试：真实期次/对阵/分布（源B 同步）、三向
@@ -86,19 +85,20 @@ test("picks are one-per-match toggles and prefill fills best selections", async 
 	await userEvent.click(screen.getByTestId("pool-pick-1-h"));
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 0/14");
 
-	// 预选：概率最高向填前 9 场（全部场有概率）→ C(9,9) = 1 注
+	// 预选：概率最高向填前 9 场 → C(9,9) = 1 注（票 01：组合数后端单源，异步回读）
 	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 9/14");
-	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("1 注");
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("1 注");
+	});
 	expect(screen.getByTestId("pool-pick-1-h")).toHaveAttribute("aria-pressed", "true");
 	// 场 2 概率最高 = 主 42%（票 pool-v2/01 fixture：搏冷样本的推荐位与冷门位分离）
 	expect(screen.getByTestId("pool-pick-2-h")).toHaveAttribute("aria-pressed", "true");
 	// 手动补选第 10 场 → C(10,9) = 10 注
 	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
-	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("10 注");
-	// 组合数函数口径自检：C(14,9) = 2002
-	expect(combinations(14, 9)).toBe(2002);
-	expect(combinations(8, 9)).toBe(0);
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("10 注");
+	});
 });
 
 test("switching the period resets picks", async () => {
@@ -150,11 +150,15 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 
 	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
 	expect(submit).toBeEnabled();
-	expect(submit).toHaveTextContent("1 注 × ¥2");
+	// 票 01：按钮注数 = 后端预览读数（异步回读后 1 注）
+	await waitFor(() => {
+		expect(submit).toHaveTextContent("1 注 × ¥2");
+	});
 
 	let captured: {
 		mode?: string;
 		pool_period_id?: number | null;
+		market_code?: string;
 		picks?: Array<{ match_seq: number; selection_code: string }>;
 	} = {};
 	server.use(
@@ -170,15 +174,20 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 					bet_count: 0,
 					stake_total: 0,
 					profit_total: 0,
+					combination_count: 1,
+					pool_stake_total: 2,
+					quarantined_combinations: 0,
 				},
 				{ status: 201 },
 			);
 		}),
 	);
 	await userEvent.click(submit);
-	expect(await screen.findByTestId("pool-submit-result")).toHaveTextContent("已建纸面池票 #902");
-	// 提交载荷：mode=paper + 官方池码（h→3/d→1/a→0）
+	// 票 01：提交结果带后端回读的组合数/金额（三方一致的回读面）
+	expect(await screen.findByTestId("pool-submit-result")).toHaveTextContent("已建纸面池票 #902（1 注 × ¥2，合计 ¥2");
+	// 提交载荷：mode=paper + 任9 Market + 官方池码（h→3/d→1/a→0）
 	expect(captured.mode).toBe("paper");
+	expect(captured.market_code).toBe("pick9");
 	// 票 04：池票携带真实期次身份（详情视图 pool_period_id，替代硬编码 null）
 	expect(captured.pool_period_id).toBe(poolPeriodDetailFixture.pool_period_id);
 	expect(captured.picks?.[0]).toEqual({ match_seq: 1, selection_code: "3" });

@@ -1006,17 +1006,142 @@ def test_pool_slip_creation_and_materialization(api_client: TestClient) -> None:
             "mode": "paper",
             "stake_per_combination": 2.0,
             "picks": [
-                {"match_seq": 1, "selection_code": "3", "fixture_id": fixture_id},
-                {"match_seq": 1, "selection_code": "1", "fixture_id": fixture_id},
-                {"match_seq": 2, "selection_code": "0"},
-            ],
+                {"match_seq": seq, "selection_code": "3", "fixture_id": fixture_id}
+                for seq in range(1, 10)
+            ]
+            + [{"match_seq": 10, "selection_code": "1"}],  # 10 场单选 → 10 注
         },
     )
     assert response.status_code == 201
     slip = response.json()
     assert slip["mode"] == "paper"
+    # 票 01 回读三方一致：组合数/池票金额直出（活口径）
+    assert slip["combination_count"] == 10
+    assert slip["pool_stake_total"] == 20.0
+    assert slip["quarantined_combinations"] == 0
     combos = api_client.get("/api/v1/bet-slips")
     assert any(row["id"] == slip["id"] for row in combos.json())
+
+
+def test_pool_slip_pick9_requires_nine_matches(api_client: TestClient) -> None:
+    """票 01：任9 <9 场 = 400 整票拒绝（atomic 回滚）。"""
+    response = api_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "picks": [
+                {"match_seq": 1, "selection_code": "3"},
+                {"match_seq": 2, "selection_code": "0"},
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert "任9 需至少" in response.json()["detail"]
+    assert api_client.get("/api/v1/bet-slips").json() == []
+
+
+@pytest.mark.parametrize(
+    ("n", "count", "total"),
+    [
+        (9, 1, 2.0),  # 9 场单选 = 1 注 2 元
+        (10, 10, 20.0),  # 10 场单选 = 10 注 20 元
+        (14, 2002, 4004.0),  # 14 场单选 = 2002 注 4004 元
+    ],
+)
+def test_pool_slip_preview_golden(
+    api_client: TestClient, n: int, count: int, total: float
+) -> None:
+    """票 01 预览黄金样例：注数/总金额后端单源。"""
+    response = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "picks": [
+                {"match_seq": seq, "selection_code": "3"} for seq in range(1, n + 1)
+            ]
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["market_code"] == "pick9"
+    assert body["combination_count"] == count
+    assert body["stake_per_combination"] == 2.0
+    assert body["total_stake"] == total
+    assert len(body["combinations_sha256"]) == 64
+
+
+def test_pool_slip_preview_multi_pick_and_under_nine(api_client: TestClient) -> None:
+    """复式每场多选与 <9 场读数：10 场场 1 双选 = 19 注；8 场 = 0 注。"""
+    multi = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "picks": [{"match_seq": 1, "selection_code": sel} for sel in ("3", "1")]
+            + [{"match_seq": seq, "selection_code": "3"} for seq in range(2, 11)]
+        },
+    )
+    assert multi.status_code == 200
+    assert multi.json()["combination_count"] == 19
+    under = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "picks": [{"match_seq": seq, "selection_code": "3"} for seq in range(1, 9)]
+        },
+    )
+    assert under.status_code == 200
+    assert under.json()["combination_count"] == 0
+    assert under.json()["total_stake"] == 0.0
+
+
+def test_pool_slip_preview_ttt14_cartesian(api_client: TestClient) -> None:
+    """ttt14 玩法 = 整体连乘（14 场全单选 = 1 注；双选场放大 2 倍）。"""
+    response = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "market_code": "ttt14",
+            "picks": [{"match_seq": seq, "selection_code": "3"} for seq in range(1, 15)]
+            + [{"match_seq": 14, "selection_code": "1"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["market_code"] == "ttt14"
+    assert response.json()["combination_count"] == 2
+    assert response.json()["total_stake"] == 4.0
+
+
+def test_pool_slip_preview_matches_readback_on_fractional_stake(
+    api_client: TestClient,
+) -> None:
+    """票 01 三方一致（金额面）：预览 total_stake == 创建回读 pool_stake_total。"""
+    picks = [{"match_seq": 1, "selection_code": sel} for sel in ("3", "1", "0")] + [
+        {"match_seq": seq, "selection_code": "3"} for seq in range(2, 10)
+    ]
+    preview = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={"stake_per_combination": 0.1, "picks": picks},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["combination_count"] == 3
+    created = api_client.post(
+        "/api/v1/pool-slips",
+        json={"mode": "paper", "stake_per_combination": 0.1, "picks": picks},
+    )
+    assert created.status_code == 201
+    assert created.json()["pool_stake_total"] == preview.json()["total_stake"]
+
+
+def test_pool_slip_preview_over_limit_rejected(api_client: TestClient) -> None:
+    """票 01+07④：预览超限同创建口径 422（拒绝不截断，人裁决）。"""
+    response = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "picks": [
+                {"match_seq": seq, "selection_code": sel}
+                for seq in range(1, 15)  # C(14,9)×2^9 ≈ 102.5 万 > 10 万
+                for sel in ("3", "1")
+            ]
+        },
+    )
+    assert response.status_code == 422
+    assert "超上限" in str(response.json()["detail"])
 
 
 def test_pool_slip_over_combination_limit_rejected(api_client: TestClient) -> None:

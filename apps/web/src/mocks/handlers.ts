@@ -506,6 +506,9 @@ export const slipsFixture = [
 		bet_count: 1,
 		stake_total: 100,
 		profit_total: 0,
+		combination_count: 0,
+		pool_stake_total: 0,
+		quarantined_combinations: 0,
 	},
 ] as const satisfies readonly DeepReadonly<Slip>[];
 
@@ -1207,6 +1210,26 @@ handlers.push(
 			caliber: "估计派彩随最终池变，不承诺目标达成。",
 		});
 	}),
+	http.post("*/api/v1/pool-slips/preview", async ({ request }) => {
+		// 与后端任9 口径同型的最小实现（mock 只服务前端测试）：一场一选 → C(n,9)
+		const body = (await request.json()) as { picks: { match_seq: number }[] };
+		const n = new Set(body.picks.map((p) => p.match_seq)).size;
+		let count = 0;
+		if (n >= 9) {
+			count = 1;
+			for (let i = 1; i <= 9; i += 1) {
+				count = (count * (n - 9 + i)) / i;
+			}
+			count = Math.round(count);
+		}
+		return HttpResponse.json({
+			market_code: "pick9",
+			combination_count: count,
+			stake_per_combination: 2,
+			total_stake: count * 2,
+			combinations_sha256: "preview-fixture",
+		});
+	}),
 	http.post("*/api/v1/pool-slips", () =>
 		HttpResponse.json(
 			{
@@ -1218,6 +1241,9 @@ handlers.push(
 				bet_count: 0,
 				stake_total: 0,
 				profit_total: 0,
+				combination_count: 1,
+				pool_stake_total: 2,
+				quarantined_combinations: 0,
 			},
 			{ status: 201 },
 		),

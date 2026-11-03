@@ -1855,6 +1855,35 @@ def _apply_v35(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE bets ADD COLUMN price_source TEXT")
 
 
+def _apply_v36(conn: sqlite3.Connection) -> None:
+    """
+    v36（票 01）：任9 旧笛卡尔积史行标记隔离。
+
+    combinations 增 quarantine_reason；人裁决（2026-11-03）：历史错误
+    组合行 = 标记隔离 + 对账注记——原行保留、不改写不迁移；消费侧
+    （票聚合/评估分母）按 quarantine_reason IS NULL 过滤，隔离行计数
+    由 SlipView 单列呈现。
+
+    判定规则：腿数 ≠9 的组合行 = 旧笛卡尔积口径产物（新口径任9 恒 9
+    腿）。不按期次 market 分叉——任9 页是唯一池票来源，史行一律按任9
+    归因；挂 ttt14/goals4 期次的 14 腿史行存在"真整体票"的理论歧义，
+    但该票型从无创建路径，主库 2026-11-03 普查 = 0 行组合/0 张票，本
+    迁移为规则性防御。一次性应用（schema_migrations 钉版本）：其后
+    pick9 新口径不再产 ≠9 腿行，ttt14 票会产 14 腿行——戳被人工抹除
+    的病态重放会把这类行误标（同 v31 W1 教训场景），常规重入不发生。
+    """
+    if not _column_exists(conn, "combinations", "quarantine_reason"):
+        conn.execute("ALTER TABLE combinations ADD COLUMN quarantine_reason TEXT")
+    conn.execute(
+        """
+        UPDATE combinations
+        SET quarantine_reason = 'legacy_cartesian_pick9_20261103'
+        WHERE quarantine_reason IS NULL
+          AND json_array_length(selections) != 9
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1891,6 +1920,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (33, _apply_v33),
     (34, _apply_v34),
     (35, _apply_v35),
+    (36, _apply_v36),
 )
 
 

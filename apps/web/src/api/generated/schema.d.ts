@@ -282,6 +282,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pool-slips/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 复式组合预览(任9 9选子积/14场整体连乘): 注数/总金额/组合流摘要
+         * @description 只读组合预览（票 01）：与创建同源——三方一致。
+         *
+         *     同一套矩阵/计数/展开：前端展示、落库组合、SlipView 回读共用；
+         *     超上限同创建口径 422 拒绝；任9 已选 <9 场 → 组合数 0（未成票的
+         *     诚实读数，非错误；创建端点对 <9 场直接 400）。
+         */
+        post: operations["preview_pool_slip_api_v1_pool_slips_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pool-slips": {
         parameters: {
             query?: never;
@@ -294,6 +318,10 @@ export interface paths {
         /**
          * 创建待结算的 paper 池票草稿
          * @description 按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
+         *
+         *     组合按票级 Market 展开（票 01）：pick9 = 全部 9 场子集 × 各子集内
+         *     picks 之积（<9 场 400）；ttt14 = 整体连乘。超上限 422 整票拒绝
+         *     （人裁决：拒绝不截断）。
          *
          *     组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
          *     线程池不占事件循环（correctness F6，同票 07①）。
@@ -2237,14 +2265,60 @@ export interface components {
         };
         /**
          * PoolSlipCreate
-         * @description 创建池票（任9/14 场复式）：picks 笛卡尔积 materialize 为组合。
+         * @description 创建池票（任9/14 场复式）；market_code 为票级 Market 口径（票 01）。
+         *
+         *     market_code=pick9：组合 = 全部 9 场子集 × 各子集内逐场 picks 之积
+         *     （需 ≥9 场）；market_code=ttt14：整体所选场连乘（14 腿不动）。缺省
+         *     pick9——任9 页是唯一池票 UI；期次（ttt14 期）承载的是 14 场赛程，
+         *     任9 从同场程选 9 场，Market 归票不归期次。
          */
         PoolSlipCreate: {
             mode: components["schemas"]["BetMode"];
             /** Pool Period Id */
             pool_period_id?: number | null;
+            /**
+             * Market Code
+             * @default pick9
+             * @enum {string}
+             */
+            market_code: "pick9" | "ttt14";
             /** Note */
             note?: string | null;
+            /**
+             * Stake Per Combination
+             * @default 2
+             */
+            stake_per_combination: number;
+            /** Picks */
+            picks: components["schemas"]["PoolPickPayload"][];
+        };
+        /**
+         * PoolSlipPreview
+         * @description 复式组合预览（票 01）：注数/总金额/组合流摘要——展示与落库同源。
+         */
+        PoolSlipPreview: {
+            /** Market Code */
+            market_code: string;
+            /** Combination Count */
+            combination_count: number;
+            /** Stake Per Combination */
+            stake_per_combination: number;
+            /** Total Stake */
+            total_stake: number;
+            /** Combinations Sha256 */
+            combinations_sha256: string;
+        };
+        /**
+         * PoolSlipPreviewRequest
+         * @description 复式组合预览输入（票 01）：与创建同载荷减 mode/note/期次（只读）。
+         */
+        PoolSlipPreviewRequest: {
+            /**
+             * Market Code
+             * @default pick9
+             * @enum {string}
+             */
+            market_code: "pick9" | "ttt14";
             /**
              * Stake Per Combination
              * @default 2
@@ -2452,6 +2526,12 @@ export interface components {
             stake_total: number;
             /** Profit Total */
             profit_total: number;
+            /** Combination Count */
+            combination_count: number;
+            /** Pool Stake Total */
+            pool_stake_total: number;
+            /** Quarantined Combinations */
+            quarantined_combinations: number;
         };
         /**
          * StakeAdviceRequest
@@ -3237,6 +3317,39 @@ export interface operations {
             };
         };
     };
+    preview_pool_slip_api_v1_pool_slips_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolSlipPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolSlipPreview"];
+                };
+            };
+            /** @description 复式组合数超上限(10万);载荷校验失败 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_pool_slip_api_v1_pool_slips_post: {
         parameters: {
             query?: never;
@@ -3259,7 +3372,7 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
-            /** @description 暂不支持 live 奖池票 */
+            /** @description 暂不支持 live 奖池票; 任9 已选不足 9 场; 玩法/载荷非法 */
             400: {
                 headers: {
                     [name: string]: unknown;

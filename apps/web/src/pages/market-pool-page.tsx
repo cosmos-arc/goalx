@@ -6,6 +6,7 @@ import {
 	fetchPoolPeriodDetail,
 	fetchPoolPeriods,
 	fetchPoolSyncStatus,
+	previewPoolSlip,
 	runPoolSync,
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
@@ -36,6 +37,9 @@ import { errorText, TABULAR_NUMS } from "../lib/ui";
  * 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1（未建模 price
  * impact 与分彩风险，词典词条同口径）。
  *
+ * 组合数/总金额后端单源（票 01）：任9 = 全部 9 场子集复式展开——预览端点
+ * 与落库同源计算，前端只消费（不再客户端 C(n,9) 自算）。
+ *
  * 官方销量四源直接 GET 不可得 → "AI 代采待命"占位（代理经代采入口回填，
  * source=agent）；期次/对阵可得而销量缺失时只降级该区块（不整页骨架）。
  *
@@ -50,18 +54,6 @@ const PICK9 = 9;
 const HAD_TO_POOL_CODE = { h: "3", d: "1", a: "0" } as const;
 /** 每注金额（任9 一注 ¥2，规则价）。 */
 const STAKE_PER_COMBINATION = 2;
-
-/** C(n, k)：复式组合数（每场单选 → 组合数 = C(已选场数, 9)；导出供单测）。 */
-export function combinations(n: number, k: number): number {
-	if (n < k || k < 0) {
-		return 0;
-	}
-	let result = 1;
-	for (let i = 1; i <= k; i += 1) {
-		result = (result * (n - k + i)) / i;
-	}
-	return Math.round(result);
-}
 
 export function MarketPoolPage() {
 	const periodsQuery = useQuery({ queryKey: poolPeriodsKey, queryFn: () => fetchPoolPeriods() });
@@ -93,7 +85,10 @@ export function MarketPoolPage() {
 	const submitMutation = useMutation({
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
-			setSubmitResult(`已建纸面池票 #${slip.id}`);
+			// 票 01 三方一致的回读面：注数/金额直出后端聚合（隔离史行已排除）
+			setSubmitResult(
+				`已建纸面池票 #${slip.id}（${slip.combination_count} 注 × ¥${STAKE_PER_COMBINATION}，合计 ¥${slip.pool_stake_total}）`,
+			);
 			void queryClient.invalidateQueries({ queryKey: slipsKey });
 		},
 		onError: (error) => setSubmitResult(`提交失败：${errorText(error)}`),
@@ -106,7 +101,33 @@ export function MarketPoolPage() {
 		const code = picks[m.match_seq];
 		return code === undefined ? [] : [{ match: m, code }];
 	});
-	const comboCount = combinations(pickedEntries.length, PICK9);
+	/** 提交/预览共用的 picks 载荷（票 01：同输入同展开序）。 */
+	const picksPayload = useMemo(
+		() =>
+			pickedEntries.map(({ match, code }) => ({
+				match_seq: match.match_seq,
+				selection_code: HAD_TO_POOL_CODE[code as "h" | "d" | "a"],
+				...(match.fixture_id === null || match.fixture_id === undefined ? {} : { fixture_id: match.fixture_id }),
+			})),
+		[pickedEntries],
+	);
+	// 组合数后端单源（票 01）：任9 9 选子集展开与落库同源，前端只消费
+	const picksSignature = useMemo(
+		() => JSON.stringify(picksPayload.map(({ match_seq, selection_code }) => [match_seq, selection_code])),
+		[picksPayload],
+	);
+	const previewQuery = useQuery({
+		queryKey: ["pool-slip-preview", activePeriod, picksSignature],
+		queryFn: () =>
+			previewPoolSlip({
+				market_code: "pick9",
+				stake_per_combination: STAKE_PER_COMBINATION,
+				picks: picksPayload,
+			}),
+		enabled: picksPayload.length > 0,
+		placeholderData: (previous) => previous,
+	});
+	const comboCount = previewQuery.data?.combination_count ?? 0;
 	/** 三档输入：所选组合联合口径（parlayAdviceInput 正典——估计派彩赔率 Π × 联合 EV = Π(1+ev)−1）。 */
 	const adviceInput = useMemo(
 		() =>
@@ -159,12 +180,9 @@ export function MarketPoolPage() {
 		submitMutation.mutate({
 			mode: "paper",
 			pool_period_id: detail.pool_period_id,
+			market_code: "pick9",
 			stake_per_combination: STAKE_PER_COMBINATION,
-			picks: pickedEntries.map(({ match, code }) => ({
-				match_seq: match.match_seq,
-				selection_code: HAD_TO_POOL_CODE[code as "h" | "d" | "a"],
-				...(match.fixture_id === null || match.fixture_id === undefined ? {} : { fixture_id: match.fixture_id }),
-			})),
+			picks: picksPayload,
 		});
 	}
 

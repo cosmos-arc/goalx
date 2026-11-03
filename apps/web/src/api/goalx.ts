@@ -246,11 +246,19 @@ export function runPoolSync(): Promise<PoolSyncStatus> {
 export type PoolSlipCreateInput = Schemas["PoolSlipCreate"];
 
 /**
- * 创建纸面池票（票 43 接线）：picks 笛卡尔积 materialize 为组合；
- * 奖池型只纸面（调研红线——真金须用户单独裁决）。
+ * 创建纸面池票（票 43 接线 + 票 01 玩法口径）：任9 = 9 场子集复式 /
+ * ttt14 = 整体连乘；奖池型只纸面（调研红线——真金须用户单独裁决）。
  */
 export function createPoolSlip(payload: PoolSlipCreateInput): Promise<Slip> {
 	return unwrap(client.POST("/api/v1/pool-slips", { body: payload }));
+}
+
+export type PoolSlipPreviewInput = Schemas["PoolSlipPreviewRequest"];
+export type PoolSlipPreview = Schemas["PoolSlipPreview"];
+
+/** 复式组合预览（票 01）：注数/总金额来自后端单源（与落库同源），前端只消费。 */
+export function previewPoolSlip(payload: PoolSlipPreviewInput): Promise<PoolSlipPreview> {
+	return unwrap(client.POST("/api/v1/pool-slips/preview", { body: payload }));
 }
 
 // --- 票 14：证据面（证据卡/证据链/复核/盲评） ---
