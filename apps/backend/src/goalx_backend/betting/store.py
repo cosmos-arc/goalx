@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from itertools import product
+from itertools import combinations, product
 from typing import Any
 
 from goalx_backend.betting.snapshot import EMPTY_SNAPSHOT, BetEvSnapshot
@@ -21,6 +22,10 @@ from goalx_backend.models import (
 # 复式组合物化上限（票 07④ 人裁决②：10 万量级；14 场×3 向=478 万曾可
 # 整展开）。超限拒绝发生在任何写入之前。
 MAX_MATERIALIZED_COMBINATIONS = 100_000
+
+# 任9 固定腿数（票 01 口径单源：子集展开与玩法校验共用；决策侧
+# pool_strategy 同引用）。
+PICK9_LEGS = 9
 
 
 class CombinationLimitExceeded(ValueError):
@@ -403,11 +408,118 @@ ON CONFLICT(slip_id, match_seq, selection_code) DO
     return _insert_id(cur)
 
 
+def pool_pick_matrix(
+    pick_rows: Iterable[tuple[int, str]],
+) -> dict[int, list[str]]:
+    """
+    (match_seq, selection_code) 行 → 逐场选择矩阵（去重+排序，票 01 单源）。
+
+    创建（落库后回读）与预览（载荷直入）共用，保证同输入同展开序。
+    """
+    seen: dict[int, set[str]] = {}
+    for seq, code in pick_rows:
+        seen.setdefault(int(seq), set()).add(str(code))
+    return {seq: sorted(seen[seq]) for seq in sorted(seen)}
+
+
+def _validate_market_code(market_code: str) -> None:
+    """票级 Market 字面量守卫：未知 Market fail-closed，不静默落到连乘口径。"""
+    if market_code not in ("pick9", "ttt14"):
+        raise ValueError(f"未知池票 Market {market_code!r}（可选 pick9/ttt14）")
+
+
+def count_pool_combinations(by_match: dict[int, list[str]], market_code: str) -> int:
+    """
+    组合数（票 01 单源）：任9 子集积 / 14 场连乘。
+
+    pick9 = 全部 9 场子集 × 各子集内逐场 picks 之积；ttt14 = 整体
+    连乘。先算后拒：超 ``MAX_MATERIALIZED_COMBINATIONS`` 抛
+    ``CombinationLimitExceeded``（票 07④），调用方须在写入前调用。
+    """
+    _validate_market_code(market_code)
+    if not by_match:
+        # 空矩阵守卫：连乘口径的空积=1 会静默物化一条零腿组合（票 01）
+        raise ValueError("无已选场次，组合数为 0")
+    sizes = [len(picks) for picks in by_match.values()]
+    if market_code == "pick9":
+        if len(sizes) < PICK9_LEGS:
+            raise ValueError(f"任9 需至少 {PICK9_LEGS} 场已选（当前 {len(sizes)} 场）")
+        total = 0
+        for subset in combinations(sizes, PICK9_LEGS):
+            subtotal = 1
+            for size in subset:
+                subtotal *= size
+            total += subtotal
+            if total > MAX_MATERIALIZED_COMBINATIONS:
+                # total 是逐子集累加中途值（真实组合数 ≥ total），消息如实
+                raise CombinationLimitExceeded(
+                    f"组合数已累加至 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
+                    + f"（{len(sizes)} 场任9 复式）；缩小复式面后重试"
+                )
+        return total
+    total = 1
+    for size in sizes:
+        total *= size
+        if total > MAX_MATERIALIZED_COMBINATIONS:
+            # total 是连乘中途值（真实组合数 ≥ total），消息按"已连乘至"如实
+            raise CombinationLimitExceeded(
+                f"组合数已连乘至 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
+                + f"（{len(sizes)} 场复式）；缩小复式面后重试"
+            )
+    return total
+
+
+def iter_pool_selections(
+    by_match: dict[int, list[str]], market_code: str
+) -> Iterator[list[dict[str, int | str]]]:
+    """
+    逐组合惰性产出选择行（票 01 单源；物化与预览摘要共用同一生成序）。
+
+    pick9 = 逐 9 场子集内连乘；ttt14 = 全部所选场整体连乘（14 腿口径）。
+    """
+    _validate_market_code(market_code)
+    seqs = list(by_match)
+    subsets: Iterator[tuple[int, ...]] = (
+        combinations(seqs, PICK9_LEGS)
+        if market_code == "pick9"
+        else iter((tuple(seqs),))
+    )
+    for subset in subsets:
+        for picks in product(*(by_match[s] for s in subset)):
+            yield [
+                {"match_seq": s, "selection_code": pick}
+                for s, pick in zip(subset, picks, strict=True)
+            ]
+
+
+def pool_selections_sha256(by_match: dict[int, list[str]], market_code: str) -> str:
+    """组合流的可校验摘要（票 01）：预览 ↔ 物化对账用，canon json 行拼接。"""
+    digest = hashlib.sha256()
+    for selections in iter_pool_selections(by_match, market_code):
+        digest.update(
+            json.dumps(selections, ensure_ascii=False, separators=(",", ":")).encode()
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+# 空组合流的摘要（票 01 预览 <9 场未成票读数；sha256(b"") 恒定值提级为常量）
+EMPTY_SELECTIONS_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
 def materialize_combinations(
-    conn: sqlite3.Connection, slip_id: int, *, stake_per_combination: float = 2.0
+    conn: sqlite3.Connection,
+    slip_id: int,
+    *,
+    stake_per_combination: float = 2.0,
+    market_code: str = "pick9",
 ) -> int:
     """
     Expand pool picks into concrete combinations (任9 复式 1—N 组合).
+
+    market_code（票 01 票级 Market 口径）：``pick9`` = 全部 9 场子集 ×
+    各子集内逐场 picks 之积（n≥9）；``ttt14`` = 整体所选场连乘（14 腿
+    不动）。
 
     重跑替换而非累加（幂等）；返回组合数。组合数先算后展开：超上限
     直接拒绝（票 07④，人裁决②取 10 万量级），拒绝发生在任何写入之前；
@@ -422,85 +534,75 @@ ORDER BY
         """,
         (slip_id,),
     ).fetchall()
-    by_match: dict[int, list[str]] = {}
-    for row in rows:
-        by_match.setdefault(int(row["match_seq"]), []).append(
-            str(row["selection_code"])
-        )
-    seqs = sorted(by_match)
-    total = 1
-    for seq in seqs:
-        total *= len(by_match[seq])
-        if total > MAX_MATERIALIZED_COMBINATIONS:
-            # total 是连乘中途值（真实组合数 ≥ total），消息按"已连乘至"如实
-            raise CombinationLimitExceeded(
-                f"组合数已连乘至 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
-                + f"（{len(seqs)} 场复式）；缩小复式面后重试"
-            )
+    by_match = pool_pick_matrix(
+        (int(row["match_seq"]), str(row["selection_code"])) for row in rows
+    )
+    total = count_pool_combinations(by_match, market_code)
     conn.execute("DELETE FROM combinations WHERE slip_id = ?", (slip_id,))
     conn.executemany(
         """
-            INSERT INTO combinations
-(slip_id, seq, stake, selections) VALUES (?, ?, ?,
-            ?)
+            INSERT INTO combinations (slip_id, seq, stake, selections)
+            VALUES (?, ?, ?, ?)
         """,
-        _combination_rows(slip_id, seqs, by_match, stake_per_combination),
+        (
+            (
+                slip_id,
+                seq,
+                stake_per_combination,
+                json.dumps(selections, ensure_ascii=False, separators=(",", ":")),
+            )
+            for seq, selections in enumerate(
+                iter_pool_selections(by_match, market_code)
+            )
+        ),
     )
     return total
 
 
-def _combination_rows(
-    slip_id: int,
-    seqs: list[int],
-    by_match: dict[int, list[str]],
-    stake_per_combination: float,
-) -> Iterator[tuple[int, int, float, str]]:
-    """逐组合惰性产出插入行（票 07④：不整建组合列表在内存）。"""
-    for seq, picks in enumerate(product(*(by_match[s] for s in seqs))):
-        selections = [
-            {"match_seq": s, "selection_code": pick}
-            for s, pick in zip(seqs, picks, strict=True)
-        ]
-        yield (
-            slip_id,
-            seq,
-            stake_per_combination,
-            json.dumps(selections, ensure_ascii=False),
-        )
+def _slip_aggregates() -> str:
+    """
+    票级聚合子查询（票 01）：bets 面与池票组合回读面共用。
 
-
-def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:
-    """Fetch one slip with bet aggregates."""
-    return conn.execute(
-        """
-        SELECT s.*,
+    组合活口径排除标记隔离史行（quarantine_reason IS NULL）；隔离行单列
+    计数 = 对账注记（人裁决 2026-11-03：原行保留、不改写）。
+    """
+    return """
         (SELECT COUNT(*) FROM bets b WHERE b.slip_id = s.id) AS bet_count,
         (SELECT COALESCE(SUM(b.stake), 0) FROM bets b WHERE b.slip_id = s.id)
         AS stake_total,
         (SELECT COALESCE(SUM(b.profit), 0) FROM bets b
-        WHERE b.slip_id = s.id AND b.status != 'open') AS profit_total
+         WHERE b.slip_id = s.id AND b.status != 'open') AS profit_total,
+        (SELECT COUNT(*) FROM combinations c
+         WHERE c.slip_id = s.id AND c.quarantine_reason IS NULL)
+        AS combination_count,
+        (SELECT COALESCE(SUM(c.stake), 0) FROM combinations c
+         WHERE c.slip_id = s.id AND c.quarantine_reason IS NULL)
+        AS pool_stake_total,
+        (SELECT COUNT(*) FROM combinations c
+         WHERE c.slip_id = s.id AND c.quarantine_reason IS NOT NULL)
+        AS quarantined_combinations
+    """
+
+
+def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:
+    """Fetch one slip with bet and combination aggregates."""
+    return conn.execute(
+        f"""
+        SELECT s.*, {_slip_aggregates()}
         FROM bet_slips s WHERE s.id = ?
-        """,
+        """,  # noqa: S608 常量子查询拼接
         (slip_id,),
     ).fetchone()
 
 
 def list_slips(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """List slips with bet aggregates."""
+    """List slips with bet and combination aggregates."""
     return conn.execute(
-        """
-            SELECT s.*,
-(SELECT COUNT(*) FROM bets b WHERE b.slip_id = s.id) AS
-            bet_count,
-(SELECT COALESCE(SUM(b.stake), 0) FROM bets b WHERE b.slip_id =
-            s.id)
-AS stake_total,
-(SELECT COALESCE(SUM(b.profit), 0) FROM bets b
-WHERE
-            b.slip_id = s.id AND b.status != 'open') AS profit_total
-FROM bet_slips s
-            ORDER BY s.created_at DESC, s.id DESC
-        """
+        f"""
+        SELECT s.*, {_slip_aggregates()}
+        FROM bet_slips s
+        ORDER BY s.created_at DESC, s.id DESC
+        """,  # noqa: S608 常量子查询拼接
     ).fetchall()
 
 

@@ -153,12 +153,19 @@ def test_validation_progress_real_state(seeded_client: TestClient) -> None:
 
 
 def test_validation_progress_empty_state(tmp_path: Path) -> None:
-    # 空库：三条件空态正确（票 31 验收）
+    # 空库：三条件空态正确（票 31 验收）；research 路径同指临时区
+    # （票 07② 同款隔离——缺省会读到运行栈在写的真实 research 库）
     db_path = tmp_path / "empty.db"
     conn = connect(db_path)
     migrate(conn)
     conn.close()
-    with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
+    with TestClient(
+        create_app(
+            settings=Settings(
+                db_path=db_path, research_db_path=tmp_path / "research.db"
+            )
+        )
+    ) as client:
         response = client.get("/api/v1/validation/progress")
     assert response.status_code == 200
     body = response.json()
@@ -178,7 +185,13 @@ def test_backtest_runs_empty(tmp_path: Path) -> None:
     conn = connect(db_path)
     migrate(conn)
     conn.close()
-    with TestClient(create_app(settings=Settings(db_path=db_path))) as client:
+    with TestClient(
+        create_app(
+            settings=Settings(
+                db_path=db_path, research_db_path=tmp_path / "research.db"
+            )
+        )
+    ) as client:
         assert client.get("/api/v1/backtest/runs").json() == []
 
 

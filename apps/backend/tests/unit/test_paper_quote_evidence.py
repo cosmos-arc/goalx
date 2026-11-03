@@ -288,8 +288,9 @@ def test_pool_period_detail_exposes_stable_id(tmp_path: Path) -> None:
                 "pool_period_id": expected,
                 "stake_per_combination": 2,
                 "picks": [
-                    {"match_seq": 1, "selection_code": "3"},
-                    {"match_seq": 2, "selection_code": "1"},
+                    # 任9 口径（票 01）：9 场单选 → 1 组合
+                    {"match_seq": seq, "selection_code": "3"}
+                    for seq in range(1, 10)
                 ],
             },
         )

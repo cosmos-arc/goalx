@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from goalx_backend.betting.store import PICK9_LEGS
 from goalx_backend.data.pool import (
     COLD_SHARE_MAX,
     POOL_RETURN_RATE,
@@ -26,7 +27,8 @@ from goalx_backend.data.pool import (
 )
 
 STAKE_PER_UNIT = 2.0  # 任9/14场 每注 ¥2
-PICK9_COUNT = 9
+# 任9 固定腿数单源在 store（票 01：组合展开与选场决策同口径）
+PICK9_COUNT = PICK9_LEGS
 
 COLD_CALIBER_TEXT = (
     "变体 = 基础票按「冷选项 EV − 基础向 EV」降序贪心替换 1..N 处"
