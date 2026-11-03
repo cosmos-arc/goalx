@@ -233,22 +233,13 @@ def board_coverage(conn: sqlite3.Connection, business_date: str) -> tuple[int, i
 
 
 # ---- 票 07：首页无候选六桶归因（report-audit-20261103） ----
-# 映射表（桶判定规则与 quote_evidence 裁决原因一一对应——单一真相，
-# 不新造第二套健康口径；报告六类措辞 = 桶 label）：
-#
-#   未开售           ← sale_not_on_sale / sale_window_closed（窗相位自算）
-#   数据没采到       ← jc_no_quote / sale_status_unknown(_value)
-#   国际参考断供     ← eu_no_quote / eu_no_valid_books / eu_observed_at_unknown
-#   有价但证据不合格 ← stale_source / jc_observed_at_unknown /
-#                      jc_source_time_unknown / jc_three_way_incomplete /
-#                      single_eligibility_unknown（及未来未映射原因兜底）
-#   信息齐确实无优势 ← 判定 valid 且该场无任何正 EV 选项
-#   有候选来不及执行 ← 空桶占位（人裁决：依赖截止时间数据，首期不做）
-#
-# 不入六桶的两个对照面（诚实计数，防桶内混装）：
-#   window_closed（脚注）← sale_stopped / kickoff_passed（已停售/已开赛，
-#                          不属于"今天的候选面"但必须可见）
-#   positive_candidates  ← 判定 valid 且有正 EV 选项（= 今日确实有候选）
+# 桶判定规则与 quote_evidence 裁决原因一一对应——单一真相不新造第二套
+# 健康口径；报告六类措辞 = 桶 label。可执行映射 = 下列 frozensets（原因
+# →桶），完整映射表文本见 ATTRIBUTION_CALIBER（进契约描述，勿在此
+# 复写第三份）。未映射新原因兜底进"有价但证据不合格"并经 reasons_seen
+# 浮出；已停售/已开赛入 window_closed 脚注面（不入六桶但必须可见）；
+# positive_candidates=valid 且有正 EV 的对照面（"没有候选"前提不成立时
+# 如实亮出）。
 WINDOW_CLOSED_REASONS = frozenset({"sale_stopped", "kickoff_passed"})
 NOT_ON_SALE_REASONS = frozenset({"sale_not_on_sale", "sale_window_closed"})
 NOT_COLLECTED_REASONS = frozenset(
@@ -270,12 +261,15 @@ MAX_BUCKET_SAMPLES = 50  # 桶样本上限（下钻展示用，非全量清单�
 
 ATTRIBUTION_CALIBER = (
     "六桶=report-audit-20261103 报告措辞；桶判定与 quote_evidence 裁决原因"
-    "一一对应（not_on_sale←sale_not_on_sale/sale_window_closed；"
-    "数据没采到←jc_no_quote/sale_status_unknown*；国际参考断供←eu_*；"
-    "有价但证据不合格←stale_source/jc 观测与三向类；信息齐确实无优势←"
-    "判定 valid 且无正 EV；来不及执行=空桶占位）。已停售/已开赛入"
-    "window_closed 脚注面不入六桶；positive_candidates=valid 且有正 EV"
-    "（今日确实有候选的对照面）；board_coverage 与晨检第 8 项同函数同数。"
+    "一一对应（未开售←sale_not_on_sale/sale_window_closed；数据没采到←"
+    "jc_no_quote/sale_status_unknown*；国际参考断供←eu_no_quote/"
+    "eu_no_valid_books/eu_observed_at_unknown；有价但证据不合格←stale_source"
+    "/jc 观测与三向类，未映射新原因兜底进此桶并经 reasons_seen 浮出；"
+    "信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位）。"
+    "已停售/已开赛入 window_closed 脚注面不入六桶；positive_candidates="
+    "valid 且有正 EV（今日确实有候选的对照面）。对账：board_coverage 与"
+    "晨检第 8 项同函数同数；eu_cut 桶按判定原因计（已链但无有效书也入），"
+    "与晨检链覆盖为间接对账（eu_cut ≥ 未链差额）。days>1 时窗口合并为一组桶。"
 )
 
 
@@ -417,6 +411,6 @@ def no_candidate_attribution(
         buckets=[buckets_by_key[key] for key, _ in definitions],
         window_closed=buckets_by_key["window_closed"],
         positive_candidates=buckets_by_key["positive_candidates"],
-        board_coverage=board_coverage(conn, business_date),
+        board_coverage=list(board_coverage(conn, business_date)),
         caliber=ATTRIBUTION_CALIBER,
     )

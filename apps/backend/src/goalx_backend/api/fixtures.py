@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -91,7 +91,7 @@ def get_no_candidate_attribution(
         int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
     ] = 1,
     market_code: Annotated[
-        str, Query(description="玩法(现仅 had 有判定链,其他玩法后续)")
+        Literal["had"], Query(description="玩法(现仅 had 有判定链,其他玩法后续)")
     ] = "had",
 ) -> NoCandidateAttribution:
     """
@@ -105,7 +105,8 @@ def get_no_candidate_attribution(
     信息齐确实无优势←判定 valid 且无正 EV；有候选来不及执行=空桶占位
     （人裁决：依赖截止时间数据，首期不做）。已停售/已开赛入 window_closed
     脚注面不入六桶；positive_candidates=valid 且有正 EV 的对照面；
-    board_coverage 与晨检第 8 项同函数同数（对账一致）。
+    board_coverage 与晨检第 8 项同函数同数（eu_cut 按判定原因计，与晨检
+    链覆盖为间接对账）。days>1 时窗口合并为一组桶。
     """
     start = date or beijing_business_date()
     with corpus_duckdb.reader() as duck_con:
