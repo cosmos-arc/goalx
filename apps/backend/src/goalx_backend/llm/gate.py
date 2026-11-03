@@ -208,7 +208,7 @@ def analyst_review(
     if info is None:
         return PARSE_FAILED, None
     moment = now or utc_now_iso()
-    intels = intel_for_fixture(conn, fixture_id)
+    intels = intel_for_fixture(conn, fixture_id, as_of=moment)
     ml = latest_triple(conn, fixture_id, "ml", as_of=moment) or (0.0, 0.0, 0.0)
     scout = latest_triple(conn, fixture_id, "llm", as_of=moment) or (0.0, 0.0, 0.0)
     with atomic(conn):

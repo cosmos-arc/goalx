@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { researchFixture } from "../mocks/handlers";
+import { fixtureEvidenceFixture, researchFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -312,6 +312,39 @@ test("ask panel streams the AG-UI answer and shows citation badges (票 15)", as
 	expect(answer).toHaveTextContent("证据弱点：情报仅一条");
 	// 结束后引用徽章（来源 + 时点）
 	expect(within(panel).getByTestId("ask-citations")).toHaveTextContent("okooo formation");
+});
+
+test("ask panel badges bounded by decision moment — future intel hidden (票 04)", async () => {
+	const user = userEvent.setup();
+	// 情报面混入"30 分钟后才采集"的未来条目：徽章不得回溯挂上
+	server.use(
+		http.get("*/api/v1/fixtures/:id/evidence", () =>
+			HttpResponse.json({
+				...fixtureEvidenceFixture,
+				intels: [
+					...fixtureEvidenceFixture.intels,
+					{
+						kind: "form",
+						text: "开球前 30 分钟才采集的情报",
+						source: "future src",
+						collected_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+					},
+				],
+			}),
+		),
+	);
+	await renderAt("/fixtures/1");
+	const chain = await screen.findByTestId("research-chain");
+	await user.click(await within(chain).findByTestId("chain-ask-toggle"));
+	const panel = await within(chain).findByTestId("ask-panel");
+	await user.type(within(panel).getByTestId("ask-input"), "主队能赢吗？");
+	await user.click(within(panel).getByTestId("ask-submit"));
+
+	const answer = await within(panel).findByTestId("ask-msg-assistant");
+	await waitFor(() => expect(answer).toHaveTextContent("主队胜率承压"));
+	const citations = within(panel).getByTestId("ask-citations");
+	expect(citations).toHaveTextContent("okooo formation"); // 决策时刻前的照常展示
+	expect(citations).not.toHaveTextContent("future src"); // 未来情报不显徽章
 });
 
 test("ask panel surfaces RUN_ERROR honestly (票 15)", async () => {

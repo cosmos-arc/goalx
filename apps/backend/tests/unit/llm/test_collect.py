@@ -12,6 +12,7 @@ from goalx_backend.llm.store import (
     IntelDraft,
     insert_intel_observation,
     intel_for_fixture,
+    intel_summary_by_fixture,
     raw_hash,
 )
 
@@ -186,6 +187,33 @@ def test_intel_observations_append_only(db: sqlite3.Connection) -> None:
         db.execute("UPDATE intel_observations SET text = 'y'")
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         db.execute("DELETE FROM intel_observations")
+
+
+def test_intel_reads_asof_boundary(db: sqlite3.Connection) -> None:
+    """票 04：as_of 时点界（collected_at <= as_of）；不传 = 全量现行为。"""
+    fixture_id = _seed_fixture(db, sport_key="soccer_epl", home="阿森纳", away="切尔西")
+    for at in ("2026-09-19T22:00:00+00:00", "2026-09-19T23:30:00+00:00"):
+        insert_intel_observation(
+            db,
+            fixture_id,
+            IntelDraft(
+                kind="form",
+                text=f"情报@{at}",
+                source="t",
+                collected_at=at,
+                collector="t",
+                raw_payload={"at": at},
+            ),
+        )
+    # 不传 as_of = 全量（实时面现行为）
+    assert len(intel_for_fixture(db, fixture_id)) == 2
+    assert len(intel_summary_by_fixture(db, [fixture_id])[fixture_id]) == 2
+    # 时点界：23:00 只见 22:00 一条
+    as_of = "2026-09-19T23:00:00+00:00"
+    rows = intel_for_fixture(db, fixture_id, as_of=as_of)
+    assert [str(r["collected_at"]) for r in rows] == ["2026-09-19T22:00:00+00:00"]
+    summary = intel_summary_by_fixture(db, [fixture_id], as_of=as_of)
+    assert [t for _, t in summary[fixture_id]] == ["2026-09-19T22:00:00+00:00"]
 
 
 def test_match_intels_dropped(db: sqlite3.Connection) -> None:

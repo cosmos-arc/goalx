@@ -132,7 +132,7 @@ async def ask_analyst_events(
     yield encoder.encode(RunStartedEvent(thread_id=thread_id, run_id=run))
     message_id = uuid.uuid4().hex
     try:
-        intels = intel_for_fixture(conn, fixture_id)
+        intels = intel_for_fixture(conn, fixture_id, as_of=moment)
         if not intels:
             yield encoder.encode(
                 TextMessageStartEvent(message_id=message_id, role="assistant")

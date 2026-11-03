@@ -176,6 +176,57 @@ def test_scout_fixture_inserts_forecast(
     )
 
 
+def test_scout_replay_excludes_future_intel(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 04 回放黄金样例：backdated now 下，collected_at 晚于 moment 的
+    情报不入 payload（intel_ids/intel_count 读不到未来情报）。"""
+    import json as _json
+
+    fixture_id = _seed_fixture(db)
+    past_id = insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="伤停",
+            text="过去情报",
+            source="s",
+            collected_at="2026-09-19T22:00:00+00:00",
+            collector="c",
+            raw_payload={"i": 1},
+        ),
+    )
+    insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="伤停",
+            text="未来情报",
+            source="s",
+            collected_at="2026-09-19T23:30:00+00:00",
+            collector="c",
+            raw_payload={"i": 2},
+        ),
+    )
+    monkeypatch.setattr(
+        "goalx_backend.llm.client._build_client", lambda s, base: _StubClient(_GOOD)
+    )
+    status, row_id = scout_fixture(
+        db,
+        _settings(),
+        fixture_id,
+        purpose=Purpose.SCOUT,
+        now="2026-09-19T23:00:00+00:00",
+    )
+    assert status == INSERTED
+    assert row_id is not None
+    row = db.execute("SELECT payload FROM forecasts WHERE id = ?", (row_id,)).fetchone()
+    payload = _json.loads(str(row["payload"]))
+    assert payload["intel_count"] == 1
+    assert payload["intel_ids"] == [past_id]
+    assert "未来情报" not in str(row["payload"])
+
+
 def test_scout_fixture_parse_failed_zero_rows(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

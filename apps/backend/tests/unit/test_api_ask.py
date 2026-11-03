@@ -249,6 +249,57 @@ def test_extract_question_handles_content_parts() -> None:
     assert extract_question(messages) == "分段\n提问"
 
 
+def test_ask_replay_prompt_excludes_future_intel(
+    ask_client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 04 回放黄金样例：backdated now 下 prompt 只含决策时刻前的情报。"""
+    import asyncio
+
+    import goalx_backend.llm.ask as ask_mod
+
+    _client, db_path = ask_client
+    conn = connect(db_path)
+    insert_intel_observation(
+        conn,
+        1,
+        IntelDraft(
+            kind="formation",
+            text="未来情报：首发已公布",
+            source="s",
+            collected_at="2099-01-01T00:00:00+00:00",
+            collector="s",
+            raw_payload={"i": 2},
+        ),
+    )
+    conn.commit()
+    prompts: list[str] = []
+
+    def _capture_run_streamed(*args: object, **kwargs: object) -> _FakeResult:
+        prompts.append(str(args[1]))
+        return _FakeResult()
+
+    monkeypatch.setattr(ask_mod.Runner, "run_streamed", _capture_run_streamed)
+    try:
+
+        async def _drive() -> None:
+            gen = ask_mod.ask_analyst_events(
+                conn,
+                Settings(db_path=db_path, glm_api_key="test-key"),
+                1,
+                "问题",
+                thread_id="t",
+                now="2026-09-26T10:00:00+00:00",
+            )
+            async for _chunk in gen:
+                pass
+
+        asyncio.run(_drive())
+    finally:
+        conn.close()
+    assert "主队主力中卫伤缺" in prompts[0]  # 决策时刻前的情报在 prompt
+    assert "未来情报" not in prompts[0]  # 晚于 as_of 的不入 prompt
+
+
 def test_ask_stream_close_cancels_upstream(
     ask_client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
