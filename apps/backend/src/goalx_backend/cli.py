@@ -1821,7 +1821,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--date",
         type=str,
         default=None,
-        help="业务日 北京日期(缺省=今天;回放指定日用)",
+        help="业务日 北京日期(缺省=今天;仅当日/未来日——过去日无冻结回放会销毁原始快照)",
     )
     sub.add_parser(
         "gold-build",

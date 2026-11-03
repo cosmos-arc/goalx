@@ -1437,10 +1437,21 @@ def record_freshness_shadow(
 
 
 def latest_freshness_shadow_date(conn: sqlite3.Connection) -> str | None:
-    """最新已拍业务日（无行 None——晨检读数入口）。"""
-    row = conn.execute(
-        "SELECT business_date FROM freshness_shadow ORDER BY business_date DESC LIMIT 1"
-    ).fetchone()
+    """
+    最新已拍业务日（无行/表未建 None——晨检读数入口）。
+
+    v38 前旧库（只读连接无法自 migrate）降级 None 不抛——晨检是新代码
+    首个跑面，缺表部署窗不该打灭整张红绿面（correctness F3）。
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT business_date FROM freshness_shadow
+            ORDER BY business_date DESC LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
     return str(row["business_date"]) if row is not None else None
 
 
@@ -1451,16 +1462,19 @@ def freshness_shadow_summary(
     一日影子读数（晨检/面板只读消费）：双口径新鲜覆盖 + 分歧计数。
 
     覆盖分母=可比行（两钟都可算；无 JC 证据行计入 n 可见但不进分子）。
-    无当日行返回 None（未拍不硬判）。
+    无当日行/表未建返回 None（未拍不硬判——同 latest_ 入口缺表降级）。
     """
-    rows = conn.execute(
-        """
-        SELECT rule_stale_source, observed_stale, price_age_seconds,
-               observed_age_seconds
-        FROM freshness_shadow WHERE business_date = ?
-        """,
-        (business_date,),
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            """
+            SELECT rule_stale_source, observed_stale, price_age_seconds,
+                   observed_age_seconds
+            FROM freshness_shadow WHERE business_date = ?
+            """,
+            (business_date,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
     if not rows:
         return None
     n = len(rows)

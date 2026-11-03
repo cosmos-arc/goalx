@@ -48,6 +48,17 @@ function normalizedImplied(odds: number): number {
 	return odds > 1 ? 1 / odds : 0;
 }
 
+/** 票 08 两源时差人类可读（corpus 出版时滞可跨日，按量级给单位）。 */
+function gapText(seconds: number): string {
+	if (seconds < 90) {
+		return `${Math.round(seconds)}s`;
+	}
+	if (seconds < 5400) {
+		return `${Math.round(seconds / 60)}分钟`;
+	}
+	return `${(seconds / 86400).toFixed(1)}天`;
+}
+
 /** 票 08 五时钟展示：秒龄 → 整分钟（null/undefined=未知占位）。 */
 function clockMinutes(seconds: number | null | undefined): string {
 	if (seconds === null || seconds === undefined) {
@@ -166,8 +177,8 @@ export function FixtureResearchPage() {
 									{clockMinutes(data.had_quote.eu_age_seconds)} · 两源时差{" "}
 									{data.had_quote.pair_gap_seconds === null || data.had_quote.pair_gap_seconds === undefined
 										? "—"
-										: `${Math.round(data.had_quote.pair_gap_seconds)}s`}
-									（分钟前；判定口径=价格未变 300s，其余仅记录）
+										: gapText(data.had_quote.pair_gap_seconds)}
+									（分钟前；判定口径=价格未变 300s，其余仅记录；两源时差对 corpus 链=出版时滞口径可跨日，非实时钟）
 								</p>
 							) : null}
 						</header>

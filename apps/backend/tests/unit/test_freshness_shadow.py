@@ -140,3 +140,32 @@ def test_morning_check_item_reports_and_tolerates_empty(db: sqlite3.Connection) 
     assert item.status == "ok"  # 观察项不判红
     assert "规则新鲜 1/1" in item.detail
     assert "观测新鲜 1/1" in item.detail
+
+
+def test_past_date_replay_refused(db: sqlite3.Connection) -> None:
+    """票 08 correctness F2：过去日重放拒绝——无冻结 as_of 的回放会把
+    当日读成 kickoff_passed 并 REPLACE 销毁原始快照。"""
+    from goalx_backend import tasks
+    from goalx_backend.data import fixtures as fx_store
+
+    today = fx_store.beijing_business_date()
+    rows = [_row(1, "valid", [], jc_age_seconds=60.0, jc_observed_age_seconds=60.0)]
+    qe.record_freshness_shadow(db, rows, today, as_of="2026-11-04T12:00:00+00:00")
+    import pytest
+
+    with pytest.raises(ValueError, match="拒绝重放过去日"):
+        tasks.freshness_shadow_day(business_date="2020-01-01")
+    # 当日原始快照仍在（拒绝路径零写入）
+    assert qe.freshness_shadow_summary(db, today) is not None
+
+
+def test_morning_check_tolerates_missing_table(db: sqlite3.Connection) -> None:
+    """票 08 correctness F3：v38 前旧库（表未建）晨检项降级'未拍'不抛
+    ——只读连接无法自 migrate，缺表部署窗不该打灭整张红绿面。"""
+    from goalx_backend.morning_check import check_freshness_shadow
+
+    db.execute("DROP TABLE IF EXISTS freshness_shadow")
+    db.commit()
+    item = check_freshness_shadow(db)
+    assert item.status == "ok"
+    assert "未拍" in item.detail

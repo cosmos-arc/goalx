@@ -258,6 +258,7 @@ export const attributionFixture = {
 		observed_stale: 0,
 		divergent_rule_stale_observed_fresh: 1,
 	},
+	freshness_shadow_date: beijingBusinessDate(Date.now()),
 	caliber: "六桶=报告措辞；桶判定与 quote_evidence 裁决原因一一对应。",
 } as const satisfies DeepReadonly<components["schemas"]["NoCandidateAttribution"]>;
 

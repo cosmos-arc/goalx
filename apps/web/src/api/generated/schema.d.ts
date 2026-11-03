@@ -2271,6 +2271,8 @@ export interface components {
             freshness_shadow?: {
                 [key: string]: number;
             } | null;
+            /** Freshness Shadow Date */
+            freshness_shadow_date?: string | null;
             /** Caliber */
             caliber: string;
         };

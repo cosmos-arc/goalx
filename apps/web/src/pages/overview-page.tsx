@@ -410,8 +410,8 @@ export function OverviewPage() {
 									</div>
 									{attributionQuery.data.freshness_shadow ? (
 										<p className="mt-2 text-xs text-muted-foreground" data-testid="attribution-freshness-shadow">
-											300s 双口径读数（票 08 并行测量，最新已拍日）：规则新鲜{" "}
-											{attributionQuery.data.freshness_shadow["rule_fresh"]}/
+											300s 双口径读数（票 08 并行测量，快照日 {attributionQuery.data.freshness_shadow_date ?? "—"}
+											）：规则新鲜 {attributionQuery.data.freshness_shadow["rule_fresh"]}/
 											{attributionQuery.data.freshness_shadow["n_comparable"]} · 观测新鲜{" "}
 											{attributionQuery.data.freshness_shadow["observed_fresh"]}/
 											{attributionQuery.data.freshness_shadow["n_comparable"]} · 分歧（规则旧 /观测新）

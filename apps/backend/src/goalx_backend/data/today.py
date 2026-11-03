@@ -330,9 +330,11 @@ class NoCandidateAttribution(BaseModel):
     # ok | degraded：degraded=corpus 读面缺席（被写方锁占/库缺席）——
     # 此时 eu_cut 桶可能混入"读面缺席"而非真断供，对账先看本字段
     corpus_reader: str = "ok"
-    # 票 08 双口径读数（最新已拍日影子快照；未拍 None）——面板面：
-    # 300s 规则口径 vs 观测口径的有效覆盖差异，读数时点与票 09 对齐
+    # 票 08 双口径读数（请求日影子快照；未拍 None）——面板面：300s 规则
+    # 口径 vs 观测口径的有效覆盖差异，读数时点与票 09 对齐；
+    # freshness_shadow_date=快照归属业务日（读数可归期）
     freshness_shadow: dict[str, int] | None = None
+    freshness_shadow_date: str | None = None
     caliber: str
 
 
@@ -455,6 +457,9 @@ def no_candidate_attribution(
             strict=True,
         )
     ]
+    # 影子读数取请求起始日的快照（correctness F4：恒取最新日会把历史
+    # 查询日与另一日读数并列无标注）；该日未拍=None 诚实缺席不冒充最新
+    shadow = quote_evidence.freshness_shadow_summary(conn, business_date)
     return NoCandidateAttribution(
         business_date=business_date,
         market_code=market_code,
@@ -465,10 +470,7 @@ def no_candidate_attribution(
         positive_candidates=buckets_by_key["positive_candidates"],
         board_coverage=coverage,
         corpus_reader=corpus_reader,
-        freshness_shadow=(
-            quote_evidence.freshness_shadow_summary(conn, latest)
-            if (latest := quote_evidence.latest_freshness_shadow_date(conn)) is not None
-            else None
-        ),
+        freshness_shadow=shadow,
+        freshness_shadow_date=business_date if shadow is not None else None,
         caliber=ATTRIBUTION_CALIBER,
     )

@@ -704,6 +704,9 @@ def test_no_candidate_attribution_endpoint(demo_client: TestClient) -> None:
     assert payload["total"] == 3
     assert payload["board_coverage"] == [3, 0]  # 晨检第 8 项同源（demo 无 srct 链）
     assert "quote_evidence" in payload["caliber"]
+    # 票 08 correctness F4：影子读数取请求日快照并带日期——未拍日 None
+    assert payload["freshness_shadow"] is None
+    assert payload["freshness_shadow_date"] is None
 
 
 def test_attribution_marks_degraded_corpus_reader(

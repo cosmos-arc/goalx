@@ -5416,6 +5416,17 @@
             ],
             "title": "Freshness Shadow"
           },
+          "freshness_shadow_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Shadow Date"
+          },
           "caliber": {
             "type": "string",
             "title": "Caliber"

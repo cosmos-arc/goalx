@@ -370,3 +370,21 @@ test("票 08：五时钟分离展示（判定口径只标价格未变一只钟�
 	expect(clocks).toHaveTextContent("两源时差 0s");
 	expect(clocks).toHaveTextContent("判定口径=价格未变 300s");
 });
+
+test("票 08 correctness：corpus 链两源时差按量级人类可读并注记出版时滞口径", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/:id/research", () =>
+			HttpResponse.json({
+				...researchFixture,
+				had_quote: {
+					...researchFixture.had_quote,
+					pair_gap_seconds: 172800,
+				},
+			}),
+		),
+	);
+	await renderAt("/fixtures/1");
+	const clocks = await screen.findByTestId("research-clocks");
+	expect(clocks).toHaveTextContent("两源时差 2.0天");
+	expect(clocks).toHaveTextContent("出版时滞口径可跨日");
+});
