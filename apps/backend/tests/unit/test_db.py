@@ -497,3 +497,83 @@ def test_v34_reentrant_after_interrupted_migration() -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(pool_sync_runs)")}
     assert "empty_markets" in cols
     conn.close()
+
+
+def test_research_db_fresh_migrate_and_idempotent(tmp_path) -> None:
+    """票 07②：研究库连接自动建 backtest 四表（终态形状），幂等重开。"""
+    path = tmp_path / "research.db"
+    conn = db.connect_research(path)
+    try:
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert {
+            "backtest_runs",
+            "backtest_predictions",
+            "backtest_bets",
+            "backtest_metrics",
+        } <= tables
+        # 终态形状锚点（v25 后）：predictions 键 match_key + era/ftr 列
+        cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(backtest_predictions)")
+        }
+        assert {"match_key", "era", "ftr"} <= cols
+        assert db.current_version(conn) == len(migrations.RESEARCH_MIGRATIONS)
+    finally:
+        conn.close()
+    # 重开幂等（schema_migrations 记账后不再执行 DDL）
+    again = db.connect_research(path)
+    again.close()
+
+
+def test_research_backfill_copies_rows_id_preserving(tmp_path) -> None:
+    """票 07②：CLI research-backfill 保 id 搬运、幂等可重跑。"""
+    from unittest.mock import patch
+
+    from goalx_backend import cli
+    from goalx_backend.config import Settings
+
+    ops = db.connect(tmp_path / "ops.db")
+    db.migrate(ops)
+    ops.execute(
+        "INSERT INTO backtest_runs (label, params, status, created_at)"
+        " VALUES ('legacy', '{}', 'done', '2026-01-01T00:00:00+00:00')"
+    )
+    run_id = int(ops.execute("SELECT id FROM backtest_runs").fetchone()["id"])
+    ops.execute(
+        "INSERT INTO backtest_predictions (run_id, match_key, competition, season,"
+        " match_date, home_team, away_team, had_probs, fair_probs, fair_source,"
+        " model_fingerprint, train_window_end)"
+        " VALUES (?, '9001', 'E0', '2024-25', '2025-01-01', 'A', 'B', '[]', '[]',"
+        " 'psc', 'fp', '2024-12-31')",
+        (run_id,),
+    )
+    ops.commit()
+    ops.close()
+
+    settings = Settings(
+        db_path=tmp_path / "ops.db", research_db_path=tmp_path / "research.db"
+    )
+    with patch("goalx_backend.cli.get_settings", return_value=settings):
+        cli._cmd_research_backfill()
+
+    rconn = db.connect_research(settings.research_db_path)
+    try:
+        copied_run = rconn.execute("SELECT id, label FROM backtest_runs").fetchone()
+        assert copied_run["id"] == run_id  # id 保序：报告引用不漂移
+        assert copied_run["label"] == "legacy"
+        n_preds = rconn.execute(
+            "SELECT COUNT(*) AS n FROM backtest_predictions"
+        ).fetchone()["n"]
+        assert n_preds == 1
+        # 幂等重跑：不重复不报错
+        with patch("goalx_backend.cli.get_settings", return_value=settings):
+            cli._cmd_research_backfill()
+        n_again = rconn.execute(
+            "SELECT COUNT(*) AS n FROM backtest_predictions"
+        ).fetchone()["n"]
+        assert n_again == 1
+    finally:
+        rconn.close()

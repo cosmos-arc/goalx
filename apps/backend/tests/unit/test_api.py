@@ -1015,6 +1015,25 @@ def test_pool_slip_creation_and_materialization(api_client: TestClient) -> None:
     assert any(row["id"] == slip["id"] for row in combos.json())
 
 
+def test_pool_slip_over_combination_limit_rejected(api_client: TestClient) -> None:
+    """票 07④：超上限复式组合 422 拒绝，不落半截票。"""
+    response = api_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "picks": [
+                {"match_seq": seq, "selection_code": sel}
+                for seq in range(1, 15)  # 14 场 × 3 向 = 478 万 > 10 万
+                for sel in ("3", "1", "0")
+            ],
+        },
+    )
+    assert response.status_code == 422
+    assert "超上限" in response.json()["detail"]
+    # 回滚干净：票不落库
+    assert api_client.get("/api/v1/bet-slips").json() == []
+
+
 def test_manual_join_endpoint(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     assert (

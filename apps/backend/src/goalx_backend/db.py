@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goalx_backend.config import get_settings
-from goalx_backend.migrations import MIGRATIONS
+from goalx_backend.migrations import MIGRATIONS, RESEARCH_MIGRATIONS, MigrationFn
 
 
 def utc_now_iso() -> str:
@@ -53,6 +53,22 @@ def current_version(conn: sqlite3.Connection) -> int:
 
 def migrate(conn: sqlite3.Connection) -> int:
     """Apply pending migrations in order; return the resulting version."""
+    return _apply_chain(conn, MIGRATIONS)
+
+
+def migrate_research(conn: sqlite3.Connection) -> int:
+    """
+    研究库迁移（boundary-hardening 票 07②）：连接时即席执行。
+
+    链内只有幂等 CREATE IF NOT EXISTS——研究库无部署方迁移步骤，免一个
+    运维前置（运行面库迁移由部署方/CLI 执行的既有约定不变）。
+    """
+    return _apply_chain(conn, RESEARCH_MIGRATIONS)
+
+
+def _apply_chain(
+    conn: sqlite3.Connection, chain: tuple[tuple[int, MigrationFn], ...]
+) -> int:
     conn.execute(
         """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -64,7 +80,7 @@ version INTEGER PRIMARY KEY,
         int(row["version"])
         for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
     }
-    for version, apply_fn in MIGRATIONS:
+    for version, apply_fn in chain:
         if version in applied:
             continue
         apply_fn(conn)
@@ -74,6 +90,18 @@ version INTEGER PRIMARY KEY,
         )
         conn.commit()
     return current_version(conn)
+
+
+def connect_research(db_path: str | Path = "") -> sqlite3.Connection:
+    """打开研究库连接（WAL + 自动迁移，票 07②）。"""
+    resolved = Path(db_path) if db_path else get_settings().research_db_path
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(resolved, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    migrate_research(conn)
+    return conn
 
 
 @contextmanager

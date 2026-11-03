@@ -77,6 +77,8 @@ export interface paths {
          *
          *     ``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内
          *     ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
+         *
+         *     duckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。
          */
         get: operations["get_today_fixtures_api_v1_fixtures_today_get"];
         put?: never;
@@ -162,6 +164,7 @@ export interface paths {
          *     概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。
          *
          *     共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。
+         *     duckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。
          */
         get: operations["get_fixture_research_api_v1_fixtures__fixture_id__research_get"];
         put?: never;
@@ -393,6 +396,9 @@ export interface paths {
         /**
          * 触发一次彩池同步(体彩官方在售对阵+上期彩果)
          * @description 触发与定拍同款的彩池同步（票 68 官方源；幂等）。
+         *
+         *     同步外网请求 + 库写入是秒级同步 I/O——普通 def 走线程池，不占
+         *     事件循环（boundary-hardening 票 07①）。
          */
         post: operations["run_pool_sync_api_v1_pool_sync_run_post"];
         delete?: never;
@@ -622,7 +628,7 @@ export interface paths {
         };
         /**
          * 回测 run 列表
-         * @description 全部回测 run（新→旧），附 overall 指标摘要。
+         * @description 全部回测 run（新→旧），附 overall 指标摘要（读研究库）。
          */
         get: operations["list_backtest_runs_api_v1_backtest_runs_get"];
         put?: never;
@@ -642,7 +648,7 @@ export interface paths {
         };
         /**
          * 回测 run 详情(分层指标)
-         * @description 一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧）。
+         * @description 一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。
          */
         get: operations["get_backtest_run_api_v1_backtest_runs__run_id__get"];
         put?: never;
@@ -3257,14 +3263,12 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description 复式组合数超上限(10万);载荷校验失败 */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
+                content?: never;
             };
         };
     };

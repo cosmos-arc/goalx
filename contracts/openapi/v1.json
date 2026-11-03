@@ -96,7 +96,7 @@
           "fixtures"
         ],
         "summary": "竞彩场次对照表(按业务日窗口)",
-        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。\n\n``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内\n``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。",
+        "description": "竞彩 vs 欧洲共识对照：赔率、隐含概率、EV、books 数、调盘时点。\n\n``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内\n``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。\n\nduckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。",
         "operationId": "get_today_fixtures_api_v1_fixtures_today_get",
         "parameters": [
           {
@@ -378,7 +378,7 @@
           "fixtures"
         ],
         "summary": "单场研究页读模型",
-        "description": "一场比赛的研究视图。\n\n各欧赔 book 最新 H/D/A 与捕获时间、去水共识概率、模型（DC Forecast）\n概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。\n\n共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。",
+        "description": "一场比赛的研究视图。\n\n各欧赔 book 最新 H/D/A 与捕获时间、去水共识概率、模型（DC Forecast）\n概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。\n\n共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。\nduckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。",
         "operationId": "get_fixture_research_api_v1_fixtures__fixture_id__research_get",
         "parameters": [
           {
@@ -872,14 +872,7 @@
             "description": "暂不支持 live 奖池票"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "复式组合数超上限(10万);载荷校验失败"
           }
         }
       }
@@ -1070,7 +1063,7 @@
           "pool"
         ],
         "summary": "触发一次彩池同步(体彩官方在售对阵+上期彩果)",
-        "description": "触发与定拍同款的彩池同步（票 68 官方源；幂等）。",
+        "description": "触发与定拍同款的彩池同步（票 68 官方源；幂等）。\n\n同步外网请求 + 库写入是秒级同步 I/O——普通 def 走线程池，不占\n事件循环（boundary-hardening 票 07①）。",
         "operationId": "run_pool_sync_api_v1_pool_sync_run_post",
         "responses": {
           "200": {
@@ -1498,7 +1491,7 @@
           "validation"
         ],
         "summary": "回测 run 列表",
-        "description": "全部回测 run（新→旧），附 overall 指标摘要。",
+        "description": "全部回测 run（新→旧），附 overall 指标摘要（读研究库）。",
         "operationId": "list_backtest_runs_api_v1_backtest_runs_get",
         "responses": {
           "200": {
@@ -1524,7 +1517,7 @@
           "validation"
         ],
         "summary": "回测 run 详情(分层指标)",
-        "description": "一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧）。",
+        "description": "一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。",
         "operationId": "get_backtest_run_api_v1_backtest_runs__run_id__get",
         "parameters": [
           {

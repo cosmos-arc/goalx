@@ -39,6 +39,10 @@ class Settings(BaseSettings):
 
     # --- 存储（ADR 0003：SQLite WAL 单机） ---
     db_path: Path = Path("data/goalx.db")
+    # 研究回测独立库（票 07②人裁决①）：backtest_runs/predictions/bets/
+    # metrics 物理迁出运行面库——研究长跑与运营写入(纸面建注等)分文件,
+    # 互不占写锁。历史 run 由 `goalx-backend research-backfill` 一次性搬入。
+    research_db_path: Path = Path("data/goalx-research.db")
     observations_dir: Path = Path("data/observations")  # 原始响应 gzip 存档（票 35）
     # CorpusStore 语料树根（ADR-0011）：repo 外独立数据资产，换机/外置盘改这里
     corpus_root: Path = Path.home() / "goalx-data"

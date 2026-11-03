@@ -46,7 +46,7 @@ MAX_WINDOW_DAYS = 7  # 场次列表日期窗口上限（票 wb-01：前端 3 日
     summary="竞彩场次对照表(按业务日窗口)",
     response_model=list[TodayFixtureView],
 )
-async def get_today_fixtures(
+def get_today_fixtures(
     db: DbDep,
     date: Annotated[
         str | None, Query(description="起始业务日(北京日期, 默认今天)")
@@ -60,6 +60,8 @@ async def get_today_fixtures(
 
     ``days>1`` 时返回 ``[date, date+days-1]`` 业务日窗口内的场次，行内
     ``business_date`` 标记归属日（票 wb-01 场次列表 3 日化）。
+
+    duckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。
     """
     with corpus_duckdb.reader() as duck_con:
         rows = build_today_view(
@@ -275,7 +277,7 @@ class FixtureResearchView(BaseModel):
     response_model=FixtureResearchView,
     responses={404: {"description": "fixture 不存在或无竞彩销售编号"}},
 )
-async def get_fixture_research(
+def get_fixture_research(
     fixture_id: int,
     db: DbDep,
     as_of: Annotated[
@@ -289,6 +291,7 @@ async def get_fixture_research(
     概率与模型 EV、had 资格判定与开赛信息（票 wb-02）。
 
     共识口径与场次列表页一致（同 fixture 两页不出现两个共识）。
+    duckdb+sqlite 同步查询走线程池，不阻塞事件循环（票 07①）。
     """
     detail = fx_store.fixture_detail(db, fixture_id)
     if detail is None:

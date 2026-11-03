@@ -84,7 +84,7 @@ from goalx_backend.data.ingest import (
 )
 from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
-from goalx_backend.db import connect, migrate
+from goalx_backend.db import connect, connect_research, migrate
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import baseline, market_lambda, unlock_report
 from goalx_backend.evaluation import bucket_reaudit as bkt
@@ -320,9 +320,56 @@ def _corpus_handles() -> Generator[tuple[duckdb.DuckDBPyConnection, CorpusStore]
         store.close()
 
 
+@contextmanager
+def _research_conn() -> Generator[sqlite3.Connection]:
+    """研究库连接壳（票 07②）：backtest 表读写面，独立于运行面库。"""
+    conn = connect_research()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _cmd_research_backfill() -> None:
+    """
+    研究库历史回填（票 07②）：运行面库 backtest 四表一次性搬入研究库。
+
+    保 id、幂等可重跑（研究库已有该 id 即跳过）；SQL 归 evaluation
+    包（表归属闸），本入口只做编排。
+    """
+    settings = get_settings()
+    if not settings.db_path.exists():
+        raise SystemExit(f"运行面库不存在: {settings.db_path}")
+    warm = connect_research(settings.research_db_path)  # 先建研究库 schema
+    warm.close()
+    ops = connect(settings.db_path)
+    try:
+        copied = bt.backfill_research(ops, settings.research_db_path)
+    finally:
+        ops.close()
+    for table, n in copied.items():
+        logger.info("research-backfill {}: {} 行", table, n)
+    sys.stdout.write(
+        json.dumps(
+            {"research_db": str(settings.research_db_path), "rows": copied},
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    logger.info(
+        "research-backfill 共 {} 行 → {}",
+        sum(copied.values()),
+        settings.research_db_path,
+    )
+
+
 def _cmd_backtest(args: argparse.Namespace) -> None:
     """跑一次十年回测（gold 消费，walk-forward）+ 指标分层汇总。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         haircut, source, n = hc.calibrated_haircut(conn)
         if args.haircut is not None:
             haircut, source = args.haircut, "cli"
@@ -348,8 +395,15 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
             residual_min_samples=args.residual_min_samples,
             residual_window=args.residual_window,
         )
-        result = bt.run_backtest(conn, duck_con, store, params, label=args.label)
-        ev.compute_run_metrics(conn, result.run_id)
+        result = bt.run_backtest(
+            rconn,
+            duck_con,
+            store,
+            params,
+            label=args.label,
+            fingerprint_conn=conn,
+        )
+        ev.compute_run_metrics(rconn, result.run_id)
         logger.info(
             "run={} predictions={} bets={} staked={:.2f} profit={:.2f} roi={:.2%}",
             result.run_id,
@@ -363,7 +417,11 @@ def _cmd_backtest(args: argparse.Namespace) -> None:
 
 def _cmd_baseline_compare() -> None:
     """基准分期质检报告 + psc/avgc 对照新 run(旧 run 保留,票 34)。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
         sys.stdout.write(
             json.dumps(
                 baseline.baseline_quality_report(conn).model_dump(),
@@ -374,14 +432,15 @@ def _cmd_baseline_compare() -> None:
         )
         haircut, _, _ = hc.calibrated_haircut(conn)
         results = baseline.run_baseline_comparison(
-            conn,
+            rconn,
             duck_con,
             store,
             bt.BacktestParams(haircut=haircut),
             base_label=f"baseline-{datetime.now(tz=UTC).strftime('%Y%m%d')}",
+            fingerprint_conn=conn,
         )
         for source, summary in results.items():
-            ev.compute_run_metrics(conn, int(summary["run_id"]))
+            ev.compute_run_metrics(rconn, int(summary["run_id"]))
             logger.info("baseline {} run={}", source, summary)
 
 
@@ -441,8 +500,8 @@ def _cmd_decade_skill(args: argparse.Namespace) -> None:
     """十年分时代技能报告（票 19：era×联赛×玩法，预测面+下注面+EV 实现率）。"""
     store = CorpusStore(get_settings().corpus_root)
     try:
-        with task_conn() as conn:
-            payload = dsk.build_decade_skill_report(conn, store, run_id=args.run_id)
+        with _research_conn() as rconn:
+            payload = dsk.build_decade_skill_report(rconn, store, run_id=args.run_id)
     finally:
         store.close()
     sys.stdout.write(
@@ -459,9 +518,9 @@ def _cmd_decade_skill(args: argparse.Namespace) -> None:
 
 def _cmd_clv_decade(args: argparse.Namespace) -> None:
     """CLV 十年仪表盘（票 20：结构校验+早锁价值+线漂移，观察性不回写）。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
         payload = clvd.build_clv_decade_report(
-            conn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -477,9 +536,9 @@ def _cmd_clv_decade(args: argparse.Namespace) -> None:
 
 def _cmd_news_signal(args: argparse.Namespace) -> None:
     """事件信号 PIT 回放（票 05：事件×残差×price-in，观察性）。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
         payload = nsw.build_news_signal_report(
-            conn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -496,8 +555,13 @@ def _cmd_news_signal(args: argparse.Namespace) -> None:
 def _cmd_guardian_news_funnel(args: argparse.Namespace) -> None:
     """扩样收敛表（票 07：表先行——候选→独立场次→可检验，预算另裁）。"""
     settings = get_settings()
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
-        predicted, tested = ev.latest_done_run_prediction_sids(conn)
+    with (
+        _corpus_handles() as (duck_con, store),
+        task_conn() as conn,
+        _research_conn() as rconn,
+    ):
+        # 票 07②：预测面读研究库；NewsContext 的运行面句柄（fixtures 等）仍走运行面库
+        predicted, tested = ev.latest_done_run_prediction_sids(rconn)
         table = gs.convergence_table(
             gs.NewsContext(duck_con=duck_con, conn=conn, settings=settings),
             store,
@@ -540,9 +604,9 @@ def _cmd_guardian_news_pilot(args: argparse.Namespace) -> None:
 
 def _cmd_bucket_reaudit(args: argparse.Namespace) -> None:
     """错价桶方向映射限定复核（票 03：一次性，结论上限=探索性）。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
         payload = bkt.build_bucket_reaudit_report(
-            conn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -559,9 +623,9 @@ def _cmd_bucket_reaudit(args: argparse.Namespace) -> None:
 
 def _cmd_signal_attribution(args: argparse.Namespace) -> None:
     """信号级归因（票 21：残差×收盘族特征分桶，观察性探索报告）。"""
-    with _corpus_handles() as (duck_con, store), task_conn() as conn:
+    with _corpus_handles() as (duck_con, store), _research_conn() as rconn:
         payload = sig.build_signal_attribution_report(
-            conn, duck_con, store, run_id=args.run_id
+            rconn, duck_con, store, run_id=args.run_id
         )
     sys.stdout.write(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
@@ -588,9 +652,9 @@ def _cmd_model_layers(args: argparse.Namespace) -> None:
         raise SystemExit("至少一个 --treatment label:run_id")
     store = CorpusStore(get_settings().corpus_root)
     try:
-        with task_conn() as conn:
+        with _research_conn() as rconn:
             payload = mlp.build_model_layers_report(
-                conn,
+                rconn,
                 store,
                 treatments=treatments,
                 baseline_run_id=args.baseline_run_id,
@@ -1385,6 +1449,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     backtest = sub.add_parser(
         "backtest", help="跑一次十年回测(gold 消费,walk-forward,票 13)"
     )
+    sub.add_parser(
+        "research-backfill",
+        help="运行面库 backtest 历史一次性搬入研究库(票 07②,幂等)",
+    )
     backtest.add_argument("--label", default="manual", help="run 标签")
     backtest.add_argument(
         "--haircut",
@@ -1845,6 +1913,7 @@ def main(argv: list[str] | None = None) -> int:
         "align-report": _cmd_align_report,
         "set-alias": lambda: _cmd_set_alias(args),
         "backtest": lambda: _cmd_backtest(args),
+        "research-backfill": _cmd_research_backfill,
         "baseline-compare": _cmd_baseline_compare,
         "unlock-report": _cmd_unlock_report,
         "market-lambda-report": _cmd_market_lambda_report,

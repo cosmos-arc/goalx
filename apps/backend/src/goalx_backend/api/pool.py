@@ -347,8 +347,13 @@ async def build_target_plan(payload: TargetPlanPayload, db: DbDep) -> TargetPlan
     response_model=PoolSyncStatusView,
     responses={502: {"description": "同步源不可达或返回异常"}},
 )
-async def run_pool_sync(db: DbDep) -> PoolSyncStatusView:
-    """触发与定拍同款的彩池同步（票 68 官方源；幂等）。"""
+def run_pool_sync(db: DbDep) -> PoolSyncStatusView:
+    """
+    触发与定拍同款的彩池同步（票 68 官方源；幂等）。
+
+    同步外网请求 + 库写入是秒级同步 I/O——普通 def 走线程池，不占
+    事件循环（boundary-hardening 票 07①）。
+    """
     try:
         tasks.pool_snapshot()
     except (HTTPError, ValueError, RuntimeError) as exc:

@@ -64,8 +64,13 @@ from goalx_backend.db import utc_now_iso
 FULL_REMAT_MIN_HEADROOM_BYTES = 6 * 1024**3
 
 
-def _headroom_bytes() -> int:
-    """系统可挪用内存余量（可用物理 + swap 空闲；模块级供测试放宽）。"""
+def headroom_bytes() -> int:
+    """
+    系统可挪用内存余量（可用物理 + swap 空闲）。
+
+    公共出口（票 07③）：remat 全量与 gold-rebuild 共用同一余量口径与
+    下限常量——重任务预算=1（silver_build_lock）内探测。
+    """
     return psutil.virtual_memory().available + psutil.swap_memory().free
 
 
@@ -332,7 +337,7 @@ def _deferred_low_headroom(
     if full or not report.guard_reason:
         return False
     try:
-        headroom = headroom_fn() if headroom_fn is not None else _headroom_bytes()
+        headroom = headroom_fn() if headroom_fn is not None else headroom_bytes()
     except OSError:
         # 探测自身不许成为 08:10 无人值守路径的新死因（票 13 correctness
         # F1）——fail-open 照走全量，宁可回到护栏前行为也不静默断链

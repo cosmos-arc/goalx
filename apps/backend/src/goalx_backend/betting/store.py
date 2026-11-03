@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import product
 from typing import Any
@@ -16,6 +17,10 @@ from goalx_backend.models import (
     MarketKind,
     SettlementInput,
 )
+
+# 复式组合物化上限（票 07④ 人裁决②：10 万量级；14 场×3 向=478 万曾可
+# 整展开）。超限拒绝发生在任何写入之前。
+MAX_MATERIALIZED_COMBINATIONS = 100_000
 
 
 @dataclass(frozen=True)
@@ -398,9 +403,12 @@ def materialize_combinations(
     conn: sqlite3.Connection, slip_id: int, *, stake_per_combination: float = 2.0
 ) -> int:
     """
-    Expand pool picks into concrete combinations (任9 复式 1—N 组合)。
+    Expand pool picks into concrete combinations (任9 复式 1—N 组合).
 
-    重跑替换而非累加（幂等）；返回组合数。
+    重跑替换而非累加（幂等）；返回组合数。组合数先算后展开：超上限
+    直接拒绝（票 07④，人裁决②取 10 万量级），拒绝发生在任何写入之前；
+    规模内按生成器分批插入，不整建组合列表在内存（14 场×3 向
+    =478 万曾整展开）。
     """
     rows = conn.execute(
         """
@@ -416,13 +424,14 @@ ORDER BY
             str(row["selection_code"])
         )
     seqs = sorted(by_match)
-    combos = [
-        [
-            {"match_seq": seq, "selection_code": pick}
-            for seq, pick in zip(seqs, picks, strict=True)
-        ]
-        for picks in product(*(by_match[seq] for seq in seqs))
-    ]
+    total = 1
+    for seq in seqs:
+        total *= len(by_match[seq])
+        if total > MAX_MATERIALIZED_COMBINATIONS:
+            raise ValueError(
+                f"组合数 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
+                + f"（{len(seqs)} 场复式）；缩小复式面后重试"
+            )
     conn.execute("DELETE FROM combinations WHERE slip_id = ?", (slip_id,))
     conn.executemany(
         """
@@ -430,17 +439,29 @@ ORDER BY
 (slip_id, seq, stake, selections) VALUES (?, ?, ?,
             ?)
         """,
-        [
-            (
-                slip_id,
-                seq,
-                stake_per_combination,
-                json.dumps(sel_list, ensure_ascii=False),
-            )
-            for seq, sel_list in enumerate(combos)
-        ],
+        _combination_rows(slip_id, seqs, by_match, stake_per_combination),
     )
-    return len(combos)
+    return total
+
+
+def _combination_rows(
+    slip_id: int,
+    seqs: list[int],
+    by_match: dict[int, list[str]],
+    stake_per_combination: float,
+) -> Iterator[tuple[int, int, float, str]]:
+    """逐组合惰性产出插入行（票 07④：不整建组合列表在内存）。"""
+    for seq, picks in enumerate(product(*(by_match[s] for s in seqs))):
+        selections = [
+            {"match_seq": s, "selection_code": pick}
+            for s, pick in zip(seqs, picks, strict=True)
+        ]
+        yield (
+            slip_id,
+            seq,
+            stake_per_combination,
+            json.dumps(selections, ensure_ascii=False),
+        )
 
 
 def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:

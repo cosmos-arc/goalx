@@ -34,7 +34,12 @@ export default defineConfig({
 			url: `http://127.0.0.1:${backendPort}/healthz`,
 			reuseExistingServer: false,
 			cwd: repoRoot,
-			env: { ...process.env, GOALX_DB_PATH: dbPath },
+			env: {
+				...process.env,
+				GOALX_DB_PATH: dbPath,
+				// 票 07②：验证页回测读面走研究库——同样指进夹具区，不碰 repo 默认路径
+				GOALX_RESEARCH_DB_PATH: path.join(import.meta.dirname, "test-results", "loop-e2e-research.db"),
+			},
 			timeout: 60_000,
 		},
 		{

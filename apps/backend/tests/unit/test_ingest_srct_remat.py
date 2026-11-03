@@ -35,7 +35,7 @@ def _wide_rate_window(monkeypatch: pytest.MonkeyPatch) -> None:
     from limits import RateLimitItemPerMinute
 
     monkeypatch.setattr(srct, "_REQUEST_WINDOW", RateLimitItemPerMinute(10**6))
-    monkeypatch.setattr(srct_remat, "_headroom_bytes", lambda: 1 << 40)
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 << 40)
 
 
 _ODDS_JS = (

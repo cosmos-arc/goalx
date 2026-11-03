@@ -393,6 +393,91 @@ def test_run_backtest_marks_failed_run(gold_env, monkeypatch) -> None:
         assert str(row["status"]) == "failed"
 
 
+def test_run_backtest_research_split_and_short_transactions(
+    gold_env, tmp_path, monkeypatch
+) -> None:
+    """票 07② 验收：研究库分文件 + running 中途可见 + 运营写入不被占。
+
+    - 回测写研究库，运行面库（face）零 backtest 行；
+    - running 行先提交——walk 进行中，另一连接读得到 'running'；
+    - 回测进行中运营库建票（纸面）即写即成，不被长事务阻塞。
+    """
+    import threading
+
+    from goalx_backend.betting import store as bt_store
+    from goalx_backend.db import connect_research
+    from goalx_backend.models import BetMode
+
+    research_path = tmp_path / "research.db"
+    entered = threading.Event()
+    release = threading.Event()
+    original_walk = bt._walk_competition
+
+    def slow_walk(*args: object, **kwargs: object) -> None:
+        entered.set()  # running 行已提交（否则本回调拿不到被测时机）
+        assert release.wait(timeout=10)
+        original_walk(*args, **kwargs)
+
+    monkeypatch.setattr(bt, "_walk_competition", slow_walk)
+
+    with gold_env(seed_rows()) as (face, duck_con, store):
+        observed: dict[str, object] = {}
+
+        def prober() -> None:
+            assert entered.wait(timeout=15), "walk 未启动（测试骨架失效）"
+            probe = connect_research(research_path)
+            try:
+                observed["status"] = probe.execute(
+                    "SELECT status FROM backtest_runs ORDER BY id DESC LIMIT 1"
+                ).fetchone()["status"]
+                # 运营库写入（纸面建票）在回测进行中即写即成
+                bt_store.create_slip(face, BetMode.PAPER, note="mid-backtest")
+                face.commit()
+                observed["op_backtest_rows"] = face.execute(
+                    "SELECT COUNT(*) AS n FROM backtest_runs"
+                ).fetchone()["n"]
+            finally:
+                probe.close()
+                release.set()
+
+        prober_thread = threading.Thread(target=prober)
+        prober_thread.start()
+        rconn = connect_research(research_path)
+        try:
+            params = bt.BacktestParams(competitions=("E0",), min_train_matches=9)
+            # 主线程进 walk 即阻塞等探针放行（duck/store 留在创建线程，
+            # 探针只碰研究库第二连接与运营库 face——face 此刻主线程不碰）
+            bt.run_backtest(
+                rconn,
+                duck_con,
+                store,
+                params,
+                label="split",
+                fingerprint_conn=face,
+            )
+        finally:
+            rconn.close()
+        prober_thread.join(timeout=10)
+        assert not prober_thread.is_alive(), "探针线程未收班（死锁面）"
+
+        assert observed["status"] == "running", (
+            "running 行未对其他连接可见（先提交被回退？）"
+        )
+        assert observed["op_backtest_rows"] == 0, (
+            "回测行写进了运行面库（研究库切分被绕过）"
+        )
+        done = connect_research(research_path)
+        try:
+            final = done.execute(
+                "SELECT status FROM backtest_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()["status"]
+        finally:
+            done.close()
+        assert final == "done"
+        slips = face.execute("SELECT COUNT(*) AS n FROM bet_slips").fetchone()["n"]
+        assert slips == 1  # 探针建票确实落库（写入面真实发生过）
+
+
 def test_backtest_lookahead_guard_via_weeks(gold_env) -> None:
     # 端到端防前视：训练截止取周最早日前一天，训练集不可能含当周比赛
     with gold_env(seed_rows()) as (face, duck_con, store):
