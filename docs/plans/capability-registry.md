@@ -13,7 +13,7 @@
 | 运行已验收 | 在日常运行中持续工作，有带日期的运行证据（晨检/日志/库行） |
 | 经济性已确认 | 税后正期望在受控验证中成立——**当前无任何能力达成**（十年结论=模型无 skill、账本 would_bet 面在积累、bets=0） |
 
-## 登记表（2026-10-28 快照；✓=该态达成有证据，—=未达成/不适用）
+## 登记表（2026-11-04 快照；✓=该态达成有证据，—=未达成/不适用）
 
 | 能力 | 代码 | 实验 | 运行 | 经济 | 证据 |
 |---|---|---|---|---|---|
@@ -35,7 +35,9 @@
 | **新鲜度五时钟 + 300s 并行影子（票 08）** | ✓ | — | ◐ | — | PR#222（[95ca9ab 前](https://github.com/cosmos-arc/goalx)）v38 freshness_shadow 日拍挂采集流后拍点；规则红线零改动（stale_source 逐字节不动）；运行验收=读数归期（11-13 与票 09 共用） |
 | **首页无候选六桶归因（票 07）** | ✓ | — | ✓ | — | PR#221 /today/attribution 单源判定映射+晨检同源对账；随 serve 栈日渲染 |
 | **goals4 四场进球开面（票 10）** | ✓ | — | ◐ | — | PR#224（[95ca9ab](https://github.com/cosmos-arc/goalx/commit/95ca9ab)）同场联合=比分矩阵格聚合（一致性测试钉死）+/markets/pool4+构票贯通；运行验收待真实期次首笔纸面票 |
-| serve 栈 + 晨检（18 面注册 + 09:05 九项） | ✓ | — | ✓ | — | schedules.py；PR#186（[0f60040](https://github.com/cosmos-arc/goalx/commit/0f60040)）daily-capture-window 补进恢复清单，2026-10-31 12:36 重启注册 18 面（protocol-v1-window 在列，--only 日志行可证）；2026-10-28 七项全绿（见下节对账）；11-01 起第九项=纸面闭环首注观察 |
+| **幂等提交意图指纹（票 09 批三）** | ✓ | — | ✓ | — | PR#234（[ba9831d](https://github.com/cosmos-arc/goalx/commit/ba9831d)）v41 intent_fingerprint：同键同意图 201 回带/异意图 409（域层预检+UNIQUE 竞态两路）；运行验收=新栈 v41 落列（2026-11-04 migrate+readyz 读数）；前端冲突恢复+e2e 响应丢失→改单→另建钉死 |
+| **语料发布边界（台账先行，票 11 批三）** | ✓ | ✓ | ✓ | — | PR#236（[879a077](https://github.com/cosmos-arc/goalx/commit/879a077)）ingest_raw BEGIN IMMEDIATE 先于正式替换（busy 官方字节零触碰/崩溃窗重写收敛两用例）；运行验收=新栈夜班+remat 增量在票 11 代码上首班收班（2026-11-04 夜 completed 请求=50、水位 15:31Z） |
+| serve 栈 + 晨检（19 面注册 + 09:05 十四项） | ✓ | — | ✓ | — | schedules.py；2026-11-04 23:46 换新栈（批三 HEAD 879a077，单树；四组孤儿 schedules 同日清毕）注册 19 面（+gold-rebuild）；晨检 14 项首读 ok=11/degraded=2/fail=1（[run-acceptance.md](report-audit-20261104/run-acceptance.md)）；readyz 真检查（库可读+schema 等值）随票 10 落地 |
 
 ## 与 09:05 晨检七项对账（2026-10-28，建表时手跑）
 
@@ -84,3 +86,6 @@
   （+纸面闭环首注观察，首注>0 翻闭环行）。
 - 2026-11-01 晚补：PR#193 合 main + 栈重启后 track2 首拍 5 行落库（corpus
   锚），track2 行 ✗→✓——补行以来第一条由 ✗ 翻 ✓ 的行（修复闭环走通）。
+- 2026-11-04：批三（report-audit-20261104 票 09-12）收官对账——新增幂等
+  意图指纹/发布边界两行（运行验收=换新栈首读）；serve 栈行更新（19 面、
+  晨检 14 项、readyz 真检查、恢复演练记录）；经济性列维持空（红线）。
