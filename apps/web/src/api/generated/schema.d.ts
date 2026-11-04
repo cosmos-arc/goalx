@@ -763,6 +763,11 @@ export interface paths {
         /**
          * 前瞻评分集合分组报告
          * @description 冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。
+         *
+         *     票 05：市场基准接 corpus 行源（srct 链场次 corpus 唯一真值 + 历史
+         *     时点青铜重放；无语料环境自动降级 legacy odds_snapshots 口径）。
+         *     同步 def：corpus 行源含青铜全文件扫（GB 级 ~10s），走线程池不阻
+         *     事件环。
          */
         get: operations["get_forward_skill_api_v1_validation_forward_skill_get"];
         put?: never;
@@ -791,6 +796,8 @@ export interface paths {
          *     已修）；Tier B 增方向核验——判词三态：达标候选（须用户显式裁决
          *     切换）/ 未达标 / 方向反向（融合显著更差）——未达标（DM 双侧只测
          *     有差异，显著更差不再误判达标候选）。
+         *
+         *     同步 def：同 forward-skill（青铜批扫走线程池）。
          */
         get: operations["get_m3_protocol_api_v1_validation_m3_protocol_get"];
         put?: never;

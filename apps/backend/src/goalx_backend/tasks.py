@@ -55,6 +55,7 @@ from goalx_backend.data.ingest import (
     sporttery,
     srcb,
     srct,
+    srct_asof,
     srct_market,
     srct_night,
     srct_remat,
@@ -1034,9 +1035,25 @@ def _srct_close_provider(
 
 
 def m3_evaluation() -> dict[str, object]:
-    """M3 评测协议（票 13）：三列报告 + 赛后复核入队 + 控制事件。"""
-    with task_conn() as conn:
-        report = m3_protocol_report(conn)
+    """
+    M3 评测协议（票 13）：三列报告 + 赛后复核入队 + 控制事件。
+
+    票 05：市场基准 corpus 行源，与验证 API 同口径——定时面不接会让
+    corpus-only 场次在 API 进评分集合、在本拍落 no_market_baseline。
+    """
+    with task_conn() as conn, corpus_duckdb.reader() as duck_con:
+        report = m3_protocol_report(
+            conn,
+            duck_con=duck_con,
+            asof_batch=(
+                # 请求域 resolver：内部多次样本构建共享青铜扫 memo
+                srct_asof.batch_asof_resolver(
+                    CorpusStore(get_settings().corpus_root), duck_con
+                )
+                if duck_con is not None
+                else None
+            ),
+        )
         review = enqueue_post_settle(conn)
         record_control_events(conn, get_settings())
     return {

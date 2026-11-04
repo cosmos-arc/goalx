@@ -20,6 +20,7 @@ from goalx_backend.betting.store import (
     dedupe_by_decision,
     settled_purchased_bets,
 )
+from goalx_backend.data import quote_evidence
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import forward_validation as fwd
 from goalx_backend.evaluation.clv import ClvReport
@@ -244,6 +245,8 @@ def validation_progress(
     research_conn: sqlite3.Connection | None = None,
     yield_mode: str = "paper",
     review_counts: dict[str, int] | None = None,
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: fwd.AsOfBatch | None = None,
 ) -> ValidationProgressView:
     """
     验证页主数据（票 34 边界）：
@@ -257,6 +260,8 @@ def validation_progress(
 
     research_conn = 研究库连接（票 07②：backtest 表读面）。缺省回退 conn
     ——同库形态（测试/未拆分环境）下 latest_run 照读。
+    duck_con/asof_batch = corpus 行源 + 青铜重放批解析器（票 05；缺省
+    legacy odds_snapshots 口径，测试/无语料环境不变）。
     """
     clv_stats = clv_mod.clv_report(conn)
     paper_clv_bets = (
@@ -289,7 +294,7 @@ def validation_progress(
         )
     ]
 
-    forward = fwd.forward_skill_report(conn)
+    forward = fwd.forward_skill_report(conn, duck_con=duck_con, asof_batch=asof_batch)
     deployed = latest_model_version(conn)
     dep_metrics = forward.groups.get(deployed) if deployed is not None else None
     if deployed is None or not forward.groups:

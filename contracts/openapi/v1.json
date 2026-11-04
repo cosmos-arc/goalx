@@ -1738,7 +1738,7 @@
           "validation"
         ],
         "summary": "前瞻评分集合分组报告",
-        "description": "冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。",
+        "description": "冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。\n\n票 05：市场基准接 corpus 行源（srct 链场次 corpus 唯一真值 + 历史\n时点青铜重放；无语料环境自动降级 legacy odds_snapshots 口径）。\n同步 def：corpus 行源含青铜全文件扫（GB 级 ~10s），走线程池不阻\n事件环。",
         "operationId": "get_forward_skill_api_v1_validation_forward_skill_get",
         "responses": {
           "200": {
@@ -1760,7 +1760,7 @@
           "validation"
         ],
         "summary": "M3 评测协议报告(三轨参考列+两档冻结阈值)",
-        "description": "三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。\n\n（票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格\n三条件只读 ML 轨（票 04 冻结）。\n\n票 03 判词语义：Tier A 的 ECE 检查为三键按样本数（场次数）加权真算（原桩恒 None\n已修）；Tier B 增方向核验——判词三态：达标候选（须用户显式裁决\n切换）/ 未达标 / 方向反向（融合显著更差）——未达标（DM 双侧只测\n有差异，显著更差不再误判达标候选）。",
+        "description": "三列（ml/llm/fused）前瞻评分 + 配对 RPS/DM + Tier A/B 达标状态行。\n\n（票 05 冻结阈值，票 13 落库）。LLM/Fused 永远是参考列——真钱资格\n三条件只读 ML 轨（票 04 冻结）。\n\n票 03 判词语义：Tier A 的 ECE 检查为三键按样本数（场次数）加权真算（原桩恒 None\n已修）；Tier B 增方向核验——判词三态：达标候选（须用户显式裁决\n切换）/ 未达标 / 方向反向（融合显著更差）——未达标（DM 双侧只测\n有差异，显著更差不再误判达标候选）。\n\n同步 def：同 forward-skill（青铜批扫走线程池）。",
         "operationId": "get_m3_protocol_api_v1_validation_m3_protocol_get",
         "responses": {
           "200": {
