@@ -66,3 +66,27 @@ test("requestIdForLegs: order-independent composite; empty = null (旧行为)", 
 	expect(requestIdForLegs([{ request_id: a }])).toBe(a);
 	expect(requestIdForLegs([])).toBeNull();
 });
+
+test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢复（票 06）", async () => {
+	const withSnapshot = {
+		...LEG,
+		probability: { value: 0.53, source: "research:consensus", at: "2026-11-04T10:00:00+00:00" },
+	};
+	basketActions.setHadLegs([withSnapshot]);
+	vi.resetModules();
+	const fresh = await import("./basket-store");
+	const { result } = renderHook(() => fresh.useBasket());
+	expect(result.current.hadLegs[0]?.probability).toEqual(withSnapshot.probability);
+
+	// 修复前入库的旧篮（无 probability 字段）：不丢腿，快照 undefined=依据缺失
+	basketActions.setHadLegs([{ ...LEG, request_id: "legacy-leg" }]);
+	localStorage.setItem(
+		"goalx:basket",
+		JSON.stringify({ hadLegs: [{ ...LEG, request_id: "legacy-leg" }], stake: "100", mode: "paper" }),
+	);
+	vi.resetModules();
+	const fresh2 = await import("./basket-store");
+	const { result: result2 } = renderHook(() => fresh2.useBasket());
+	expect(result2.current.hadLegs).toHaveLength(1);
+	expect(result2.current.hadLegs[0]?.probability).toBeUndefined();
+});

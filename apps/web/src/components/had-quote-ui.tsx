@@ -75,6 +75,15 @@ export type PickableFixture = {
 	had_quote?: HadQuoteStatus | null;
 };
 
+/** 入篮时概率快照（报告审计票 06 人裁决）：fixture 身份在腿上，值+来源+
+ * 时点随腿落篮——切页/刷新/离线 EV 不随当前页面漂移；仅用于篮内预览
+ * 展示，锁票仍以服务器重验为准。 */
+export type ProbabilitySnapshot = {
+	value: number;
+	source: string;
+	at: string | null;
+};
+
 export type Leg = {
 	fixture_id: number;
 	match_code: string;
@@ -86,6 +95,8 @@ export type Leg = {
 	single_eligible: boolean | null;
 	/** 腿稳定幂等键（票 06）：pick 时生成，重试同键不落双行；开球时间随腿持久化（篮内截止展示）。 */
 	request_id: string;
+	/** 入篮时概率快照（票 06）：缺省/undefined=EV 依据缺失（旧篮恢复腿/无共识面）。 */
+	probability?: ProbabilitySnapshot | null;
 };
 
 export function oddsText(value: number | null | undefined): string {
@@ -144,7 +155,21 @@ export function isPickable(fixture: PickableFixture, now: number): boolean {
 	return !Number.isNaN(kickoff) && kickoff > now;
 }
 
-export function makeLeg(fixture: PickableFixture, selection: Selection, odds: number): Leg {
+/** 今日列表行 → 入篮时概率快照（票 06 单一出处：选注篮缺省来源与
+ * 胜平负页一键带入共用；eu_prob 缺=依据缺失不冒充）。 */
+export function todayProbabilitySnapshot(row: TodayFixture, selection: Selection): ProbabilitySnapshot | null {
+	const value = row.eu_prob?.[selection];
+	return value === null || value === undefined
+		? null
+		: { value, source: "today-list:eu_prob", at: row.jc_updated_at ?? null };
+}
+
+export function makeLeg(
+	fixture: PickableFixture,
+	selection: Selection,
+	odds: number,
+	probability?: ProbabilitySnapshot | null,
+): Leg {
 	return {
 		fixture_id: fixture.fixture_id,
 		match_code: fixture.match_code,
@@ -155,6 +180,7 @@ export function makeLeg(fixture: PickableFixture, selection: Selection, odds: nu
 		odds,
 		single_eligible: fixture.had_quote?.single_eligible ?? null,
 		request_id: newRequestId(),
+		probability: probability ?? null,
 	};
 }
 

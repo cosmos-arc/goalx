@@ -81,11 +81,14 @@ export function FixtureResearchPage() {
 
 	const data = research.data;
 	const canPick = data ? isPickable(data, now) : false;
-	// 选注篮（review-20260928 票 06：接 useHadBasket，legEv 注入研究页共识口径 =
-	// 去水共识概率 × 所选竞彩价 − 1，与列表页 fixture.ev 同语义不同数据源）
-	const basket = useHadBasket(now, [], (leg) => {
-		const probability = data?.consensus?.probability[leg.selection];
-		return probability === null || probability === undefined ? null : probability * leg.odds - 1;
+	// 选注篮（报告审计票 06：pick 时落研究页共识快照——去水概率 × 所选
+	// 竞彩价 − 1 与列表页同语义不同数据源；快照随腿持久化，切到别场
+	// 研究页 EV 不随当前页漂移，无共识=依据缺失不冒充）
+	const basket = useHadBasket(now, [], (_fixture, selection) => {
+		const probability = data?.consensus?.probability[selection];
+		return probability === null || probability === undefined
+			? null
+			: { value: probability, source: "research:consensus", at: data?.jc_updated_at ?? null };
 	});
 
 	const kickoff = data ? kickoffInfo(data.kickoff_utc, now) : undefined;

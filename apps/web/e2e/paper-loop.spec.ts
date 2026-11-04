@@ -28,6 +28,24 @@ function dbRows(sql: string): Array<Record<string, unknown>> {
 
 test.describe.configure({ mode: "serial" });
 
+/** e2e 价变注入（报告审计票 06）：追加更新的 sporttery 快照行——服务器
+ * 当前价随之后移（append-only，不改写既有行）。 */
+function insertJcSnapshot(fixtureId: number, selection: string, odds: number) {
+	const script =
+		"import json;from goalx_backend.db import connect,utc_now_iso;" +
+		"from goalx_backend.models import SnapshotInput;from goalx_backend.data import fixtures as fx;" +
+		`conn=connect("${DB_ENV["GOALX_DB_PATH"]}");` +
+		`fx.insert_odds_snapshot(conn,SnapshotInput(fixture_id=${fixtureId},market_code="had",` +
+		`selection_code="${selection}",source="sporttery",odds=${odds},` +
+		"captured_at=utc_now_iso(),observed_at=utc_now_iso(),source_updated_at=utc_now_iso()));" +
+		'conn.commit();conn.close();print(json.dumps({"ok":1}))';
+	execSync(`uv run --no-sync python -c ${JSON.stringify(script)}`, {
+		cwd: repoRoot,
+		env: DB_ENV,
+		encoding: "utf8",
+	});
+}
+
 test("空库状态诚实显示，无需手查 Fixture ID", async ({ page }) => {
 	await page.goto("/fixtures");
 	// 票 13：统一空状态组件——空库是无数据态（非后端不可用）
@@ -419,4 +437,45 @@ test("浏览器、API 与 DB 最终状态一致", async ({ page }) => {
 		{ kind: "bet_stake", n: 1 },
 	]);
 	expect(dbRows("SELECT COUNT(*) AS n FROM settlements")[0]?.["n"]).toBeGreaterThanOrEqual(3);
+});
+
+test("跨页构票遇价变 409：研究页就地刷新按新价重提（报告审计票 06）", async ({ page }) => {
+	// 跨页构票：A 场研究页选主胜 → B 场研究页选客胜
+	await page.goto("/fixtures/1");
+	await page.getByTestId("pick-1-h").click();
+	await page.goto("/fixtures/2");
+	await page.getByTestId("pick-2-a").click();
+	await page.getByTestId("basket-open").click();
+	// 票 06：两腿各带入篮时概率快照（fixture 身份+来源+时点，切页 EV 不漂移）
+	await expect(page.getByTestId("basket-leg-prob")).toHaveCount(2);
+	await page.getByTestId("basket-form-parlay").click();
+
+	// 场后改价：B 场客胜上调（追加更新的 sporttery 行——服务器价随之后移）
+	const current = Number(
+		dbRows(
+			"SELECT odds AS o FROM odds_snapshots WHERE fixture_id=2 AND market_code='had'" +
+				" AND source='sporttery' AND selection_code='a' ORDER BY captured_at DESC, id DESC LIMIT 1",
+		)[0]?.["o"],
+	);
+	const newPrice = current + 0.25;
+	insertJcSnapshot(2, "a", newPrice);
+
+	// 提交 → 服务器 409 带新价；今日列表+研究页报价查询一并失效
+	await page.getByTestId("basket-submit").click();
+	await expect(page.getByTestId("fixtures-message")).toContainText("报价已变");
+	await expect(page.getByTestId("fixtures-message")).toContainText(newPrice.toFixed(2));
+
+	// 停留在 B 场研究页（无重挂载）：失效的报价查询就地刷新——按钮价新价
+	// （修复前：只失效今日列表，研究页停在旧价，重选仍带旧价 409 死循环）
+	await expect(page.getByTestId("pick-2-a")).toContainText(newPrice.toFixed(2));
+
+	// 按新价重提（同序构票：A 先 B 后，B 腿带刷新后的新价）→ 整注成立
+	await page.goto("/fixtures/1");
+	await page.getByTestId("pick-1-h").click();
+	await page.goto("/fixtures/2");
+	await page.getByTestId("pick-2-a").click();
+	await page.getByTestId("basket-open").click();
+	await page.getByTestId("basket-form-parlay").click();
+	await page.getByTestId("basket-submit").click();
+	await expect(page.getByTestId("fixtures-message")).toContainText("已建建议");
 });
