@@ -152,9 +152,18 @@ def _survival_readout(
 
 
 def _survival_pair_face(
-    pairs: list[tuple[float, _LegObservation]], missing: int
+    pairs: list[tuple[float, _LegObservation]],
+    missing: int,
+    not_matured: int,
+    sale_stopped: int,
 ) -> dict[str, Any]:
-    """一组 (EV, 腿) 的存活读数（留存比=EV_t/EV_discovery 中位数）。"""
+    """
+    一组 (EV, 腿) 的存活读数（留存比=EV_t/EV_discovery 中位数）。
+
+    票 02 三分层：未到点（观察时点晚于 read_at）不进可算分母单列；
+    到点但缺价/缺参考单列；到点有价但该时点已停售的腿价照读（售止前
+    最后价）另列 n_sale_stopped——"完成购买时仍存活"读数须叠加该口径。
+    """
     evs = [ev for ev, _leg in pairs]
     retention = (
         median(
@@ -169,17 +178,38 @@ def _survival_pair_face(
     )
     return {
         "n_ev_computable": len(evs),
+        "n_not_matured": not_matured,
         "n_missing_price_or_reference": missing,
+        "n_sale_stopped": sale_stopped,
         "positive_share": sum(1 for ev in evs if ev > 0) / len(evs) if evs else None,
         "median_ev": median(evs) if evs else None,
         "median_retention": retention,
     }
 
 
+def _reached(target: str, read_at: str) -> bool:
+    """观察时点是否已到（票 02：晚于 read_at 的时点不进可算分母）。"""
+    return datetime.fromisoformat(target) <= datetime.fromisoformat(read_at)
+
+
+def _sale_stopped_at(conn: sqlite3.Connection, fixture_id: int, t: str) -> bool:
+    """
+    T 时点最后已知销售状态是否停售（未知按未停售，不冒充）。
+
+    与决策漏斗共用 latest_sale_status_asof 语义（盘口级行优先于赛事级
+    行）。shortcut: 更晚的赛事级 stopped 可被更早的 had 级 on_sale 遮蔽
+    （低估停售）；若观察期读数显示遮蔽频发，再改"两层各自最新、任一
+    stopped 即停"并同改漏斗口径。
+    """
+    sale = fx_store.latest_sale_status_asof(conn, fixture_id, "had", t)
+    return sale is not None and str(sale["sale_state"]) == "stopped"
+
+
 def _offset_faces(
     conn: sqlite3.Connection,
     candidates: list[_LegObservation],
     duck_con: qe.DuckCon | None,
+    read_at: str,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """逐偏移档读数 + 半衰档（中位留存 ≤50% 的最小偏移；未破记 None）。"""
     offsets: list[dict[str, Any]] = []
@@ -187,18 +217,25 @@ def _offset_faces(
     for offset in SURVIVAL_OFFSETS:
         pairs: list[tuple[float, _LegObservation]] = []
         missing = 0
+        not_matured = 0
+        sale_stopped = 0
         for leg in candidates:
             t = (
                 datetime.fromisoformat(str(leg.discovery_at))
                 + timedelta(seconds=offset)
             ).isoformat()
+            if not _reached(t, read_at):
+                not_matured += 1
+                continue
             odds = _jc_odds_asof(conn, leg.fixture_id, leg.selection_code, t)
             pair = _survival_readout(conn, duck_con, t, odds, leg)
             if pair is None:
                 missing += 1
             else:
                 pairs.append(pair)
-        face = _survival_pair_face(pairs, missing)
+                if _sale_stopped_at(conn, leg.fixture_id, t):
+                    sale_stopped += 1
+        face = _survival_pair_face(pairs, missing, not_matured, sale_stopped)
         retention = face["median_retention"]
         if (
             half_life_s is None
@@ -229,34 +266,42 @@ def _close_face(
     conn: sqlite3.Connection,
     candidates: list[_LegObservation],
     duck_con: qe.DuckCon | None,
+    read_at: str,
 ) -> dict[str, Any]:
     """收盘读数：JC 收盘价=开球前最后有效快照 × 开球时点共识。"""
     pairs: list[tuple[float, _LegObservation]] = []
     missing = 0
+    not_matured = 0
+    sale_stopped = 0
     for leg in candidates:
         kickoff = _close_asof(conn, leg.fixture_id)
-        pair = (
-            None
-            if kickoff is None
-            else _survival_readout(
-                conn,
-                duck_con,
-                kickoff,
-                _jc_odds_asof(conn, leg.fixture_id, leg.selection_code, kickoff),
-                leg,
-            )
+        if kickoff is None:
+            missing += 1
+            continue
+        if not _reached(kickoff, read_at):
+            not_matured += 1
+            continue
+        pair = _survival_readout(
+            conn,
+            duck_con,
+            kickoff,
+            _jc_odds_asof(conn, leg.fixture_id, leg.selection_code, kickoff),
+            leg,
         )
         if pair is None:
             missing += 1
         else:
             pairs.append(pair)
-    return _survival_pair_face(pairs, missing)
+            if _sale_stopped_at(conn, leg.fixture_id, kickoff):
+                sale_stopped += 1
+    return _survival_pair_face(pairs, missing, not_matured, sale_stopped)
 
 
 def _survival_face(
     conn: sqlite3.Connection,
     legs: list[_LegObservation],
     duck_con: qe.DuckCon | None,
+    read_at: str,
 ) -> dict[str, Any]:
     """价差存活协报告（正候选子集 EV_discovery>0，prereg §5 描述层）。"""
     candidates = [
@@ -266,13 +311,13 @@ def _survival_face(
         and leg.ev_discovery > 0.0
         and leg.discovery_at is not None
     ]
-    offsets, half_life_s = _offset_faces(conn, candidates, duck_con)
+    offsets, half_life_s = _offset_faces(conn, candidates, duck_con, read_at)
     # 半衰口径=偏移档内最小破 50% 档（prereg §5 原文）；收盘留存另列
     # close 面，不折进半衰读数
     return {
         "n_candidates": len(candidates),
         "offsets": offsets,
-        "close": _close_face(conn, candidates, duck_con),
+        "close": _close_face(conn, candidates, duck_con, read_at),
         "median_half_life_offset_s": half_life_s,
     }
 
@@ -398,11 +443,19 @@ def build_price_edge_report(
     涂抹，同 delay-audit 事务纪律）。
     """
     own_txn = not conn.in_transaction
+    # 票 02：入口冻结一次 read_at（=generated_at）传入所有读取函数——
+    # 观察时点（discovery+偏移/开球）晚于 read_at 记未到点，不进可算分母
+    read_at = utc_now_iso()
     if own_txn:
         conn.execute("BEGIN")  # 纯读快照：deferred，首读才锁定视图
     try:
         report = _assemble_report(
-            conn, date_from=date_from, date_to=date_to, duck_con=duck_con, store=store
+            conn,
+            date_from=date_from,
+            date_to=date_to,
+            duck_con=duck_con,
+            store=store,
+            read_at=read_at,
         )
     finally:
         if own_txn:
@@ -419,6 +472,7 @@ def _assemble_report(
     date_to: str,
     duck_con: qe.DuckCon | None,
     store: CorpusStore | None,
+    read_at: str,
 ) -> dict[str, Any]:
     """单读事务内的报告装配（调用方负责事务壳与落盘）。"""
     legs, counts = _collect_legs(conn, date_from, date_to, duck_con)
@@ -434,12 +488,15 @@ def _assemble_report(
         sale_days >= SALE_DAY_GATE and metric["n_computable"] < LEG_SUPPLY_FLOOR
     )
     formal_ready = sale_days >= SALE_DAY_GATE
-    if formal_ready:
-        # 三向判读只在正式窗注入（correctness F2）；provisional 恒 None
+    if formal_ready and not supply_short:
+        # 三向判读只在正式窗注入（correctness F2）；provisional 恒 None。
+        # 票 02：停止条件优先——供给不足归档时不出路线判词（描述性
+        # EV/CI 照常展示），判读与归档不得同时出口
         metric["route_verdict"] = _route_verdict(metric["bootstrap95"])
     report: dict[str, Any] = {
         "schema": "price-edge-checkpoint/1",
-        "generated_at": utc_now_iso(),
+        "generated_at": read_at,
+        "read_at": read_at,
         "window": {
             "date_from": date_from,
             "date_to": date_to,
@@ -458,7 +515,7 @@ def _assemble_report(
         },
         "denominator": counts,
         "main_metric": metric,
-        "survival": _survival_face(conn, legs, duck_con),
+        "survival": _survival_face(conn, legs, duck_con, read_at),
         "freshness_shadow": {
             "business_date": shadow_date,
             "summary": shadow,
@@ -477,6 +534,8 @@ def _assemble_report(
         "known_boundaries": [
             "时间线自记录管道上线起（存量已锁注无 confirm 行，不倒填）。",
             "发现→确认可能同会话极短间隔；存活偏移自 discovery 起算照算不弃。",
+            "观察点成熟度（票 02）：观察时点晚于 read_at 记 n_not_matured（未到点）。",
+            "销售资格（票 02）：价=最后已知 JC 价（售止保留售止前价）。",
             "参考缺（EU 无完整三向）的腿分母外单列 missing_reference，不冒充 0。",
             "协报告全部描述层；未来任何分层正式检验用 Holm 校正（prereg §7）。",
         ],
@@ -501,6 +560,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
     w(
         f"- 窗口 {report['window']['date_from']} → {report['window']['date_to']}"
         + f"（{report['window']['date_basis']}）；收盘面 = {report['close_face']}"
+        + f"；读数时点 read_at = {report['read_at']}"
     )
     w(
         f"- 判读状态：{proto['metric_status']}"
@@ -523,26 +583,32 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- 协报告·正候选率：{_fmt_pct(metric['positive_candidate_rate'])}"
         + "（EV_confirm>0 腿占比，描述层）"
     )
-    if proto["metric_status"] == "formal_ready":
+    if (
+        proto["metric_status"] == "formal_ready"
+        and not report["stop_condition"]["supply_insufficient"]
+    ):
         w(f"- 三向判读：{metric['route_verdict']}")
     w("")
     w("## 价差存活（正候选子集，描述层）")
     w("")
-    w("| 时点 | 可算 | 缺价/缺参考 | 正占比 | 中位 EV | 中位留存 |")
-    w("|---|---|---|---|---|---|")
+    w("| 时点 | 未到点 | 可算 | 缺价/缺参考 | 其中售止 | 正占比 | 中位 EV | 中位留存 |")
+    w("|---|---|---|---|---|---|---|---|")
     surv = report["survival"]
     for offset in surv["offsets"]:
         w(
-            f"| +{offset['offset_s'] // 60}min | {offset['n_ev_computable']}"
+            f"| +{offset['offset_s'] // 60}min | {offset['n_not_matured']}"
+            + f" | {offset['n_ev_computable']}"
             + f" | {offset['n_missing_price_or_reference']}"
+            + f" | {offset['n_sale_stopped']}"
             + f" | {_fmt_pct(offset['positive_share'])}"
             + f" | {_fmt(offset['median_ev'])}"
             + f" | {_fmt(offset['median_retention'])} |"
         )
     close = surv["close"]
     w(
-        f"| 收盘 | {close['n_ev_computable']} |"
+        f"| 收盘 | {close['n_not_matured']} | {close['n_ev_computable']} |"
         + f" {close['n_missing_price_or_reference']}"
+        + f" | {close['n_sale_stopped']}"
         + f" | {_fmt_pct(close['positive_share'])} | {_fmt(close['median_ev'])}"
         + f" | {_fmt(close['median_retention'])} |"
     )
@@ -550,6 +616,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- 中位半衰偏移：{_fmt(surv['median_half_life_offset_s'])}"
         + "（None=偏移档内未破 50%；收盘留存另列上表）"
     )
+    w("- 价=最后已知 JC 价（售止保留售止前价）；'其中售止'=到点已停售腿（票 02）")
     w("")
     w("## 票 08 新鲜度影子对表（读数背景）")
     w("")

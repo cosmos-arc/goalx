@@ -159,17 +159,20 @@ def test_main_metric_and_survival(tmp_path: Path) -> None:
         assert metric["n_effective_fixtures"] == 1
         # 单 fixture 簇：bootstrap 不出区间（<2 簇如实 None）
         assert metric["bootstrap95"] is None
-        # 存活：价未动 → +5min 与收盘 EV 同值、留存 1.0、无半衰
+        # 存活（票 02 成熟度）：报告时刻 discovery+偏移与开球（明日）均未到
+        # → 全部 pending 不进可算分母，未到点与缺价/缺参考分开统计
         surv = report["survival"]
         assert surv["n_candidates"] == 1
-        offset5 = surv["offsets"][0]
-        assert offset5["offset_s"] == 300
-        assert offset5["n_ev_computable"] == 1
-        assert offset5["median_retention"] == pytest.approx(1.0)
+        for offset in surv["offsets"]:
+            assert offset["n_not_matured"] == 1
+            assert offset["n_ev_computable"] == 0
+            assert offset["n_missing_price_or_reference"] == 0
+            assert offset["median_ev"] is None
+            assert offset["median_retention"] is None
         close = surv["close"]
-        assert close["n_ev_computable"] == 1
-        assert close["median_ev"] == pytest.approx(expected)
-        assert close["median_retention"] == pytest.approx(1.0)
+        assert close["n_not_matured"] == 1
+        assert close["n_ev_computable"] == 0
+        assert close["median_retention"] is None
         assert surv["median_half_life_offset_s"] is None
         # 协议面：单销售日 → provisional；判读不注入（correctness F2）；
         # 影子无行 → None 诚实
@@ -178,6 +181,65 @@ def test_main_metric_and_survival(tmp_path: Path) -> None:
         assert "route_verdict" not in metric
         assert report["stop_condition"]["supply_insufficient"] is False
         assert report["freshness_shadow"]["summary"] is None
+    finally:
+        conn.close()
+
+
+def test_matured_faces_enter_denominator(tmp_path: Path) -> None:
+    """票 02（报告一案例 7）：到点后进分母——discovery+偏移与开球均早于
+    read_at 时可算、留存照读；售止腿价保留（售止前最后价）资格单列。"""
+    conn = _setup(tmp_path)
+    try:
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        day = yesterday.strftime("%Y-%m-%d")
+        kickoff = f"{day}T12:00:00+00:00"
+        fixture_id = _seed_fixture(conn, kickoff, jc_h=2.6)
+        bet_id = _lock_paper_bet(conn, fixture_id, jc_h=2.6)
+        # 时间线回拨到昨日（discovery 10:00 → +5/15/30min 与开球均已到点）
+        for stage, hh, mm in (
+            ("discovery", 10, 0),
+            ("decision", 10, 0),
+            ("confirm", 10, 1),
+        ):
+            conn.execute(
+                "UPDATE bet_price_timeline SET recorded_at = ?"
+                " WHERE bet_id = ? AND stage = ?",
+                (f"{day}T{hh:02d}:{mm:02d}:00+00:00", bet_id, stage),
+            )
+        # 10:10 停售观测：+15min 起观察时点已停售（价保留），+5min 未停
+        fx_store.append_sale_status(
+            conn,
+            SaleStatusInput(
+                fixture_id=fixture_id,
+                market_code="had",
+                sale_state="stopped",
+                observed_at=f"{day}T10:10:00+00:00",
+            ),
+        )
+        conn.commit()
+
+        report = pe.build_price_edge_report(
+            conn, date_from=day, date_to=day, duck_con=None
+        )
+        md = pe._render_markdown(report)
+        assert "未到点" in md  # 新列头渲染
+        assert "其中售止" in md
+        assert report["read_at"] in md  # 读数时点可见
+        surv = report["survival"]
+        o5, o15, o30 = surv["offsets"]
+        assert o5["n_not_matured"] == 0
+        assert o5["n_ev_computable"] == 1
+        assert o5["n_sale_stopped"] == 0
+        assert o5["median_retention"] == pytest.approx(1.0)  # 价未动
+        assert o15["n_sale_stopped"] == 1  # 到点已停售：资格单列
+        assert o15["n_ev_computable"] == 1  # 价照读=售止前最后价
+        assert o15["median_retention"] == pytest.approx(1.0)
+        assert o30["n_sale_stopped"] == 1  # 30min 档同口径钉死
+        close = surv["close"]
+        assert close["n_not_matured"] == 0  # 开球已过 → 收盘面进分母
+        assert close["n_ev_computable"] == 1
+        assert close["n_sale_stopped"] == 1  # 收盘=售止前最后价（口径注记）
+        assert close["median_retention"] == pytest.approx(1.0)
     finally:
         conn.close()
 
@@ -303,12 +365,17 @@ def test_bootstrap_two_fixture_clusters(tmp_path: Path) -> None:
 
 
 def test_supply_insufficient_stop_condition(tmp_path: Path) -> None:
-    """停止条件：销售日满门槛而可算腿 <30 → 供给不足标记。"""
+    """停止条件：销售日满门槛而可算腿 <30 → 供给不足标记；票 02 判读
+    优先级——供给不足归档时不得同时输出路线升级判词（描述性 EV/CI 照常）。"""
     conn = _setup(tmp_path)
     try:
-        kickoff = (datetime.now(UTC) + timedelta(days=5)).isoformat(timespec="seconds")
-        fixture_id = _seed_fixture(conn, kickoff, jc_h=2.6)
+        base = datetime.now(UTC) + timedelta(days=5)
+        fixture_id = _seed_fixture(conn, base.isoformat(timespec="seconds"), jc_h=2.6)
+        f2 = _seed_fixture(
+            conn, (base + timedelta(hours=5)).isoformat(timespec="seconds"), jc_h=2.4
+        )
         _lock_paper_bet(conn, fixture_id, jc_h=2.6)
+        _lock_paper_bet(conn, f2, jc_h=2.4)
         # 抬门槛面：1 月逐日在售观测（分母供给不动）
         for day in range(30):
             fx_store.append_sale_status(
@@ -328,5 +395,60 @@ def test_supply_insufficient_stop_condition(tmp_path: Path) -> None:
         assert report["protocol"]["sale_days"] >= 30
         assert report["protocol"]["metric_status"] == "formal_ready"
         assert report["stop_condition"]["supply_insufficient"] is True
+        metric = report["main_metric"]
+        assert metric["n_computable"] == 2  # 可算腿 2 < 30 → 供给不足
+        assert metric["bootstrap95"] is not None  # 描述性区间照常展示
+        assert metric["bootstrap95"][0] > 0.0  # 修复前会同时输出"升级裁决"
+        assert "route_verdict" not in metric  # 票 02：停止条件优先，不出判词
+        assert "三向判读" not in pe._render_markdown(report)  # MD 同守卫
+    finally:
+        conn.close()
+
+
+def test_sale_stop_market_level_precedence_pinned(tmp_path: Path) -> None:
+    """票 02 correctness F1：销售资格读取共用 latest_sale_status_asof 的
+    盘口级优先序——更晚的赛事级 stopped 被更早的 had 级 on_sale 遮蔽
+    （低估停售），现行为钉死；频发再按 shortcut 注记升级口径。"""
+    conn = _setup(tmp_path)
+    try:
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        day = yesterday.strftime("%Y-%m-%d")
+        fixture_id = _seed_fixture(conn, f"{day}T12:00:00+00:00", jc_h=2.6)
+        bet_id = _lock_paper_bet(conn, fixture_id, jc_h=2.6)
+        for stage, hh, mm in (
+            ("discovery", 10, 0),
+            ("decision", 10, 0),
+            ("confirm", 10, 1),
+        ):
+            conn.execute(
+                "UPDATE bet_price_timeline SET recorded_at = ?"
+                " WHERE bet_id = ? AND stage = ?",
+                (f"{day}T{hh:02d}:{mm:02d}:00+00:00", bet_id, stage),
+            )
+        fx_store.append_sale_status(  # had 级在售（更早）
+            conn,
+            SaleStatusInput(
+                fixture_id=fixture_id,
+                market_code="had",
+                sale_state="on_sale",
+                observed_at=f"{day}T10:00:00+00:00",
+            ),
+        )
+        fx_store.append_sale_status(  # 赛事级停售（更晚，回退探测路径）
+            conn,
+            SaleStatusInput(
+                fixture_id=fixture_id,
+                market_code=None,
+                sale_state="stopped",
+                observed_at=f"{day}T10:10:00+00:00",
+            ),
+        )
+        conn.commit()
+        report = pe.build_price_edge_report(
+            conn, date_from=day, date_to=day, duck_con=None
+        )
+        o15 = report["survival"]["offsets"][1]
+        assert o15["n_ev_computable"] == 1  # 价照读
+        assert o15["n_sale_stopped"] == 0  # 盘口级优先序：遮蔽生效（钉死）
     finally:
         conn.close()
