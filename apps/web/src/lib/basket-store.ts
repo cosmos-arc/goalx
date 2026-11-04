@@ -46,6 +46,27 @@ function isPersistableLeg(leg: unknown): boolean {
 	);
 }
 
+/** 快照形状守卫（报告审计票 06）：畸形 probability 字段剥为 null（腿保留，
+ * EV 降级依据缺失）——畸形 value 直进渲染/legEv 会 TypeError/NaN，
+ * 与 F4 同类恢复路径崩溃面。 */
+function sanitizeSnapshot<T extends { probability?: unknown }>(leg: T): T {
+	const snap = leg.probability;
+	if (snap === undefined || snap === null) {
+		return leg;
+	}
+	const value = (snap as Record<string, unknown>)["value"];
+	const ok =
+		typeof snap === "object" &&
+		snap !== null &&
+		typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= 0 &&
+		value <= 1 && // 概率区间（correctness F2）：越界值剥 null 不进预览
+		typeof (snap as Record<string, unknown>)["source"] === "string" &&
+		((snap as Record<string, unknown>)["at"] === null || typeof (snap as Record<string, unknown>)["at"] === "string");
+	return ok ? leg : { ...leg, probability: null };
+}
+
 let state: BasketState = loadInitial();
 const listeners = new Set<() => void>();
 
@@ -58,7 +79,7 @@ function loadInitial(): BasketState {
 		}
 		const parsed = JSON.parse(raw) as Partial<BasketState>;
 		return {
-			hadLegs: Array.isArray(parsed.hadLegs) ? parsed.hadLegs.filter(isPersistableLeg) : [],
+			hadLegs: Array.isArray(parsed.hadLegs) ? parsed.hadLegs.filter(isPersistableLeg).map(sanitizeSnapshot) : [],
 			goalsLegs: Array.isArray(parsed.goalsLegs) ? parsed.goalsLegs.filter(isPersistableLeg) : [],
 			stake: typeof parsed.stake === "string" ? parsed.stake : EMPTY.stake,
 			strategyVersion: typeof parsed.strategyVersion === "string" ? parsed.strategyVersion : EMPTY.strategyVersion,

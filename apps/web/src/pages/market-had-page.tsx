@@ -4,7 +4,14 @@ import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { BasketBar, BasketDrawer, SlipFormChooser, useHadBasket } from "../components/had-basket";
-import { EligibleCard, evClass, evText, isPickable, makeLeg } from "../components/had-quote-ui";
+import {
+	EligibleCard,
+	evClass,
+	evText,
+	isPickable,
+	makeLeg,
+	todayProbabilitySnapshot,
+} from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
@@ -85,7 +92,16 @@ export function MarketHadPage() {
 		if (combo === null || combo.picks.length === 0 || comboPlans === null || comboSelected === null) {
 			return;
 		}
-		basket.setLegs(combo.picks.map((pickEntry) => makeLeg(pickEntry.fixture, pickEntry.selection, pickEntry.odds)));
+		basket.setLegs(
+			combo.picks.map((pickEntry) =>
+				makeLeg(
+					pickEntry.fixture,
+					pickEntry.selection,
+					pickEntry.odds,
+					todayProbabilitySnapshot(pickEntry.fixture, pickEntry.selection),
+				),
+			),
+		);
 		basket.setStake(String(combo.picks[0]?.stake ?? HAD_COMBO_CONFIG.stake.minStakeCny));
 		basket.setMessage(
 			combo.picks.length >= 2

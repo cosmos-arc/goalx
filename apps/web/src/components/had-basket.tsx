@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
 import { basketActions, requestIdForLegs, useBasket } from "../lib/basket-store";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
-import { invalidateBets } from "../lib/query-keys";
+import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
 import { currentQuotes, errorText, localTime, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import {
 	isPickable,
@@ -13,7 +13,9 @@ import {
 	MAX_LEGS,
 	makeLeg,
 	type PickableFixture,
+	type ProbabilitySnapshot,
 	type Selection,
+	todayProbabilitySnapshot,
 } from "./had-quote-ui";
 import { parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
 import {
@@ -31,9 +33,10 @@ import {
  * 场次页/胜平负页/单场研究页三页共用。
  * - useHadBasket：篮草稿走全站单源 store（票 06：路由切换/刷新可恢复，
  *   与进球页共用一份草稿）+ 规则前置（同场替换/MAX_LEGS/单固首腿）+
- *   建议仓位输入 + createBet mutation（invalidate ["bets"]）；建议仓位的
- *   leg EV 经第三参注入（缺省 = 列表页 fixture.ev 字段口径，研究页注入
- *   共识口径）；
+ *   建议仓位输入 + createBet mutation（invalidate ["bets"]）；腿 EV 只读
+ *   入篮时概率快照（报告审计票 06：第三参=pick 时快照来源，缺省今日列表
+ *   eu_prob，研究页注入共识口径——跨场腿 EV 不随当前页漂移，缺快照=
+ *   依据缺失）；
  * - 票型（report-audit 票 02）：篮内 ≥2 腿时显式票型——两笔单关（逐腿独立
  *   建注）/一注 2串1（整注）；预览与提交同走 ticketPlan 单源，无静默切换；
  * - 提交幂等（票 06）：单关腿=腿 request_id、整注=腿键有序拼接，服务端
@@ -63,7 +66,15 @@ function persistSlipForm(form: SlipForm): void {
 	}
 }
 
-export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverride?: (leg: Leg) => number | null) {
+/**
+ * 入篮时概率快照来源（报告审计票 06 人裁决）：pick 时逐腿落快照（值+
+ * 来源+时点），篮内 EV/预览只用快照——切研究页另一场 EV 不随当前页漂移，
+ * 快照缺失=依据缺失（不用当前页概率顶替、不用 0 冒充）。缺省来源=今日
+ * 列表 eu_prob；研究页注入共识口径。
+ */
+export type ProbabilityAtPick = (fixture: PickableFixture, selection: Selection) => ProbabilitySnapshot | null;
+
+export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityAtPick?: ProbabilityAtPick) {
 	// 票 06：草稿单源——had 腿/金额/模式/策略版本全站一份（localStorage 持久化）
 	const { hadLegs: legs, stake, strategyVersion, mode } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
@@ -81,14 +92,15 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 
 	const combinedOdds = legs.reduce((acc, leg) => acc * leg.odds, 1);
 
-	// 建议仓位输入（票 wb-06）：1 腿=单关口径；2 腿按票型——单关=逐注独立
-	// 口径（示例第一腿），2串1=联合口径（整注一个 Kelly，不分腿）
-	const legEv =
-		legEvOverride ??
-		((leg: Leg): number | null => {
-			const fixture = fixtures.find((row) => row.fixture_id === leg.fixture_id);
-			return fixture?.ev?.[leg.selection] ?? null;
+	// 票 06：快照来源缺省=今日列表共识（todayProbabilitySnapshot 单一出处）
+	const snapshotFor: ProbabilityAtPick =
+		probabilityAtPick ??
+		((fixture, selection) => {
+			const row = fixtures.find((item) => item.fixture_id === fixture.fixture_id);
+			return row ? todayProbabilitySnapshot(row, selection) : null;
 		});
+	// 票 06：篮内 EV 只读入篮快照——不查当前页/列表（跨场腿不冒充）
+	const legEv = (leg: Leg): number | null => (leg.probability != null ? leg.probability.value * leg.odds - 1 : null);
 	const multiLeg = legs.length >= 2;
 	const firstLeg = legs[0];
 	const basketAdvice =
@@ -128,7 +140,13 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			return;
 		}
 		if (existing) {
-			setLegs(legs.map((leg) => (leg.fixture_id === fixture.fixture_id ? makeLeg(fixture, selection, odds) : leg)));
+			setLegs(
+				legs.map((leg) =>
+					leg.fixture_id === fixture.fixture_id
+						? makeLeg(fixture, selection, odds, snapshotFor(fixture, selection))
+						: leg,
+				),
+			);
 			setMessage("同场只能选一腿（竞彩禁同场串关），已替换原选择");
 			return;
 		}
@@ -141,7 +159,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 		} else {
 			setMessage(null);
 		}
-		setLegs([...legs, makeLeg(fixture, selection, odds)]);
+		setLegs([...legs, makeLeg(fixture, selection, odds, snapshotFor(fixture, selection))]);
 	}
 
 	function removeLeg(fixtureId: number) {
@@ -198,7 +216,10 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 						if (created.length > 0) {
 							invalidateBets(queryClient);
 						}
-						void queryClient.invalidateQueries({ queryKey: ["today-fixtures"] });
+						invalidateLegQuoteQueries(
+							queryClient,
+							legs.map((leg) => leg.fixture_id),
+						);
 						setMessage(
 							`第 ${index + 1} 笔报价已变（${quotes
 								.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
@@ -231,9 +252,13 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], legEvOverrid
 			if (quotes !== null && quotes.length > 0) {
 				setLegs([]);
 				setBasketOpen(false);
-				// 前缀失效各日期页的今日场次查询（键形 ["today-fixtures", days]）——
-				// correctness F1：打错键=不刷新，页面停在旧价上确认流死循环
-				void queryClient.invalidateQueries({ queryKey: ["today-fixtures"] });
+				// 前缀失效今日场次（键形 ["today-fixtures", days]）+ 逐场研究页
+				// 报价查询（票 06）——correctness F1：打错键=不刷新，页面停在
+				// 旧价上确认流死循环
+				invalidateLegQuoteQueries(
+					queryClient,
+					legs.map((leg) => leg.fixture_id),
+				);
 				setMessage(
 					`报价已变（${quotes
 						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
@@ -492,6 +517,19 @@ export function BasketDrawer({
 											<br />
 											<span className="font-medium">{SELECTION_LABELS[leg.selection]}</span>
 											<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
+											{leg.probability != null ? (
+												<span
+													className={`${TABULAR_NUMS} ml-2 text-xs text-muted-foreground`}
+													data-testid="basket-leg-prob"
+													title={`EV 依据=入篮时快照（来源 ${leg.probability.source} · 时点 ${leg.probability.at ?? "未知"}）`}
+												>
+													p={leg.probability.value.toFixed(2)}
+												</span>
+											) : (
+												<span className="ml-2 text-xs text-warning" data-testid="basket-leg-no-prob">
+													EV 依据缺失
+												</span>
+											)}
 											<span
 												className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
 												data-testid="basket-leg-deadline"
