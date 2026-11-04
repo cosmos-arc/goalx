@@ -3399,26 +3399,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        message: string;
-                        current_quotes: {
-                            /** Fixture Id */
-                            fixture_id: number;
-                            /** Selection Code */
-                            selection_code: string;
-                            /** Server Odds */
-                            server_odds: number;
-                            /** Snapshot Id */
-                            snapshot_id: number;
-                            /** Observed At */
-                            observed_at: string;
-                        }[];
-                    } | {
-                        message: string;
-                        existing_bet: {
-                            id: number;
-                            /** @enum {string} */
-                            mode: "paper" | "live";
-                            stake: number;
+                        detail: {
+                            message: string;
+                            current_quotes: {
+                                /** Fixture Id */
+                                fixture_id: number;
+                                /** Selection Code */
+                                selection_code: string;
+                                /** Server Odds */
+                                server_odds: number;
+                                /** Snapshot Id */
+                                snapshot_id: number;
+                                /** Observed At */
+                                observed_at: string;
+                            }[];
+                        } | {
+                            message: string;
+                            existing_bet: {
+                                id: number;
+                                /** @enum {string} */
+                                mode: "paper" | "live";
+                                stake: number;
+                            };
                         };
                     };
                 };
@@ -3497,19 +3499,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        message: string;
-                        current_quotes: {
-                            /** Fixture Id */
-                            fixture_id: number;
-                            /** Selection Code */
-                            selection_code: string;
-                            /** Server Odds */
-                            server_odds: number;
-                            /** Snapshot Id */
-                            snapshot_id: number;
-                            /** Observed At */
-                            observed_at: string;
-                        }[];
+                        detail: {
+                            message: string;
+                            current_quotes: {
+                                /** Fixture Id */
+                                fixture_id: number;
+                                /** Selection Code */
+                                selection_code: string;
+                                /** Server Odds */
+                                server_odds: number;
+                                /** Snapshot Id */
+                                snapshot_id: number;
+                                /** Observed At */
+                                observed_at: string;
+                            }[];
+                        };
                     };
                 };
             };

@@ -115,10 +115,12 @@ def intent_fingerprint(mode: BetMode, stake: float, legs: list[LegInput]) -> str
     goal_line 市场线）排序后哈希——腿序无关、不含 locked_odds（价随确认
     重绑，非意图）与 note 等自由文本。建注时由提交载荷计算一次落库；
     重放时重算比对，不读回绑后的行（比较对象=不可变原始提交快照）。
+    stake 归一 float（int/float 同值同哈希）；goal_line 排序键 None 在前
+    （None 与 float 不可比，correctness F1）。
     """
     canon = {
         "mode": mode.value,
-        "stake": stake,
+        "stake": float(stake),
         "legs": sorted(
             (
                 {
@@ -133,7 +135,8 @@ def intent_fingerprint(mode: BetMode, stake: float, legs: list[LegInput]) -> str
                 item["fixture_id"],
                 item["market_code"],
                 item["selection_code"],
-                item["goal_line"],
+                item["goal_line"] is None,
+                item["goal_line"] or 0.0,
             ),
         ),
     }

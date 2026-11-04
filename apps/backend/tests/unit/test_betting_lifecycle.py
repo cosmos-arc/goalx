@@ -597,6 +597,31 @@ def test_same_key_race_intent_conflict_raises(
     db.commit()
 
 
+def test_intent_fingerprint_canonicalization() -> None:
+    """票 09 correctness F1/F3：规范形哈希的健壮性——混合 goal_line 排序
+    不抛、int/float 同值同哈希、腿序无关。"""
+    leg_none = LegInput(
+        fixture_id=1, market_code="had", selection_code="h", locked_odds=2
+    )
+    leg_line = LegInput(
+        fixture_id=2,
+        market_code="had",
+        selection_code="h",
+        locked_odds=2,
+        goal_line=2.5,
+    )
+    # 混合 goal_line（None/float 并存）不抛 TypeError（F1）
+    assert intent_fingerprint(BetMode.PAPER, 2.0, [leg_none, leg_line])
+    # int/float 同值同哈希（F3：直传 int 的未来调用者不产假 409）
+    assert intent_fingerprint(BetMode.PAPER, 2, [leg_none]) == intent_fingerprint(
+        BetMode.PAPER, 2.0, [leg_none]
+    )
+    # 腿序无关（串关 A+B 与 B+A 同意图）
+    assert intent_fingerprint(BetMode.PAPER, 2.0, [leg_none, leg_line]) == (
+        intent_fingerprint(BetMode.PAPER, 2.0, [leg_line, leg_none])
+    )
+
+
 def test_other_unique_violation_still_raises(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -669,6 +669,37 @@ def test_bet_create_idempotent_client_request_id(demo_client: TestClient) -> Non
     assert again.json()["id"] != first.json()["id"]
 
 
+def test_bet_fingerprint_mixed_goal_line_no_crash(demo_client: TestClient) -> None:
+    """票 09 correctness F1：同三元组双腿 goal_line 一 None 一 float 时
+    指纹排序不得 TypeError 500——归输入校验域（同场串关 400）。"""
+    single_ok, _parlay_ok, _stopped = _demo_ids(demo_client)
+    response = demo_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 2.0,
+            "client_request_id": "leg-mixed-gl",
+            "legs": [
+                {
+                    "fixture_id": single_ok,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 6.5,
+                },
+                {
+                    "fixture_id": single_ok,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 6.5,
+                    "goal_line": 2.5,
+                },
+            ],
+        },
+    )
+    assert response.status_code == 400  # 同场串关校验先于指纹崩溃面
+    assert "重复出现在串关中" in response.json()["detail"]
+
+
 def test_bet_replay_intent_conflict_rejected(demo_client: TestClient) -> None:
     """票 09：同键异意图（改模式/改金额/换腿）→ 409 带原注摘要，不静默
     回旧、不落第二行——响应丢失后改单重提的反模式钉死。"""

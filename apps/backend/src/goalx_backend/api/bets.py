@@ -217,18 +217,25 @@ def _price_mismatch_schema() -> dict[str, object]:
 
     由 LegQuotePayload 自建（无嵌套模型、无 $defs）——FastAPI 0.13x 的
     openapi() 不接受 responses content 内的 model 类，嵌套 $defs 又无法
-    在响应路径下解析。
+    在响应路径下解析。外层 detail=HTTPException 包装（correctness F2：
+    wire 实形与契约对齐）。
     """
     return {
         "type": "object",
         "properties": {
-            "message": {"type": "string"},
-            "current_quotes": {
-                "type": "array",
-                "items": LegQuotePayload.model_json_schema(),
-            },
+            "detail": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "current_quotes": {
+                        "type": "array",
+                        "items": LegQuotePayload.model_json_schema(),
+                    },
+                },
+                "required": ["message", "current_quotes"],
+            }
         },
-        "required": ["message", "current_quotes"],
+        "required": ["detail"],
     }
 
 
@@ -238,35 +245,48 @@ def _bet_conflict_schema() -> dict[str, object]:
 
     价变 → current_quotes 必有（票 04 裁决①语义不放宽）；同 client_request_id
     异意图 → existing_bet（原注摘要，恢复原结果用）。两形态均 message 必有。
+    外层 detail=HTTPException 包装（correctness F2：wire 实形与契约对齐）。
     """
     quote_schema = LegQuotePayload.model_json_schema()
     return {
-        "oneOf": [
-            {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string"},
-                    "current_quotes": {"type": "array", "items": quote_schema},
-                },
-                "required": ["message", "current_quotes"],
-            },
-            {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string"},
-                    "existing_bet": {
+        "type": "object",
+        "properties": {
+            "detail": {
+                "oneOf": [
+                    {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "integer"},
-                            "mode": {"type": "string", "enum": ["paper", "live"]},
-                            "stake": {"type": "number", "exclusiveMinimum": 0},
+                            "message": {"type": "string"},
+                            "current_quotes": {"type": "array", "items": quote_schema},
                         },
-                        "required": ["id", "mode", "stake"],
+                        "required": ["message", "current_quotes"],
                     },
-                },
-                "required": ["message", "existing_bet"],
-            },
-        ]
+                    {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string"},
+                            "existing_bet": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "integer"},
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["paper", "live"],
+                                    },
+                                    "stake": {
+                                        "type": "number",
+                                        "exclusiveMinimum": 0,
+                                    },
+                                },
+                                "required": ["id", "mode", "stake"],
+                            },
+                        },
+                        "required": ["message", "existing_bet"],
+                    },
+                ]
+            }
+        },
+        "required": ["detail"],
     }
 
 
