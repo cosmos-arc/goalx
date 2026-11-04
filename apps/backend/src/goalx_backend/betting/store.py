@@ -229,6 +229,7 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     ev_snapshot: BetEvSnapshot | None = None,
     price_source: str | None = None,
     client_request_id: str | None = None,
+    intent_fingerprint: str | None = None,
 ) -> int:
     """
     Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。
@@ -237,16 +238,18 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     client_request_id=客户端幂等键（票 06，v37 列）：撞唯一索引抛
     IntegrityError——调用侧捕获后以 bet_id_for_request 取回既有注；
     None=未带键（旧行为，池票/内部调用不受约束）。
+    intent_fingerprint=提交意图指纹（票 09，v41 列）：建注时一次写入，
+    锁票重绑不改值；None=未带键（不受约束）。
     """
     snap = ev_snapshot or EMPTY_SNAPSHOT
     cur = conn.execute(
         """
             INSERT INTO bets
-	(slip_id, mode, market_kind, purchased, stake, placed_at,
+            (slip_id, mode, market_kind, purchased, stake, placed_at,
             created_at, strategy_version,
             snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model,
-            price_source, client_request_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            price_source, client_request_id, intent_fingerprint)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -263,6 +266,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             snap.ev_model,
             price_source,
             client_request_id,
+            intent_fingerprint,
         ),
     )
     return _insert_id(cur)

@@ -154,6 +154,12 @@ export function requestIdForLegs(legs: { request_id: string }[]): string | null 
 				.join("+");
 }
 
+/** 腿集换新幂等键（票 09）：意图冲突恢复原结果后，篮内腿换新键——
+ * 下次提交=按新意图另建（改条款重提不换键=双注反模式，冲突确认后才换）。 */
+export function withFreshRequestIds<T extends { request_id: string }>(legs: T[]): T[] {
+	return legs.map((leg) => ({ ...leg, request_id: newRequestId() }));
+}
+
 /** 测试隔离：清内存态与存储（test/setup.ts afterEach 调用）。 */
 export function __resetBasketForTests(): void {
 	state = EMPTY;

@@ -18,6 +18,7 @@ from goalx_backend.betting.bets import (
     BetEligibilityError,
     PriceMismatchError,
     create_bet_with_legs,
+    intent_fingerprint,
     record_purchase,
     resolve_paper_price,
     validate_had_selections,
@@ -230,6 +231,35 @@ def _price_mismatch_schema() -> dict[str, object]:
     }
 
 
+def _bet_conflict_schema() -> dict[str, object]:
+    """
+    建注 409 载荷 schema（票 04 价变 + 票 09 意图冲突两形态，二者互斥）。
+
+    价变 → current_quotes（票 04 裁决①）；同 client_request_id 异意图 →
+    existing_bet（原注摘要，恢复原结果用）。均为可选、message 必有。
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "message": {"type": "string"},
+            "current_quotes": {
+                "type": "array",
+                "items": LegQuotePayload.model_json_schema(),
+            },
+            "existing_bet": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "mode": {"type": "string", "enum": ["paper", "live"]},
+                    "stake": {"type": "number", "exclusiveMinimum": 0},
+                },
+                "required": ["id", "mode", "stake"],
+            },
+        },
+        "required": ["message"],
+    }
+
+
 class StakeAdviceRequest(BaseModel):
     """建议仓位输入（票 wb-06）：串关由调用方传联合赔率/联合 EV（整注口径）。"""
 
@@ -304,22 +334,55 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
     )
 
 
-def _replayed_bet_view(
+def _replayed_bet_row(
     db: sqlite3.Connection, client_request_id: str
-) -> BetView | None:
-    """同幂等键既有注视图（票 06 重放回带；无则 None 走正常建注）。"""
+) -> sqlite3.Row | None:
+    """同幂等键既有注行（票 06 重放回带；无则 None 走正常建注）。"""
     existing_id = bt_store.bet_id_for_request(db, client_request_id)
     if existing_id is None:
         return None
-    row = bt_store.get_bet(db, existing_id)
-    if row is None:
+    return bt_store.get_bet(db, existing_id)
+
+
+def _replay_or_conflict(
+    db: sqlite3.Connection,
+    client_request_id: str,
+    fingerprint: str | None,
+) -> BetView | None:
+    """
+    同键重放判定（票 06/09）。
+
+    同意图 → 既有注视图（201 同体回带）；异意图 → 409 带原注摘要（不
+    静默吞改）；无既有注/存量无指纹行 → None 走正常建注（v37 期旧行
+    无可比对，降级旧回带）。
+    """
+    existing = _replayed_bet_row(db, client_request_id)
+    if existing is None:
         return None
-    return _bet_view(row, review_views(db, [row]).get(existing_id))
+    stored = existing["intent_fingerprint"]
+    if stored is not None and stored != fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "client_request_id 已绑定另一提交意图：原注 "
+                    f"#{existing['id']}（{existing['mode']} "
+                    f"¥{existing['stake']}）已建立，本次新意图未建注"
+                    "——换新键另建或按原意图重提"
+                ),
+                "existing_bet": {
+                    "id": int(existing["id"]),
+                    "mode": str(existing["mode"]),
+                    "stake": float(existing["stake"]),
+                },
+            },
+        )
+    return _bet_view(existing, review_views(db, [existing]).get(int(existing["id"])))
 
 
 @router.post(
     "/api/v1/bets",
-    summary="建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 重放回带)",
+    summary="建注(注级建议; 校验 had 资格+纸面价绑定; 同键同意图回带/异意图409)",
     status_code=201,
     response_model=BetView,
     responses={
@@ -327,9 +390,11 @@ def _replayed_bet_view(
         409: {
             "description": (
                 "纸面价与服务器当前有效报价不一致(返回新价; "
-                "按 server_odds 重提,或 allow_manual_price 走研究假设)"
+                "按 server_odds 重提,或 allow_manual_price 走研究假设); "
+                "或 client_request_id 已绑定不同提交意图(返回 existing_bet "
+                "原注摘要; 换新键按新意图另建)"
             ),
-            "content": {"application/json": {"schema": _price_mismatch_schema()}},
+            "content": {"application/json": {"schema": _bet_conflict_schema()}},
         },
     },
 )
@@ -342,14 +407,13 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
     manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
 
-    幂等(票 06)：client_request_id 同键重复提交回带既有注(201 同体)，
-    不落双行——批量逐腿提交的重试安全网。重放在资格/价绑校验**之前**
-    短路：原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
+    幂等(票 06/09)：client_request_id 同键重复提交——同意图回带既有注
+    (201 同体)不落双行；异意图(改金额/模式/选注)409 带原注摘要，不静默
+    吞改。意图指纹=提交载荷业务字段规范形哈希(建注时一次落库)，比对
+    对象是不可变原始提交，不读锁票重绑后的行。存量无指纹行(v37 期)
+    无可比对 → 维持旧回带(降级)。重放在资格/价绑校验**之前**短路：
+    原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
     """
-    if payload.client_request_id is not None:
-        replayed = _replayed_bet_view(db, payload.client_request_id)
-        if replayed is not None:
-            return replayed
     legs = [
         LegInput(
             fixture_id=leg.fixture_id,
@@ -360,6 +424,15 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
         )
         for leg in payload.legs
     ]
+    fingerprint = (
+        intent_fingerprint(payload.mode, payload.stake, legs)
+        if payload.client_request_id is not None
+        else None
+    )
+    if payload.client_request_id is not None:
+        replayed = _replay_or_conflict(db, payload.client_request_id, fingerprint)
+        if replayed is not None:
+            return replayed
     try:
         with corpus_duckdb.reader() as duck_con:
             validate_had_selections(db, legs, duck_con=duck_con)
@@ -381,6 +454,7 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
                     legs=bound,
                     strategy_version=payload.strategy_version,
                     client_request_id=payload.client_request_id,
+                    intent_fingerprint=fingerprint,
                 ),
                 duck_con=duck_con,
                 price_source=price_source,

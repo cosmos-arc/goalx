@@ -463,6 +463,70 @@ test("票 06：选注草稿全站持久 + 一成一败重试同键不落双行",
 	expect(Number(failedRows[0]?.["n"])).toBe(0);
 });
 
+test("票 09：响应丢失改单重提 → 409 恢复原结果，新键另建无双注", async ({ page }) => {
+	await page.goto("/fixtures");
+	await page.getByTestId("pick-1-h").click();
+
+	// 首提：服务器真实受理（route.fetch 打到后端）但响应丢弃（abort）——
+	// 浏览器只见网络失败，paper/¥2 注已实际落库（"结果未知"状态）
+	const betPosts: Array<Record<string, unknown>> = [];
+	let dropOnce = true;
+	await page.route("**/api/v1/bets", async (route) => {
+		if (route.request().method() !== "POST") {
+			await route.continue();
+			return;
+		}
+		betPosts.push(route.request().postDataJSON() as Record<string, unknown>);
+		if (dropOnce) {
+			dropOnce = false;
+			await route.fetch(); // 服务端已处理（201 建注）
+			await route.abort("connectionreset"); // 响应不送达浏览器
+			return;
+		}
+		await route.continue();
+	});
+	await page.getByTestId("basket-open").click();
+	await page.getByTestId("basket-stake").fill("2");
+	await page.getByTestId("basket-submit").click();
+	// 前端结果未知：腿留篮、失败消息（不冒充成功清篮）
+	await expect(page.getByTestId("fixtures-message")).toContainText("建注失败");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2");
+	const originalKey = betPosts[0]?.["client_request_id"];
+	expect(typeof originalKey).toBe("string");
+
+	// 改单重提（同键，模式/金额改 live/¥200）：服务端 409 带原注摘要
+	// （失败后抽屉保持打开——BasketFormFields 就在抽屉内直接改）
+	await page.getByTestId("basket-mode").selectOption("live");
+	await page.getByTestId("basket-stake").fill("200");
+	await page.getByTestId("basket-submit").click();
+	const message = page.getByTestId("fixtures-message");
+	await expect(message).toContainText("原提交其实已成功");
+	await expect(message).toContainText("（纸面 ¥2）——已恢复原结果");
+	await expect(message).toContainText("本次新条款未建立");
+	await expect(page.getByTestId("basket-count")).toHaveText("1/2"); // 腿留篮（换新键）
+	expect(betPosts[1]?.["client_request_id"]).toBe(originalKey); // 反模式：改单不换键
+	const conflictBet = dbRows(`SELECT id, mode, stake FROM bets WHERE client_request_id = '${originalKey}'`);
+	expect(conflictBet).toHaveLength(1); // 无双注
+	expect(conflictBet[0]?.["mode"]).toBe("paper");
+	expect(Number(conflictBet[0]?.["stake"])).toBe(2);
+
+	// 确认后重提：腿已换新键 → 按新意图另建 live/¥200（无双注、无吞改）
+	await page.getByTestId("basket-submit").click();
+	await expect(message).toContainText("已建建议 #");
+	await expect(message).toContainText("（单关，真金 ¥200）");
+	await expect(page.getByTestId("basket-count")).toHaveText("0/2");
+	const newKey = betPosts[2]?.["client_request_id"];
+	expect(typeof newKey).toBe("string");
+	expect(newKey).not.toBe(originalKey);
+	const finalRows = dbRows(
+		`SELECT client_request_id, mode, stake FROM bets WHERE client_request_id IN ('${originalKey}', '${newKey}')`,
+	);
+	expect(finalRows).toHaveLength(2); // 每键恰一行：原 paper/2 + 新 live/200
+	const liveRow = finalRows.find((row) => row["client_request_id"] === newKey);
+	expect(liveRow?.["mode"]).toBe("live");
+	expect(Number(liveRow?.["stake"])).toBe(200);
+});
+
 test("浏览器、API 与 DB 最终状态一致", async ({ page }) => {
 	const apiBets = (
 		(await (await page.request.get("/api/v1/bets")).json()) as Array<{

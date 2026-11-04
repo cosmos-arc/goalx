@@ -204,7 +204,7 @@ test("picks into the basket and creates a suggestion in place", async () => {
 	await user.type(screen.getByTestId("basket-stake"), "100");
 	await user.click(screen.getByTestId("basket-submit"));
 
-	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #88（单关）");
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #88（单关，纸面 ¥100）");
 	expect(captured.body).toMatchObject({
 		mode: "paper",
 		stake: 100,

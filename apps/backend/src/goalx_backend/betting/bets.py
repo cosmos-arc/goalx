@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -73,6 +74,42 @@ class BetDraft(BaseModel):
     strategy_version: str | None = None
     # 客户端建注幂等键（票 06）：同键重复提交不落双行（撞唯一索引回带）
     client_request_id: str | None = Field(default=None, max_length=200)
+    # 提交意图指纹（票 09）：键带则随行落库，重放比对防同键吞改
+    intent_fingerprint: str | None = None
+
+
+def intent_fingerprint(mode: BetMode, stake: float, legs: list[LegInput]) -> str:
+    """
+    提交意图规范化指纹（票 09，人裁决 2026-11-04）。
+
+    业务字段规范形（mode/stake + 逐腿 fixture/selection/market，含
+    goal_line 市场线）排序后哈希——腿序无关、不含 locked_odds（价随确认
+    重绑，非意图）与 note 等自由文本。建注时由提交载荷计算一次落库；
+    重放时重算比对，不读回绑后的行（比较对象=不可变原始提交快照）。
+    """
+    canon = {
+        "mode": mode.value,
+        "stake": stake,
+        "legs": sorted(
+            (
+                {
+                    "fixture_id": leg.fixture_id,
+                    "market_code": leg.market_code,
+                    "selection_code": leg.selection_code,
+                    "goal_line": leg.goal_line,
+                }
+                for leg in legs
+            ),
+            key=lambda item: (
+                item["fixture_id"],
+                item["market_code"],
+                item["selection_code"],
+                item["goal_line"],
+            ),
+        ),
+    }
+    payload = json.dumps(canon, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ActualLegOdds(BaseModel):
@@ -252,6 +289,7 @@ def create_bet_with_legs(
                 ev_snapshot=snapshot,
                 price_source=price_source,
                 client_request_id=draft.client_request_id,
+                intent_fingerprint=draft.intent_fingerprint,
             )
         except sqlite3.IntegrityError as exc:
             existing = _existing_for_request_race(conn, exc, draft.client_request_id)

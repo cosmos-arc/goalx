@@ -149,7 +149,7 @@ test("apply combo loads legs into the in-page basket; each leg submits as an ind
 	expect(drawerLegs[0]).toHaveTextContent("总进球 2");
 
 	await user.click(screen.getByTestId("goals-basket-submit"));
-	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议");
+	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议（纸面 ¥100.08）");
 	expect(captured.bodies).toHaveLength(1);
 	expect(captured.bodies[0]).toMatchObject({
 		mode: "paper",
@@ -201,7 +201,7 @@ test("basket drawer submits multiple singles and surfaces server rejection", asy
 	await user.selectOptions(screen.getByTestId("goals-basket-mode"), "live");
 	await user.click(screen.getByTestId("goals-basket-submit"));
 
-	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议");
+	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议（纸面 ¥100.08）");
 	expect(captured.bodies[0]).toMatchObject({ mode: "live", stake: 20, strategy_version: "goals-v1" });
 
 	// 服务器拒绝 = 唯一权威：400 detail 透出（票 06 逐腿语义：失败腿留篮可重试）

@@ -21,10 +21,10 @@ import {
 	DrawerHeader,
 	DrawerTitle,
 } from "../components/ui/drawer";
-import { basketActions, newRequestId, useBasket } from "../lib/basket-store";
+import { basketActions, newRequestId, useBasket, withFreshRequestIds } from "../lib/basket-store";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
 import { bankrollKey, goalsMarketKey, invalidateBets } from "../lib/query-keys";
-import { dayNoteOf, errorText, TABULAR_NUMS } from "../lib/ui";
+import { betModeLabel, dayNoteOf, errorText, intentConflict, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-05：进球玩法页 `/markets/goals`——玩法轴第二页（ttg/crs）。
@@ -151,11 +151,16 @@ export function MarketGoalsPage() {
 	}
 
 	const createSuggestion = useMutation({
-		mutationFn: async (): Promise<{ created: number[]; failedAt: number | null }> => {
+		mutationFn: async (): Promise<{
+			created: number[];
+			failedAt: number | null;
+			labels: string[];
+		}> => {
 			// 进球类以单关为主：每腿独立一注（服务器侧 non-had 腿按既有行为不校验）。
 			// 票 06：逐腿 try/catch——一成一败时已成注保留账面、失败腿起留篮
 			// 可重试（同 request_id 只补发失败腿，不重复已建注）
 			const created: number[] = [];
+			const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
 			for (const [index, leg] of legs.entries()) {
 				try {
 					const bet = await createBet({
@@ -173,7 +178,21 @@ export function MarketGoalsPage() {
 						],
 					});
 					created.push(bet.id);
+					labels.push(`${betModeLabel(bet.mode)} ¥${bet.stake}`);
 				} catch (error) {
+					// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、该腿
+					// 换新键留篮（未提交腿不动），新意图待用户再点提交另建
+					const conflict = intentConflict(error);
+					if (conflict !== null) {
+						invalidateBets(queryClient);
+						basketActions.setGoalsLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
+						setMessage(
+							`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）原提交其实已成功：#${conflict.id}` +
+								`（${betModeLabel(conflict.mode)} ¥${conflict.stake}）——已恢复原结果；` +
+								"本次新条款未建立，确认后再点提交将按新意图另建",
+						);
+						return { created, failedAt: index, labels };
+					}
 					// 失败腿起整段留篮（前面的已成注保留账面）；未提交 ≠ 失败，
 					// 分开计数（correctness F3）
 					basketActions.setGoalsLegs(legs.slice(created.length));
@@ -184,14 +203,14 @@ export function MarketGoalsPage() {
 						`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）失败：${errorText(error)}` +
 							`——成功 ${created.length} · 失败 1 · 未提交 ${legs.length - index - 1}，失败/未提交腿留篮可重试`,
 					);
-					return { created, failedAt: index };
+					return { created, failedAt: index, labels };
 				}
 			}
-			return { created, failedAt: null };
+			return { created, failedAt: null, labels };
 		},
-		onSuccess: ({ created, failedAt }) => {
+		onSuccess: ({ created, failedAt, labels }) => {
 			if (failedAt === null) {
-				setMessage(`已建 ${created.length} 条单关建议 — 去投注页锁定`);
+				setMessage(`已建 ${created.length} 条单关建议（${labels.join("、")}）— 去投注页锁定`);
 				basketActions.setGoalsLegs([]);
 				setBasketOpen(false);
 			}

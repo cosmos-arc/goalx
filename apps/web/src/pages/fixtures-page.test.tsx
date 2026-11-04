@@ -299,7 +299,7 @@ test("basket drawer manages legs and creates the suggestion through the real API
 	await user.click(screen.getByTestId("basket-submit"));
 
 	// 建议提交走现有 API；成功后清篮、关抽屉、消息常驻底部
-	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #77（2串1）");
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #77（2串1，纸面 ¥50）");
 	expect(captured.body).toMatchObject({
 		mode: "live",
 		stake: 50,
@@ -326,7 +326,7 @@ test("basket drawer manages legs and creates the suggestion through the real API
 	await user.clear(screen.getByTestId("basket-strategy"));
 	await user.selectOptions(screen.getByTestId("basket-mode"), "paper");
 	await user.click(screen.getByTestId("basket-submit"));
-	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #77（单关）");
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #77（单关，纸面 ¥50）");
 	expect(captured.body).toMatchObject({ mode: "paper", stake: 50, strategy_version: null });
 
 	// 服务器拒绝 = 唯一权威：400 detail 透出为失败消息
@@ -409,10 +409,80 @@ test("票 06：草稿跨页持久 + 一成一败重试同键只补发失败腿",
 		}),
 	);
 	await user.click(screen.getByTestId("basket-submit"));
-	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #78（单关）");
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #78（单关，纸面 ¥100）");
 	expect(bodies).toHaveLength(3);
 	expect(bodies[2]?.client_request_id).toBe(failedKey);
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+});
+
+test("票 09：意图冲突恢复原结果，腿换新键留篮可另建新意图", async () => {
+	const user = userEvent.setup();
+	await renderAt("/fixtures");
+	await user.click(await screen.findByTestId("pick-1-h"));
+
+	// 模拟"响应丢失后改单重提"：首提被记键；用户改 live/¥200 再提
+	// → 服务端 409 带原注摘要（paper/¥2 已建立，新意图未建）
+	const keys: string[] = [];
+	const okBet = () => ({
+		id: 91,
+		slip_id: null,
+		mode: "live",
+		market_kind: "fixed",
+		purchased: false,
+		stake: 200,
+		actual_stake: null,
+		strategy_version: null,
+		placed_at: null,
+		locked_at: null,
+		created_at: "2026-11-04T10:00:00+00:00",
+		status: "open",
+		payout: null,
+		profit: null,
+		settled_at: null,
+		legs: [{ fixture_id: 1, market_code: "had", selection_code: "h", locked_odds: 1.92, goal_line: null }],
+		review: null,
+	});
+	let conflictOnce = true;
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			const body = (await request.json()) as { client_request_id?: string };
+			if (body.client_request_id !== undefined) {
+				keys.push(body.client_request_id);
+			}
+			if (conflictOnce) {
+				conflictOnce = false;
+				return HttpResponse.json(
+					{
+						detail: {
+							message: "client_request_id 已绑定另一提交意图",
+							existing_bet: { id: 90, mode: "paper", stake: 2 },
+						},
+					},
+					{ status: 409 },
+				);
+			}
+			return HttpResponse.json(okBet(), { status: 201 });
+		}),
+	);
+	await user.click(screen.getByTestId("basket-open"));
+	await user.selectOptions(screen.getByTestId("basket-mode"), "live");
+	await user.clear(screen.getByTestId("basket-stake"));
+	await user.type(screen.getByTestId("basket-stake"), "200");
+	await user.click(screen.getByTestId("basket-submit"));
+
+	// 恢复原结果 + 明示新意图未建立；腿留篮不清（不冒充成功清篮）
+	const message = await screen.findByTestId("fixtures-message");
+	expect(message).toHaveTextContent("原提交其实已成功：#90（纸面 ¥2）——已恢复原结果");
+	expect(message).toHaveTextContent("本次新条款未建立");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2");
+
+	// 再点提交：腿已换新键 → 按新意图另建成功，消息展示服务器口径（真金 ¥200）
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("已建建议 #91（单关，真金 ¥200）");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+	// 反模式钉死：冲突确认后才换键（第二键≠第一键）
+	expect(keys).toHaveLength(2);
+	expect(keys[1]).not.toBe(keys[0]);
 });
 
 test("renders edge encodings: partial triples, invalid timestamps, passed kickoff, neutral near-zero EV", async () => {

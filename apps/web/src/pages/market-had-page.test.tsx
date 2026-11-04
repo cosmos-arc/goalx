@@ -144,7 +144,7 @@ test("apply combo loads legs into the in-page basket with the flat stake prefill
 
 	// 提交建建议：单关、引擎注额、locked_odds = 竞彩价
 	await user.click(screen.getByTestId("basket-submit"));
-	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #88（单关）");
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #88（单关，纸面 ¥100.08）");
 	expect(captured.body).toMatchObject({
 		mode: "paper",
 		stake: F1_STAKE,
@@ -167,7 +167,7 @@ test("two positive-EV picks: slip form explicit (default singles), preview == su
 	server.use(
 		http.post("*/api/v1/bets", async ({ request }) => {
 			bodies.push((await request.json()) as Record<string, unknown>);
-			return HttpResponse.json({ id: 90 + bodies.length, legs: [] }, { status: 201 });
+			return HttpResponse.json({ id: 90 + bodies.length, mode: "paper", stake: 100.08, legs: [] }, { status: 201 });
 		}),
 	);
 	await renderAt("/markets/had");
@@ -201,7 +201,9 @@ test("two positive-EV picks: slip form explicit (default singles), preview == su
 
 	// 提交 = 两笔独立单关（各 F1_STAKE）；预览数 == 落库口径（票级单源）
 	await user.click(screen.getByTestId("basket-submit"));
-	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #91、#92（2 笔单关）");
+	expect(await screen.findByTestId("market-message")).toHaveTextContent(
+		"已建建议 #91、#92（2 笔单关：纸面 ¥100.08、纸面 ¥100.08）",
+	);
 	expect(bodies).toHaveLength(2);
 	for (const body of bodies) {
 		expect(body).toMatchObject({ mode: "paper", stake: F1_STAKE, legs: [expect.anything()] });
@@ -235,7 +237,7 @@ test("slip form explicitly switched to parlay: one 2串1 bet at the parlay calib
 	expect(screen.getByTestId("basket-form-parlay")).toBeChecked();
 
 	await user.click(screen.getByTestId("basket-submit"));
-	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #93（2串1）");
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #93（2串1，纸面 ¥100.08）");
 	expect(captured.body).toMatchObject({ mode: "paper", stake: F1_STAKE, legs: [expect.anything(), expect.anything()] });
 });
 
@@ -254,7 +256,7 @@ test("singles submit partial failure: created bets stay booked, failed leg stays
 		http.post("*/api/v1/bets", async () => {
 			calls += 1;
 			if (calls === 1) {
-				return HttpResponse.json({ id: 95, legs: [] }, { status: 201 });
+				return HttpResponse.json({ id: 95, mode: "paper", stake: 100.08, legs: [] }, { status: 201 });
 			}
 			return HttpResponse.json({ detail: "fixture 4 不可投: sale_stopped" }, { status: 400 });
 		}),
@@ -285,7 +287,7 @@ test("singles submit mid-loop price drift clears basket (票 04 裁决① 同流
 		http.post("*/api/v1/bets", async () => {
 			calls += 1;
 			if (calls === 1) {
-				return HttpResponse.json({ id: 96, legs: [] }, { status: 201 });
+				return HttpResponse.json({ id: 96, mode: "paper", stake: 100.08, legs: [] }, { status: 201 });
 			}
 			return HttpResponse.json(
 				{
@@ -410,7 +412,7 @@ test("basket drawer manages legs, non-single hint, and surfaces server rejection
 	await waitFor(() => expect(screen.getByTestId("basket-stake-advice-reason")).toHaveTextContent("建议不投（¥0）"));
 	await user.click(screen.getByTestId("basket-submit"));
 
-	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #89（2串1）");
+	expect(await screen.findByTestId("market-message")).toHaveTextContent("已建建议 #89（2串1，纸面 ¥100.08）");
 	expect(captured.body).toMatchObject({
 		mode: "live",
 		stake: 50,
