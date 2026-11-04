@@ -195,3 +195,21 @@ def test_detail_payload_serializes() -> None:
     payload = detail_payload(out)
     assert payload["status"] == "won"
     assert payload["legs"][0]["fixture_id"] == 1
+
+
+def test_goals4_band_adjudication_matches_pool_code_space() -> None:
+    """票 10（correctness W4）：goals4 池票档位码按侧判档，非 crs 码空间。
+
+    2:1 赛果：h2/a1 命中、h3 miss；crs 口径会对档位腿恒 miss。
+    """
+    result = ResultFacts(
+        home_goals=2,
+        away_goals=1,
+        half_home_goals=1,
+        half_away_goals=0,
+    )
+    assert judge_leg(leg(1, "goals4", "h2"), result).hit is True
+    assert judge_leg(leg(1, "goals4", "a1"), result).hit is True
+    assert judge_leg(leg(1, "goals4", "h3"), result).hit is False
+    # 闭集外码不可判定（不误判；构票侧已拒，此处守判定面）
+    assert judge_leg(leg(1, "goals4", "h9"), result).hit is None

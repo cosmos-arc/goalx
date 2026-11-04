@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
+from goalx_backend.db import connect, migrate
+from goalx_backend.main import create_app
 from goalx_backend.models import MatchCodeInput
 
 _POOL_KICKOFF = "2026-11-02T16:00:00+00:00"  # 官方源日期精度假时刻
@@ -144,3 +149,108 @@ def test_goals4_mapping_reaches_llm_targets(db: sqlite3.Connection) -> None:
     pool_fids = [fid for fid, purpose in targets.items() if purpose is Purpose.POOL]
     assert pool_fids, targets
     assert llm_gate._is_pool_fixture(db, fixture_id=pool_fids[0], moment=moment)
+
+
+def test_goals4_joint_served_from_matrix(db: sqlite3.Connection) -> None:
+    """票 10 验收②：服务面联合=矩阵格聚合，边缘和==档位边际（逐位钉死）。"""
+    pid = _seed(db, market="goals4", with_forecast=True)
+    views = pool_store.match_views(db, pid, _AS_OF)
+    joint = views[0].goals4_joint
+    assert joint is not None
+    prob = {s.code: s.prob for s in views[0].selections}
+    # 格值显式钉死（非边际连乘：连乘 h1×a1=0.3×0.3=0.09 ≠ 格 0.2）
+    assert joint["h1"]["a1"] == 0.2
+    assert joint["h2"]["a2"] == 0.35
+    assert joint["h3"]["a3"] == 0.1
+    for i in range(4):
+        row_sum = sum(joint[f"h{i}"][f"a{j}"] for j in range(4))
+        col_sum = sum(joint[f"h{j}"][f"a{i}"] for j in range(4))
+        # 服务面两侧独立取整（4/6 位），边缘一致在浮点容差内钉死
+        assert row_sum == pytest.approx(prob[f"h{i}"], abs=1e-4)
+        assert col_sum == pytest.approx(prob[f"a{i}"], abs=1e-4)
+
+
+def test_goals4_joint_none_without_forecast_or_other_market(
+    db: sqlite3.Connection,
+) -> None:
+    """无预测 goals4 / 非 goals4 期次：联合恒 None（不虚构）。"""
+    pid = _seed(db, market="goals4", with_forecast=False)
+    assert pool_store.match_views(db, pid, _AS_OF)[0].goals4_joint is None
+    ttt = _seed(db, market="ttt14", with_forecast=True)
+    assert pool_store.match_views(db, ttt, _AS_OF)[0].goals4_joint is None
+
+
+def test_goals4_pool_slip_preview_and_create(tmp_path: Path) -> None:
+    """票 10 验收①：goals4 构票贯通——预览 0 读数（不完备）/计数（完备）+ 落库。
+
+    隔离库（correctness E1）：共享 client fixture 的应用按 CWD 相对路径
+    开 data/goalx.db——从仓根跑会把测试票写进真实工作库；本测试自建
+    临时库并显式传 pool_period_id（期次校验一并覆盖）。
+    """
+    db_path = tmp_path / "goals4-slip.db"
+    db = connect(db_path)
+    migrate(db)
+    pid = _seed(db, market="goals4", with_forecast=False)
+    db.commit()  # _seed 不自提交；app 是独立连接，先落盘再开门
+    client = TestClient(
+        create_app(
+            settings=Settings(
+                db_path=db_path, research_db_path=tmp_path / "research.db"
+            )
+        )
+    )
+    client.__enter__()
+    try:
+        # 不完备预览（<4 场 / 单侧缺）：诚实 0，不 400
+        incomplete = client.post(
+            "/api/v1/pool-slips/preview",
+            json={
+                "market_code": "goals4",
+                "picks": [{"match_seq": 1, "selection_code": "h0"}],
+            },
+        )
+        assert incomplete.status_code == 200, incomplete.text
+        assert incomplete.json()["combination_count"] == 0
+        # 完备票：4 场各双档（第 1 场主档复式 h0/h1）→ 2 注
+        picks = [
+            {"match_seq": 1, "selection_code": "h0"},
+            {"match_seq": 1, "selection_code": "h1"},
+            {"match_seq": 1, "selection_code": "a2"},
+            {"match_seq": 2, "selection_code": "h3"},
+            {"match_seq": 2, "selection_code": "a2"},
+            {"match_seq": 3, "selection_code": "h2"},
+            {"match_seq": 3, "selection_code": "a2"},
+            {"match_seq": 4, "selection_code": "h1"},
+            {"match_seq": 4, "selection_code": "a2"},
+        ]
+        preview = client.post(
+            "/api/v1/pool-slips/preview",
+            json={"market_code": "goals4", "picks": picks},
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["combination_count"] == 2
+        created = client.post(
+            "/api/v1/pool-slips",
+            json={
+                "mode": "paper",
+                "pool_period_id": pid,
+                "market_code": "goals4",
+                "picks": picks,
+            },
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert body["combination_count"] == 2
+        assert body["pool_stake_total"] == 4  # 2 注 × ¥2
+        rows = db.execute(
+            "SELECT selections FROM combinations WHERE slip_id = ?",
+            (body["id"],),
+        ).fetchall()
+        assert len(rows) == 2
+        first = json.loads(rows[0]["selections"])
+        assert len(first) == 8  # 4 场 × (主档+客档)
+        assert {"match_seq": 1, "selection_code": "h0"} in first
+        assert {"match_seq": 1, "selection_code": "a2"} in first
+    finally:
+        client.__exit__(None, None, None)
+        db.close()

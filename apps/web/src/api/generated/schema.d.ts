@@ -329,7 +329,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 复式组合预览(任9 9选子积/14场整体连乘): 注数/总金额/组合流摘要
+         * 复式组合预览(任9 9选子积/14场连乘/goals4双侧积): 注数/总金额/摘要
          * @description 只读组合预览（票 01）：与创建同源——三方一致。
          *
          *     同一套矩阵/计数/展开：前端展示、落库组合、SlipView 回读共用；
@@ -2335,6 +2335,12 @@ export interface components {
             fixture_id?: number | null;
             /** Selections */
             selections: components["schemas"]["PoolSelectionView"][];
+            /** Goals4 Joint */
+            goals4_joint?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            } | null;
         };
         /**
          * PoolPeriodDetailView
@@ -2410,12 +2416,12 @@ export interface components {
         };
         /**
          * PoolSlipCreate
-         * @description 创建池票（任9/14 场复式）；market_code 为票级 Market 口径（票 01）。
+         * @description 创建池票（任9/14 场/goals4 复式）；market_code 为票级 Market 口径（票 01/10）。
          *
          *     market_code=pick9：组合 = 全部 9 场子集 × 各子集内逐场 picks 之积
-         *     （需 ≥9 场）；market_code=ttt14：整体所选场连乘（14 腿不动）。缺省
-         *     pick9——任9 页是唯一池票 UI；期次（ttt14 期）承载的是 14 场赛程，
-         *     任9 从同场程选 9 场，Market 归票不归期次。
+         *     （需 ≥9 场）；ttt14：整体所选场连乘（14 腿不动）；goals4：4 场固定、
+         *     每场主/客档各一选（复式=|主档|×|客档| 积，票 10）。缺省 pick9——
+         *     任9 页是默认池票 UI；期次承载赛程，Market 归票不归期次。
          */
         PoolSlipCreate: {
             mode: components["schemas"]["BetMode"];
@@ -2426,7 +2432,7 @@ export interface components {
              * @default pick9
              * @enum {string}
              */
-            market_code: "pick9" | "ttt14";
+            market_code: "pick9" | "ttt14" | "goals4";
             /** Note */
             note?: string | null;
             /**
@@ -2455,7 +2461,7 @@ export interface components {
         };
         /**
          * PoolSlipPreviewRequest
-         * @description 复式组合预览输入（票 01）：与创建同载荷减 mode/note/期次（只读）。
+         * @description 复式组合预览输入（票 01/10）：与创建同载荷减 mode/note/期次（只读）。
          */
         PoolSlipPreviewRequest: {
             /**
@@ -2463,7 +2469,7 @@ export interface components {
              * @default pick9
              * @enum {string}
              */
-            market_code: "pick9" | "ttt14";
+            market_code: "pick9" | "ttt14" | "goals4";
             /**
              * Stake Per Combination
              * @default 2

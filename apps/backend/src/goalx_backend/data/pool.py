@@ -564,24 +564,36 @@ def market_code_for_period(conn: sqlite3.Connection, pool_period_id: int) -> str
     return str(row["market_code"]) if row else ""
 
 
-def _goal_bands_from_matrix(matrix: ScoreMatrix) -> dict[str, float]:
-    """比分矩阵 → goals4 档位边际（行和=主队档、列和=客队档，3+ 聚尾）。"""
-    bands = {f"{side}{band}": 0.0 for side in ("h", "a") for band in range(4)}
-    for home_goals, row in enumerate(matrix.grid):
-        for away_goals, p in enumerate(row):
-            bands[f"h{min(home_goals, 3)}"] += float(p)
-            bands[f"a{min(away_goals, 3)}"] += float(p)
-    return bands
-
-
 def model_goal_bands_for_fixture(
     conn: sqlite3.Connection, fixture_id: int, as_of: str
 ) -> dict[str, float] | None:
     """
     映射成功时取 as_of 前最新 ML Forecast 的进球档边际（goals4 面）。
 
-    PIT 口径同 model_prob_for_fixture（issued_at <= as_of）。
+    PIT 口径同 model_prob_for_fixture（issued_at <= as_of）。档位聚合单源
+    在 ScoreMatrix.goals4_bands（票 10）。
     """
+    matrix = _ml_matrix_for_fixture(conn, fixture_id, as_of)
+    return matrix.goals4_bands() if matrix is not None else None
+
+
+def model_goals4_joint_for_fixture(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> dict[str, dict[str, float]] | None:
+    """
+    映射成功时取 as_of 前最新 ML Forecast 的同场档位联合（票 10）。
+
+    比分矩阵格聚合（主客档相关，非边际连乘——路线 D 红线）；边缘和恒等
+    于 model_goal_bands_for_fixture。
+    """
+    matrix = _ml_matrix_for_fixture(conn, fixture_id, as_of)
+    return matrix.goals4_joint() if matrix is not None else None
+
+
+def _ml_matrix_for_fixture(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> ScoreMatrix | None:
+    """as_of 前最新 ML Forecast 的比分矩阵（无预测返回 None）。"""
     from goalx_backend.modelling.forecast import (  # noqa: PLC0415 局部导入避免环
         forecast_matrix_from_payload,
         latest_forecast_asof,
@@ -591,8 +603,7 @@ def model_goal_bands_for_fixture(
     if row is None:
         return None
     payload = json.loads(str(row["payload"]))
-    matrix = forecast_matrix_from_payload(payload)
-    return _goal_bands_from_matrix(matrix)
+    return forecast_matrix_from_payload(payload)
 
 
 class PoolSelectionView(BaseModel):
@@ -618,6 +629,10 @@ class PoolMatchView(BaseModel):
     away_team: str
     fixture_id: int | None = None  # 映射到的竞彩场次（无则 None）
     selections: list[PoolSelectionView]
+    # goals4 同场档位联合（票 10）：joint["h{i}"]["a{j}"]=P(主 i 档且客 j 档)，
+    # 比分矩阵格聚合——主客档相关，不得按边际连乘（路线 D 红线）；
+    # 边缘和 == selections 档位概率。非 goals4 / 无预测恒 None。
+    goals4_joint: dict[str, dict[str, float]] | None = None
 
 
 def match_rows_with_fixture_ids(
@@ -735,8 +750,16 @@ def match_views(
     for row, fixture_id in match_rows_with_fixture_ids(conn, pool_period_id):
         seq = int(row["match_seq"])
         shares_seq = shares.get(seq, {})
+        goals4_joint: dict[str, dict[str, float]] | None = None
         if market_code == "goals4":
             selection_views = _goals4_selection_views(conn, fixture_id, shares_seq, now)
+            if fixture_id is not None:
+                joint = model_goals4_joint_for_fixture(conn, fixture_id, now)
+                if joint is not None:
+                    goals4_joint = {
+                        h: {a: round(p, 6) for a, p in row.items()}
+                        for h, row in joint.items()
+                    }
         else:
             selection_views = _wdl_selection_views(
                 conn, row, fixture_id, shares_seq, now
@@ -751,6 +774,7 @@ def match_views(
                 away_team=str(row["away_team"]),
                 fixture_id=fixture_id,
                 selections=selection_views,
+                goals4_joint=goals4_joint,
             )
         )
     return views

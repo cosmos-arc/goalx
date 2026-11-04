@@ -192,7 +192,61 @@ def test_count_pool_combinations_rejects_empty_matrix() -> None:
 
 def test_count_pool_combinations_rejects_unknown_play() -> None:
     with pytest.raises(ValueError, match="未知池票 Market"):
-        bt.count_pool_combinations(_pick9_matrix(9), "goals4")
+        bt.count_pool_combinations(_pick9_matrix(9), "nope")
+
+
+def test_goals4_combination_semantics() -> None:
+    """票 10：goals4 组合 = 每场 |主档|×|客档| 积；4 场固定、双侧齐才成形。"""
+    matrix = {1: ["h0", "h1", "a2"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]}
+    assert bt.count_pool_combinations(matrix, "goals4") == 2
+    # 场次不足 4 → fail-loud（创建路径 400；预览路径先探针返回 0）
+    with pytest.raises(ValueError, match="goals4 需 4 场"):
+        bt.count_pool_combinations({1: ["h0", "a0"]}, "goals4")
+    # 单侧缺选/非法码 → fail-loud
+    with pytest.raises(ValueError, match="主/客档各至少一选"):
+        bt.count_pool_combinations(
+            {1: ["h0"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]}, "goals4"
+        )
+    with pytest.raises(ValueError, match="档位码"):
+        bt.count_pool_combinations(
+            {1: ["h0", "d"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]},
+            "goals4",
+        )
+    # correctness W3：闭集校验——前缀合法但档位不存在的死码（h9/ax）拒绝
+    with pytest.raises(ValueError, match="档位码"):
+        bt.count_pool_combinations(
+            {1: ["h9", "a0"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]},
+            "goals4",
+        )
+    assert (
+        bt.goals4_selections_complete(
+            {1: ["h9", "a0"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]}
+        )
+        is False
+    )
+    # 预览完备探针：4 场双侧齐才 True
+    assert bt.goals4_selections_complete(matrix) is True
+    assert bt.goals4_selections_complete({1: ["h0", "a0"]}) is False
+    assert (
+        bt.goals4_selections_complete(
+            {1: ["h0"], 2: ["h3", "a0"], 3: ["h2", "a1"], 4: ["h1", "a3"]}
+        )
+        is False
+    )
+    # 生成序：一组合内每场两行（主档+客档），跨场配对连乘
+    rows = list(bt.iter_pool_selections(matrix, "goals4"))
+    assert len(rows) == 2
+    first = rows[0]
+    assert first == [
+        {"match_seq": 1, "selection_code": "h0"},
+        {"match_seq": 1, "selection_code": "a2"},
+        {"match_seq": 2, "selection_code": "h3"},
+        {"match_seq": 2, "selection_code": "a0"},
+        {"match_seq": 3, "selection_code": "h2"},
+        {"match_seq": 3, "selection_code": "a1"},
+        {"match_seq": 4, "selection_code": "h1"},
+        {"match_seq": 4, "selection_code": "a3"},
+    ]
 
 
 def test_materialize_combinations_pick9_golden(db: sqlite3.Connection) -> None:

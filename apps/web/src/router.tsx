@@ -9,6 +9,7 @@ import { HistoryPage } from "./pages/history-page";
 import { MarketGoalsPage } from "./pages/market-goals-page";
 import { MarketHadPage } from "./pages/market-had-page";
 import { MarketPoolPage } from "./pages/market-pool-page";
+import { MarketPool4Page } from "./pages/market-pool4-page";
 import { OverviewPage } from "./pages/overview-page";
 import { ReviewPage } from "./pages/review-page";
 import { StubPage } from "./pages/stub-page";
@@ -79,6 +80,11 @@ const marketPoolRoute = createRoute({
 	path: "/markets/pool",
 	component: MarketPoolPage,
 });
+const marketPool4Route = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/markets/pool4",
+	component: MarketPool4Page,
+});
 const historyRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/history",
@@ -125,6 +131,7 @@ const routeTree = rootRoute.addChildren([
 	marketHadRoute,
 	marketGoalsRoute,
 	marketPoolRoute,
+	marketPool4Route,
 	historyRoute,
 	glossaryRoute,
 	reviewRoute,

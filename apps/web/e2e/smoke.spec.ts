@@ -52,20 +52,27 @@ test("two-level navigation matches the IA and marks the active page", async ({ p
 	}
 	await expect(primary.getByRole("link", { name: "场次" })).toHaveAttribute("aria-current", "page");
 
-	// 玩法组（票 wb-03）：入口默认落胜平负，三入口 Tab 在页内
+	// 玩法组（票 wb-03）：入口默认落胜平负，组内 Tab 在页内（票 10 起四入口；
+	// "进球"与"四场进球"是子串关系——exact 防严格模式双命中）
 	await primary.getByRole("link", { name: "玩法" }).click();
 	await expect(page).toHaveURL(/\/markets\/had$/);
 	await expect(page.getByRole("heading", { name: "GoalX · 胜平负" })).toBeVisible();
 	await expect(primary.getByRole("link", { name: "玩法" })).toHaveAttribute("aria-current", "page");
 	const tabs = page.getByTestId("market-tabs");
-	await expect(tabs.getByRole("link", { name: "胜平负" })).toHaveAttribute("aria-current", "page");
+	await expect(tabs.getByRole("link", { name: "胜平负", exact: true })).toHaveAttribute("aria-current", "page");
 
 	// 进球入口（票 wb-05 已上线真实页）：Tab 点亮 + 口径行常显
-	await tabs.getByRole("link", { name: "进球" }).click();
+	await tabs.getByRole("link", { name: "进球", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "GoalX · 进球" })).toBeVisible();
-	await expect(tabs.getByRole("link", { name: "进球" })).toHaveAttribute("aria-current", "page");
+	await expect(tabs.getByRole("link", { name: "进球", exact: true })).toHaveAttribute("aria-current", "page");
 	await expect(page.getByTestId("goals-caliber")).toContainText("比分矩阵推导");
 	await expect(primary.getByRole("link", { name: "玩法" })).toHaveAttribute("aria-current", "page");
+
+	// 四场进球入口（票 10 goals4 开面）：Tab 点亮 + 联合口径行常显
+	await tabs.getByRole("link", { name: "四场进球" }).click();
+	await expect(page.getByRole("heading", { name: "GoalX · 四场进球" })).toBeVisible();
+	await expect(tabs.getByRole("link", { name: "四场进球" })).toHaveAttribute("aria-current", "page");
+	await expect(page.getByTestId("pool4-caliber")).toContainText("比分矩阵格聚合");
 
 	// 跨级切换后 active 态随路由移动
 	await primary.getByRole("link", { name: "历史" }).click();
