@@ -621,12 +621,12 @@ class CorpusStore:
                     provider,
                     dataset,
                     -1,  # 行数由重扫维护；自写路径 anchor 同步防误扫
-                    self._bronze_anchor(provider, dataset),
+                    self.bronze_anchor(provider, dataset),
                     utc_now_iso(),
                 ),
             )
             conn.commit()
-            self._bronze_sid_anchor_cache[(provider, dataset)] = self._bronze_anchor(
+            self._bronze_sid_anchor_cache[(provider, dataset)] = self.bronze_anchor(
                 provider, dataset
             )
             for _, _, sid, version in index_rows:
@@ -635,8 +635,8 @@ class CorpusStore:
                     cached.add(sid)
         return len(rows)
 
-    def _bronze_anchor(self, provider: str, dataset: str) -> str:
-        """Bronze 文件身份锚（size:mtime；缺文件=空串）。"""
+    def bronze_anchor(self, provider: str, dataset: str) -> str:
+        """Bronze 文件身份锚（size:mtime；缺文件=空串；票 04 信封缓存键）。"""
         path = self.bronze_path(provider, dataset)
         try:
             stat = path.stat()
@@ -656,7 +656,7 @@ class CorpusStore:
         cache_key = (provider, dataset, parser_version)
         cached = self._bronze_sid_cache.get(cache_key)
         if cached is not None:
-            if self._bronze_anchor(
+            if self.bronze_anchor(
                 provider, dataset
             ) == self._bronze_sid_anchor_cache.get((provider, dataset)):
                 return cached
@@ -665,7 +665,7 @@ class CorpusStore:
             ]:
                 del self._bronze_sid_cache[key]
         conn = self._checkpoint()
-        anchor = self._bronze_anchor(provider, dataset)
+        anchor = self.bronze_anchor(provider, dataset)
         row = conn.execute(
             "SELECT anchor FROM bronze_sid_backfill WHERE provider=? AND dataset=?",
             (provider, dataset),

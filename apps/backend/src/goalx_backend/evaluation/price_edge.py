@@ -19,6 +19,9 @@
   delay_survival.count_on_sale_days 口径）；停止条件=30 销售日里可算
   腿 <30 判"决策流供给不足"；
 - 参考缺（EU 无完整三向）的腿分母外单列 missing_reference，不冒充 0；
+- 参考 as-of 历史时点（早于 silver 最新观测）经 asof_resolver 走 bronze
+  可见信封重放（票 04：再物化后同一历史时点读数不变；resolver 缺席
+  回退最新视图口径=修复前行为）；
   非本协议窗口/非 had 腿/存量无时间线注天然不进（诚实记缺不倒填）。
 """
 
@@ -27,6 +30,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import median
@@ -73,6 +77,12 @@ class _LegObservation:
     ev_discovery: float | None
 
 
+# 票 04 历史可见性注入缝：(sid, as_of) → 青铜重放行 | None（不适用）。
+# 实现在 ingest.srct_asof（分层位于 evaluation 之上）——组合根（CLI/调用
+# 方）注入；缺省 None = 历史时点退 corpus 最新视图口径（修复前行为）。
+AsofResolver = Callable[[str, str], list[qe.SnapshotRow] | None]
+
+
 def _ev_at(
     conn: sqlite3.Connection,
     fixture_id: int,
@@ -80,16 +90,25 @@ def _ev_at(
     odds: float | None,
     as_of: str,
     duck_con: qe.DuckCon | None,
+    asof_resolver: AsofResolver | None = None,
 ) -> float | None:
-    """某时点价 × 该时点共识参考 − 1（价或参考缺 → None）。"""
+    """
+    某时点价 × 该时点共识参考 − 1（价或参考缺 → None）。
+
+    票 04：resolver 在场时历史时点（早于 silver 最新观测）先走青铜重放
+    （重放行经 rows= 注入缝进共识）；不适用则 corpus/legacy 行源照旧。
+    """
     if odds is None:
         return None
+    sid = mapping.srct_sid_for_fixture(conn, fixture_id)
+    replayed = asof_resolver(sid, as_of) if asof_resolver is not None and sid else None
     probs = qe.eu_consensus_asof(
         conn,
         fixture_id,
         as_of,
         duck_con=duck_con,
-        sid=mapping.srct_sid_for_fixture(conn, fixture_id),
+        sid=sid,
+        rows=replayed,
     )
     if probs is None or selection not in probs:
         return None
@@ -145,9 +164,12 @@ def _survival_readout(
     as_of: str,
     odds: float | None,
     leg: _LegObservation,
+    asof_resolver: AsofResolver | None = None,
 ) -> tuple[float, _LegObservation] | None:
     """一腿某时点的 (EV, 腿)；价或参考缺返回 None。"""
-    ev = _ev_at(conn, leg.fixture_id, leg.selection_code, odds, as_of, duck_con)
+    ev = _ev_at(
+        conn, leg.fixture_id, leg.selection_code, odds, as_of, duck_con, asof_resolver
+    )
     return None if ev is None else (ev, leg)
 
 
@@ -210,6 +232,7 @@ def _offset_faces(
     candidates: list[_LegObservation],
     duck_con: qe.DuckCon | None,
     read_at: str,
+    asof_resolver: AsofResolver | None = None,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """逐偏移档读数 + 半衰档（中位留存 ≤50% 的最小偏移；未破记 None）。"""
     offsets: list[dict[str, Any]] = []
@@ -228,7 +251,7 @@ def _offset_faces(
                 not_matured += 1
                 continue
             odds = _jc_odds_asof(conn, leg.fixture_id, leg.selection_code, t)
-            pair = _survival_readout(conn, duck_con, t, odds, leg)
+            pair = _survival_readout(conn, duck_con, t, odds, leg, asof_resolver)
             if pair is None:
                 missing += 1
             else:
@@ -267,6 +290,7 @@ def _close_face(
     candidates: list[_LegObservation],
     duck_con: qe.DuckCon | None,
     read_at: str,
+    asof_resolver: AsofResolver | None = None,
 ) -> dict[str, Any]:
     """收盘读数：JC 收盘价=开球前最后有效快照 × 开球时点共识。"""
     pairs: list[tuple[float, _LegObservation]] = []
@@ -287,6 +311,7 @@ def _close_face(
             kickoff,
             _jc_odds_asof(conn, leg.fixture_id, leg.selection_code, kickoff),
             leg,
+            asof_resolver,
         )
         if pair is None:
             missing += 1
@@ -302,6 +327,7 @@ def _survival_face(
     legs: list[_LegObservation],
     duck_con: qe.DuckCon | None,
     read_at: str,
+    asof_resolver: AsofResolver | None = None,
 ) -> dict[str, Any]:
     """价差存活协报告（正候选子集 EV_discovery>0，prereg §5 描述层）。"""
     candidates = [
@@ -311,13 +337,15 @@ def _survival_face(
         and leg.ev_discovery > 0.0
         and leg.discovery_at is not None
     ]
-    offsets, half_life_s = _offset_faces(conn, candidates, duck_con, read_at)
+    offsets, half_life_s = _offset_faces(
+        conn, candidates, duck_con, read_at, asof_resolver
+    )
     # 半衰口径=偏移档内最小破 50% 档（prereg §5 原文）；收盘留存另列
     # close 面，不折进半衰读数
     return {
         "n_candidates": len(candidates),
         "offsets": offsets,
-        "close": _close_face(conn, candidates, duck_con, read_at),
+        "close": _close_face(conn, candidates, duck_con, read_at, asof_resolver),
         "median_half_life_offset_s": half_life_s,
     }
 
@@ -327,6 +355,7 @@ def _collect_legs(
     date_from: str,
     date_to: str,
     duck_con: qe.DuckCon | None,
+    asof_resolver: AsofResolver | None = None,
 ) -> tuple[list[_LegObservation], dict[str, int]]:
     """正式纸面决策腿 → 观察面（had 外/参考缺如实分层计数）。"""
     legs: list[_LegObservation] = []
@@ -354,12 +383,26 @@ def _collect_legs(
             float(row["discovery_odds"]) if row["discovery_odds"] is not None else None
         )
         ev_confirm = _ev_at(
-            conn, fixture_id, selection, confirm_odds, confirm_at, duck_con
+            conn,
+            fixture_id,
+            selection,
+            confirm_odds,
+            confirm_at,
+            duck_con,
+            asof_resolver,
         )
         if ev_confirm is None:
             counts["missing_reference"] += 1
         ev_discovery = (
-            _ev_at(conn, fixture_id, selection, discovery_odds, discovery_at, duck_con)
+            _ev_at(
+                conn,
+                fixture_id,
+                selection,
+                discovery_odds,
+                discovery_at,
+                duck_con,
+                asof_resolver,
+            )
             if discovery_at is not None
             else None
         )
@@ -432,6 +475,7 @@ def build_price_edge_report(
     date_to: str,
     duck_con: qe.DuckCon | None = None,
     store: CorpusStore | None = None,
+    asof_resolver: AsofResolver | None = None,
 ) -> dict[str, Any]:
     """
     价格存活检查点报告（窗口两端含，按 confirm 阶段落窗）。
@@ -456,6 +500,7 @@ def build_price_edge_report(
             duck_con=duck_con,
             store=store,
             read_at=read_at,
+            asof_resolver=asof_resolver,
         )
     finally:
         if own_txn:
@@ -473,9 +518,10 @@ def _assemble_report(
     duck_con: qe.DuckCon | None,
     store: CorpusStore | None,
     read_at: str,
+    asof_resolver: AsofResolver | None = None,
 ) -> dict[str, Any]:
     """单读事务内的报告装配（调用方负责事务壳与落盘）。"""
-    legs, counts = _collect_legs(conn, date_from, date_to, duck_con)
+    legs, counts = _collect_legs(conn, date_from, date_to, duck_con, asof_resolver)
     sale_days = delay_survival.count_on_sale_days(conn, date_from, date_to)
     metric = _main_metric(legs)
     shadow_date = qe.latest_freshness_shadow_date(conn)
@@ -515,7 +561,7 @@ def _assemble_report(
         },
         "denominator": counts,
         "main_metric": metric,
-        "survival": _survival_face(conn, legs, duck_con, read_at),
+        "survival": _survival_face(conn, legs, duck_con, read_at, asof_resolver),
         "freshness_shadow": {
             "business_date": shadow_date,
             "summary": shadow,

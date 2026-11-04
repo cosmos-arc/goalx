@@ -274,6 +274,35 @@ def latest_bronze_ledger_filtered(
     return ledger
 
 
+def bronze_envelopes_for_sid(
+    store: CorpusStore, provider: str, dataset: str, version: str, sid: str
+) -> list[dict[str, object]]:
+    """
+    该 sid 的全部当前版本 bronze 信封（文件序=抓取序；票 04 读侧可见性源）。
+
+    最新视图 silver 每 sid 只保留最新信封，历史时点重放（as-of）从本表选
+    ``fetched_at <= as_of`` 的可见信封——bronze 追加不删，重放跨再物化稳定。
+    前缀正则判行归属（同账本扫描口径），不匹配行落 json.loads 慢路径。
+    全文件线性扫（GB 级 ~10s 量级）：单 sid 查询用，批查调用方自行摊销。
+    """
+    found: list[dict[str, object]] = []
+    for line in store.iter_bronze_lines(provider, dataset):
+        matched = _ENVELOPE_PREFIX_RE.match(line)
+        if matched is not None:
+            if (
+                matched.group("provider") == provider
+                and matched.group("dataset") == dataset
+                and matched.group("version") == version
+                and matched.group("sid") == sid
+            ):
+                found.append(json.loads(line))
+            continue
+        row = json.loads(line)  # 慢路径：键序/格式漂移行
+        if row.get("parser_version") == version and str(row.get("sid")) == sid:
+            found.append(row)
+    return found
+
+
 def iter_selected_rows(
     store: CorpusStore, provider: str, dataset: str, ledger: dict[str, int]
 ) -> Iterator[tuple[str, dict[str, object]]]:
