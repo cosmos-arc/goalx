@@ -78,11 +78,21 @@ export type PickableFixture = {
 /** 入篮时概率快照（报告审计票 06 人裁决）：fixture 身份在腿上，值+来源+
  * 时点随腿落篮——切页/刷新/离线 EV 不随当前页面漂移；仅用于篮内预览
  * 展示，锁票仍以服务器重验为准。 */
+export type ProbabilitySource = "today-list:eu_prob" | "research:consensus";
+
 export type ProbabilitySnapshot = {
 	value: number;
-	source: string;
+	source: ProbabilitySource;
 	at: string | null;
 };
+
+/** 欧赔共识观测钟（票 06 快照时点）：had_quote 的 eu_age_seconds 是年龄
+ * 非时刻——pick 时换算墙钟；缺年龄（无判定/未 join）= null 时点未知，
+ * 不拿竞彩调盘钟冒充概率观测时点。 */
+export function euObservedAt(hadQuote: HadQuoteStatus | null | undefined, now: number): string | null {
+	const age = hadQuote?.eu_age_seconds;
+	return age === null || age === undefined ? null : new Date(now - age * 1000).toISOString();
+}
 
 export type Leg = {
 	fixture_id: number;
@@ -157,11 +167,15 @@ export function isPickable(fixture: PickableFixture, now: number): boolean {
 
 /** 今日列表行 → 入篮时概率快照（票 06 单一出处：选注篮缺省来源与
  * 胜平负页一键带入共用；eu_prob 缺=依据缺失不冒充）。 */
-export function todayProbabilitySnapshot(row: TodayFixture, selection: Selection): ProbabilitySnapshot | null {
+export function todayProbabilitySnapshot(
+	row: TodayFixture,
+	selection: Selection,
+	now: number,
+): ProbabilitySnapshot | null {
 	const value = row.eu_prob?.[selection];
 	return value === null || value === undefined
 		? null
-		: { value, source: "today-list:eu_prob", at: row.jc_updated_at ?? null };
+		: { value, source: "today-list:eu_prob", at: euObservedAt(row.had_quote, now) };
 }
 
 export function makeLeg(

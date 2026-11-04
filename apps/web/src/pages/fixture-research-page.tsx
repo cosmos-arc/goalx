@@ -8,6 +8,7 @@ import { GlossaryTerm } from "../components/glossary-term";
 import { BasketBar, BasketDrawer, useHadBasket } from "../components/had-basket";
 import {
 	EligibilityBadge,
+	euObservedAt,
 	evClass,
 	evText,
 	isPickable,
@@ -88,7 +89,11 @@ export function FixtureResearchPage() {
 		const probability = data?.consensus?.probability[selection];
 		return probability === null || probability === undefined
 			? null
-			: { value: probability, source: "research:consensus", at: data?.jc_updated_at ?? null };
+			: {
+					value: probability,
+					source: "research:consensus",
+					at: euObservedAt(data?.had_quote, now),
+				};
 	});
 
 	const kickoff = data ? kickoffInfo(data.kickoff_utc, now) : undefined;

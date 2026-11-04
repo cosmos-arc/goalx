@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
 import { basketActions, requestIdForLegs, useBasket } from "../lib/basket-store";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
-import { fixtureResearchKey, invalidateBets } from "../lib/query-keys";
+import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
 import { currentQuotes, errorText, localTime, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import {
 	isPickable,
@@ -97,7 +97,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 		probabilityAtPick ??
 		((fixture, selection) => {
 			const row = fixtures.find((item) => item.fixture_id === fixture.fixture_id);
-			return row ? todayProbabilitySnapshot(row, selection) : null;
+			return row ? todayProbabilitySnapshot(row, selection, now) : null;
 		});
 	// 票 06：篮内 EV 只读入篮快照——不查当前页/列表（跨场腿不冒充）
 	const legEv = (leg: Leg): number | null => (leg.probability != null ? leg.probability.value * leg.odds - 1 : null);
@@ -170,15 +170,6 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 		setMessage(null);
 	}
 
-	/** 价变后刷新全部选注面（票 06）：今日列表 + 逐场研究页报价查询——
-	 * 停留在研究页重选时页面拿新价，旧价 409 确认流死循环不再。 */
-	function invalidateLegQuotes() {
-		void queryClient.invalidateQueries({ queryKey: ["today-fixtures"] });
-		for (const leg of legs) {
-			void queryClient.invalidateQueries({ queryKey: fixtureResearchKey(leg.fixture_id) });
-		}
-	}
-
 	const createSuggestion = useMutation({
 		mutationFn: async () => {
 			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
@@ -225,7 +216,10 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 						if (created.length > 0) {
 							invalidateBets(queryClient);
 						}
-						invalidateLegQuotes();
+						invalidateLegQuoteQueries(
+							queryClient,
+							legs.map((leg) => leg.fixture_id),
+						);
 						setMessage(
 							`第 ${index + 1} 笔报价已变（${quotes
 								.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
@@ -261,7 +255,10 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 				// 前缀失效今日场次（键形 ["today-fixtures", days]）+ 逐场研究页
 				// 报价查询（票 06）——correctness F1：打错键=不刷新，页面停在
 				// 旧价上确认流死循环
-				invalidateLegQuotes();
+				invalidateLegQuoteQueries(
+					queryClient,
+					legs.map((leg) => leg.fixture_id),
+				);
 				setMessage(
 					`报价已变（${quotes
 						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)

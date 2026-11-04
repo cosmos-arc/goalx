@@ -45,6 +45,18 @@ export const fixtureEvidenceKey = (fixtureId: number | null) => ["fixture-eviden
 /** 单场研究视图。 */
 export const fixtureResearchKey = (fixtureId: number) => ["fixture-research", fixtureId] as const;
 
+/** 今日场次跨窗前缀键（价变全失效用；页面消费仍走 todayFixturesKey(days)）。 */
+export const todayFixturesPrefixKey = ["today-fixtures"] as const;
+
+/** 价变 409 后刷新全部选注面（报告审计票 06）：今日列表各窗 + 篮内各腿的
+ * 逐场研究页报价查询——停留在研究页重选拿新价，旧价 409 死循环不再。 */
+export function invalidateLegQuoteQueries(client: QueryClient, fixtureIds: number[]): void {
+	void client.invalidateQueries({ queryKey: todayFixturesPrefixKey });
+	for (const fixtureId of fixtureIds) {
+		void client.invalidateQueries({ queryKey: fixtureResearchKey(fixtureId) });
+	}
+}
+
 /** 池期证据卡。 */
 export const poolEvidenceSummaryKey = (periodNo: string) => ["pool-evidence-summary", periodNo] as const;
 

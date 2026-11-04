@@ -70,13 +70,32 @@ test("requestIdForLegs: order-independent composite; empty = null (旧行为)", 
 test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢复（票 06）", async () => {
 	const withSnapshot = {
 		...LEG,
-		probability: { value: 0.53, source: "research:consensus", at: "2026-11-04T10:00:00+00:00" },
+		probability: {
+			value: 0.53,
+			source: "research:consensus" as const,
+			at: "2026-11-04T10:00:00+00:00",
+		},
 	};
 	basketActions.setHadLegs([withSnapshot]);
 	vi.resetModules();
 	const fresh = await import("./basket-store");
 	const { result } = renderHook(() => fresh.useBasket());
 	expect(result.current.hadLegs[0]?.probability).toEqual(withSnapshot.probability);
+
+	// 畸形快照（correctness F4 同类）：腿保留，快照剥为 null=依据缺失不炸渲染
+	localStorage.setItem(
+		"goalx:basket",
+		JSON.stringify({
+			hadLegs: [{ ...LEG, request_id: "bad-snap", probability: { value: "0.5" } }],
+			stake: "100",
+			mode: "paper",
+		}),
+	);
+	vi.resetModules();
+	const freshBad = await import("./basket-store");
+	const { result: resultBad } = renderHook(() => freshBad.useBasket());
+	expect(resultBad.current.hadLegs).toHaveLength(1);
+	expect(resultBad.current.hadLegs[0]?.probability).toBeNull();
 
 	// 修复前入库的旧篮（无 probability 字段）：不丢腿，快照 undefined=依据缺失
 	basketActions.setHadLegs([{ ...LEG, request_id: "legacy-leg" }]);

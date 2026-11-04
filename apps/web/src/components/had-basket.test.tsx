@@ -86,8 +86,10 @@ test("pick 落入篮时概率快照；EV 只读快照不查当前页（票 06 �
 	expect(otherPage.result.current.legEv(leg)).toBeCloseTo(0.53 * 1.92 - 1, 10);
 });
 
-test("缺省快照来源=今日列表 eu_prob；无共识=依据缺失 null（票 06 验收 2）", () => {
+test("缺省快照来源=今日列表 eu_prob；时点=欧赔观测钟；无共识=依据缺失 null（票 06 验收 2）", () => {
 	const { wrapper } = withClient();
+	const now = Date.now();
+	const EU_AGE_SECONDS = 3600;
 	const fixtures = [
 		{
 			fixture_id: 1,
@@ -104,6 +106,7 @@ test("缺省快照来源=今日列表 eu_prob；无共识=依据缺失 null（�
 			jc_updated_at: "2026-11-07T09:00:00+00:00",
 			books: 3,
 			eu_prob: { h: 0.5, d: 0.25, a: 0.25 },
+			had_quote: { as_of: "2026-11-07T09:00:00+00:00", status: "valid", eu_age_seconds: EU_AGE_SECONDS, eu_books: 3 },
 			flags: [],
 		},
 		{
@@ -124,7 +127,7 @@ test("缺省快照来源=今日列表 eu_prob；无共识=依据缺失 null（�
 			flags: [],
 		},
 	] as unknown as TodayFixture[];
-	const { result } = renderHook(() => useHadBasket(Date.now(), fixtures), { wrapper });
+	const { result } = renderHook(() => useHadBasket(now, fixtures), { wrapper });
 
 	act(() => {
 		result.current.pick(PICKABLE, "h", 1.92); // 列表有共识 → 快照落 eu_prob
@@ -133,10 +136,11 @@ test("缺省快照来源=今日列表 eu_prob；无共识=依据缺失 null（�
 		result.current.pick(OTHER, "a", 2.7); // 无共识 → null=依据缺失
 	});
 	const [snapLeg, bareLeg] = result.current.legs;
+	// 时点=概率观测钟（eu_age_seconds 换算墙钟），非竞彩调盘钟
 	expect(snapLeg?.probability).toEqual({
 		value: 0.5,
 		source: "today-list:eu_prob",
-		at: "2026-11-07T09:00:00+00:00",
+		at: new Date(now - EU_AGE_SECONDS * 1000).toISOString(),
 	});
 	if (snapLeg === undefined || bareLeg === undefined) throw new Error("legs missing");
 	expect(result.current.legEv(snapLeg)).toBeCloseTo(0.5 * 1.92 - 1, 10);
