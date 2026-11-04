@@ -478,13 +478,19 @@ class CorpusStore:
         否则 verify_raw 误报腐化、取证时间错档。首写键（内容恒定）行为
         与 INSERT OR IGNORE 时代逐位一致。
 
-        发布互斥（boundary-hardening 票 03，P1-3）：写 tmp→replace→
-        台账三步同序完成后才返回——旧实现文件序与台账序可交叉（A 落盘
-        →B 落盘+B 记账→A 记账=盘上 B 体、台账 A sha）。粒度=数据集目录
-        flock（同 key 必同目录；临界段毫秒级，对采集限速零感知，也免按
-        key 锁文件让 raw 树 inode 翻倍）。tmp 名带随机后缀：同名 .part
+        发布互斥（boundary-hardening 票 03，P1-3）：写 tmp→台账写事务→
+        replace→记账 commit 同序完成后才返回——旧实现文件序与台账序可交叉
+        （A 落盘→B 落盘+B 记账→A 记账=盘上 B 体、台账 A sha）。粒度=数据集
+        目录 flock（同 key 必同目录；临界段毫秒级，对采集限速零感知，也免
+        按 key 锁文件让 raw 树 inode 翻倍）。tmp 名带随机后缀：同名 .part
         双班竞态根除（票 03），失败自清，SIGKILL 残留由树 walk 的
         .part 跳过容忍。
+
+        台账先行（票 11③）：checkpoint 的 BEGIN IMMEDIATE 在正式替换
+        **之前**取——常见锁竞争（checkpoint busy）在改正式文件之前失败，
+        官方字节零触碰。残余窗口=replace 后未 commit 即崩溃（进程级，非
+        锁竞争）：文件新/台账旧 sha，verify_raw 如实报腐化，同键重写一次
+        即收敛（不回滚文件：重放落盘比恢复旧体可靠）。
         """
         sha = hashlib.sha256(body).hexdigest()
         path = self.raw_path(provider, dataset, key, ext=ext)
@@ -504,26 +510,34 @@ class CorpusStore:
                     gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
                 ):
                     fh.write(body)
+                # 台账写事务先于正式替换（票 11③）；嵌套调用方已持事务时
+                # 不再开新事务（docstring 串行前提的防御位）
+                conn = self._checkpoint()
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 tmp.replace(path)
+                conn.execute(
+                    """
+                    INSERT INTO raw_artifacts
+                        (provider, dataset, key, sha256, path, byte_size, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(provider, dataset, key) DO UPDATE SET
+                        sha256 = excluded.sha256,
+                        path = excluded.path,
+                        byte_size = excluded.byte_size,
+                        fetched_at = excluded.fetched_at
+                    """,
+                    (provider, dataset, key, sha, str(path), len(body), utc_now_iso()),
+                )
+                conn.commit()
             except BaseException:
                 with contextlib.suppress(OSError):
                     tmp.unlink()
+                # 未 commit 的台账半写让位；checkpoint 打不开也无妨——
+                # 本就要抛原始异常（abort 同款 suppress 容错）
+                with contextlib.suppress(Exception):
+                    self._checkpoint().rollback()
                 raise
-            conn = self._checkpoint()
-            conn.execute(
-                """
-                INSERT INTO raw_artifacts
-                    (provider, dataset, key, sha256, path, byte_size, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (provider, dataset, key) DO UPDATE SET
-                    sha256 = excluded.sha256,
-                    path = excluded.path,
-                    byte_size = excluded.byte_size,
-                    fetched_at = excluded.fetched_at
-                """,
-                (provider, dataset, key, sha, str(path), len(body), utc_now_iso()),
-            )
-            conn.commit()
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
