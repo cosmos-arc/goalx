@@ -830,6 +830,34 @@ def test_slip_record_purchase_flow(api_client: TestClient) -> None:
     assert missing.status_code == 404
 
 
+def test_paper_slip_with_actuals_rejected(api_client: TestClient) -> None:
+    """票 01（报告一案例 1）：system_paper 6.5 锁票传 actual 99 → 400，
+    票/绑定/actual 列零部分写入；99 无法以 system_paper 身份进价格链。"""
+    fixture_id = _fixture_id(api_client)
+    bet_id = api_client.post(
+        "/api/v1/bets", json=_had_leg_payload(fixture_id, "h")
+    ).json()["id"]
+    rejected = api_client.post(
+        "/api/v1/bet-slips",
+        json={
+            "bet_ids": [bet_id],
+            "actuals": {
+                str(bet_id): {
+                    "stake": 2.0,
+                    "leg_odds": [{"fixture_id": fixture_id, "odds": 99.0}],
+                }
+            },
+        },
+    )
+    assert rejected.status_code == 400
+    assert "实际条款" in rejected.json()["detail"]
+    bet = api_client.get("/api/v1/bets").json()[0]
+    assert bet["purchased"] is False
+    assert bet["slip_id"] is None
+    assert bet["actual_stake"] is None
+    assert bet["legs"][0]["actual_odds"] is None
+
+
 def test_lock_revalidates_sale_stop(tmp_path: Path) -> None:
     """票 36 验收 2：提交时服务端重新校验停售，不仅禁用按钮。"""
     from goalx_backend.data import fixtures as fx_store

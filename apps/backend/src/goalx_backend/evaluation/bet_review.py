@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from goalx_backend.betting import bets
+from goalx_backend.betting import store as bt_store
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation import clv as clv_mod
 
@@ -26,6 +27,7 @@ class BetReviewView(BaseModel):
     closing_present: bool | None = None
     # included | excluded_unlocked | excluded_post_kickoff
     # | live_separate | missing_closing | unknown
+    # | excluded_price_source | excluded_actual_terms（票 01 增）
     forward: str
 
 
@@ -69,6 +71,10 @@ def review_views(
             # 研究假设)排除出正式纸面成绩面;历史 NULL 不回溯排除(裁决③
             # "仅新记录生效"),沿旧判定链走
             forward = "excluded_price_source"
+        elif bt_store.paper_has_actual_terms(row):
+            # 票 01:paper 行携带 actual 条款=修复前异常旧行,与正式分母
+            # (settled_purchased_bets) 同步排除,复盘面与成绩面同一边界
+            forward = "excluded_actual_terms"
         elif pre_kickoff is not True:
             forward = "excluded_post_kickoff"
         elif closing_present is not True:

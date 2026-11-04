@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.settle import evaluate_bet
 from goalx_backend.data.results import draw_result_revisions_history
 from goalx_backend.db import current_version
@@ -109,6 +110,10 @@ def _bet_issues(
     paid = sum(float(e["amount_cny"]) for e in events if e["kind"] == "bet_payout")
     # 扣款核查口径与结算引擎一致：实际条款优先（票 36），旧库缺列回退建议注金
     effective_stake = float(dict(bet).get("actual_stake") or bet["stake"])
+    # 票 01：paper 行携带 actual 条款=修复前异常旧行——结算/成绩面按绑定价
+    # 忽略 actuals，异常本身在审计面点名（可见，不改写历史）
+    if bt_store.paper_has_actual_terms(bet):
+        issues.append("paper_actual_terms_anomaly")
     if not real and events:
         issues.append("events_without_live_purchase")
     if real:

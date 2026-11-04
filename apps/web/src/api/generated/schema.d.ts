@@ -3456,7 +3456,7 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
-            /** @description mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固) */
+            /** @description mode 混用、paper 携带实际条款(actuals 仅限 live 回录)、或 paper 锁定 had 资格不满足(停售/已开赛/非单固) */
             400: {
                 headers: {
                     [name: string]: unknown;

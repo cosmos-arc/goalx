@@ -424,7 +424,10 @@ async def list_bets(
     response_model=SlipView,
     responses={
         400: {
-            "description": "mode 混用或 paper 锁定 had 资格不满足(停售/已开赛/非单固)"
+            "description": (
+                "mode 混用、paper 携带实际条款(actuals 仅限 live 回录)、或 paper "
+                "锁定 had 资格不满足(停售/已开赛/非单固)"
+            )
         },
         404: {"description": "bet 不存在"},
         409: {

@@ -532,6 +532,13 @@ def record_purchase(
         if unknown:
             raise ValueError(f"actuals 引用了不在本票内的 bet: {sorted(unknown)}")
         if mode is BetMode.PAPER:
+            # 票 01：paper 价格链单一真相=服务器绑定价，实际条款只属于 live
+            # 回录；手工情景价走 manual_research 分类建注，不经 actuals 旁路。
+            # 在产生时间线/绑定票据之前拒绝，事务回滚保证零部分写入。
+            if terms:
+                raise ValueError(
+                    "paper 注不接受实际条款(actuals); 手工情景走 manual_research 分类"
+                )
             _rebind_paper_legs(conn, bets, allow_price_update)
             _record_confirm_stages(conn, bets, confirm_at=utc_now_iso())
         slip = bt_store.create_slip(conn, mode, placed_at=at)
