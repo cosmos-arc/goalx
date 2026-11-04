@@ -136,11 +136,12 @@ test("缺省快照来源=今日列表 eu_prob；时点=欧赔观测钟；无共�
 		result.current.pick(OTHER, "a", 2.7); // 无共识 → null=依据缺失
 	});
 	const [snapLeg, bareLeg] = result.current.legs;
-	// 时点=概率观测钟（eu_age_seconds 换算墙钟），非竞彩调盘钟
+	// 时点=概率观测钟（as_of−age 同载荷同钟域），非竞彩调盘钟、
+	// 也不随 pick 驻留时长漂移（correctness F1）
 	expect(snapLeg?.probability).toEqual({
 		value: 0.5,
 		source: "today-list:eu_prob",
-		at: new Date(now - EU_AGE_SECONDS * 1000).toISOString(),
+		at: new Date(new Date("2026-11-07T09:00:00+00:00").getTime() - EU_AGE_SECONDS * 1000).toISOString(),
 	});
 	if (snapLeg === undefined || bareLeg === undefined) throw new Error("legs missing");
 	expect(result.current.legEv(snapLeg)).toBeCloseTo(0.5 * 1.92 - 1, 10);

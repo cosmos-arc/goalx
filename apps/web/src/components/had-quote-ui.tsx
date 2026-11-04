@@ -86,12 +86,18 @@ export type ProbabilitySnapshot = {
 	at: string | null;
 };
 
-/** 欧赔共识观测钟（票 06 快照时点）：had_quote 的 eu_age_seconds 是年龄
- * 非时刻——pick 时换算墙钟；缺年龄（无判定/未 join）= null 时点未知，
- * 不拿竞彩调盘钟冒充概率观测时点。 */
-export function euObservedAt(hadQuote: HadQuoteStatus | null | undefined, now: number): string | null {
+/** 欧赔共识观测钟（票 06 快照时点）：as_of − eu_age_seconds——两者同出
+ * 一次服务器判定载荷，同钟域零换算（correctness：用点击时刻做减法基
+ * 准会把页面驻留时长混进观测时点）。缺任一 = null 时点未知，不拿竞彩
+ * 调盘钟冒充概率观测时点。 */
+export function euObservedAt(hadQuote: HadQuoteStatus | null | undefined): string | null {
+	const asOf = hadQuote?.as_of;
 	const age = hadQuote?.eu_age_seconds;
-	return age === null || age === undefined ? null : new Date(now - age * 1000).toISOString();
+	if (age === null || age === undefined || asOf === undefined) {
+		return null;
+	}
+	const base = new Date(asOf).getTime();
+	return Number.isNaN(base) ? null : new Date(base - age * 1000).toISOString();
 }
 
 export type Leg = {
@@ -167,15 +173,11 @@ export function isPickable(fixture: PickableFixture, now: number): boolean {
 
 /** 今日列表行 → 入篮时概率快照（票 06 单一出处：选注篮缺省来源与
  * 胜平负页一键带入共用；eu_prob 缺=依据缺失不冒充）。 */
-export function todayProbabilitySnapshot(
-	row: TodayFixture,
-	selection: Selection,
-	now: number,
-): ProbabilitySnapshot | null {
+export function todayProbabilitySnapshot(row: TodayFixture, selection: Selection): ProbabilitySnapshot | null {
 	const value = row.eu_prob?.[selection];
 	return value === null || value === undefined
 		? null
-		: { value, source: "today-list:eu_prob", at: euObservedAt(row.had_quote, now) };
+		: { value, source: "today-list:eu_prob", at: euObservedAt(row.had_quote) };
 }
 
 export function makeLeg(

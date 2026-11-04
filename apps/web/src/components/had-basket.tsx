@@ -97,7 +97,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 		probabilityAtPick ??
 		((fixture, selection) => {
 			const row = fixtures.find((item) => item.fixture_id === fixture.fixture_id);
-			return row ? todayProbabilitySnapshot(row, selection, now) : null;
+			return row ? todayProbabilitySnapshot(row, selection) : null;
 		});
 	// 票 06：篮内 EV 只读入篮快照——不查当前页/列表（跨场腿不冒充）
 	const legEv = (leg: Leg): number | null => (leg.probability != null ? leg.probability.value * leg.odds - 1 : null);

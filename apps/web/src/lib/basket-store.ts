@@ -54,11 +54,14 @@ function sanitizeSnapshot<T extends { probability?: unknown }>(leg: T): T {
 	if (snap === undefined || snap === null) {
 		return leg;
 	}
+	const value = (snap as Record<string, unknown>)["value"];
 	const ok =
 		typeof snap === "object" &&
 		snap !== null &&
-		typeof (snap as Record<string, unknown>)["value"] === "number" &&
-		Number.isFinite((snap as Record<string, unknown>)["value"] as number) &&
+		typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= 0 &&
+		value <= 1 && // 概率区间（correctness F2）：越界值剥 null 不进预览
 		typeof (snap as Record<string, unknown>)["source"] === "string" &&
 		((snap as Record<string, unknown>)["at"] === null || typeof (snap as Record<string, unknown>)["at"] === "string");
 	return ok ? leg : { ...leg, probability: null };

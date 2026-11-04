@@ -98,7 +98,7 @@ export function MarketHadPage() {
 					pickEntry.fixture,
 					pickEntry.selection,
 					pickEntry.odds,
-					todayProbabilitySnapshot(pickEntry.fixture, pickEntry.selection, now),
+					todayProbabilitySnapshot(pickEntry.fixture, pickEntry.selection),
 				),
 			),
 		);

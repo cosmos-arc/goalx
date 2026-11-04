@@ -82,11 +82,20 @@ test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢�
 	const { result } = renderHook(() => fresh.useBasket());
 	expect(result.current.hadLegs[0]?.probability).toEqual(withSnapshot.probability);
 
-	// 畸形快照（correctness F4 同类）：腿保留，快照剥为 null=依据缺失不炸渲染
+	// 畸形快照（correctness F4 同类 + F2 概率区间）：腿保留，快照剥为
+	// null=依据缺失不炸渲染；越界概率（53）同剥
 	localStorage.setItem(
 		"goalx:basket",
 		JSON.stringify({
-			hadLegs: [{ ...LEG, request_id: "bad-snap", probability: { value: "0.5" } }],
+			hadLegs: [
+				{ ...LEG, request_id: "bad-snap", probability: { value: "0.5" } },
+				{
+					...LEG,
+					fixture_id: 8,
+					request_id: "out-of-range",
+					probability: { value: 53, source: "research:consensus" as const, at: null },
+				},
+			],
 			stake: "100",
 			mode: "paper",
 		}),
@@ -94,8 +103,8 @@ test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢�
 	vi.resetModules();
 	const freshBad = await import("./basket-store");
 	const { result: resultBad } = renderHook(() => freshBad.useBasket());
-	expect(resultBad.current.hadLegs).toHaveLength(1);
-	expect(resultBad.current.hadLegs[0]?.probability).toBeNull();
+	expect(resultBad.current.hadLegs).toHaveLength(2);
+	expect(resultBad.current.hadLegs.every((leg) => leg.probability === null)).toBe(true);
 
 	// 修复前入库的旧篮（无 probability 字段）：不丢腿，快照 undefined=依据缺失
 	basketActions.setHadLegs([{ ...LEG, request_id: "legacy-leg" }]);

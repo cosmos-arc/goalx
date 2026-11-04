@@ -92,7 +92,7 @@ export function FixtureResearchPage() {
 			: {
 					value: probability,
 					source: "research:consensus",
-					at: euObservedAt(data?.had_quote, now),
+					at: euObservedAt(data?.had_quote),
 				};
 	});
 
