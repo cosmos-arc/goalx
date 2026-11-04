@@ -201,6 +201,28 @@ def test_legacy_only_scoring_unchanged_with_wiring(tmp_path: Path, db) -> None:
         store.close()
 
 
+def test_dirty_issued_at_degrades_not_raises(tmp_path: Path, db) -> None:
+    """correctness F2：脏 issued_at 单对降级（不适用→字符串比较口径），
+    报告照出、该场次计入 no_market_baseline——不炸整份报告。"""
+    store, con = _build_corpus(tmp_path, [_envelope(FETCHED_1)])
+    fixture = _seed_fixture(db)
+    _link(db, fixture)
+    _add_forecast(db, fixture, "2026-11-04T05:45:00+00:00")
+    # 脏 issued_at：字符串序仍属赛前且最大（冻结规则选中它），parse_ts 必炸
+    _add_forecast(db, fixture, "2026-11-05 bogus")
+    _add_result(db, fixture)
+    try:
+        # 解析失败须降级而非 ValueError 炸整份报告
+        report = fwd.forward_skill_report(
+            db, duck_con=con, asof_batch=srct_asof.batch_asof_resolver(store, con)
+        ).model_dump()
+        assert report["coverage"]["no_market_baseline"] == 1
+        assert report["coverage"]["scored"] == 0
+    finally:
+        con.close()
+        store.close()
+
+
 def test_scoring_stable_across_rematerialization(tmp_path: Path, db) -> None:
     """验收 3（与票 04 联合）：同载荷再抓+再物化后，同一 issued_at 的评分
     依据可复现——重放读 bronze 可见信封，不随 silver 最新视图漂移。"""

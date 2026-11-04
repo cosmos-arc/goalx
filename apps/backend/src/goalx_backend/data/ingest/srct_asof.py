@@ -260,6 +260,36 @@ def _scan_visible_envelopes(
     return visible, seen
 
 
+def _pending_replay(
+    pairs: list[tuple[str, str]],
+    probe: dict[str, tuple[datetime, datetime | None]],
+) -> tuple[dict[tuple[str, str], datetime], dict[str, list[tuple[str, datetime]]]]:
+    """
+    请求分诊：哪些 (sid, as_of) 需要青铜重放。
+
+    返回 (cutoffs, pending_by_sid)。silver 无该 sid 行 / as_of 不早于最新
+    观测（silver 快路径）/ 脏 as_of（correctness F2 单对跳过降级）都不进。
+    """
+    cutoffs: dict[tuple[str, str], datetime] = {}
+    pending_by_sid: dict[str, list[tuple[str, datetime]]] = {}
+    for sid, as_of in pairs:
+        top = probe.get(sid)
+        if top is None:
+            continue  # silver 无该 sid 行：不劣于现状
+        try:
+            cutoff = qe.parse_ts(as_of)
+        except ValueError:
+            # 脏 issued_at 单对降级（不适用→字符串比较口径，与修复前
+            # 行为一致），不炸整份报告
+            logger.warning("srct asof bronze: as_of 不可解析, 跳过: {!r}", as_of)
+            continue
+        if cutoff >= top[0]:
+            continue  # as_of 不早于最新观测：silver 快路径
+        cutoffs[(sid, as_of)] = cutoff
+        pending_by_sid.setdefault(sid, []).append((as_of, cutoff))
+    return cutoffs, pending_by_sid
+
+
 def batch_asof_rows(
     store: CorpusStore,
     duck_con: DuckCon,
@@ -279,17 +309,7 @@ def batch_asof_rows(
     if not pairs:
         return []
     probe = _silver_max_probe_batch(duck_con, sorted({sid for sid, _ in pairs}))
-    cutoffs: dict[tuple[str, str], datetime] = {}
-    pending_by_sid: dict[str, list[tuple[str, datetime]]] = {}
-    for sid, as_of in pairs:
-        top = probe.get(sid)
-        if top is None:
-            continue  # silver 无该 sid 行：不劣于现状
-        cutoff = qe.parse_ts(as_of)
-        if cutoff >= top[0]:
-            continue  # as_of 不早于最新观测：silver 快路径
-        cutoffs[(sid, as_of)] = cutoff
-        pending_by_sid.setdefault(sid, []).append((as_of, cutoff))
+    cutoffs, pending_by_sid = _pending_replay(pairs, probe)
     visible: dict[tuple[str, str], dict[str, object]] = {}
     seen: set[str] = set()
     if pending_by_sid:

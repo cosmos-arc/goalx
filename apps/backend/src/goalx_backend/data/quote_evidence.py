@@ -220,7 +220,13 @@ def srct_snapshot_rows_asof(
     页面变慢后按 sid 批量聚合一次拿全。历史时点（早于 silver 最新观测）
     的青铜重放见 ingest.srct_asof（票 04，分层：本模块不依赖 ingest）。
     """
-    cutoff = parse_ts(as_of)
+    try:
+        cutoff = parse_ts(as_of)
+    except ValueError:
+        # correctness（报告审计 2026-11-04 票 05）：脏 as_of（如 forecasts
+        # 脏 issued_at）降级空表并告警，不炸调用方——同 duckdb.Error 哲学
+        logger.warning("srct eu rows: as_of 不可解析, 降级空表: {!r}", as_of)
+        return []
     compare = "<" if exclusive else "<="
     age_clause = ""
     age_param: list[object] = []
