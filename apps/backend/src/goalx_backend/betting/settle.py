@@ -72,21 +72,31 @@ def _proposed_facts(result: DrawResultInput) -> ResultFacts:
     )
 
 
-def _effective_terms(bet: sqlite3.Row) -> tuple[float, list[LegSpec]]:
+def _effective_terms(
+    bet: sqlite3.Row, *, legacy_paper_actuals: bool = False
+) -> tuple[float, list[LegSpec]]:
     """
     一注的结算条款：实际执行条款优先，缺省回退建议条款（票 36）。
 
     兼容旧库/旧聚合行：actual_stake/actual_odds 缺失按建议条款结算。
+    票 01 守卫：paper 注按建议（服务器绑定）条款结算——actual 列只对
+    live 回录有意义，paper 行携带 actuals 属修复前异常旧行，不进结算。
+    legacy_paper_actuals=True 仅供更正通道比对旧账（恢复修复前口径）。
     """
+    paper = str(bet["mode"]) == "paper" and not legacy_paper_actuals
     fields = dict(bet)
-    actual_stake = fields.get("actual_stake")
+    actual_stake = None if paper else fields.get("actual_stake")
     stake = float(actual_stake) if actual_stake is not None else float(bet["stake"])
     specs = [
         LegSpec(
             fixture_id=int(leg["fixture_id"]),
             market_code=str(leg["market_code"]),
             selection_code=str(leg["selection_code"]),
-            locked_odds=float(leg.get("actual_odds") or leg["locked_odds"]),
+            locked_odds=float(
+                leg["locked_odds"]
+                if paper
+                else (leg.get("actual_odds") or leg["locked_odds"])
+            ),
             goal_line=leg["goal_line"],
         )
         for leg in json.loads(bet["legs"])
@@ -94,9 +104,11 @@ def _effective_terms(bet: sqlite3.Row) -> tuple[float, list[LegSpec]]:
     return stake, specs
 
 
-def evaluate_bet(conn: sqlite3.Connection, bet: sqlite3.Row) -> SettlementOutcome:
+def evaluate_bet(
+    conn: sqlite3.Connection, bet: sqlite3.Row, *, legacy_paper_actuals: bool = False
+) -> SettlementOutcome:
     """Project a fixed bet against current results without changing stored facts."""
-    stake, leg_specs = _effective_terms(bet)
+    stake, leg_specs = _effective_terms(bet, legacy_paper_actuals=legacy_paper_actuals)
     results = {
         int(fixture_id): _result_facts(row)
         for fixture_id, row in rs_store.draw_results_for_fixtures(
@@ -157,6 +169,13 @@ def _settle_one_bet(
     return outcome.status
 
 
+def _matches_stored(bet: sqlite3.Row, outcome: SettlementOutcome) -> bool:
+    """Stored 结算与投影一致（状态与派彩均等，票 01 更正通道比对用）。"""
+    return outcome.status == bet["status"] and not round(
+        outcome.payout - float(bet["payout"] or 0), 2
+    )
+
+
 def validate_correction_targets(
     conn: sqlite3.Connection, fixture_ids: set[int]
 ) -> None:
@@ -168,13 +187,18 @@ def validate_correction_targets(
             int(leg["fixture_id"]) in fixture_ids for leg in json.loads(bet["legs"])
         ):
             continue
-        prior = evaluate_bet(conn, bet)
-        if prior.status != bet["status"] or round(
-            prior.payout - float(bet["payout"] or 0), 2
+        if _matches_stored(bet, evaluate_bet(conn, bet)):
+            continue
+        # 票 01：已结 paper+actuals 旧行按绑定价重投影必与旧账分歧；若旧账
+        # 恰与"尊重 actuals"的修复前口径一致，则分歧纯由本守卫引起——放行
+        # 更正通道，resettle 按绑定价追加结算修订收敛（历史入 revisions）。
+        if bt_store.paper_has_actual_terms(bet) and _matches_stored(
+            bet, evaluate_bet(conn, bet, legacy_paper_actuals=True)
         ):
-            raise ValueError(
-                f"bet {bet['id']} 原结算与当前规则/事实不符, 请先 audit-ledger"
-            )
+            continue
+        raise ValueError(
+            f"bet {bet['id']} 原结算与当前规则/事实不符, 请先 audit-ledger"
+        )
 
 
 def resettle_corrected_results(

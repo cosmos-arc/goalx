@@ -86,13 +86,30 @@ def decision_key(
     return (mode, combo, placed_at)
 
 
+def paper_has_actual_terms(bet: sqlite3.Row) -> bool:
+    """
+    Paper 行是否携带实际条款（票 01：修复前异常旧行判据）。
+
+    actuals 写入已对 paper 关闭（record_purchase 领域拒绝），存量携带者=
+    异常旧行：结算/正式分母按绑定价忽略 actuals。审计（ledger_audit）、
+    更正通道（settle）与复盘资格（bet_review）共用本判据，行须为
+    list_bets/get_bet 口径（含 actual_stake 列与带 actual_odds 的 legs JSON）；
+    旧库缺列/缺键按无 actuals（.get 回退）。
+    """
+    return str(bet["mode"]) == "paper" and (
+        dict(bet).get("actual_stake") is not None
+        or any(leg.get("actual_odds") is not None for leg in json.loads(bet["legs"]))
+    )
+
+
 def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
     """
     全部已结算已购注（腿内联，按 settled_at,id 稳定排序）。
 
     正式纸面成绩面闸门（boundary-hardening 票 04 范围④）：manual_research
     纸面注排除（验证/CLV 共用本分母）；历史 NULL 不回溯排除（裁决③）。
-    live 注不受影响。
+    live 注不受影响。票 01：paper 行携带 actual 条款（修复前异常旧行）
+    一并排除——正式成绩价链只认服务器绑定价，异常行见 audit-ledger。
     """
     rows = conn.execute(
         """
@@ -105,6 +122,10 @@ def settled_purchased_bets(conn: sqlite3.Connection) -> list[SettledBet]:
         JOIN bet_legs l ON l.bet_id = b.id
         WHERE b.status IN ('won', 'lost', 'void') AND b.purchased = 1
           AND NOT (b.mode = 'paper' AND b.price_source IS 'manual_research')
+          AND NOT (b.mode = 'paper' AND (
+                b.actual_stake IS NOT NULL
+                OR EXISTS (SELECT 1 FROM bet_legs la
+                           WHERE la.bet_id = b.id AND la.actual_odds IS NOT NULL)))
         ORDER BY b.settled_at, b.id, l.id
         """
     ).fetchall()

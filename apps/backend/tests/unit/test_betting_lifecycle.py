@@ -7,7 +7,13 @@ import sqlite3
 import pytest
 
 from goalx_backend.betting import store as bt
-from goalx_backend.betting.bets import BetDraft, create_bet_with_legs, record_purchase
+from goalx_backend.betting.bets import (
+    ActualLegOdds,
+    ActualTerms,
+    BetDraft,
+    create_bet_with_legs,
+    record_purchase,
+)
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.data import fixtures as fx
 from goalx_backend.data.ingest.results import import_draw_results
@@ -396,6 +402,111 @@ def test_correction_does_not_silently_repair_legacy_rule_errors(
             ],
         )
     assert list(db.iterdump()) == before
+
+
+def test_paper_lock_with_actuals_rejected_zero_write(
+    db: sqlite3.Connection,
+) -> None:
+    """票 01 验收 1：paper 锁票携带 actuals 整票拒绝——票/时间线/actual
+    列零部分写入；无 actuals 的正常 paper 路径不受影响。"""
+    bet, fixture = make_bet(db, BetMode.PAPER)
+    db.commit()
+    before = list(db.iterdump())
+    with pytest.raises(ValueError, match="paper 注不接受实际条款"):
+        record_purchase(
+            db,
+            [bet],
+            actuals={
+                bet: ActualTerms(
+                    stake=200, leg_odds=[ActualLegOdds(fixture_id=fixture, odds=99)]
+                )
+            },
+        )
+    assert list(db.iterdump()) == before
+    record_purchase(db, [bet])
+    assert bt.get_bet(db, bet)["purchased"] == 1
+
+
+def test_paper_actuals_never_reach_formal_results(db: sqlite3.Connection) -> None:
+    """票 01 验收 4（报告一案例 1 贯通反例）：system_paper 行即使携带
+    actual 99（修复前异常旧行），结算与正式成绩全链按绑定价。"""
+    from goalx_backend.betting.ledger_audit import audit_ledger
+
+    bet, fixture = make_bet(db, BetMode.PAPER)
+    db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
+    db.commit()
+    record_purchase(db, [bet])
+    bt.set_actual_terms(db, bet, 200, {fixture: 99})  # 模拟旧行落列
+    import_draw_results(
+        db, [DrawResultInput(fixture_id=fixture, home_goals=2, away_goals=0)]
+    )
+    run_settlement(db)
+    row = bt.get_bet(db, bet)
+    assert row["status"] == "won"
+    assert row["payout"] == pytest.approx(20.0)  # 10×2 绑定价, 非 200×99
+    assert bt.settled_purchased_bets(db) == []  # 异常行不进正式分母
+    assert "paper_actual_terms_anomaly" in str(audit_ledger(db)["manual_review"])
+
+
+def test_correction_converges_legacy_paper_actuals_settlement(
+    db: sqlite3.Connection,
+) -> None:
+    """票 01 correctness F1：已结 paper+actuals 旧行的更正通道不被砖死——
+    旧账与修复前口径一致时 validate 放行，resettle 按绑定价收敛并留修订。"""
+    from goalx_backend.betting.ledger_audit import audit_ledger
+    from goalx_backend.betting.settle import evaluate_bet, preview_draw_result_change
+    from goalx_backend.models import BetStatus, SettlementInput
+    from goalx_backend.settlement import detail_payload
+
+    bet, fixture = make_bet(db, BetMode.PAPER)
+    db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
+    db.commit()
+    record_purchase(db, [bet])
+    bt.set_actual_terms(db, bet, 200, {fixture: 99})  # 旧行落列
+    import_draw_results(
+        db, [DrawResultInput(fixture_id=fixture, home_goals=2, away_goals=0)]
+    )
+    # 模拟修复前引擎按 actuals 落的旧账（200×99=19800）
+    legacy = evaluate_bet(db, bt.get_bet(db, bet), legacy_paper_actuals=True)
+    assert legacy.payout == pytest.approx(19800.0)
+    bt.save_settlement(
+        db,
+        SettlementInput(
+            bet_id=bet,
+            status=BetStatus(legacy.status),
+            stake=legacy.stake,
+            payout=legacy.payout,
+            profit=legacy.profit,
+            detail=detail_payload(legacy),
+        ),
+        reason="pre-fix actual-terms settlement",
+    )
+    db.commit()
+    corrected = DrawResultInput(
+        fixture_id=fixture, home_goals=0, away_goals=2, correction_reason="revision"
+    )
+    preview = preview_draw_result_change(db, [corrected])
+    assert preview.affected_bets[0].payout_projected == 0.0  # 预览=绑定价投影
+    import_draw_results(db, [corrected])  # 修复前此处被 validate 砖死
+    row = bt.get_bet(db, bet)
+    assert row["status"] == "lost"  # 收敛到绑定价口径
+    assert row["payout"] == 0.0
+    revisions = db.execute("SELECT * FROM settlement_revisions ORDER BY id").fetchall()
+    assert len(revisions) == 2  # 旧账 + 更正收敛, 历史入修订不丢失
+    assert "paper_actual_terms_anomaly" in str(audit_ledger(db)["manual_review"])
+
+
+def test_review_excludes_paper_actuals_anomaly(db: sqlite3.Connection) -> None:
+    """票 01 correctness F2：异常旧行在复盘面与正式分母同边界。"""
+    from goalx_backend.evaluation.bet_review import review_views
+
+    bet, fixture = make_bet(db, BetMode.PAPER)
+    db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
+    db.commit()
+    record_purchase(db, [bet])
+    bt.set_actual_terms(db, bet, 200, {fixture: 99})
+    view = review_views(db, [bt.get_bet(db, bet)])[bet]
+    assert view.forward == "excluded_actual_terms"
 
 
 def test_same_key_race_returns_existing_bet(
