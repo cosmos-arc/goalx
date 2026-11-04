@@ -133,6 +133,9 @@ erDiagram
     bet_legs {
         INTEGER id PK
     }
+    bet_price_timeline {
+        INTEGER id PK
+    }
     bet_slips {
         INTEGER id PK
     }
@@ -289,6 +292,8 @@ erDiagram
     bet_legs }o--|| odds_snapshots : snapshot_id
     bet_legs }|--|| fixtures : fixture_id
     bet_legs }|--|| bets : bet_id
+    bet_price_timeline }o--|| odds_snapshots : snapshot_id
+    bet_price_timeline }|--|| bets : bet_id
     bet_slips }o--|| pool_periods : pool_period_id
     bets }o--|| bet_slips : slip_id
     blind_reviews }|--|| fixtures : fixture_id
@@ -1063,6 +1068,22 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `meta` | TEXT | — |
 | `actual_odds` | REAL | — |
 <!-- schema-doc:END:table:bet_legs -->
+<!-- schema-doc:BEGIN:table:bet_price_timeline -->
+#### `bet_price_timeline`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `bet_id` | INTEGER | NOT NULL，FK→bets.id |
+| `fixture_id` | INTEGER | NOT NULL |
+| `selection_code` | TEXT | NOT NULL |
+| `stage` | TEXT | NOT NULL |
+| `odds` | REAL | — |
+| `snapshot_id` | INTEGER | FK→odds_snapshots.id |
+| `recorded_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`bet_id`, `fixture_id`, `stage`)`
+<!-- schema-doc:END:table:bet_price_timeline -->
 <!-- schema-doc:BEGIN:table:bet_slips -->
 #### `bet_slips`
 
