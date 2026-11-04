@@ -24,7 +24,7 @@ import {
 import { basketActions, newRequestId, useBasket, withFreshRequestIds } from "../lib/basket-store";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
 import { bankrollKey, goalsMarketKey, invalidateBets } from "../lib/query-keys";
-import { betModeLabel, dayNoteOf, errorText, intentConflict, TABULAR_NUMS } from "../lib/ui";
+import { betTermsLabel, conflictRestoreMessage, dayNoteOf, errorText, intentConflict, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 wb-05：进球玩法页 `/markets/goals`——玩法轴第二页（ttg/crs）。
@@ -178,7 +178,7 @@ export function MarketGoalsPage() {
 						],
 					});
 					created.push(bet.id);
-					labels.push(`${betModeLabel(bet.mode)} ¥${bet.stake}`);
+					labels.push(betTermsLabel(bet));
 				} catch (error) {
 					// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、该腿
 					// 换新键留篮（未提交腿不动），新意图待用户再点提交另建
@@ -187,9 +187,8 @@ export function MarketGoalsPage() {
 						invalidateBets(queryClient);
 						basketActions.setGoalsLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
 						setMessage(
-							`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）原提交其实已成功：#${conflict.id}` +
-								`（${betModeLabel(conflict.mode)} ¥${conflict.stake}）——已恢复原结果；` +
-								"本次新条款未建立，确认后再点提交将按新意图另建",
+							conflictRestoreMessage(`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）`, conflict) +
+								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
 						);
 						return { created, failedAt: index, labels };
 					}

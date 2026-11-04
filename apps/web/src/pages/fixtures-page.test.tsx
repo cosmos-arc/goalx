@@ -483,6 +483,44 @@ test("票 09：意图冲突恢复原结果，腿换新键留篮可另建新意�
 	// 反模式钉死：冲突确认后才换键（第二键≠第一键）
 	expect(keys).toHaveLength(2);
 	expect(keys[1]).not.toBe(keys[0]);
+
+	// singles 路径（≥2 腿默认两笔单关）：第 1 笔冲突 → 恢复原结果、该腿
+	// 换新键留篮且未提交腿不动；再提交两笔按新意图另建
+	await user.click(screen.getByTestId("pick-1-h"));
+	await user.click(screen.getByTestId("pick-2-a"));
+	await user.click(screen.getByTestId("basket-open"));
+	let singlesConflict = true;
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			const body = (await request.json()) as { client_request_id?: string };
+			if (body.client_request_id !== undefined) {
+				keys.push(body.client_request_id);
+			}
+			if (singlesConflict) {
+				singlesConflict = false;
+				return HttpResponse.json(
+					{
+						detail: {
+							message: "client_request_id 已绑定另一提交意图",
+							existing_bet: { id: 92, mode: "live", stake: 300 },
+						},
+					},
+					{ status: 409 },
+				);
+			}
+			return HttpResponse.json(okBet(), { status: 201 });
+		}),
+	);
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent(
+		"第 1 笔原提交其实已成功：#92（真金 ¥300）——已恢复原结果",
+	);
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2"); // 冲突腿（换新键）+ 未提交腿
+	await user.click(screen.getByTestId("basket-submit"));
+	expect(await screen.findByTestId("fixtures-message")).toHaveTextContent("2 笔单关：真金 ¥200、真金 ¥200");
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
+	expect(keys).toHaveLength(5);
+	expect(keys[3]).not.toBe(keys[2]); // 冲突腿重提已换新键；leg2（keys[4]）本就未提交不动
 });
 
 test("renders edge encodings: partial triples, invalid timestamps, passed kickoff, neutral near-zero EV", async () => {

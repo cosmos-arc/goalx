@@ -6,7 +6,8 @@ import { basketActions, requestIdForLegs, useBasket, withFreshRequestIds } from 
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
 import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
 import {
-	betModeLabel,
+	betTermsLabel,
+	conflictRestoreMessage,
 	currentQuotes,
 	errorText,
 	intentConflict,
@@ -203,7 +204,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 				const bet = await post(legs);
 				setMessage(
 					`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
-						`${betModeLabel(bet.mode)} ¥${bet.stake}）— 去投注页锁定`,
+						`${betTermsLabel(bet)}）— 去投注页锁定`,
 				);
 				setLegs([]);
 				setBasketOpen(false);
@@ -216,7 +217,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 				try {
 					const bet = await post([leg]);
 					created.push(bet.id);
-					labels.push(`${betModeLabel(bet.mode)} ¥${bet.stake}`);
+					labels.push(betTermsLabel(bet));
 				} catch (error) {
 					// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、
 					// 该腿换新键留篮（改单重提不换键=双注反模式；冲突确认后才
@@ -226,9 +227,8 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 						invalidateBets(queryClient);
 						setLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
 						setMessage(
-							`第 ${index + 1} 笔原提交其实已成功：#${conflict.id}` +
-								`（${betModeLabel(conflict.mode)} ¥${conflict.stake}）——已恢复原结果；` +
-								"本次新条款未建立，确认后再点提交将按新意图另建",
+							conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
+								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
 						);
 						return;
 					}
@@ -279,10 +279,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 			if (conflict !== null) {
 				invalidateBets(queryClient);
 				setLegs(withFreshRequestIds(legs));
-				setMessage(
-					`原提交其实已成功：#${conflict.id}（${betModeLabel(conflict.mode)} ¥${conflict.stake}）` +
-						"——已恢复原结果；本次新条款未建立，确认后再点提交将按新意图另建",
-				);
+				setMessage(conflictRestoreMessage("", conflict));
 				return;
 			}
 			// 价变（票 04 裁决①）：清篮+刷新场次列表（新价随查询回到页面），

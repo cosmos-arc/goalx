@@ -664,75 +664,92 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "message": {
-                      "type": "string"
-                    },
-                    "current_quotes": {
-                      "type": "array",
-                      "items": {
-                        "description": "价变 409 载荷一腿：服务器当前有效报价（含快照身份）。",
-                        "properties": {
-                          "fixture_id": {
-                            "title": "Fixture Id",
-                            "type": "integer"
-                          },
-                          "selection_code": {
-                            "title": "Selection Code",
-                            "type": "string"
-                          },
-                          "server_odds": {
-                            "title": "Server Odds",
-                            "type": "number"
-                          },
-                          "snapshot_id": {
-                            "title": "Snapshot Id",
-                            "type": "integer"
-                          },
-                          "observed_at": {
-                            "title": "Observed At",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "fixture_id",
-                          "selection_code",
-                          "server_odds",
-                          "snapshot_id",
-                          "observed_at"
-                        ],
-                        "title": "LegQuotePayload",
-                        "type": "object"
-                      }
-                    },
-                    "existing_bet": {
+                  "oneOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "id": {
-                          "type": "integer"
+                        "message": {
+                          "type": "string"
                         },
-                        "mode": {
-                          "type": "string",
-                          "enum": [
-                            "paper",
-                            "live"
-                          ]
-                        },
-                        "stake": {
-                          "type": "number",
-                          "exclusiveMinimum": 0
+                        "current_quotes": {
+                          "type": "array",
+                          "items": {
+                            "description": "价变 409 载荷一腿：服务器当前有效报价（含快照身份）。",
+                            "properties": {
+                              "fixture_id": {
+                                "title": "Fixture Id",
+                                "type": "integer"
+                              },
+                              "selection_code": {
+                                "title": "Selection Code",
+                                "type": "string"
+                              },
+                              "server_odds": {
+                                "title": "Server Odds",
+                                "type": "number"
+                              },
+                              "snapshot_id": {
+                                "title": "Snapshot Id",
+                                "type": "integer"
+                              },
+                              "observed_at": {
+                                "title": "Observed At",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "selection_code",
+                              "server_odds",
+                              "snapshot_id",
+                              "observed_at"
+                            ],
+                            "title": "LegQuotePayload",
+                            "type": "object"
+                          }
                         }
                       },
                       "required": [
-                        "id",
-                        "mode",
-                        "stake"
+                        "message",
+                        "current_quotes"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "existing_bet": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "paper",
+                                "live"
+                              ]
+                            },
+                            "stake": {
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "mode",
+                            "stake"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "existing_bet"
                       ]
                     }
-                  },
-                  "required": [
-                    "message"
                   ]
                 }
               }

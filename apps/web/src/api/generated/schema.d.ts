@@ -272,7 +272,7 @@ export interface paths {
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
         /**
-         * 建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 同意图回带/异意图冲突)
+         * 建注(注级建议; 校验 had 资格+纸面价绑定; 同键同意图回带/异意图409)
          * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
          *
          *     纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
@@ -3400,7 +3400,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         message: string;
-                        current_quotes?: {
+                        current_quotes: {
                             /** Fixture Id */
                             fixture_id: number;
                             /** Selection Code */
@@ -3412,7 +3412,9 @@ export interface operations {
                             /** Observed At */
                             observed_at: string;
                         }[];
-                        existing_bet?: {
+                    } | {
+                        message: string;
+                        existing_bet: {
                             id: number;
                             /** @enum {string} */
                             mode: "paper" | "live";

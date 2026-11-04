@@ -16,6 +16,7 @@ from goalx_backend.betting.bets import (
     ActualTerms,
     BetDraft,
     BetEligibilityError,
+    IntentConflictError,
     PriceMismatchError,
     create_bet_with_legs,
     intent_fingerprint,
@@ -233,30 +234,39 @@ def _price_mismatch_schema() -> dict[str, object]:
 
 def _bet_conflict_schema() -> dict[str, object]:
     """
-    建注 409 载荷 schema（票 04 价变 + 票 09 意图冲突两形态，二者互斥）。
+    建注 409 载荷 schema（票 04 价变 + 票 09 意图冲突两形态，oneOf 互斥）。
 
-    价变 → current_quotes（票 04 裁决①）；同 client_request_id 异意图 →
-    existing_bet（原注摘要，恢复原结果用）。均为可选、message 必有。
+    价变 → current_quotes 必有（票 04 裁决①语义不放宽）；同 client_request_id
+    异意图 → existing_bet（原注摘要，恢复原结果用）。两形态均 message 必有。
     """
+    quote_schema = LegQuotePayload.model_json_schema()
     return {
-        "type": "object",
-        "properties": {
-            "message": {"type": "string"},
-            "current_quotes": {
-                "type": "array",
-                "items": LegQuotePayload.model_json_schema(),
-            },
-            "existing_bet": {
+        "oneOf": [
+            {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "integer"},
-                    "mode": {"type": "string", "enum": ["paper", "live"]},
-                    "stake": {"type": "number", "exclusiveMinimum": 0},
+                    "message": {"type": "string"},
+                    "current_quotes": {"type": "array", "items": quote_schema},
                 },
-                "required": ["id", "mode", "stake"],
+                "required": ["message", "current_quotes"],
             },
-        },
-        "required": ["message"],
+            {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "existing_bet": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "mode": {"type": "string", "enum": ["paper", "live"]},
+                            "stake": {"type": "number", "exclusiveMinimum": 0},
+                        },
+                        "required": ["id", "mode", "stake"],
+                    },
+                },
+                "required": ["message", "existing_bet"],
+            },
+        ]
     }
 
 
@@ -334,50 +344,65 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
     )
 
 
-def _replayed_bet_row(
-    db: sqlite3.Connection, client_request_id: str
-) -> sqlite3.Row | None:
-    """同幂等键既有注行（票 06 重放回带；无则 None 走正常建注）。"""
-    existing_id = bt_store.bet_id_for_request(db, client_request_id)
-    if existing_id is None:
-        return None
-    return bt_store.get_bet(db, existing_id)
-
-
 def _replay_or_conflict(
     db: sqlite3.Connection,
     client_request_id: str,
     fingerprint: str | None,
 ) -> BetView | None:
     """
-    同键重放判定（票 06/09）。
+    同键重放判定（票 06/09，串行预检）。
 
-    同意图 → 既有注视图（201 同体回带）；异意图 → 409 带原注摘要（不
-    静默吞改）；无既有注/存量无指纹行 → None 走正常建注（v37 期旧行
-    无可比对，降级旧回带）。
+    同意图 → 既有注视图（201 同体回带）；异意图 → IntentConflictError
+    （HTTP 层统一映射 409，不静默吞改）；无既有注/存量无指纹行 → None
+    走正常建注（v37 期旧行无可比对，降级旧回带）。并发竞态窗由域层
+    同一异常兜底。
     """
-    existing = _replayed_bet_row(db, client_request_id)
+    existing_id = bt_store.bet_id_for_request(db, client_request_id)
+    if existing_id is None:
+        return None
+    existing = bt_store.get_bet(db, existing_id)
     if existing is None:
         return None
     stored = existing["intent_fingerprint"]
     if stored is not None and stored != fingerprint:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": (
-                    "client_request_id 已绑定另一提交意图：原注 "
-                    f"#{existing['id']}（{existing['mode']} "
-                    f"¥{existing['stake']}）已建立，本次新意图未建注"
-                    "——换新键另建或按原意图重提"
-                ),
-                "existing_bet": {
-                    "id": int(existing["id"]),
-                    "mode": str(existing["mode"]),
-                    "stake": float(existing["stake"]),
-                },
-            },
+        raise IntentConflictError(
+            int(existing["id"]), str(existing["mode"]), float(existing["stake"])
         )
-    return _bet_view(existing, review_views(db, [existing]).get(int(existing["id"])))
+    return _bet_view(existing, review_views(db, [existing]).get(existing_id))
+
+
+def _persist_new_bet(
+    db: sqlite3.Connection,
+    payload: BetCreate,
+    legs: list[LegInput],
+    fingerprint: str | None,
+) -> int:
+    """资格校验 + 价绑定 + 落库（create_bet 的建新注内块；返回 bet id）。"""
+    with corpus_duckdb.reader() as duck_con:
+        validate_had_selections(db, legs, duck_con=duck_con)
+        if payload.mode is BetMode.LIVE:
+            # live 回录独立路径：按实际条款结算，不要求等于系统报价
+            bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL
+        else:
+            bound, price_source, mismatches = resolve_paper_price(db, legs)
+            if mismatches and not payload.allow_manual_price:
+                raise PriceMismatchError(mismatches)
+            if mismatches:
+                # 显式手工价通道：客户端价保留，类标签③
+                price_source = "manual_research"
+        return create_bet_with_legs(
+            db,
+            BetDraft(
+                mode=payload.mode,
+                stake=payload.stake,
+                legs=bound,
+                strategy_version=payload.strategy_version,
+                client_request_id=payload.client_request_id,
+                intent_fingerprint=fingerprint,
+            ),
+            duck_con=duck_con,
+            price_source=price_source,
+        )
 
 
 @router.post(
@@ -429,36 +454,16 @@ async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
         if payload.client_request_id is not None
         else None
     )
-    if payload.client_request_id is not None:
-        replayed = _replay_or_conflict(db, payload.client_request_id, fingerprint)
-        if replayed is not None:
-            return replayed
     try:
-        with corpus_duckdb.reader() as duck_con:
-            validate_had_selections(db, legs, duck_con=duck_con)
-            if payload.mode is BetMode.LIVE:
-                # live 回录独立路径：按实际条款结算，不要求等于系统报价
-                bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL
-            else:
-                bound, price_source, mismatches = resolve_paper_price(db, legs)
-                if mismatches and not payload.allow_manual_price:
-                    raise PriceMismatchError(mismatches)
-                if mismatches:
-                    # 显式手工价通道：客户端价保留，类标签③
-                    price_source = "manual_research"
-            bet_id = create_bet_with_legs(
-                db,
-                BetDraft(
-                    mode=payload.mode,
-                    stake=payload.stake,
-                    legs=bound,
-                    strategy_version=payload.strategy_version,
-                    client_request_id=payload.client_request_id,
-                    intent_fingerprint=fingerprint,
-                ),
-                duck_con=duck_con,
-                price_source=price_source,
-            )
+        # 重放预检在资格/价绑之前（原决策已落库短路）；异意图在此或域层
+        # 并发竞态窗内抛 IntentConflictError，统一映射 409
+        if payload.client_request_id is not None:
+            replayed = _replay_or_conflict(db, payload.client_request_id, fingerprint)
+            if replayed is not None:
+                return replayed
+        bet_id = _persist_new_bet(db, payload, legs, fingerprint)
+    except IntentConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
     except PriceMismatchError as exc:
         raise HTTPException(
             status_code=409,
