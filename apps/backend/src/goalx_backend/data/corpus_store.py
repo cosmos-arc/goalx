@@ -9,9 +9,10 @@ duckdb/ + checkpoint.db（本模块自持表 SQL，ADR-0008）。
 raw 落盘约定：每响应 gzip 原样字节 + 内容 sha256，路径
 ``raw/{provider}/{dataset}/{key}{ext}.gz``；checkpoint 行记 sha/path/bytes，
 (provider, dataset, key) 唯一——断点续传与零重抓都查这一张表。发布次序
-先文件后 checkpoint 行（同 key 跨进程按数据集目录 flock 互斥、同序完成，
-boundary-hardening 票 03）：中断落在这两步之间时重跑会重抓该条并幂等
-覆盖，同内容重写无害。
+台账写事务先于正式替换、commit 在替换后（同 key 跨进程按数据集目录
+flock 互斥、同序完成，boundary-hardening 票 03 + report-audit-20261104
+票 11）：锁竞争在改正式文件之前失败；中断落在线程窗口时重跑会重抓该条
+并幂等覆盖，同内容重写无害。
 
 bronze 落盘约定（切片 12）：每数据集一文件
 ``bronze/{provider}/{dataset}.ndjson.gz``，NDJSON(gzip) append-only，行 =
@@ -501,6 +502,7 @@ class CorpusStore:
         # description 计，同进程两个 fd 互斥会自死锁（correctness F3；
         # 现有调用方全是逐 key 串行循环）
         lock_fd = os.open(path.parent, os.O_RDONLY)
+        own_txn = False  # 本路径是否已开台账写事务（rollback 只管自己的）
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.part")
@@ -510,15 +512,17 @@ class CorpusStore:
                     gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
                 ):
                     fh.write(body)
-                # 台账写事务先于正式替换（票 11③）；已持外层事务=嵌套调用，
-                # commit/rollback 会波及外层——fail-fast 不静默兼容
+                # 台账写事务先于正式替换（票 11③）；已持事务=嵌套调用或
+                # 前序失败残留半开事务——fail-fast 不静默兼容（本路径
+                # commit/rollback 只管自己开的事务，不代管外层半写）
                 conn = self._checkpoint()
                 if conn.in_transaction:
                     raise RuntimeError(
-                        "ingest_raw 禁止嵌套于外层 checkpoint 事务"
-                        + "（本路径 commit/rollback 自管事务边界）"
+                        "ingest_raw 拒绝在未提交 checkpoint 事务上继续"
+                        + "（嵌套调用，或前序失败残留半开事务）"
                     )
                 conn.execute("BEGIN IMMEDIATE")
+                own_txn = True
                 tmp.replace(path)
                 conn.execute(
                     """
@@ -537,10 +541,11 @@ class CorpusStore:
             except BaseException:
                 with contextlib.suppress(OSError):
                     tmp.unlink()
-                # 未 commit 的台账半写让位；checkpoint 打不开也无妨——
-                # 本就要抛原始异常（abort 同款 suppress 容错）
-                with contextlib.suppress(Exception):
-                    self._checkpoint().rollback()
+                if own_txn:
+                    # 自己开的未提交台账事务让位；非本路径事务（fail-fast
+                    # 前抛）不代管——外层半写归属其调用方
+                    with contextlib.suppress(Exception):
+                        self._checkpoint().rollback()
                 raise
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
