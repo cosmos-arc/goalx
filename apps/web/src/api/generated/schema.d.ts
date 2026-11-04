@@ -763,6 +763,9 @@ export interface paths {
         /**
          * 前瞻评分集合分组报告
          * @description 冻结赛前 Forecast × 同期市场基准的分组 skill 与排除分母（票 34）。
+         *
+         *     票 05：市场基准接 corpus 行源（srct 链场次 corpus 唯一真值 + 历史
+         *     时点青铜重放；无语料环境自动降级 legacy odds_snapshots 口径）。
          */
         get: operations["get_forward_skill_api_v1_validation_forward_skill_get"];
         put?: never;

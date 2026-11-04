@@ -23,8 +23,10 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data import quote_evidence
 from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation.forward_validation import (
+    AsOfBatch,
     ForwardSample,
     ForwardSkillReport,
     build_forward_samples,
@@ -103,11 +105,24 @@ class M3ProtocolReport(BaseModel):
     generated_at: str
 
 
-def paired_fused_vs_ml(conn: sqlite3.Connection) -> PairedFusedVsMl:
+def paired_fused_vs_ml(
+    conn: sqlite3.Connection,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: AsOfBatch | None = None,
+) -> PairedFusedVsMl:
     """配对统计：同场双轨（fused vs ml，冻结赛前样本）的 RPS 对照 + DM。"""
-    ml_samples = {s.fixture_id: s for s in build_forward_samples(conn, track="ml")[0]}
+    ml_samples = {
+        s.fixture_id: s
+        for s in build_forward_samples(
+            conn, track="ml", duck_con=duck_con, asof_batch=asof_batch
+        )[0]
+    }
     fused_samples = {
-        s.fixture_id: s for s in build_forward_samples(conn, track="fused")[0]
+        s.fixture_id: s
+        for s in build_forward_samples(
+            conn, track="fused", duck_con=duck_con, asof_batch=asof_batch
+        )[0]
     }
     common = sorted(set(ml_samples) & set(fused_samples))
     wins = 0
@@ -200,10 +215,19 @@ def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
     return TierStatus(checks=checks, verdict=verdict)
 
 
-def _ece_clean(conn: sqlite3.Connection) -> bool | None:
+def _ece_clean(
+    conn: sqlite3.Connection,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: AsOfBatch | None = None,
+) -> bool | None:
     """LLM 轨 ECE 无劣化：与 ML 同分母比较（样本不足 None=未知）。"""
-    ml = forward_skill_report(conn, track="ml")
-    llm = forward_skill_report(conn, track="llm")
+    ml = forward_skill_report(
+        conn, track="ml", duck_con=duck_con, asof_batch=asof_batch
+    )
+    llm = forward_skill_report(
+        conn, track="llm", duck_con=duck_con, asof_batch=asof_batch
+    )
     ml_n = sum(g.n_fixtures for g in ml.groups.values())
     llm_n = sum(g.n_fixtures for g in llm.groups.values())
     if llm_n < _REVIEW_MIN_SAMPLES * 3 or ml_n < _REVIEW_MIN_SAMPLES * 3:
@@ -316,15 +340,27 @@ def _review_systematic_error(conn: sqlite3.Connection) -> bool | None:
     return counts.get("misleading", 0) / total <= _MISLEADING_MAX_SHARE
 
 
-def m3_protocol_report(conn: sqlite3.Connection) -> M3ProtocolReport:
-    """M3 评测协议总报告（三列参考 + 两档达标状态 + 情报/盲评列）。"""
-    paired = paired_fused_vs_ml(conn)
-    ece_clean = _ece_clean(conn)
+def m3_protocol_report(
+    conn: sqlite3.Connection,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: AsOfBatch | None = None,
+) -> M3ProtocolReport:
+    """
+    M3 评测协议总报告（三列参考 + 两档达标状态 + 情报/盲评列）。
+
+    票 05：duck_con/asof_batch 透传 corpus 行源——同一 asof_batch 实例
+    在内部多次样本构建间复用（青铜扫 memo 摊销）。
+    """
+    paired = paired_fused_vs_ml(conn, duck_con=duck_con, asof_batch=asof_batch)
+    ece_clean = _ece_clean(conn, duck_con=duck_con, asof_batch=asof_batch)
     review_clean = _review_systematic_error(conn)
     return M3ProtocolReport(
         rule="m3_protocol_v1（票 05 冻结阈值，不得放宽）",
         tracks={
-            track: forward_skill_report(conn, track=track)
+            track: forward_skill_report(
+                conn, track=track, duck_con=duck_con, asof_batch=asof_batch
+            )
             for track in ("ml", "llm", "fused")
         },
         paired_fused_vs_ml=paired,

@@ -20,12 +20,13 @@ ingest，铜/银两路径对消费方同形（SnapshotRow）。
 
 shortcut: 逐 sid 全文件线性扫（GB 级 ~10s 量级）+ 进程内信封缓存
 （32 sid FIFO）——检查点/批报告够用；页面热路径恒走 silver 快路径
-（as_of ≥ 最新观测不触发本模块）。前瞻评分大批量接线（票 05）时再
-按 wanted sid 集合一次扫描摊销。
+（as_of ≥ 最新观测不触发本模块）。前瞻评分大批量（票 05）走
+batch_asof_rows：wanted sid 集一次扫描摊销。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -190,3 +191,146 @@ def asof_rows(
     floor = cutoff - timedelta(seconds=max_age_seconds) if max_age_seconds else None
     by_book = _books_from_event_rows(rows, floor)
     return qe.pseudo_rows_capped(duck_con, by_book)
+
+
+def _silver_max_probe_batch(
+    duck_con: DuckCon, sids: list[str]
+) -> dict[str, tuple[datetime, datetime | None]]:
+    """Silver 逐 sid (最新观测, 最新开球) 一次批查（分块 IN，探测降级空表）。"""
+    probe: dict[str, tuple[datetime, datetime | None]] = {}
+    try:
+        for i in range(0, len(sids), 900):  # 同 mapping._ID_CHUNK 保守分块
+            chunk = sids[i : i + 900]
+            ph = ", ".join("?" for _ in chunk)
+            sql = (
+                "SELECT sid, MAX(observed_at), MAX(kickoff) FROM odds_change_event"  # noqa: S608 占位符=分块形状，值全参数绑定
+                f" WHERE sid IN ({ph}) GROUP BY sid"
+            )
+            rows = duck_con.execute(sql, chunk).fetchall()
+            probe.update(
+                {
+                    str(r[0]): (cast("datetime", r[1]), r[2])
+                    for r in rows
+                    if r[1] is not None
+                }
+            )
+    except duckdb.Error as exc:
+        logger.warning("srct asof bronze: silver max probe (batch) degraded: {}", exc)
+        return {}
+    return probe
+
+
+def _scan_visible_envelopes(
+    store: CorpusStore,
+    pending_by_sid: dict[str, list[tuple[str, datetime]]],
+) -> tuple[dict[tuple[str, str], dict[str, object]], set[str]]:
+    """
+    单遍 bronze 扫（票 05 摊销主体）：逐 (sid, as_of) 留最后可见信封。
+
+    返回 ((sid, as_of) → 可见信封, 出现过信封的 sid 集)。重放内存 =
+    每请求一对信封（文件序后者覆盖前者）。
+    """
+    visible: dict[tuple[str, str], dict[str, object]] = {}
+    seen: set[str] = set()
+    for env in silver.iter_bronze_envelopes_for_sids(
+        store,
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        set(pending_by_sid),
+    ):
+        sid = str(env["sid"])
+        seen.add(sid)
+        try:
+            fetched = qe.parse_ts(str(env["fetched_at"]))
+        except ValueError:
+            # correctness F1 同款：坏 fetched_at 单信封跳过降级，不炸整批
+            logger.warning(
+                "srct asof bronze: 信封 fetched_at 不可解析, 跳过: {!r}",
+                env.get("fetched_at"),
+            )
+            continue
+        for as_of, cutoff in pending_by_sid[sid]:
+            if fetched <= cutoff:
+                visible[(sid, as_of)] = env  # 文件序后者胜=当时最新可见
+    return visible, seen
+
+
+def batch_asof_rows(
+    store: CorpusStore,
+    duck_con: DuckCon,
+    requests: list[tuple[str, str]],
+) -> list[list[qe.SnapshotRow] | None]:
+    """
+    批量历史时点青铜重放（票 05 前瞻评分接线）；返回与 requests 对齐。
+
+    与逐条 ``asof_rows`` 同语义（None=不适用回退 silver 路径 / []=as_of
+    早于首抓空真 / 行=可见信封重放），差异只在成本：silver 探针与 bronze
+    全文件扫各**一次**摊销到整个请求集（前瞻面数百 sid，逐 sid 扫 GB 级
+    文件不可行——srct_asof 模块头 shortcut 兑现）。请求对 (sid, as_of)
+    去重。
+    """
+    pairs = list(dict.fromkeys(requests))
+    if not pairs:
+        return []
+    probe = _silver_max_probe_batch(duck_con, sorted({sid for sid, _ in pairs}))
+    cutoffs: dict[tuple[str, str], datetime] = {}
+    pending_by_sid: dict[str, list[tuple[str, datetime]]] = {}
+    for sid, as_of in pairs:
+        top = probe.get(sid)
+        if top is None:
+            continue  # silver 无该 sid 行：不劣于现状
+        cutoff = qe.parse_ts(as_of)
+        if cutoff >= top[0]:
+            continue  # as_of 不早于最新观测：silver 快路径
+        cutoffs[(sid, as_of)] = cutoff
+        pending_by_sid.setdefault(sid, []).append((as_of, cutoff))
+    visible: dict[tuple[str, str], dict[str, object]] = {}
+    seen: set[str] = set()
+    if pending_by_sid:
+        visible, seen = _scan_visible_envelopes(store, pending_by_sid)
+    by_pair: dict[tuple[str, str], list[qe.SnapshotRow] | None] = {}
+    for sid, as_of in pairs:
+        if (sid, as_of) not in cutoffs:
+            by_pair[(sid, as_of)] = None  # 不适用：silver 快路径/无行/探针降级
+            continue
+        if sid not in seen:
+            by_pair[(sid, as_of)] = None  # bronze 无信封（版本漂移等）：不劣于修复前
+            continue
+        env = visible.get((sid, as_of))
+        if env is None:
+            by_pair[(sid, as_of)] = []  # as_of 早于首抓：空真
+            continue
+        top = probe[sid]
+        kickoff_ms = int(top[1].timestamp() * 1000) if top[1] is not None else None
+        scratch = srct_odds.SilverOddsReport(built_at=utc_now_iso())
+        rows = srct_odds.kept_1x2_event_rows(env, kickoff_ms, scratch)
+        by_pair[(sid, as_of)] = qe.pseudo_rows_capped(
+            duck_con, _books_from_event_rows(rows, None)
+        )
+    return [by_pair[pair] for pair in requests]
+
+
+def batch_asof_resolver(
+    store: CorpusStore, duck_con: DuckCon
+) -> Callable[[list[tuple[str, str]]], list[list[qe.SnapshotRow] | None]]:
+    """
+    请求域 memo 批解析器（票 05）：同 (sid, as_of) 只解析一次。
+
+    m3 报告内部多次样本构建共享一实例——已解析对免扫，新 sid 集增量走
+    batch_asof_rows。shortcut: 生命周期=单次报告生成（API 请求/CLI 一次
+    调用）；跨请求进程级缓存不做（bronze 锚失效已有 _ENVELOPES_CACHE
+    先例，前瞻面有延迟读数需求时再挂）。
+    """
+    cache: dict[tuple[str, str], list[qe.SnapshotRow] | None] = {}
+
+    def resolve(requests: list[tuple[str, str]]) -> list[list[qe.SnapshotRow] | None]:
+        pending = [p for p in dict.fromkeys(requests) if p not in cache]
+        if pending:
+            for pair, rows in zip(
+                pending, batch_asof_rows(store, duck_con, pending), strict=True
+            ):
+                cache[pair] = rows
+        return [cache[p] for p in requests]
+
+    return resolve

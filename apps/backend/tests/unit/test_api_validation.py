@@ -335,7 +335,8 @@ def test_market_skill_deploys_latest_version(
     groups = {"dc-v1": _group(50, 0.02), "dc-v2": _group(50, -0.01)}
     monkeypatch.setattr(
         "goalx_backend.evaluation.forward_validation.forward_skill_report",
-        lambda conn: ForwardSkillReport(
+        # 票 05：透传缝多了 duck_con/asof_batch 两关键字（corpus 行源）
+        lambda conn, **_kwargs: ForwardSkillReport(
             rule="stub",
             track="ml",
             coverage=ForwardCoverage(

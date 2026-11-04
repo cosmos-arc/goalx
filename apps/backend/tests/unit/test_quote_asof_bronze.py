@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from goalx_backend.data import corpus_duckdb
 from goalx_backend.data import quote_evidence as qe
@@ -32,13 +33,15 @@ _ROW_A2 = "2.02|3.40|3.55|11-04 13:50|0.9|0.9|0.9|2026"  # 05:50 UTC 变价
 _ROW_B = "3.50|3.60|1.90|11-04 11:30|0.9|0.9|0.9|2026"
 
 
-def _envelope(fetched_at: str, book_a_rows: list[str] | None = None) -> dict:
+def _envelope(
+    fetched_at: str, book_a_rows: list[str] | None = None, *, sid: str = SID
+) -> dict:
     """一个 odds_1x2d bronze 信封（书 A 轨迹可多行=变价历史）。"""
     a_rows = ";".join(book_a_rows or [_ROW_A])
     return {
         "provider": srct.SRCT_PROVIDER,
         "dataset": srct.ODDS_DATASET,
-        "sid": SID,
+        "sid": sid,
         "fetched_at": fetched_at,
         "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
         "raw_sha": "0" * 64,
@@ -56,12 +59,15 @@ def _envelope(fetched_at: str, book_a_rows: list[str] | None = None) -> dict:
     }
 
 
-def _build(tmp_path: Path, envelopes: list[dict]) -> tuple[CorpusStore, str]:
+def _build(
+    tmp_path: Path, envelopes: list[dict], *, sids: tuple[str, ...] = (SID,)
+) -> tuple[CorpusStore, str]:
     """攒 bronze → silver → duck 库；返回 (store, duckdb 路径)。"""
     store = CorpusStore(tmp_path / "corpus")
     store.append_bronze(srct.SRCT_PROVIDER, srct.ODDS_DATASET, envelopes)
     srct_odds.build_odds_change_events(
-        store, meta={SID: {"sid": SID, "kickoff": KICKOFF, "league": "英超"}}
+        store,
+        meta={s: {"sid": s, "kickoff": KICKOFF, "league": "英超"} for s in sids},
     )
     path = corpus_duckdb.build_corpus_duckdb(store)
     return store, str(path)
@@ -248,3 +254,66 @@ def test_same_root_rebuild_invalidates_envelope_cache(tmp_path: Path) -> None:
         assert h2[0]["odds"] == 1.90  # 修复前：旧缓存吐 2.10
     finally:
         store2.close()
+
+
+def test_batch_asof_rows_matches_single(tmp_path: Path) -> None:
+    """票 05 批扫等价：多 sid 多时点请求与逐条 asof_rows 逐值一致
+    （None 快路径 / [] 空真 / 重放行三种形态全覆盖）。"""
+    sid2 = "95002"
+    envelopes = [
+        _envelope(FETCHED_1),
+        _envelope(FETCHED_2, book_a_rows=[_ROW_A, _ROW_A2]),
+        _envelope(FETCHED_1, sid=sid2),
+    ]
+    store, duck_path = _build(tmp_path, envelopes, sids=(SID, sid2))
+    con = duckdb.connect(duck_path, read_only=True)
+    try:
+        requests = [
+            (SID, AS_OF_531),  # 重放（silver 最新=06:00 > 05:31）
+            (SID, AS_OF_605),  # silver 快路径 → None
+            (SID, "2026-11-04T05:00:00+00:00"),  # 早于首抓 → []
+            (sid2, AS_OF_531),  # 第二 sid 重放
+            ("95009", AS_OF_531),  # silver 无行 → None
+            (SID, AS_OF_531),  # 重复请求（去重）
+        ]
+        batch = srct_asof.batch_asof_rows(store, con, requests)
+        single = [srct_asof.asof_rows(store, con, s, a) for s, a in requests]
+        assert batch == single
+        assert len(batch) == len(requests)
+        assert batch[0] is not None  # 重放行非空
+        assert len(batch[0]) == 6
+        assert batch[1] is None
+        assert batch[2] == []
+        # 空请求不炸
+        assert srct_asof.batch_asof_rows(store, con, []) == []
+    finally:
+        con.close()
+        store.close()
+
+
+def test_batch_asof_resolver_memos_pairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 05 memo 解析器：已解析 (sid, as_of) 免再扫，新对增量批查。"""
+    store, duck_path = _build(tmp_path, [_envelope(FETCHED_1), _envelope(FETCHED_2)])
+    con = duckdb.connect(duck_path, read_only=True)
+    real_batch = srct_asof.batch_asof_rows
+    calls: list[list[tuple[str, str]]] = []
+
+    def counting(
+        s: CorpusStore, c: duckdb.DuckDBPyConnection, requests: list[tuple[str, str]]
+    ) -> list[list[qe.SnapshotRow] | None]:
+        calls.append(list(requests))
+        return real_batch(s, c, requests)
+
+    monkeypatch.setattr(srct_asof, "batch_asof_rows", counting)
+    resolve = srct_asof.batch_asof_resolver(store, con)
+    try:
+        first = resolve([(SID, AS_OF_531)])
+        second = resolve([(SID, AS_OF_531), (SID, AS_OF_605)])
+        assert first[0] is second[0]  # memo：同对象复用，不再扫
+        assert calls == [[(SID, AS_OF_531)], [(SID, AS_OF_605)]]  # 只查新对
+        assert srct_asof.batch_asof_rows is counting  # sanity：断言替换生效
+    finally:
+        con.close()
+        store.close()

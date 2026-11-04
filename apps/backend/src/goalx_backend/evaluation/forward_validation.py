@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
 from pydantic import BaseModel
 
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data import results as rs_store
 from goalx_backend.evaluation.metrics import evaluate_predictions
 from goalx_backend.markets import SELECTIONS
@@ -35,6 +36,14 @@ from goalx_backend.modelling.forecast import (
 
 FROZEN_RULE = "latest_forecast_before_kickoff_v1"
 MIN_GROUP_SAMPLES = 30  # 小于该数标「样本不足」，不作通过依据
+
+# 票 05 批量注入缝：(sid, as_of) 请求 → 对齐 rows/None。实现在
+# ingest.srct_asof.batch_asof_rows（青铜重放，分层位于 evaluation 之上）
+# ——组合根（API/调用方）注入；缺省 None=无重放面，corpus 走 silver
+# 最新视图口径。
+AsOfBatch = Callable[
+    [list[tuple[str, str]]], list[list[quote_evidence.SnapshotRow] | None]
+]
 
 
 @dataclass(frozen=True)
@@ -53,10 +62,23 @@ class ForwardSample:
 
 
 def market_baseline_asof(
-    conn: sqlite3.Connection, fixture_id: int, as_of: str
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    as_of: str,
+    *,
+    duck_con: quote_evidence.DuckCon | None = None,
+    sid: str | None = None,
+    rows: list[quote_evidence.SnapshotRow] | None = None,
 ) -> dict[str, float] | None:
-    """as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。"""
-    return quote_evidence.eu_consensus_asof(conn, fixture_id, as_of)
+    """
+    as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。
+
+    票 05：duck_con+sid 透传 corpus 行源（corpus 唯一真值，空即空）；
+    rows=青铜重放行（ingest.srct_asof 经注入缝产出，见 AsOfBatch）。
+    """
+    return quote_evidence.eu_consensus_asof(
+        conn, fixture_id, as_of, duck_con=duck_con, sid=sid, rows=rows
+    )
 
 
 def _ftr(home_goals: int, away_goals: int) -> str:
@@ -66,10 +88,53 @@ def _ftr(home_goals: int, away_goals: int) -> str:
     return "D" if home_goals == away_goals else "A"
 
 
+def _corpus_replay_pairs(
+    conn: sqlite3.Connection,
+    frozen_by_fixture: dict[int, sqlite3.Row],
+    duck_con: quote_evidence.DuckCon | None,
+    asof_batch: AsOfBatch | None,
+) -> tuple[
+    dict[int, str], dict[tuple[str, str], list[quote_evidence.SnapshotRow] | None]
+]:
+    """
+    票 05 corpus 行源预处理：冻结面 sid 批解析 + 青铜重放一次批查。
+
+    返回 (fixture_id → sid, (sid, as_of) → 重放行)。duck_con 缺席时双空
+    （legacy 口径不动）；asof_batch 缺席时重放面空（corpus 走 silver
+    最新视图，由调用方语义决定）。
+    """
+    sids: dict[int, str] = (
+        mapping.srct_sids_for_fixtures(conn, frozen_by_fixture)
+        if duck_con is not None
+        else {}
+    )
+    replayed: dict[tuple[str, str], list[quote_evidence.SnapshotRow] | None] = {}
+    if duck_con is not None and asof_batch is not None and sids:
+        requests = [
+            (sids[fid], str(frozen["issued_at"]))
+            for fid, frozen in frozen_by_fixture.items()
+            if fid in sids
+        ]
+        for pair, rows in zip(requests, asof_batch(requests), strict=True):
+            replayed[pair] = rows
+    return sids, replayed
+
+
 def build_forward_samples(
-    conn: sqlite3.Connection, *, track: str = "ml"
+    conn: sqlite3.Connection,
+    *,
+    track: str = "ml",
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: AsOfBatch | None = None,
 ) -> tuple[list[ForwardSample], dict[str, int]]:
-    """构建前瞻评分集合；返回 (样本, 排除/覆盖计数)。"""
+    """
+    构建前瞻评分集合；返回 (样本, 排除/覆盖计数)。
+
+    票 05：duck_con 给定 → corpus 行源（srct 链场次 corpus 唯一真值，
+    无链/无语料环境维持 legacy odds_snapshots 口径不变）；asof_batch
+    给定 → 历史时点青铜重放一次批查（否则 corpus 走 silver 最新视图，
+    历史 issued_at 时点全被观测过滤掉——报告一案例 8 的缺口面）。
+    """
     forecasts_by_fixture: dict[int, list[sqlite3.Row]] = {}
     for forecast in forecasts_for_track(conn, track):
         forecasts_by_fixture.setdefault(int(forecast["fixture_id"]), []).append(
@@ -91,21 +156,31 @@ def build_forward_samples(
         "no_market_baseline": 0,
         "scored": 0,
     }
-    samples: list[ForwardSample] = []
+    frozen_by_fixture: dict[int, sqlite3.Row] = {}
     for fixture_id, entry in sorted(by_fixture.items()):
-        row = entry["row"]
         counts["settled_fixtures"] += 1
         if entry["pre"]:
-            frozen = entry["pre"][-1]  # 赛前最新一条（冻结规则）
+            frozen_by_fixture[fixture_id] = entry["pre"][-1]  # 赛前最新（冻结规则）
         elif entry["post"]:
             counts["post_kickoff_only"] += 1  # 只有赛后预测 → 历史 replay
-            continue
         else:
             counts["no_forecast"] += 1
-            continue
+    sids, replayed = _corpus_replay_pairs(conn, frozen_by_fixture, duck_con, asof_batch)
+    samples: list[ForwardSample] = []
+    for fixture_id, frozen in frozen_by_fixture.items():
+        row = by_fixture[fixture_id]["row"]
+        issued = str(frozen["issued_at"])
         payload = json.loads(str(frozen["payload"]))
         had = _had_from_payload(payload)
-        baseline = market_baseline_asof(conn, fixture_id, str(frozen["issued_at"]))
+        sid = sids.get(fixture_id)
+        baseline = market_baseline_asof(
+            conn,
+            fixture_id,
+            issued,
+            duck_con=duck_con,
+            sid=sid,
+            rows=replayed.get((sid, issued)) if sid is not None else None,
+        )
         if had is None or baseline is None:
             counts["no_market_baseline"] += 1
             continue
@@ -115,7 +190,7 @@ def build_forward_samples(
                 fixture_id=fixture_id,
                 kickoff_utc=kickoff,
                 model_version=str(frozen["model_version"]),
-                issued_at=str(frozen["issued_at"]),
+                issued_at=issued,
                 had_probs={s: float(had[s]) for s in SELECTIONS},
                 fair_probs=baseline,
                 ftr=_ftr(int(row["home_goals"]), int(row["away_goals"])),
@@ -190,15 +265,22 @@ class ForwardSkillReport(BaseModel):
 
 
 def forward_skill_report(
-    conn: sqlite3.Connection, *, track: str = "ml"
+    conn: sqlite3.Connection,
+    *,
+    track: str = "ml",
+    duck_con: quote_evidence.DuckCon | None = None,
+    asof_batch: AsOfBatch | None = None,
 ) -> ForwardSkillReport:
     """
     前瞻 skill 分组报告：每个 model_version 一组，含排除/覆盖分母。
 
     组内指标沿用 evaluate_predictions（RPS/Brier/log loss 双侧 + skill +
     DM 探索性标注）；组样本 < MIN_GROUP_SAMPLES 标「样本不足」。
+    duck_con/asof_batch 透传 corpus 行源（票 05，见 build_forward_samples）。
     """
-    samples, counts = build_forward_samples(conn, track=track)
+    samples, counts = build_forward_samples(
+        conn, track=track, duck_con=duck_con, asof_batch=asof_batch
+    )
     groups: dict[str, list[ForwardSample]] = {}
     for sample in samples:
         groups.setdefault(sample.model_version, []).append(sample)
