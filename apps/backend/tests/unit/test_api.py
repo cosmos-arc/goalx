@@ -1737,6 +1737,81 @@ def test_pool_paper_slip_with_real_period(demo_client: TestClient) -> None:
     assert any(row["id"] == slip["id"] for row in slips)
 
 
+def test_pool_slip_payload_guards(demo_client: TestClient) -> None:
+    """载荷守卫（报告审计票 08）：闭集/ttt14 14 场/期次归属——预览与创建同校验。"""
+    # 报告二实测复现：ttt14 + 1 场 + 非法码此前 201 建 1 组合 ¥2 → 今 400
+    reported = demo_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "pool_period_id": 1,
+            "market_code": "ttt14",
+            "picks": [{"match_seq": 1, "selection_code": "not-a-selection"}],
+        },
+    )
+    assert reported.status_code == 400
+    assert "闭集" in reported.json()["detail"]
+
+    # 预览同校验（goals4 死码此前被完备性探针吞掉、pick9/ttt14 裸放）
+    for market, code in (("ttt14", "x"), ("pick9", "h"), ("goals4", "h9")):
+        preview_bad = demo_client.post(
+            "/api/v1/pool-slips/preview",
+            json={
+                "market_code": market,
+                "picks": [{"match_seq": 1, "selection_code": code}],
+            },
+        )
+        assert preview_bad.status_code == 400, (market, preview_bad.text)
+
+    # 合法码但不完备：预览允许（"未选完整"预览态），创建拒绝
+    partial = [{"match_seq": seq, "selection_code": "3"} for seq in (1, 2)]
+    partial_preview = demo_client.post(
+        "/api/v1/pool-slips/preview",
+        json={"market_code": "ttt14", "picks": partial},
+    )
+    assert partial_preview.status_code == 200
+    assert partial_preview.json()["combination_count"] == 1
+    partial_create = demo_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "pool_period_id": 1,
+            "market_code": "ttt14",
+            "picks": partial,
+        },
+    )
+    assert partial_create.status_code == 400
+    assert "ttt14 需 14 场" in partial_create.json()["detail"]
+
+    # 期次归属（已指定期次）：跨期 match_seq 不落库
+    foreign = demo_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "pool_period_id": 1,
+            "picks": [{"match_seq": seq, "selection_code": "3"} for seq in range(1, 9)]
+            + [{"match_seq": 99, "selection_code": "3"}],
+        },
+    )
+    assert foreign.status_code == 400
+    assert "不属于期次" in foreign.json()["detail"]
+
+    # 完备合法票不受影响：ttt14 14 场单选 → 1 组合
+    full = demo_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "pool_period_id": 1,
+            "market_code": "ttt14",
+            "picks": [
+                {"match_seq": seq, "selection_code": "3"} for seq in range(1, 15)
+            ],
+        },
+    )
+    assert full.status_code == 201, full.text
+    assert full.json()["combination_count"] == 1
+
+
 def test_pool_sync_run_delegates_to_tasks(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

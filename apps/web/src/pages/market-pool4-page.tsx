@@ -13,7 +13,8 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
 import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
-import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
+import { StakeAdviceNote } from "../components/stake-advice";
+import { poolTicketAdvice } from "../lib/pool-ticket-ev";
 import {
 	bankrollKey,
 	poolPeriodDetailKeyFor,
@@ -29,8 +30,9 @@ import { errorText, pct, TABULAR_NUMS } from "../lib/ui";
  * 每场主/客各选进球档（0/1/2/3+，双侧可复式）；**同场联合 = 比分矩阵格
  * 聚合**（后端 goals4_joint，主客档相关——边际连乘口径错误，报告路线 D
  * 红线）；联合的边缘和 == 档位边际（后端一致性测试钉死）。金额/EV 用
- * 联合口径：配对份额 = 主档份额 × 客档份额（独立近似，披露）；票级 =
- * Π(1+EV_pair)−1（跨场独立假设沿用池票现状并披露）。
+ * 联合口径：配对份额 = 主档份额 × 客档份额（独立近似，披露）；票级
+ * EV = ∏联合概率 × R/∏配对份额 − 1（票 08：整票只扣一次返奖率——
+ * 配对估计赔率已含 R，串关连乘会 R⁴ 判反）。
  *
  * 红线不变：paper 池票 flat 一档；真金禁用；生成器端点对 goals4 422
  * （一场两档硬跑产废票），本页不放生成器入口。
@@ -42,8 +44,6 @@ const MARKET = "goals4";
 const GOALS4_MATCHES = 4;
 /** 每注金额（goals4 一注 ¥2，规则价）。 */
 const STAKE_PER_COMBINATION = 2;
-/** 返奖率（口径镜像后端 POOL_RETURN_RATE，配对份额估计派彩用）。 */
-const POOL_RETURN_RATE = 0.65;
 /** 档位短标（h0..h3 / a0..a3 → 展示）。 */
 const BAND_LABELS = ["0球", "1球", "2球", "3+球"] as const;
 
@@ -220,23 +220,27 @@ export function MarketPool4Page() {
 				return pair === undefined || rest.length > 0 ? [] : [{ match: m, pair }];
 			})
 		: [];
-	const adviceInput = useMemo(() => {
-		const legs = singlePairs.map(({ match, pair }) => {
-			const joint = pairJoint(match, pair.home, pair.away);
-			const homeSel = selectionOf(match, pair.home);
-			const awaySel = selectionOf(match, pair.away);
-			const shareH = homeSel?.share ?? null;
-			const shareA = awaySel?.share ?? null;
-			const odds =
-				shareH !== null && shareA !== null && shareH > 0 && shareA > 0
-					? POOL_RETURN_RATE / (shareH * shareA)
-					: Number.NaN; // 缺份额毒化票级赔率 → 整体降级（同任9页先例）
-			const ev = joint === null || !Number.isFinite(odds) ? null : joint * odds - 1;
-			return { ev, odds };
-		});
-		return parlayAdviceInput(legs);
-	}, [singlePairs]);
-	const hasValidAdvice = singlePairs.length === GOALS4_MATCHES && Number.isFinite(adviceInput.odds);
+	/** 票级建议（票 08）：∏联合概率 × R/∏配对份额 − 1——配对"赔率"已含
+	 * R，串关连乘会 R⁴ 判反（+58.69% 算成 −56.42%）；缺份额 → null 降级。 */
+	const adviceInput = useMemo(
+		() =>
+			singlePairs.length === GOALS4_MATCHES
+				? poolTicketAdvice(
+						singlePairs.map(({ match, pair }) => {
+							const joint = pairJoint(match, pair.home, pair.away);
+							const homeSel = selectionOf(match, pair.home);
+							const awaySel = selectionOf(match, pair.away);
+							const shareH = homeSel?.share ?? null;
+							const shareA = awaySel?.share ?? null;
+							return {
+								prob: joint,
+								share: shareH !== null && shareA !== null ? shareH * shareA : null,
+							};
+						}),
+					)
+				: null,
+		[singlePairs],
+	);
 	const bankroll = bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0);
 
 	/** 票级联合命中概率（复式场按所选配对联合求和；任一场缺联合 = null）。 */
@@ -441,9 +445,9 @@ export function MarketPool4Page() {
 								额度建议 <span className="font-normal text-muted-foreground">纸面 flat（奖池型红线）</span>
 							</h2>
 							<p className="mb-3 text-xs text-muted-foreground" data-testid="pool4-tier-mapping">
-								联合口径：每场配对 EV = 联合概率 × 配对估计赔率 − 1（配对份额 = 主档 × 客档，独立近似； 份额无源时不出
-								EV）；票级 = Π(1+EV)−1（跨场独立假设沿用池票现状）。EV≤0 时建议 ¥0。
-								复式（一场多配对）时不出单一票级建议，按组合数 × ¥{STAKE_PER_COMBINATION} 计金额。
+								联合口径：每场配对 EV = 联合概率 × 配对估计赔率 − 1（配对份额 = 主档 × 客档，独立近似；份额无源时不出
+								EV）；票级 EV = ∏联合概率 × 返奖率/∏配对份额 − 1（整票只扣一次返奖率，票 08；跨场独立假设）。EV≤0 时建议
+								¥0。复式（一场多配对）时不出单一票级建议，按组合数 × ¥{STAKE_PER_COMBINATION} 计金额。
 							</p>
 							{pickedMatches.length === 0 ? (
 								<p
@@ -457,8 +461,8 @@ export function MarketPool4Page() {
 									<StakeAdviceNote
 										mode="paper"
 										bankroll={bankroll}
-										ev={hasValidAdvice ? adviceInput.ev : null}
-										odds={hasValidAdvice ? adviceInput.odds : 2}
+										ev={adviceInput?.ev ?? null}
+										odds={adviceInput?.odds ?? 2}
 										label="保守档（flat，纸面）"
 										note={`组合 ${comboCount} 注 × ¥${STAKE_PER_COMBINATION}/注（goals4；联合口径估计）`}
 										testid="pool4-tier-conservative"

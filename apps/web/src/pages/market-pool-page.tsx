@@ -17,7 +17,8 @@ import { MarketTabs } from "../components/market-tabs";
 import { PoolGenerator, PoolTargetPlanner } from "../components/pool-generators";
 import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
 import { bestSelection, type PoolPickEntry, PoolSlotList, selectionOf } from "../components/pool-slots";
-import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
+import { StakeAdviceNote } from "../components/stake-advice";
+import { poolTicketAdvice } from "../lib/pool-ticket-ev";
 import {
 	bankrollKey,
 	invalidatePoolViews,
@@ -41,6 +42,9 @@ import { errorText, TABULAR_NUMS } from "../lib/ui";
  *
  * 组合数/总金额后端单源（票 01）：任9 = 全部 9 场子集复式展开——预览端点
  * 与落库同源计算，前端只消费（不再客户端 C(n,9) 自算）。
+ *
+ * 票 08：额度建议输入 = 票级 EV（∏概率 × 返奖率/∏份额 − 1，整票只扣
+ * 一次返奖率）——场级估计赔率已含 R，串关连乘会 R^N 判反正负。
  *
  * 官方销量四源直接 GET 不可得 → "AI 代采待命"占位（代理经代采入口回填，
  * source=agent）；期次/对阵可得而销量缺失时只降级该区块（不整页骨架）。
@@ -132,21 +136,21 @@ export function MarketPoolPage() {
 	// 票 07：提交门只认当前 picks 签名的预览（占位/未完成/失败不放行）
 	const previewGate = poolPreviewGate(previewQuery);
 	const comboCount = previewQuery.data?.combination_count ?? 0;
-	/** 三档输入：所选组合联合口径（parlayAdviceInput 正典——估计派彩赔率 Π × 联合 EV = Π(1+ev)−1）。 */
+	/** 票级建议（票 08）：∏p × R/∏s − 1——返奖率整票只扣一次（镜像后端
+	 * ticket_view 正典）。恰 9 场单选才出：复式/超九按实际展开组合口径，
+	 * 无单一票级 EV（不套串关公式）；缺概率/份额 → null 整体降级。 */
 	const adviceInput = useMemo(
 		() =>
-			parlayAdviceInput(
-				pickedEntries.map(({ match, code }) => {
-					const sel = selectionOf(match, code);
-					return {
-						ev: sel?.ev ?? null,
-						odds: sel?.implied_odds ?? Number.NaN, // 缺份额的向毒化联合赔率 → 下方整体降级
-					};
-				}),
-			),
+			pickedEntries.length === PICK9
+				? poolTicketAdvice(
+						pickedEntries.map(({ match, code }) => {
+							const sel = selectionOf(match, code);
+							return { prob: sel?.prob ?? null, share: sel?.share ?? null };
+						}),
+					)
+				: null,
 		[pickedEntries],
 	);
-	const hasValidInput = pickedEntries.length > 0 && Number.isFinite(adviceInput.odds);
 	const bankroll = bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0);
 
 	function pick(matchSeq: number, selection: string) {
@@ -349,8 +353,8 @@ export function MarketPoolPage() {
 							</h2>
 							<p className="mb-3 text-xs text-muted-foreground" data-testid="pool-tier-mapping">
 								奖池型初期只纸面低敞口（调研红线）：仅 flat 档（纸面）；标准/激进（live ¼Kelly）在
-								奖池真金开放经用户单独裁决前禁用不呈现。输入 = 所选组合联合口径（估计派彩赔率 Π、 联合 EV =
-								Π(1+EV)−1）；EV≤0 时建议 ¥0。
+								奖池真金开放经用户单独裁决前禁用不呈现。输入 = 票级口径（∏概率 × 返奖率/∏份额 − 1，
+								返奖率整票只扣一次，票 08）；恰 9 场单选才出票级 EV——复式/超九不出单一票级 EV；EV≤0 时建议 ¥0。
 							</p>
 							{pickedEntries.length === 0 ? (
 								<p
@@ -364,8 +368,8 @@ export function MarketPoolPage() {
 									<StakeAdviceNote
 										mode="paper"
 										bankroll={bankroll}
-										ev={hasValidInput ? adviceInput.ev : null}
-										odds={hasValidInput ? adviceInput.odds : 2}
+										ev={adviceInput?.ev ?? null}
+										odds={adviceInput?.odds ?? 2}
 										label="保守档（flat，纸面）"
 										note={`组合 ${comboCount} 注 × ¥${STAKE_PER_COMBINATION}/注（每注同额，任9 复式；估计派彩口径）`}
 										testid="pool-tier-conservative"

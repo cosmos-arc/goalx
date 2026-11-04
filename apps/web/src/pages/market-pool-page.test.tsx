@@ -193,6 +193,25 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	expect(captured.picks?.[0]).toEqual({ match_seq: 1, selection_code: "3" });
 });
 
+test("ticket-level advice feeds ∏p×R/∏s−1 and degrades beyond nine picks (票 08)", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
+	const conservative = screen.getByTestId("pool-tier-conservative");
+
+	// 恰 9 场单选：票级 EV = 0.65×∏(p/s)−1 = −38.0%（fixture 7×0.45/0.5 +
+	// 2×0.48/0.34——与后端 ticket_view 镜像测试同一组数字，同输入同输出）
+	await waitFor(() => {
+		expect(within(conservative).getByTestId("pool-tier-conservative-reason")).toHaveTextContent("EV -38.0%");
+	});
+
+	// 超九场（复式按实际展开组合口径）：不出单一票级 EV——不套串关公式
+	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
+	await waitFor(() => {
+		expect(within(conservative).getByTestId("pool-tier-conservative-reason")).toHaveTextContent("缺 EV/赔率数据");
+	});
+});
+
 test("submit gate holds while the preview for current picks is in flight (票 07)", async () => {
 	await renderAt("/markets/pool");
 	await screen.findByTestId("pool-slot-1");
