@@ -153,9 +153,15 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 
 | 路径 | 内容 | 备份策略 |
 |---|---|---|
-| `data/goalx.db` | 全部业务数据（SQLite WAL） | 定期冷拷贝（停写或 `.backup`） |
+| `data/goalx.db` | 全部业务数据（SQLite WAL） | 定期冷拷贝：`sqlite3 data/goalx.db ".backup '<目标>'"`（在线一致性快照，不停写） |
+| `data/goalx-research.db` | 研究库（backtest runs/predictions/metrics，2026-10 起 23 run / 53 万 predictions） | 同上 `.backup`；run 不可重取（对应代码版本已演进），随库备份 |
 | `data/observations/` | 原始响应 gzip + 哈希（append-only 证据，可重放） | 随库备份；丢失后不可再生成 |
-| `data/models/` | DC 模型工件（基准+bootstrap） | 可由 `train-models` 重建 |
+| `data/models/` | DC 模型工件（基准+bootstrap）——**对应历史研究 run 的冻结模型产物**：run 重放要求与 predictions 配对的当时模型工件 | 冷拷贝归档；重建（`train-models`）产出的是新工件，不能替代历史 run 的配对证据 |
+| `~/goalx-data/checkpoint.db` | corpus 台账（raw_artifacts sha 索引 + 夜班/采集状态） | 冷拷贝（128M+）；与 raw 树配对——台账在而文件缺=对账面破洞 |
+| `~/goalx-data/raw/` | corpus 原始证据树（7.6G+，gzip per-artifact） | 全量冷拷贝（外置盘/异地优先——语料积累数月，采集成本不可重取）；最小集=checkpoint.db + 所需数据集目录 |
+
+**恢复演练记录**：2026-11-04 空目录演练一次全过（备份快照→空目录恢复→三读验证：账目可开 v41 / 研究 run #23 可读 / bfdata 原始证据 gzip 解压+sha 对账 PASS），记录页 [report-audit-20261104/run-acceptance.md](plans/report-audit-20261104/run-acceptance.md)。
+演练脚注：`read_raw/verify_raw` 的 `ext` 参数须与采集时写入的扩展名一致（如 bfdata 是 `.js`）——台账不存 ext，恢复读取按数据集约定传参。
 
 关键不变量：开奖结果唯一事实源、更正原子重算+冲正、快照/运行记录 append-only（库内触发器强制）、金额为浮点元记账（真金流水以账务核查兜底）。
 
