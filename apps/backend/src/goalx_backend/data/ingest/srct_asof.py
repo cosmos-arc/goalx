@@ -193,14 +193,18 @@ def asof_rows(
     return qe.pseudo_rows_capped(duck_con, by_book)
 
 
+# IN 绑定分块（duckdb 绑定参数上限独立于 SQLite，取同量级保守值）
+_SID_IN_CHUNK = 900
+
+
 def _silver_max_probe_batch(
     duck_con: DuckCon, sids: list[str]
 ) -> dict[str, tuple[datetime, datetime | None]]:
     """Silver 逐 sid (最新观测, 最新开球) 一次批查（分块 IN，探测降级空表）。"""
     probe: dict[str, tuple[datetime, datetime | None]] = {}
     try:
-        for i in range(0, len(sids), 900):  # 同 mapping._ID_CHUNK 保守分块
-            chunk = sids[i : i + 900]
+        for i in range(0, len(sids), _SID_IN_CHUNK):
+            chunk = sids[i : i + _SID_IN_CHUNK]
             ph = ", ".join("?" for _ in chunk)
             sql = (
                 "SELECT sid, MAX(observed_at), MAX(kickoff) FROM odds_change_event"  # noqa: S608 占位符=分块形状，值全参数绑定
@@ -264,11 +268,12 @@ def batch_asof_rows(
     """
     批量历史时点青铜重放（票 05 前瞻评分接线）；返回与 requests 对齐。
 
-    与逐条 ``asof_rows`` 同语义（None=不适用回退 silver 路径 / []=as_of
-    早于首抓空真 / 行=可见信封重放），差异只在成本：silver 探针与 bronze
+    与逐条 ``asof_rows`` 的默认口径同语义（None=不适用回退 silver 路径 /
+    []=as_of 早于首抓空真 / 行=可见信封重放；exclusive/max_age_seconds
+    前瞻调用面不用，本函数不收），差异只在成本：silver 探针与 bronze
     全文件扫各**一次**摊销到整个请求集（前瞻面数百 sid，逐 sid 扫 GB 级
     文件不可行——srct_asof 模块头 shortcut 兑现）。请求对 (sid, as_of)
-    去重。
+    去重，返回按原始 requests 序对齐。
     """
     pairs = list(dict.fromkeys(requests))
     if not pairs:
