@@ -721,56 +721,12 @@ def build_bookmakers(store: CorpusStore) -> SilverBookmakerReport:
     return report
 
 
-def _append_1x2_rows(
-    bronze: dict[str, object],
-    partition: tuple[str, str],
-    kickoff_ms: int | None,
-    observed_ms: int | None,
-    bookmaker_id: str,
-    kept: list[_DetailRec],
-    out: StreamingPartitions,
-) -> None:
-    """一书保留行 → 事件行（亚盘侧列全 None；行构造两 market 对称）。"""
-    for rec in kept:
-        out.append(
-            partition[0],
-            partition[1],
-            {
-                "sid": bronze.get("sid"),
-                "bookmaker_id": bookmaker_id,
-                "market": SPACE_1X2,
-                "published_at": rec.published_ms,
-                "observed_at": observed_ms,
-                "source_order": rec.source_order,
-                "kickoff": kickoff_ms,
-                "odds_home": rec.prices[0],
-                "odds_draw": rec.prices[1],
-                "odds_away": rec.prices[2],
-                "kelly_home": rec.kellys[0],
-                "kelly_draw": rec.kellys[1],
-                "kelly_away": rec.kellys[2],
-                "line_raw": None,
-                "line": None,
-                "home_water": None,
-                "away_water": None,
-                "minute": None,
-                "score": None,
-                "status": None,
-            },
-        )
-
-
-def _emit_1x2_events(
-    bronze: dict[str, object],
-    partition: tuple[str, str],
+def _parse_1x2_trajectory(
+    payload_dict: dict[str, object],
     kickoff_ms: int | None,
     report: SilverOddsReport,
-    out: StreamingPartitions,
-) -> list[tuple[str, int]]:
-    """一场 1x2 轨迹 → 变化事件；返回 (bookmaker_id, published) 保留行元数据。"""
-    payload = bronze.get("payload")
-    payload_dict = payload if isinstance(payload, dict) else {}
-    observed = fetched_ms(bronze.get("fetched_at"))
+) -> tuple[dict[str, list[_DetailRec]], dict[str, tuple[float, float, float] | None]]:
+    """game/game_detail 两段 → (cid→轨迹行, cid→初始三向)。"""
     game_map: dict[str, str] = {}
     initials: dict[str, tuple[float, float, float] | None] = {}
     for game in cast("list[object]", payload_dict.get("game", [])):
@@ -793,7 +749,27 @@ def _emit_1x2_events(
             _parse_detail_row(raw, base + i, kickoff_ms)
             for i, raw in enumerate(raw_rows)
         )
-    kept_meta: list[tuple[str, int]] = []
+    return books, initials
+
+
+def kept_1x2_event_rows(
+    bronze: dict[str, object],
+    kickoff_ms: int | None,
+    report: SilverOddsReport,
+) -> list[dict[str, object]]:
+    """
+    一场 1x2 信封 → 变化事件行（转换复用件，票 04 读侧）。
+
+    物化发射（_emit_1x2_events）与 as-of 青铜重放（ingest.srct_asof 历史
+    时点读）共用同一转换：解析→逐书值组去重→行构造（亚盘侧列全 None；
+    observed_at=信封 fetched_at）。report 计数随调用方（重放侧用一次性
+    scratch，不进物化账）。行 dict 键序与 _ODDS_SCHEMA 对齐。
+    """
+    payload = bronze.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    observed = fetched_ms(bronze.get("fetched_at"))
+    books, initials = _parse_1x2_trajectory(payload_dict, kickoff_ms, report)
+    rows_out: list[dict[str, object]] = []
     for cid in sorted(books):
         rows = books[cid]
 
@@ -820,12 +796,50 @@ def _emit_1x2_events(
         if kept and initial is not None and earliest != list(initial):
             report.open_quote_missing += 1
         bookmaker_id = f"srct:{SPACE_1X2}:{cid}"
-        _append_1x2_rows(
-            bronze, partition, kickoff_ms, observed, bookmaker_id, kept, out
-        )
-        kept_meta.extend((bookmaker_id, rec.published_ms or 0) for rec in kept)
+        for rec in kept:
+            rows_out.append(
+                {
+                    "sid": bronze.get("sid"),
+                    "bookmaker_id": bookmaker_id,
+                    "market": SPACE_1X2,
+                    "published_at": rec.published_ms,
+                    "observed_at": observed,
+                    "source_order": rec.source_order,
+                    "kickoff": kickoff_ms,
+                    "odds_home": rec.prices[0],
+                    "odds_draw": rec.prices[1],
+                    "odds_away": rec.prices[2],
+                    "kelly_home": rec.kellys[0],
+                    "kelly_draw": rec.kellys[1],
+                    "kelly_away": rec.kellys[2],
+                    "line_raw": None,
+                    "line": None,
+                    "home_water": None,
+                    "away_water": None,
+                    "minute": None,
+                    "score": None,
+                    "status": None,
+                }
+            )
         report.events_1x2 += len(kept)
-    return kept_meta
+    return rows_out
+
+
+def _emit_1x2_events(
+    bronze: dict[str, object],
+    partition: tuple[str, str],
+    kickoff_ms: int | None,
+    report: SilverOddsReport,
+    out: StreamingPartitions,
+) -> list[tuple[str, int]]:
+    """一场 1x2 轨迹 → 变化事件；返回 (bookmaker_id, published) 保留行元数据。"""
+    rows = kept_1x2_event_rows(bronze, kickoff_ms, report)
+    for row in rows:
+        out.append(partition[0], partition[1], row)
+    return [
+        (str(row["bookmaker_id"]), int(cast("int | None", row["published_at"]) or 0))
+        for row in rows
+    ]
 
 
 def _emit_ah_events(

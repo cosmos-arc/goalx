@@ -215,8 +215,10 @@ def srct_snapshot_rows_asof(
     时间统一 UTC iso 秒（与 as_of 字符串比较兼容）。corpus 异常降级空表
     并告警（EU 段空值，不炸调用方——corpus_anchor 同款降级哲学）。
 
+
     ponytail: sid 无索引、逐场单查百毫秒级——今日页 28 场 ≈ 秒级可接受；
-    页面变慢后按 sid 批量聚合一次拿全。
+    页面变慢后按 sid 批量聚合一次拿全。历史时点（早于 silver 最新观测）
+    的青铜重放见 ingest.srct_asof（票 04，分层：本模块不依赖 ingest）。
     """
     cutoff = parse_ts(as_of)
     compare = "<" if exclusive else "<="
@@ -268,8 +270,7 @@ def srct_snapshot_rows_asof(
             pub_iso or obs_iso,
             obs_iso,
         )
-    books = _cap_srct_books(duck_con, by_book)
-    return _pseudo_rows(books)
+    return pseudo_rows_capped(duck_con, by_book)
 
 
 def srct_anchor_triplets_at_cutoffs(
@@ -399,6 +400,13 @@ def srct_snapshot_rows_bulk(
         sid: _pseudo_rows(_cap_srct_books(duck_con, by_book))
         for sid, by_book in by_sid.items()
     }
+
+
+def pseudo_rows_capped(
+    duck_con: DuckCon, by_book: dict[str, tuple[float, float, float, str, str]]
+) -> list[SnapshotRow]:
+    """Corpus 逐书三向 → 书集截断 + 伪快照行（silver 读桥与 ingest.srct_asof 共用）。"""
+    return _pseudo_rows(_cap_srct_books(duck_con, by_book))
 
 
 def _pseudo_rows(
@@ -580,10 +588,22 @@ def eu_consensus_asof(
     market_code: str = "had",
     duck_con: DuckCon | None = None,
     sid: str | None = None,
+    rows: list[SnapshotRow] | None = None,
 ) -> dict[str, float] | None:
-    """as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。"""
+    """
+    as_of 前最新欧赔完整三向共识的 Shin 概率（评分基准，非成交口径）。
+
+    rows=调用方注入行（票 04：历史时点青铜重放行经 ingest.srct_asof
+    产出后由此进入共识；缺省走 duck/sid corpus 或 legacy 行源）。
+    """
     books = books_complete_asof(
-        conn, fixture_id, as_of, market_code=market_code, duck_con=duck_con, sid=sid
+        conn,
+        fixture_id,
+        as_of,
+        market_code=market_code,
+        duck_con=duck_con,
+        sid=sid,
+        rows=rows,
     )
     if not books:
         return None

@@ -75,6 +75,7 @@ from goalx_backend.data.ingest import (
     openfootball,
     sporttery,
     srct,
+    srct_asof,
     srct_market,
     srct_odds,
     srct_remat,
@@ -1066,6 +1067,13 @@ def _cmd_price_edge_audit(
                 date_to=args.date_to,
                 duck_con=duck_con,
                 store=store,
+                asof_resolver=(
+                    # 票 04：历史时点青铜重放（ingest 层实现，组合根注入；
+                    # corpus 缺席时无历史重放面，回退最新视图口径）
+                    partial(srct_asof.asof_rows, store, duck_con)
+                    if duck_con is not None
+                    else None
+                ),
             )
         except sqlite3.OperationalError as exc:
             # <v39 未迁移库（correctness F6）：记录面缺席=管道未部署，
