@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sqlite3
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +18,23 @@ from fastapi.testclient import TestClient
 
 # 测试不继承本地部署配置（票 37：本地 .env 冻结的采集范围会改变采集行为）
 os.environ["GOALX_ODDS_API_SPORT_SCOPE"] = ""
+
+# 测试隔离默认约束（report-audit-20261104 票 10①）：Settings 的存储路径
+# 默认值整体钉进会话临时目录——部分构造（只传 db_path）不再把研究库/
+# corpus/observations/models 落到 CWD data/ 或 $HOME/goalx-data
+# （goals4 测试污染真实库前科；env 优先于 .env，构造时即生效）
+_ISOLATION_ROOT = Path(tempfile.mkdtemp(prefix="goalx-test-defaults-"))
+for _key, _sub in (
+    ("GOALX_DB_PATH", "goalx.db"),
+    ("GOALX_RESEARCH_DB_PATH", "research.db"),
+    ("GOALX_OBSERVATIONS_DIR", "observations"),
+    ("GOALX_MODELS_DIR", "models"),
+    ("GOALX_CORPUS_ROOT", "corpus"),
+):
+    # 硬赋值（同票 37 先例）：shell 已导出的同名 env 也钉死在隔离目录，
+    # 不静默穿透到真实库/语料树
+    os.environ[_key] = str(_ISOLATION_ROOT / _sub)
+atexit.register(shutil.rmtree, _ISOLATION_ROOT, ignore_errors=True)
 
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, gold

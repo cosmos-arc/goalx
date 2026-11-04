@@ -26,8 +26,8 @@ def test_healthz_reports_ok(client: TestClient) -> None:
 def test_healthz_carries_runtime_fingerprint(tmp_path: Path) -> None:
     """票 06 运行隔离:/healthz 报进程加载代码的 git 身份+配置/库指纹。
 
-    自建已迁移库(共享 client fixture 不迁移库——那一路 schema=unknown
-    是正确降级,不在此断言)。
+    自建已迁移库断言 schema_version 数字面（共享 client fixture 的库是否
+    已迁移随套件执行序漂移——readyz 测试会迁移它，不在此断言那一路）。
     """
     from goalx_backend.db import connect, migrate
 
@@ -67,10 +67,45 @@ def test_healthz_schema_version_unknown_without_db(tmp_path: Path) -> None:
 
 
 def test_readyz_reports_ready(client: TestClient) -> None:
+    """票 10④：就绪检查 = 业务库可读 + schema 版本 == 部署迁移链末版。"""
+    from goalx_backend.db import connect, current_version, migrate
+
+    db_path = client.app.state.settings.db_path  # type: ignore[attr-defined]
+    conn = connect(db_path)
+    migrate(conn)
+    version = current_version(conn)
+    conn.close()
     response = client.get("/readyz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["schema_version"] == str(version)
+
+
+def test_readyz_503_when_db_absent(tmp_path: Path) -> None:
+    """库文件缺席：503 不假装 ready（原实现恒 ready）。"""
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=tmp_path / "absent.db"))
+    ) as test_client:
+        response = test_client.get("/readyz")
+    assert response.status_code == 503
+    assert "业务库不可读" in response.json()["detail"]
+
+
+def test_readyz_503_on_schema_version_mismatch(tmp_path: Path) -> None:
+    """schema 版本低于部署迁移链：503 明示先跑迁移（fresh 库=0 同此路）。"""
+    from goalx_backend.db import connect
+
+    db_path = tmp_path / "lagging.db"
+    conn = connect(db_path)  # 建库不迁移 → version 0
+    conn.close()
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=db_path))
+    ) as test_client:
+        response = test_client.get("/readyz")
+    assert response.status_code == 503
+    assert "schema 版本不一致" in response.json()["detail"]
 
 
 def test_status_reports_service_identity(client: TestClient) -> None:

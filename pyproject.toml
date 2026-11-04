@@ -156,7 +156,8 @@ ignore = [
     "S108",
     "S110",
 ]
-"**/conftest.py" = ["ANN", "D", "PLC0415"]
+# conftest 须在 goalx 导入前钉测试环境（票 37 采集范围 / 票 10① 隔离默认路径）
+"**/conftest.py" = ["ANN", "D", "PLC0415", "E402"]
 
 # __init__.py
 "__init__.py" = ["D104"]

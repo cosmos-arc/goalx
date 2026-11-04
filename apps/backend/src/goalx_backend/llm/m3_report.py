@@ -296,8 +296,10 @@ def intel_quality(conn: sqlite3.Connection) -> IntelQuality:
             continue
         for _, collected_at in entries:
             try:
+                # TypeError：legacy naive kickoff × aware collected_at 两代
+                # 字面共存期可能不可减（票 10 correctness 附注）——跳过该条
                 delta = (ko - datetime.fromisoformat(collected_at)).total_seconds()
-            except ValueError:
+            except (ValueError, TypeError):
                 continue
             if delta >= 0:
                 hours.append(delta / 3600)

@@ -29,18 +29,19 @@ cat > /tmp/goalx-ruleset.json <<'EOF'
       "type": "pull_request",
       "parameters": {
         "required_approving_review_count": 0,
-        "dismiss_stale_reviews": false,
+        "dismiss_stale_reviews_on_push": false,
         "require_code_owner_review": false,
-        "require_last_push_approval": false
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true
       }
     },
     {
       "type": "required_status_checks",
       "parameters": {
-        "strict": false,
+        "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "CI / CI gate" },
-          { "context": "PR base guard / base-must-be-main" }
+          { "context": "CI gate" },
+          { "context": "base-must-be-main" }
         ]
       }
     },
@@ -55,10 +56,16 @@ gh api -X POST repos/cosmos-arc/goalx/rulesets --input /tmp/goalx-ruleset.json
 
 说明：
 
-- `required_status_checks` 的 context = `<workflow name> / <job display name>`：
-  `CI gate` job 在 ci.yml 里带 `name: CI gate`（key 是 `ci-gate`，context 用
-  显示名）；`base-must-be-main` job 无 name，用 key。写错 context 会表现为
+- `required_status_checks` 的 context = **check-run 名**（≠ `<workflow> / <job>`
+  拼法）：job 带显式 `name:` 时 context=该显示名（ci.yml 的 `ci-gate` job 带
+  `name: CI gate` → context `CI gate`）；job 无 name 时 context=job key
+  （pr-base-guard.yml 的 `base-must-be-main`）。两处均已对实际 PR
+  check-runs 核过（report-audit-20261104 票 10）。写错 context 表现为
   required check 永不满足——配置后用一个 PR 验证 check 名被正确匹配。
+- ruleset 字段名按 GitHub rulesets REST schema：`pull_request` 规则的参数是
+  `dismiss_stale_reviews_on_push`/`required_review_thread_resolution`（非
+  网页 UI 文案）；`required_status_checks` 的严格分支策略键是
+  `strict_required_status_checks_policy`（非 `strict`）。
 - 个人单人仓库：`required_approving_review_count=0`（第二人审批明确出局），
   但"必须 PR"仍强制——历史不经 PR 的直推路径被关死。
 - 绕过：`bypass_actors` 空=无人可绕。如需 owner 紧急通道，网页 Rules →

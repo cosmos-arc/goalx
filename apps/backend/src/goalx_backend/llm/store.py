@@ -11,10 +11,25 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from goalx_backend.db import utc_now_iso
+
+
+def normalize_collected_at(value: str) -> str:
+    """
+    采集时点规范化为秒精度 UTC（票 04 I1 + 票 10②）。
+
+    naive 视为 UTC；带偏移输入换算 UTC 后落库（原 isoformat() 保留偏移，
+    `12:30-04:00` 字典序穿透 as_of 边界——实为 16:30 UTC）；非 ISO
+    fail-loud 拒绝。+00:00 统一字面是 collected_at <= as_of 谓词按
+    字典序比较的前提。
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def raw_hash(payload: dict[str, Any]) -> str:
@@ -43,12 +58,10 @@ def insert_intel_observation(
     """
     追加一条情报观测；同内容已存在时静默跳过（返回 None）。
 
-    collected_at 写入前规范化为秒精度 +00:00 ISO（票 04 as_of 谓词按
-    字典序比较的前提；非 ISO 输入 fail-loud 拒绝，不静默误界）。
+    collected_at 写入前规范化为秒精度 UTC（normalize_collected_at，
+    票 04 I1 + 票 10②：带偏移输入换算不穿透 as_of 边界）。
     """
-    normalized = datetime.fromisoformat(draft.collected_at).isoformat(
-        timespec="seconds"
-    )
+    normalized = normalize_collected_at(draft.collected_at)
     digest = raw_hash(draft.raw_payload)
     cursor = conn.execute(
         """
