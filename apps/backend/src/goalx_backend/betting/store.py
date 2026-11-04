@@ -11,8 +11,9 @@ from itertools import combinations, product
 from typing import Any
 
 from goalx_backend.betting.snapshot import EMPTY_SNAPSHOT, BetEvSnapshot
+from goalx_backend.data.pool import pool_matches_for_period
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.markets import GOALS4_CODES
+from goalx_backend.markets import GOALS4_CODES, POOL_HAD_CODES
 from goalx_backend.models import (
     BetMode,
     LegInput,
@@ -29,6 +30,8 @@ MAX_MATERIALIZED_COMBINATIONS = 100_000
 PICK9_LEGS = 9
 # goals4 固定场次数（票 10：四场进球，每场主/客档各成一选）。
 GOALS4_MATCHES = 4
+# ttt14 固定场次数（票 08：14 场完备才可创建；预览允许未选完整）。
+TTT14_LEGS = 14
 
 
 class CombinationLimitExceeded(ValueError):
@@ -542,6 +545,61 @@ def _validate_market_code(market_code: str) -> None:
     """票级 Market 字面量守卫：未知 Market fail-closed，不静默落到连乘口径。"""
     if market_code not in ("pick9", "ttt14", "goals4"):
         raise ValueError(f"未知池票 Market {market_code!r}（可选 pick9/ttt14/goals4）")
+
+
+def validate_pool_selection_codes(
+    by_match: dict[int, list[str]], market_code: str
+) -> None:
+    """
+    选择码闭集守卫（报告审计票 08）。
+
+    预览/创建共用——非法码 4xx 拒绝，不静默物化死码（goals4 闭集校验
+    此前只在完备路径生效，预览会吞掉）。
+    """
+    _validate_market_code(market_code)
+    closed = GOALS4_CODES if market_code == "goals4" else POOL_HAD_CODES
+    for seq in sorted(by_match):
+        bad = sorted(pick for pick in by_match[seq] if pick not in closed)
+        if bad:
+            allowed = "/".join(sorted(closed))
+            msg = f"{market_code} 选择码须为闭集内池码（{allowed}）: 场 {seq} 含 {bad}"
+            raise ValueError(msg)
+
+
+def require_pool_slip_creatable(
+    by_match: dict[int, list[str]], market_code: str
+) -> None:
+    """
+    创建完备性守卫（票 08）。
+
+    ttt14 需 14 场有效选择（此前 1 场也落通用连乘建票）；pick9 ≥9 场 /
+    goals4 双侧齐由 count_pool_combinations 拒。选择码闭集一并复检
+    （预览/创建同校验）。
+    """
+    validate_pool_selection_codes(by_match, market_code)
+    if market_code == "ttt14" and len(by_match) != TTT14_LEGS:
+        raise ValueError(f"ttt14 需 {TTT14_LEGS} 场有效选择（当前 {len(by_match)} 场）")
+
+
+def validate_pool_period_ownership(
+    conn: sqlite3.Connection,
+    by_match: dict[int, list[str]],
+    pool_period_id: int,
+) -> None:
+    """
+    期次归属守卫（票 08）。
+
+    已指定期次的池票：每个 match_seq 都须是该期场次——跨期场次（或
+    期次无场次）不落库。预览载荷无期次身份，只在创建侧校验。
+    """
+    period_seqs = {
+        int(row["match_seq"]) for row in pool_matches_for_period(conn, pool_period_id)
+    }
+    foreign = sorted(set(by_match) - period_seqs)
+    if foreign:
+        raise ValueError(
+            f"场次 {foreign} 不属于期次 {pool_period_id}（已指定期次须用该期场次）"
+        )
 
 
 def _goals4_sides(picks: list[str]) -> tuple[list[str], list[str]]:

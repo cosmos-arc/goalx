@@ -33,7 +33,9 @@ _MATRIX = [
 ]
 
 
-def _seed(db: sqlite3.Connection, *, market: str, with_forecast: bool) -> int:
+def _seed(
+    db: sqlite3.Connection, *, market: str, with_forecast: bool, match_count: int = 1
+) -> int:
     comp = fx_store.upsert_competition(db, "意甲")
     h = fx_store.upsert_team(db, "亚特兰大")
     a = fx_store.upsert_team(db, "帕尔马")
@@ -62,19 +64,22 @@ def _seed(db: sqlite3.Connection, *, market: str, with_forecast: bool) -> int:
     pid = pool_store.upsert_pool_period(
         db, market, "26226", "2026-11-02T14:00:00+00:00"
     )
+    # 场 1 映射真实 fixture；其余为结构占位（票 08 归属守卫下，构票测试
+    # 需期次真有场 2..N 才合法——不映射只影响概率/联合面，不影响组合）
     pool_store.replace_pool_matches(
         db,
         pid,
         [
             pool_store.PoolMatchInput(
-                match_seq=1,
-                source_match_id="2042441",
+                match_seq=seq,
+                source_match_id="2042441" if seq == 1 else None,
                 league="意甲",
                 kickoff_utc=_POOL_KICKOFF,
-                home_team="亚特兰大",
-                away_team="帕尔马",
+                home_team="亚特兰大" if seq == 1 else f"主队{seq}",
+                away_team="帕尔马" if seq == 1 else f"客队{seq}",
                 euro_odds=(None, None, None),
             )
+            for seq in range(1, match_count + 1)
         ],
     )
     return pid
@@ -190,7 +195,7 @@ def test_goals4_pool_slip_preview_and_create(tmp_path: Path) -> None:
     db_path = tmp_path / "goals4-slip.db"
     db = connect(db_path)
     migrate(db)
-    pid = _seed(db, market="goals4", with_forecast=False)
+    pid = _seed(db, market="goals4", with_forecast=False, match_count=4)
     db.commit()  # _seed 不自提交；app 是独立连接，先落盘再开门
     client = TestClient(
         create_app(

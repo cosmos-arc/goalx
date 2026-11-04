@@ -35,3 +35,7 @@ GOALS_MARKETS: tuple[str, ...] = ("ttg", "crs")
 # goals4（四场进球）档位码闭集（票 10 单源）：每场主/客各 0/1/2/3+ 档，
 # 3+ 聚尾。betting 构票校验与 settlement 档位判定共用——两处各自硬写会漂。
 GOALS4_CODES = frozenset(f"{side}{band}" for side in ("h", "a") for band in range(4))
+
+# 任9/14场 官方池码闭集（票 08 单源，与 GOALS4_CODES 同住所）：3=胜
+# 1=平 0=负——betting 池票载荷守卫消费，两处硬写会漂。
+POOL_HAD_CODES = frozenset({"3", "1", "0"})

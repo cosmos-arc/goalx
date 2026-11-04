@@ -4,6 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
+import { goals4PeriodDetailFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -173,3 +174,52 @@ async function waitForText(element: HTMLElement, text: string) {
 		{ timeout: 3000 },
 	);
 }
+
+test("goals4 ticket advice applies the return rate once (票 08 anchor +58.69%)", async () => {
+	// 全档份额 0.4 → 配对份额 0.16，h1/a1 联合 0.2 → 每场 p/s=1.25：
+	// 票级 EV = 0.65×1.25⁴−1 = +58.69%（报告二判别样例；串关连乘 R⁴ 会
+	// 算成 −56.42% 判反）。捕获 stake-advice 请求体断言页面送出的口径。
+	const bodies: Array<{ ev?: number; odds?: number }> = [];
+	server.use(
+		http.post("*/api/v1/stake-advice", async ({ request }) => {
+			bodies.push((await request.json()) as { ev?: number; odds?: number });
+			return HttpResponse.json({
+				stake: 2,
+				tier: "flat",
+				fraction: null,
+				full_kelly_fraction: null,
+				capped: false,
+				reason: "纸面 flat（测试桩）",
+			});
+		}),
+		http.get("*/api/v1/pool/periods/:periodNo", ({ params, request }) => {
+			if (params["periodNo"] !== "26226" || new URL(request.url).searchParams.get("market_code") !== "goals4") {
+				return HttpResponse.json({ detail: "period not found" }, { status: 404 });
+			}
+			return HttpResponse.json({
+				...goals4PeriodDetailFixture,
+				matches: goals4PeriodDetailFixture.matches.map((match) => ({
+					...match,
+					selections: match.selections.map((sel) => ({
+						...sel,
+						share: 0.4,
+						implied_odds: 1.625,
+						ev: null,
+					})),
+				})),
+			});
+		}),
+	);
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await pickDefaultPairs(user); // 每场 h1+a1：联合 0.2、配对份额 0.16
+	await waitFor(() => {
+		if (bodies.length === 0) {
+			throw new Error("stake-advice not called yet");
+		}
+	});
+	const last = bodies[bodies.length - 1] as { ev?: number; odds?: number };
+	expect(last.ev).toBeCloseTo(0.65 * 1.25 ** 4 - 1, 4); // +58.69%
+	expect(last.odds).toBeCloseTo(0.65 / 0.16 ** 4, 1);
+});

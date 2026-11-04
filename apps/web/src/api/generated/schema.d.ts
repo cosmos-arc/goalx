@@ -334,7 +334,8 @@ export interface paths {
          *
          *     同一套矩阵/计数/展开：前端展示、落库组合、SlipView 回读共用；
          *     超上限同创建口径 422 拒绝；任9 已选 <9 场 → 组合数 0（未成票的
-         *     诚实读数，非错误；创建端点对 <9 场直接 400）。
+         *     诚实读数，非错误；创建端点对 <9 场直接 400）。选择码闭集与创建
+         *     同校验（票 08）：非法码 400——"未选完整"可预览，非法载荷不可。
          */
         post: operations["preview_pool_slip_api_v1_pool_slips_preview_post"];
         delete?: never;
@@ -357,8 +358,9 @@ export interface paths {
          * @description 按 picks 建 paper 复式草稿; 奖金引擎未实现, 保持待结算。
          *
          *     组合按票级 Market 展开（票 01）：pick9 = 全部 9 场子集 × 各子集内
-         *     picks 之积（<9 场 400）；ttt14 = 整体连乘。超上限 422 整票拒绝
-         *     （人裁决：拒绝不截断）。
+         *     picks 之积（<9 场 400）；ttt14 = 整体连乘（票 08：需 14 场完备）。
+         *     载荷守卫（票 08）：选择码闭集（预览/创建同校验）+ 已指定期次的场次
+         *     归属；超上限 422 整票拒绝（人裁决：拒绝不截断）。
          *
          *     组合物化（上限内也 up to 10 万行 json 序列化）是同步重活——def 走
          *     线程池不占事件循环（correctness F6，同票 07①）。
@@ -3533,6 +3535,13 @@ export interface operations {
                     "application/json": components["schemas"]["PoolSlipPreview"];
                 };
             };
+            /** @description 选择码不在闭集内(任9/ttt14=3/1/0, goals4=h0..h3/a0..a3) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description 复式组合数超上限(10万);载荷校验失败 */
             422: {
                 headers: {
@@ -3566,7 +3575,7 @@ export interface operations {
                     "application/json": components["schemas"]["SlipView"];
                 };
             };
-            /** @description 暂不支持 live 奖池票; 任9 已选不足 9 场; 玩法/载荷非法 */
+            /** @description 暂不支持 live 奖池票; 任9 已选不足 9 场; ttt14 需 14 场; 选择码不在闭集; 场次不属于所指定期次 */
             400: {
                 headers: {
                     [name: string]: unknown;
