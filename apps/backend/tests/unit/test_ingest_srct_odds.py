@@ -240,13 +240,21 @@ def _append_hdp_bronze(
     )
 
 
-def _collect_bronze(tmp_path: Path) -> tuple[CorpusStore, Settings]:
-    """两日常规场（2025-10-01/02）+ 一跨年场（2026-01-02）攒 bronze。"""
+def _collect_bronze(
+    tmp_path: Path, *, day2_league: str = "英超"
+) -> tuple[CorpusStore, Settings]:
+    """两日常规场（2025-10-01/02）+ 一跨年场（2026-01-02）攒 bronze。
+
+    day2_league：次日场联赛名——传不同值即得多分区语料（票 11 一新一旧
+    用例的前提；缺省全英超=单分区）。"""
     routes: dict[str, httpx.Response] = {}
-    for day, sid in (("2025-10-01", "90001"), ("2025-10-02", "90002")):
+    for day, sid, league in (
+        ("2025-10-01", "90001", "英超"),
+        ("2025-10-02", "90002", day2_league),
+    ):
         label = f"{int(day[-2:])}日20:00"
         routes[f"day:{day.replace('-', '')}"] = httpx.Response(
-            200, content=_day_page(sid, label=label)
+            200, content=_day_page(sid, league=league, label=label)
         )
         routes.update(_odds_routes(sid))
     routes["day:20260102"] = httpx.Response(
@@ -676,6 +684,98 @@ def _tree_digest(root: Path) -> str:
     return sha.hexdigest()
 
 
+def _partition_bytes(root: Path) -> dict[str, bytes]:
+    """逐分区字节快照（一新一旧判定的对照面）。"""
+    return {
+        p.parent.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.glob("season=*/competition=*/data.parquet"))
+    }
+
+
+def test_second_replace_failure_partial_publish_rerun_converges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 11①：发布中失败（第二分区替换）——一新一旧、水位（_meta）不
+    推进、tmp 零残留；完整重跑收敛一致（再跑字节级幂等）。
+
+    措辞如实（票 11②）：发布前失败保全=上一轮逐字节不动；发布中失败
+    可能部分更新——已替换分区保留新内容，完整重跑收敛。"""
+
+    def _rows(root: Path, snapshot: dict[str, bytes]) -> dict[str, int]:
+        return {k: pq.read_table(root / k / "data.parquet").num_rows for k in snapshot}
+
+    store, _ = _collect_bronze(tmp_path, day2_league="西甲")
+    root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET
+    try:
+        srct_odds.build_odds_change_events(store)
+        baseline = _partition_bytes(root)
+        baseline_rows = _rows(root, baseline)
+        meta_before = json.loads((root / "_meta.json").read_text())
+        assert len(baseline) >= 2  # 多分区：二段失败可复现的前提
+
+        # 追加 90001 的亚盘信封（全量行集+新行、更晚 fetched_at——选轨
+        # 后行胜出，须整体携旧行）→ 重跑时其分区输出必变（区分新旧内容）
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.HANDICAP_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.HANDICAP_DATASET,
+                    "sid": "90001",
+                    "fetched_at": "2026-09-25T01:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.HANDICAP_DATASET],
+                    "raw_sha": "f" * 64,
+                    "payload": {
+                        "rows": [
+                            *_HDP_ROWS,
+                            _hdp_row(
+                                None, None, "0.70", "半球", "0.98", "10-01 08:00", "即"
+                            ),
+                        ]
+                    },
+                }
+            ],
+        )
+
+        calls = {"n": 0}
+        real_replace = Path.replace
+
+        def _fail_second_replace(self: Path, target: str | Path) -> Path:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("injected:second-replace")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _fail_second_replace)
+        with pytest.raises(RuntimeError, match="second-replace"):
+            srct_odds.build_odds_change_events(store)
+        monkeypatch.undo()
+
+        partial = _partition_bytes(root)
+        changed = [k for k, v in partial.items() if v != baseline[k]]
+        assert len(changed) == 1  # 一新一旧：恰首替换分区新，其余旧
+        assert not list(root.glob("season=*/competition=*/*.tmp"))  # tmp 自清
+        meta_after = json.loads((root / "_meta.json").read_text())
+        assert meta_after == meta_before  # 水位不推进（失败不落 _meta）
+
+        # 完整重跑收敛：新内容落地（变更分区行数 > 基线），再跑字节级幂等
+        srct_odds.build_odds_change_events(store)
+        converged = _partition_bytes(root)
+        converged_rows = _rows(root, converged)
+        assert converged_rows[changed[0]] > baseline_rows[changed[0]]
+        for k in converged:  # 未追加行的分区与基线逐字节一致（选择性更新）
+            if k != changed[0]:
+                assert converged[k] == baseline[k]
+        srct_odds.build_odds_change_events(store)
+        assert _partition_bytes(root) == converged  # 收敛后再跑字节级一致
+        final_meta = json.loads((root / "_meta.json").read_text())
+        assert final_meta != meta_before  # 成功重跑水位推进（内容面）
+        assert final_meta["events_ah"] > meta_before["events_ah"]  # 追加行入账
+    finally:
+        store.close()
+
+
 def test_cli_srct_odds_payload(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -859,13 +959,17 @@ def _tree_layout(root: Path) -> list[str]:
 def test_failed_full_build_keeps_previous_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    """全量构建任一阶段失败:上一轮已发布分区逐字节不动,零 tmp/空目录残留。
+    """全量构建**发布前**失败:上一轮已发布分区逐字节不动,零 tmp/空目录残留。
 
     票 01(boundary-hardening,审阅 P1-1):失败路径只弃本轮——不冲正式
     文件、不清理,否则空/残缺 writer 集会被 prune 当陈旧清掉上轮数据。
     emit/writer_ctor/commit_close/replace 四点配 chunk_rows=2,保证失败
     前已有分区 flush 出 writer+tmp,钉住 abort 的清理核(首场即炸的空
     writer 集是结构性 no-op,断言会空转)。
+
+    措辞边界(票 11②):replace 阶段此处钉的是**首次替换即失败**=发布前;
+    发布中失败(部分分区已替换)可能一新一旧,见
+    test_second_replace_failure_partial_publish_rerun_converges。
     """
     store, _ = _collect_bronze(tmp_path)
     root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET

@@ -129,6 +129,87 @@ def test_ingest_raw_overwrite_updates_ledger(tmp_path: Path) -> None:
         store.close()
 
 
+def test_ingest_raw_ledger_busy_leaves_official_file_untouched(
+    tmp_path: Path,
+) -> None:
+    """票 11③：checkpoint 锁竞争在改正式文件**之前**失败——BEGIN IMMEDIATE
+    先于 replace 取写事务，busy 时官方字节零触碰（旧序 replace 先行=文件
+    新/台账旧）；锁让位后重写一次即收敛。"""
+    import hashlib
+    import sqlite3 as sq
+
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store.ingest_raw("srct", "bfdata", "k1", b"body-one")
+        official = store.raw_path("srct", "bfdata", "k1")
+        before = official.read_bytes()
+        # 外部连接持 checkpoint 写事务不提交 → 本进程 BEGIN IMMEDIATE
+        # 让位；store 侧换短 timeout 连接复现 busy（默认 5s 不等满）
+        holder = sq.connect(store.checkpoint_path, timeout=0.05)
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute(
+            "INSERT INTO raw_artifacts (provider, dataset, key, sha256, path,"
+            " byte_size, fetched_at) VALUES ('x','x','hold','h','p',0,'t')"
+        )
+        store._conn.close()  # type: ignore[union-attr]
+        store._conn = sq.connect(store.checkpoint_path, timeout=0.05)  # type: ignore[assignment]
+        store._conn.row_factory = sq.Row  # type: ignore[union-attr]
+        try:
+            with pytest.raises(sq.OperationalError, match="locked"):
+                store.ingest_raw("srct", "bfdata", "k1", b"body-two")
+            # 官方文件零触碰：字节仍是旧体（票 11③ 核心断言）
+            assert official.read_bytes() == before
+            assert not list(official.parent.glob("*.part"))  # tmp 失败自清
+        finally:
+            holder.rollback()
+            holder.close()
+        # 锁让位后重写：文件+台账同新体（收敛）
+        store.ingest_raw("srct", "bfdata", "k1", b"body-two")
+        assert store.read_raw("srct", "bfdata", "k1") == b"body-two"
+        assert (
+            store.raw_sha("srct", "bfdata", "k1")
+            == hashlib.sha256(b"body-two").hexdigest()
+        )
+    finally:
+        store.close()
+
+
+def test_ingest_raw_crash_window_converges_on_rewrite(tmp_path: Path) -> None:
+    """票 11③ 后置窗口：replace 后 commit 前失败（进程崩溃形态）——文件
+    新/台账旧 sha，verify_raw 如实报腐化；同键重写一次即收敛（不回滚
+    文件）。"""
+    import hashlib
+
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store.ingest_raw("srct", "bfdata", "k1", b"body-one")
+        store._checkpoint()  # 台账就绪（首建表后路径不变）
+        real_replace = Path.replace
+
+        def _crash_after_replace(self: Path, target: str | Path) -> Path:
+            result = real_replace(self, target)
+            if self.name.endswith(".part") and "k1" in str(target):
+                raise RuntimeError("injected: crash after replace")
+            return result
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(Path, "replace", _crash_after_replace)
+            with pytest.raises(RuntimeError, match="crash after replace"):
+                store.ingest_raw("srct", "bfdata", "k1", b"body-two")
+        # 文件已新体、台账仍旧 sha → 对账如实报腐化（诚实缺，不冒充一致）
+        assert store.read_raw("srct", "bfdata", "k1") == b"body-two"
+        assert not store.verify_raw("srct", "bfdata", "k1")
+        # 同键重写一次：文件+台账收敛，对账恢复
+        store.ingest_raw("srct", "bfdata", "k1", b"body-two")
+        assert store.verify_raw("srct", "bfdata", "k1")
+        assert (
+            store.raw_sha("srct", "bfdata", "k1")
+            == hashlib.sha256(b"body-two").hexdigest()
+        )
+    finally:
+        store.close()
+
+
 # ---- remat 锁原子性（boundary-hardening 票 02，P1-2） ----
 
 
