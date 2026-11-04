@@ -48,7 +48,7 @@
           "system"
         ],
         "summary": "Readiness probe",
-        "description": "Report whether the service can accept traffic.",
+        "description": "Report whether the service can accept traffic（票 10④）。\n\n轻量检查：业务库存在可读 + schema 版本 == 部署迁移链末版（低/高\n都不可服务）。不做 corpus 扫描/研究库/数据新鲜度——那由晨检与页面\n降级表达。",
         "operationId": "readiness_check_readyz_get",
         "responses": {
           "200": {
@@ -64,6 +64,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "业务库缺失/不可读或 schema 版本与部署不一致"
           }
         }
       }

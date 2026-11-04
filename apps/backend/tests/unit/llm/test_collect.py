@@ -237,6 +237,45 @@ def test_intel_collected_at_normalized_on_write(db: sqlite3.Connection) -> None:
         (fixture_id,),
     ).fetchone()
     assert str(row["collected_at"]) == "2026-09-19T22:00:00+00:00"
+
+
+def test_intel_collected_at_offset_normalized_to_utc(db: sqlite3.Connection) -> None:
+    """票 10②：带偏移采集时点换算 UTC 落库（原 isoformat 保留偏移，实测
+    13:00Z 截止时 16:30Z 的 `12:30-04:00` 被纳入）；naive 视为 UTC。"""
+
+    fixture_id = _seed_fixture(db, sport_key="soccer_epl", home="阿森纳", away="切尔西")
+    insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="form",
+            text="带偏移",
+            source="t",
+            collected_at="2026-09-19T12:30:00-04:00",
+            collector="t",
+            raw_payload={"i": 2},
+        ),
+    )
+    insert_intel_observation(
+        db,
+        fixture_id,
+        IntelDraft(
+            kind="form",
+            text="naive",
+            source="t",
+            collected_at="2026-09-19T11:00:00",
+            collector="t",
+            raw_payload={"i": 3},
+        ),
+    )
+    rows = intel_for_fixture(db, fixture_id)
+    assert [str(r["collected_at"]) for r in rows] == [
+        "2026-09-19T11:00:00+00:00",  # naive → UTC 原值
+        "2026-09-19T16:30:00+00:00",  # -04:00 换算 UTC
+    ]
+    # 反例钉死：13:00Z 截止下，换算前的 12:30-04:00（实 16:30Z）被正确排除
+    visible = intel_for_fixture(db, fixture_id, as_of="2026-09-19T13:00:00+00:00")
+    assert [str(r["text"]) for r in visible] == ["naive"]
     with pytest.raises(ValueError, match="2026-09-19"):
         insert_intel_observation(
             db,

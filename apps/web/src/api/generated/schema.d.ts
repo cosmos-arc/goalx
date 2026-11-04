@@ -33,7 +33,11 @@ export interface paths {
         };
         /**
          * Readiness probe
-         * @description Report whether the service can accept traffic.
+         * @description Report whether the service can accept traffic（票 10④）。
+         *
+         *     轻量检查：业务库存在可读 + schema 版本 == 部署迁移链末版（低/高
+         *     都不可服务）。不做 corpus 扫描/研究库/数据新鲜度——那由晨检与页面
+         *     降级表达。
          */
         get: operations["readiness_check_readyz_get"];
         put?: never;
@@ -3000,6 +3004,13 @@ export interface operations {
                         [key: string]: string;
                     };
                 };
+            };
+            /** @description 业务库缺失/不可读或 schema 版本与部署不一致 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

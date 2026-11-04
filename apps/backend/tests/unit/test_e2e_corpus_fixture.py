@@ -164,15 +164,18 @@ def test_isolated_db_guard(tmp_path: Path) -> None:
 
 
 def test_require_isolated_paths_guard(tmp_path: Path) -> None:
-    """裸跑守卫:缺省 db_path/corpus_root(主库/真实语料树)拒绝,显式隔离路径放行。"""
+    """裸跑守卫:缺省 db_path/corpus_root(主库/真实语料树)拒绝,显式隔离路径放行。
+
+    构造一律 model_construct（跳过 env/.env，纯字段缺省）——与守卫自身
+    基线同法；conftest 的测试隔离 env 钉（票 10①）不参与本判定。"""
     from goalx_backend.config import Settings
 
     with pytest.raises(RuntimeError, match="db_path"):
-        e2e_corpus.require_isolated_paths(Settings(_env_file=None))
-    only_db = Settings(_env_file=None, db_path=tmp_path / "iso.db")  # corpus_root 缺省
+        e2e_corpus.require_isolated_paths(Settings.model_construct())
+    only_db = Settings.model_construct(db_path=tmp_path / "iso.db")  # corpus_root 缺省
     with pytest.raises(RuntimeError, match="corpus_root"):
         e2e_corpus.require_isolated_paths(only_db)
-    isolated = Settings(
-        _env_file=None, db_path=tmp_path / "iso.db", corpus_root=tmp_path / "tree"
+    isolated = Settings.model_construct(
+        db_path=tmp_path / "iso.db", corpus_root=tmp_path / "tree"
     )
     e2e_corpus.require_isolated_paths(isolated)  # 双显式隔离路径通过
