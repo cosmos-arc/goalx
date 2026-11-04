@@ -31,7 +31,9 @@ for _key, _sub in (
     ("GOALX_MODELS_DIR", "models"),
     ("GOALX_CORPUS_ROOT", "corpus"),
 ):
-    os.environ.setdefault(_key, str(_ISOLATION_ROOT / _sub))
+    # 硬赋值（同票 37 先例）：shell 已导出的同名 env 也钉死在隔离目录，
+    # 不静默穿透到真实库/语料树
+    os.environ[_key] = str(_ISOLATION_ROOT / _sub)
 atexit.register(shutil.rmtree, _ISOLATION_ROOT, ignore_errors=True)
 
 from goalx_backend.config import Settings

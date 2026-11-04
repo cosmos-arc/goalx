@@ -112,7 +112,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/readyz",
         tags=["system"],
         summary="Readiness probe",
-        responses={503: {"description": "业务库缺失/不可读或 schema 版本与部署不一致"}},
+        responses={
+            503: {
+                "description": "业务库缺失/不可读或 schema 版本与部署不一致",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"detail": {"type": "string"}},
+                            "required": ["detail"],
+                        }
+                    }
+                },
+            }
+        },
     )
     async def readiness_check() -> dict[str, str]:
         """

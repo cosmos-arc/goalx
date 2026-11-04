@@ -238,6 +238,20 @@ def test_intel_collected_at_normalized_on_write(db: sqlite3.Connection) -> None:
     ).fetchone()
     assert str(row["collected_at"]) == "2026-09-19T22:00:00+00:00"
 
+    with pytest.raises(ValueError, match="2026-09-19"):
+        insert_intel_observation(
+            db,
+            fixture_id,
+            IntelDraft(
+                kind="form",
+                text="非 ISO",
+                source="t",
+                collected_at="2026-09-19 晚上十点",
+                collector="t",
+                raw_payload={"i": 2},
+            ),
+        )
+
 
 def test_intel_collected_at_offset_normalized_to_utc(db: sqlite3.Connection) -> None:
     """票 10②：带偏移采集时点换算 UTC 落库（原 isoformat 保留偏移，实测
@@ -276,19 +290,6 @@ def test_intel_collected_at_offset_normalized_to_utc(db: sqlite3.Connection) -> 
     # 反例钉死：13:00Z 截止下，换算前的 12:30-04:00（实 16:30Z）被正确排除
     visible = intel_for_fixture(db, fixture_id, as_of="2026-09-19T13:00:00+00:00")
     assert [str(r["text"]) for r in visible] == ["naive"]
-    with pytest.raises(ValueError, match="2026-09-19"):
-        insert_intel_observation(
-            db,
-            fixture_id,
-            IntelDraft(
-                kind="form",
-                text="非 ISO",
-                source="t",
-                collected_at="2026-09-19 晚上十点",
-                collector="t",
-                raw_payload={"i": 2},
-            ),
-        )
 
 
 def test_match_intels_dropped(db: sqlite3.Connection) -> None:
