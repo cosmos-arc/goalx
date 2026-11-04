@@ -516,7 +516,7 @@ class CorpusStore:
                 if conn.in_transaction:
                     raise RuntimeError(
                         "ingest_raw 禁止嵌套于外层 checkpoint 事务"
-                        "（本路径 commit/rollback 自管事务边界）"
+                        + "（本路径 commit/rollback 自管事务边界）"
                     )
                 conn.execute("BEGIN IMMEDIATE")
                 tmp.replace(path)
