@@ -12,6 +12,7 @@ from typing import Any
 
 from goalx_backend.betting.snapshot import EMPTY_SNAPSHOT, BetEvSnapshot
 from goalx_backend.db import atomic, utc_now_iso
+from goalx_backend.markets import GOALS4_CODES
 from goalx_backend.models import (
     BetMode,
     LegInput,
@@ -26,6 +27,8 @@ MAX_MATERIALIZED_COMBINATIONS = 100_000
 # 任9 固定腿数（票 01 口径单源：子集展开与玩法校验共用；决策侧
 # pool_strategy 同引用）。
 PICK9_LEGS = 9
+# goals4 固定场次数（票 10：四场进球，每场主/客档各成一选）。
+GOALS4_MATCHES = 4
 
 
 class CombinationLimitExceeded(ValueError):
@@ -516,16 +519,65 @@ def pool_pick_matrix(
 
 def _validate_market_code(market_code: str) -> None:
     """票级 Market 字面量守卫：未知 Market fail-closed，不静默落到连乘口径。"""
-    if market_code not in ("pick9", "ttt14"):
-        raise ValueError(f"未知池票 Market {market_code!r}（可选 pick9/ttt14）")
+    if market_code not in ("pick9", "ttt14", "goals4"):
+        raise ValueError(f"未知池票 Market {market_code!r}（可选 pick9/ttt14/goals4）")
+
+
+def _goals4_sides(picks: list[str]) -> tuple[list[str], list[str]]:
+    """
+    goals4 一场的双侧档位（票 10）：返回 (主档升序, 客档升序)。
+
+    非法码（闭集 h0..h3/a0..a3 外）或单侧缺选 raise——组合无法成形，
+    fail-loud（死档不落库：永不命中的选择码只会物化废票）。
+    """
+    home = sorted(p for p in picks if p.startswith("h"))
+    away = sorted(p for p in picks if p.startswith("a"))
+    other = [p for p in picks if p not in GOALS4_CODES]
+    if other:
+        # 闭集校验（correctness W3）：仅前缀校验会放进 h9/ax 之类死档
+        raise ValueError(f"goals4 选择码须为档位码（h0..h3/a0..a3）: {other}")
+    if not home or not away:
+        raise ValueError("goals4 每场须主/客档各至少一选")
+    return home, away
+
+
+def goals4_selections_complete(by_match: dict[int, list[str]]) -> bool:
+    """goals4 预览完备探针（票 10）：4 场且每场双侧齐、无非法码。"""
+    if len(by_match) != GOALS4_MATCHES:
+        return False
+    try:
+        for picks in by_match.values():
+            _goals4_sides(picks)
+    except ValueError:
+        return False
+    return True
+
+
+def _count_goals4(by_match: dict[int, list[str]]) -> int:
+    """goals4 组合数：每场 |主档|×|客档| 之积（4 场固定，双侧齐才成形）。"""
+    if len(by_match) != GOALS4_MATCHES:
+        raise ValueError(
+            f"goals4 需 {GOALS4_MATCHES} 场各选主/客档（当前 {len(by_match)} 场）"
+        )
+    total = 1
+    for picks in by_match.values():
+        home, away = _goals4_sides(picks)
+        total *= len(home) * len(away)
+        if total > MAX_MATERIALIZED_COMBINATIONS:
+            raise CombinationLimitExceeded(
+                f"组合数已连乘至 {total} 超上限 {MAX_MATERIALIZED_COMBINATIONS}"
+                + f"（{len(by_match)} 场 goals4 复式）；缩小复式面后重试"
+            )
+    return total
 
 
 def count_pool_combinations(by_match: dict[int, list[str]], market_code: str) -> int:
     """
-    组合数（票 01 单源）：任9 子集积 / 14 场连乘。
+    组合数（票 01/10 单源）：任9 子集积 / 14 场连乘 / goals4 双侧积。
 
     pick9 = 全部 9 场子集 × 各子集内逐场 picks 之积；ttt14 = 整体
-    连乘。先算后拒：超 ``MAX_MATERIALIZED_COMBINATIONS`` 抛
+    连乘；goals4 = 每场 |主档|×|客档| 之积（4 场固定，双侧齐才成形）。
+    先算后拒：超 ``MAX_MATERIALIZED_COMBINATIONS`` 抛
     ``CombinationLimitExceeded``（票 07④），调用方须在写入前调用。
     """
     _validate_market_code(market_code)
@@ -533,6 +585,8 @@ def count_pool_combinations(by_match: dict[int, list[str]], market_code: str) ->
         # 空矩阵守卫：连乘口径的空积=1 会静默物化一条零腿组合（票 01）
         raise ValueError("无已选场次，组合数为 0")
     sizes = [len(picks) for picks in by_match.values()]
+    if market_code == "goals4":
+        return _count_goals4(by_match)
     if market_code == "pick9":
         if len(sizes) < PICK9_LEGS:
             raise ValueError(f"任9 需至少 {PICK9_LEGS} 场已选（当前 {len(sizes)} 场）")
@@ -565,12 +619,22 @@ def iter_pool_selections(
     by_match: dict[int, list[str]], market_code: str
 ) -> Iterator[list[dict[str, int | str]]]:
     """
-    逐组合惰性产出选择行（票 01 单源；物化与预览摘要共用同一生成序）。
+    逐组合惰性产出选择行（票 01/10 单源；物化与预览摘要共用同一生成序）。
 
-    pick9 = 逐 9 场子集内连乘；ttt14 = 全部所选场整体连乘（14 腿口径）。
+    pick9 = 逐 9 场子集内连乘；ttt14 = 全部所选场整体连乘（14 腿口径）；
+    goals4 = 每场 |主档|×|客档| 配对连乘，一组合内每场两行（主档+客档）。
     """
     _validate_market_code(market_code)
     seqs = list(by_match)
+    if market_code == "goals4":
+        sides = [_goals4_sides(by_match[s]) for s in seqs]
+        for pairs in product(*(product(h, a) for h, a in sides)):
+            yield [
+                {"match_seq": s, "selection_code": code}
+                for s, (home, away) in zip(seqs, pairs, strict=True)
+                for code in (home, away)
+            ]
+        return
     subsets: Iterator[tuple[int, ...]] = (
         combinations(seqs, PICK9_LEGS)
         if market_code == "pick9"

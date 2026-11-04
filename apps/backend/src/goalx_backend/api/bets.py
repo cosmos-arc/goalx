@@ -93,26 +93,26 @@ class PoolPickPayload(BaseModel):
 
 class PoolSlipCreate(BaseModel):
     """
-    创建池票（任9/14 场复式）；market_code 为票级 Market 口径（票 01）。
+    创建池票（任9/14 场/goals4 复式）；market_code 为票级 Market 口径（票 01/10）。
 
     market_code=pick9：组合 = 全部 9 场子集 × 各子集内逐场 picks 之积
-    （需 ≥9 场）；market_code=ttt14：整体所选场连乘（14 腿不动）。缺省
-    pick9——任9 页是唯一池票 UI；期次（ttt14 期）承载的是 14 场赛程，
-    任9 从同场程选 9 场，Market 归票不归期次。
+    （需 ≥9 场）；ttt14：整体所选场连乘（14 腿不动）；goals4：4 场固定、
+    每场主/客档各一选（复式=|主档|×|客档| 积，票 10）。缺省 pick9——
+    任9 页是默认池票 UI；期次承载赛程，Market 归票不归期次。
     """
 
     mode: BetMode
     pool_period_id: int | None = None
-    market_code: Literal["pick9", "ttt14"] = "pick9"
+    market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
     note: str | None = None
     stake_per_combination: float = Field(default=2.0, gt=0)
     picks: list[PoolPickPayload] = Field(min_length=1)
 
 
 class PoolSlipPreviewRequest(BaseModel):
-    """复式组合预览输入（票 01）：与创建同载荷减 mode/note/期次（只读）。"""
+    """复式组合预览输入（票 01/10）：与创建同载荷减 mode/note/期次（只读）。"""
 
-    market_code: Literal["pick9", "ttt14"] = "pick9"
+    market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
     stake_per_combination: float = Field(default=2.0, gt=0)
     picks: list[PoolPickPayload] = Field(min_length=1)
 
@@ -535,7 +535,7 @@ async def list_slips(db: DbDep) -> list[SlipView]:
 
 @router.post(
     "/api/v1/pool-slips/preview",
-    summary="复式组合预览(任9 9选子积/14场整体连乘): 注数/总金额/组合流摘要",
+    summary="复式组合预览(任9 9选子积/14场连乘/goals4双侧积): 注数/总金额/摘要",
     response_model=PoolSlipPreview,
     responses={
         422: {
@@ -559,7 +559,13 @@ def preview_pool_slip(payload: PoolSlipPreviewRequest, db: DbDep) -> PoolSlipPre
     by_match = bt_store.pool_pick_matrix(
         (pick.match_seq, pick.selection_code) for pick in payload.picks
     )
-    if payload.market_code == "pick9" and len(by_match) < bt_store.PICK9_LEGS:
+    incomplete = (
+        payload.market_code == "pick9" and len(by_match) < bt_store.PICK9_LEGS
+    ) or (
+        payload.market_code == "goals4"
+        and not bt_store.goals4_selections_complete(by_match)
+    )
+    if incomplete:
         return PoolSlipPreview(
             market_code=payload.market_code,
             combination_count=0,

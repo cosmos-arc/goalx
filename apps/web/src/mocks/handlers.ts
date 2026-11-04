@@ -1142,6 +1142,104 @@ export const poolPeriodDetailFixture = {
 		"概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；份额 = 第三方人气分布（公众分布代理，非官方池份额）；估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1，未建模 price impact 与分彩风险。",
 } satisfies PoolPeriodDetail;
 
+// --- 票 10：goals4 四场进球 mock 面（联合=格聚合可验） ---
+// 已知 2×2 矩阵片段（与后端 test_pool_goals4 同型）：主0=0.2/主1=0.3/主2=0.4/主3=0.1
+// 客0=0.25/客1=0.3/客2=0.35/客3=0.1；joint 格值显式钉死（h1a1=0.2 ≠ 0.3×0.3 连乘）
+const GOALS4_BANDS: Record<string, number> = {
+	h0: 0.2,
+	h1: 0.3,
+	h2: 0.4,
+	h3: 0.1,
+	a0: 0.25,
+	a1: 0.3,
+	a2: 0.35,
+	a3: 0.1,
+};
+const GOALS4_JOINT: Record<string, Record<string, number>> = {
+	h0: { a0: 0.1, a1: 0.1, a2: 0.0, a3: 0.0 },
+	h1: { a0: 0.1, a1: 0.2, a2: 0.0, a3: 0.0 },
+	h2: { a0: 0.05, a1: 0.0, a2: 0.35, a3: 0.0 },
+	h3: { a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.1 },
+};
+const goals4BandLabel = (code: string) =>
+	`${code.startsWith("h") ? "主" : "客"}${["0球", "1球", "2球", "3+球"][Number(code[1])]}`;
+
+export const goals4PeriodsFixture = [
+	{
+		period_no: "26226",
+		sales_deadline: "2026-11-06T12:30:00Z",
+		match_count: 4,
+		first_kickoff: "2026-11-06T10:00:00Z",
+		last_kickoff: "2026-11-06T14:00:00Z",
+		shares_captured_at: null,
+		state: null,
+		status: "on_sale",
+	},
+] as const satisfies readonly DeepReadonly<PoolPeriod>[];
+
+export const goals4PeriodDetailFixture = {
+	period_no: "26226",
+	pool_period_id: 41,
+	sales_deadline: "2026-11-06T12:30:00Z",
+	matches: (
+		[
+			["亚特兰大", "帕尔马"],
+			["拉齐奥", "热那亚"],
+			["都灵", "科莫"],
+			["卡利亚里", "维罗纳"],
+		] as [string, string][]
+	).map(([home, away], i) => ({
+		match_seq: i + 1,
+		source_match_id: `204244${i + 1}`,
+		league: "意甲",
+		kickoff_utc: "2026-11-06T10:00:00Z",
+		home_team: home,
+		away_team: away,
+		fixture_id: null,
+		selections: Object.entries(GOALS4_BANDS).map(([code, prob]) => ({
+			code,
+			label: goals4BandLabel(code),
+			prob,
+			prob_source: "model",
+			share: null,
+			implied_odds: null,
+			ev: null,
+		})),
+		goals4_joint: GOALS4_JOINT,
+	})),
+	state: null,
+	shares_captured_at: null,
+	caliber:
+		"四场进球每场主/客各选一档（0/1/2/3+球）；档位概率 = 模型边际，同场主客联合 = 比分矩阵格聚合（非边际连乘）；跨场独立假设沿用池票现状并披露；份额无源时估计派彩赔率与 EV 不可算。",
+} satisfies PoolPeriodDetail;
+
+/** 池票预览/创建请求体（goals4 分支消费的最小面）。 */
+type PoolSlipBody = {
+	market_code?: string;
+	stake_per_combination?: number;
+	picks: { match_seq: number; selection_code: string }[];
+};
+
+const goals4PreviewCount = (picks: PoolSlipBody["picks"]): number => {
+	const byMatch = new Map<number, Set<string>>();
+	for (const pick of picks) {
+		const set = byMatch.get(pick.match_seq) ?? new Set<string>();
+		set.add(pick.selection_code);
+		byMatch.set(pick.match_seq, set);
+	}
+	if (byMatch.size !== 4) return 0;
+	let count = 1;
+	for (const codes of byMatch.values()) {
+		const homes = [...codes].filter((c) => c.startsWith("h"));
+		const aways = [...codes].filter((c) => c.startsWith("a"));
+		if (homes.length === 0 || aways.length === 0 || homes.length + aways.length !== codes.size) {
+			return 0;
+		}
+		count *= homes.length * aways.length;
+	}
+	return count;
+};
+
 const poolSyncStatusFixture = {
 	last_run: {
 		source: "okooo.com",
@@ -1156,8 +1254,18 @@ const poolSyncStatusFixture = {
 };
 
 handlers.push(
-	http.get("*/api/v1/pool/periods", () => HttpResponse.json(poolPeriodsFixture)),
-	http.get("*/api/v1/pool/periods/:periodNo", ({ params }) => {
+	http.get("*/api/v1/pool/periods", ({ request }) =>
+		HttpResponse.json(
+			new URL(request.url).searchParams.get("market_code") === "goals4" ? goals4PeriodsFixture : poolPeriodsFixture,
+		),
+	),
+	http.get("*/api/v1/pool/periods/:periodNo", ({ params, request }) => {
+		if (new URL(request.url).searchParams.get("market_code") === "goals4") {
+			if (params["periodNo"] !== "26226") {
+				return HttpResponse.json({ detail: "period not found" }, { status: 404 });
+			}
+			return HttpResponse.json(goals4PeriodDetailFixture);
+		}
 		if (params["periodNo"] !== "26999") {
 			return HttpResponse.json({ detail: "period not found" }, { status: 404 });
 		}
@@ -1311,8 +1419,20 @@ handlers.push(
 		});
 	}),
 	http.post("*/api/v1/pool-slips/preview", async ({ request }) => {
+		const body = (await request.json()) as PoolSlipBody;
+		if (body.market_code === "goals4") {
+			// 与后端同口径（mock 只服务前端测试）：每场 |主档|×|客档| 积，4 场双齐
+			const count = goals4PreviewCount(body.picks);
+			const stake = body.stake_per_combination ?? 2;
+			return HttpResponse.json({
+				market_code: "goals4",
+				combination_count: count,
+				stake_per_combination: stake,
+				total_stake: count * stake,
+				combinations_sha256: "preview-goals4-fixture",
+			});
+		}
 		// 与后端任9 口径同型的最小实现（mock 只服务前端测试）：一场一选 → C(n,9)
-		const body = (await request.json()) as { picks: { match_seq: number }[] };
 		const n = new Set(body.picks.map((p) => p.match_seq)).size;
 		let count = 0;
 		if (n >= 9) {
@@ -1330,8 +1450,11 @@ handlers.push(
 			combinations_sha256: "preview-fixture",
 		});
 	}),
-	http.post("*/api/v1/pool-slips", () =>
-		HttpResponse.json(
+	http.post("*/api/v1/pool-slips", async ({ request }) => {
+		const body = (await request.json()) as PoolSlipBody;
+		const count = body.market_code === "goals4" ? goals4PreviewCount(body.picks) : 1;
+		const stake = body.stake_per_combination ?? 2;
+		return HttpResponse.json(
 			{
 				id: 901,
 				mode: "paper",
@@ -1341,13 +1464,13 @@ handlers.push(
 				bet_count: 0,
 				stake_total: 0,
 				profit_total: 0,
-				combination_count: 1,
-				pool_stake_total: 2,
+				combination_count: count,
+				pool_stake_total: count * stake,
 				quarantined_combinations: 0,
 			},
 			{ status: 201 },
-		),
-	),
+		);
+	}),
 );
 
 // --- 票 14：证据面（证据卡/证据链/复核/盲评） ---

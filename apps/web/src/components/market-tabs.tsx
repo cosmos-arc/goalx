@@ -1,15 +1,16 @@
 import { Link, useLocation } from "@tanstack/react-router";
 
 /**
- * 玩法切换（票 wb-03）：胜平负 / 进球 / 14场任9 三入口。
+ * 玩法切换（票 wb-03）：胜平负 / 进球 / 14场任9 / 四场进球 四入口。
  * 一级导航只放"玩法"一个入口（两级扁平基调不动）；组内切换在玩法页顶部，
- * 形态沿用页内 Tab 先例（语义 nav + aria-current）。进球已上线（票 wb-05
- * ttg/crs），14场任9 仍为占位引导态（随票 07）。
+ * 形态沿用页内 Tab 先例（语义 nav + aria-current）。进球（票 wb-05
+ * ttg/crs）、14场任9（票 43）与 goals4（票 10）均已上线。
  */
 const MARKET_ENTRIES = [
 	{ to: "/markets/had", label: "胜平负" },
 	{ to: "/markets/goals", label: "进球" },
 	{ to: "/markets/pool", label: "14场任9" },
+	{ to: "/markets/pool4", label: "四场进球" },
 ] as const;
 
 export function MarketTabs() {

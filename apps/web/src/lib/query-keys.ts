@@ -53,6 +53,21 @@ export const poolPeriodDetailKey = (periodNo?: string) =>
 	periodNo === undefined ? (["pool-period-detail"] as const) : (["pool-period-detail", periodNo] as const);
 
 /**
+ * goals4 池面键（票 10）：期次/详情按市场分键——端点同路径不同
+ * market_code，裸 periodNo 会让两玩法共享缓存互相涂抹。前缀仍落在
+ * poolPeriodsKey/poolPeriodDetailKey() 之下，池同步失效两键全覆盖。
+ */
+export const poolPeriodsKeyFor = (marketCode: string) => ["pool-periods", marketCode] as const;
+export const poolPeriodDetailKeyFor = (marketCode: string, periodNo?: string) =>
+	periodNo === undefined
+		? (["pool-period-detail", marketCode] as const)
+		: (["pool-period-detail", marketCode, periodNo] as const);
+
+/** 池票组合预览（票 10）：按市场+期次+picks 签名——同端点跨页/跨市场分键。 */
+export const poolSlipPreviewKey = (marketCode: string, periodNo: string | undefined, picksSignature: string) =>
+	["pool-slip-preview", marketCode, periodNo, picksSignature] as const;
+
+/**
  * 仓位建议：输入对象整进键（react-query 对对象做确定性结构哈希，加字段
  * 自动进键——不手抄字段清单，避免请求体加字段时两种建议静默共享缓存）。
  */

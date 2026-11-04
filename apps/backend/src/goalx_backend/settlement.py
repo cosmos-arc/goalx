@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from goalx_backend.markets import CRS_EXACT_SCORES
+from goalx_backend.markets import CRS_EXACT_SCORES, GOALS4_CODES
 
 CRS_EXACT_SET = frozenset(CRS_EXACT_SCORES)
 _POOL_WDL = {"h": "3", "d": "1", "a": "0"}
@@ -128,13 +128,31 @@ def _actual_selection(
     elif market in ("ttt14", "pick9"):
         code = _POOL_WDL[full]
     elif market == "goals4":
-        code = _crs_code(result.home_goals, result.away_goals)
+        code, note = _goals4_band_code(leg, result)
     elif market == "htft6":
         code = _hafu_code(result)
         note = None if code else "missing_half_score"
     else:
         note = f"unsupported_market:{market}"
     return code, note
+
+
+def _goals4_band_code(
+    leg: LegSpec, result: ResultFacts
+) -> tuple[str | None, str | None]:
+    """
+    goals4 池票档位码判定（票 10，correctness W4）。
+
+    池票存档位码（每场主/客各一行）——按所选侧取该侧进球档（3+ 聚尾）；
+    与 crs 精确比分码不同空间（crs 口径会对档位腿恒 miss）。闭集外码
+    不可判定不误判（构票侧已拒）。
+    """
+    sel = str(leg.selection_code)
+    if sel not in GOALS4_CODES:
+        return None, f"unsupported_selection:{sel}"
+    side = sel[0]
+    goals = result.home_goals if side == "h" else result.away_goals
+    return f"{side}{min(goals, 3)}", None
 
 
 def judge_leg(leg: LegSpec, result: ResultFacts) -> LegOutcome:

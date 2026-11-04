@@ -186,11 +186,36 @@ def test_pool_margins_reuse_views() -> None:
     wdl = matrix.pool_wdl()
     assert set(wdl) == {"3", "1", "0"}
     assert sums_to_one(wdl) == pytest.approx(1.0, abs=1e-12)
-    assert matrix.pool_margin("goals4") == matrix.crs()
+    # 票 10：goals4 边际=档位（3+ 聚尾），不再是 crs 精确比分形状
+    bands = matrix.goals4_bands()
+    assert set(bands) == {f"{side}{band}" for side in ("h", "a") for band in range(4)}
+    assert sums_to_one(bands) == pytest.approx(2.0, abs=1e-12)  # 主+客两侧各归一
+    assert matrix.pool_margin("goals4") == bands
     assert matrix.pool_margin("htft6") == matrix.hafu()
     assert matrix.pool_margin("ttt14") == wdl
     with pytest.raises(ValueError, match="未知"):
         matrix.pool_margin("nope")
+
+
+def test_goals4_joint_marginalizes_to_bands() -> None:
+    """票 10 验收②：联合（矩阵格聚合）的边缘和 == 档位边际，逐位钉死。"""
+    # rho≠0 才有 DC 相关性（rho=0 独立 Poisson 下联合==连乘恰成立——
+    # 红线的风险面正是相关性强时连乘冒充联合）
+    matrix = ScoreMatrix.from_lambdas(1.9, 0.8, rho=0.1)
+    joint = matrix.goals4_joint()
+    bands = matrix.goals4_bands()
+    for i in range(4):
+        row_sum = sum(joint[f"h{i}"][f"a{j}"] for j in range(4))
+        col_sum = sum(joint[f"h{j}"][f"a{i}"] for j in range(4))
+        assert row_sum == pytest.approx(bands[f"h{i}"], abs=1e-12)
+        assert col_sum == pytest.approx(bands[f"a{i}"], abs=1e-12)
+    assert sum(p for row in joint.values() for p in row.values()) == pytest.approx(
+        1.0, abs=1e-12
+    )
+    # 相关性在场：联合 != 边际连乘（可检出反例——路线 D 红线）。DC τ 只
+    # 修正 (0,0)/(0,1)/(1,0)/(1,1) 四格，反例格须取修正区内
+    prod = bands["h0"] * bands["a1"]
+    assert joint["h0"]["a1"] != pytest.approx(prod, abs=1e-6)
 
 
 def test_combination_probability_multiplies_independently() -> None:

@@ -216,21 +216,58 @@ class ScoreMatrix:
                         )
         return probs
 
-    # --- 池票边际（票 24：ttt14/pick9 三值；goals4/htft6 复用 crs/hafu）---
+    # --- 池票边际（票 24：ttt14/pick9 三值；goals4 档位；htft6 复用 hafu）---
 
     def pool_wdl(self) -> dict[str, float]:
         """任9/14 场单场三值边际（官方编码 3=胜 1=平 0=负）。"""
         had = self.had()
         return {_POOL_WDL[code]: prob for code, prob in had.items()}
 
+    def goals4_bands(self) -> dict[str, float]:
+        """
+        goals4 档位边际（h0..h3/a0..a3，3+ 聚尾；票 10 单源）。
+
+        由 :meth:`goals4_joint` 的行和/列和导出——"联合的边缘和==档位边际"
+        是结构不变量而非仅测试约定。报告路线 D 红线：主客档相关（同一比分
+        矩阵），连乘口径错误；同场联合一律用 :meth:`goals4_joint`。
+        """
+        joint = self.goals4_joint()
+        bands: dict[str, float] = {}
+        for home, row in joint.items():
+            bands[home] = sum(row.values())
+        for away in next(iter(joint.values())):
+            bands[away] = sum(row[away] for row in joint.values())
+        return bands
+
+    def goals4_joint(self) -> dict[str, dict[str, float]]:
+        """
+        goals4 同场联合（比分矩阵格聚合，票 10 人裁决）。
+
+        ``joint["h{i}"]["a{j}"] = P(主队 i 档 且 客队 j 档)``（16 格，3+
+        聚尾）。边缘和恒等于 :meth:`goals4_bands`（一致性测试钉死）——
+        主客档同出一张矩阵，联合 ≠ 边际连乘。
+        """
+        joint: dict[str, dict[str, float]] = {
+            f"h{i}": {f"a{j}": 0.0 for j in range(4)} for i in range(4)
+        }
+        for home_goals, row in enumerate(self.grid):
+            for away_goals, p in enumerate(row):
+                joint[f"h{min(home_goals, 3)}"][f"a{min(away_goals, 3)}"] += p
+        return joint
+
     def pool_margin(
         self, market_code: str, *, goal_line: float = 0.0
     ) -> dict[str, float]:
-        """池票玩法的单场边际分布（goals4 复用 crs、htft6 复用 hafu）。"""
+        """
+        池票玩法的单场边际分布。
+
+        goals4=档位边际（票 10：原 crs 精确比分形状与"档位边际"语义不符，
+        对齐 goals4_bands；crs 视图本身不动，另按需取用）。
+        """
         if market_code in ("ttt14", "pick9"):
             return self.pool_wdl()
         if market_code == "goals4":
-            return self.crs()
+            return self.goals4_bands()
         if market_code == "htft6":
             return self.hafu()
         if market_code == "hhad":

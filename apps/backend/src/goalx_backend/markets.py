@@ -30,3 +30,8 @@ CRS_SELECTIONS: tuple[str, ...] = (
 
 # 进球类玩法（MarketGroup 进球类；半全场暂不呈现，spec 工作台 v2）
 GOALS_MARKETS: tuple[str, ...] = ("ttg", "crs")
+
+
+# goals4（四场进球）档位码闭集（票 10 单源）：每场主/客各 0/1/2/3+ 档，
+# 3+ 聚尾。betting 构票校验与 settlement 档位判定共用——两处各自硬写会漂。
+GOALS4_CODES = frozenset(f"{side}{band}" for side in ("h", "a") for band in range(4))

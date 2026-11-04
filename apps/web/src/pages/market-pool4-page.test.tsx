@@ -1,0 +1,126 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { expect, test } from "vitest";
+import { router } from "../router";
+
+/**
+ * 票 10（report-audit-20261103）四场进球页测试：goals4 期次贯通、
+ * 8 档选择面、同场联合=矩阵格聚合展示（连乘反例钉死）、复式计数、
+ * 纸面提交闭环、生成器不放行（页面无入口）。
+ * 默认 mock：期次 26226（在售 4 场，档位/联合已知格值）。
+ */
+
+async function renderAt(path: string) {
+	await router.navigate({ to: path });
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<RouterProvider router={router} />
+		</QueryClientProvider>,
+	);
+}
+
+/** 逐场选 h1 + a1（联合格值 0.2，四场票级 = 0.2^4）。先等数据到位。 */
+async function pickDefaultPairs(user: ReturnType<typeof userEvent.setup>) {
+	await screen.findByTestId("pool4-band-1-h1");
+	for (const seq of [1, 2, 3, 4]) {
+		await user.click(screen.getByTestId(`pool4-band-${seq}-h1`));
+		await user.click(screen.getByTestId(`pool4-band-${seq}-a1`));
+	}
+}
+
+test("goals4 period loads with joint caliber and tab active", async () => {
+	await renderAt("/markets/pool4");
+
+	expect(await screen.findByRole("heading", { name: "GoalX · 四场进球" })).toBeVisible();
+	const select = await screen.findByTestId("pool4-period-select");
+	expect(select).toHaveValue("26226");
+	// 口径行 = 后端 caliber 原样（联合=格聚合非连乘披露）
+	const caliber = screen.getByTestId("pool4-caliber");
+	expect(caliber).toHaveTextContent("比分矩阵格聚合");
+	expect(caliber).toHaveTextContent("非边际连乘");
+	// 四入口 tab 且当前页点亮
+	const tabs = screen.getByTestId("market-tabs");
+	expect(within(tabs).getByRole("link", { name: "四场进球" })).toHaveAttribute("aria-current", "page");
+	expect(within(tabs).getByRole("link", { name: "14场任9" })).not.toHaveAttribute("aria-current");
+	// 4 场 8 档面 + 档位概率展示（pct 一位小数口径）
+	expect((await screen.findAllByTestId("pool4-match")).length).toBe(4);
+	expect(screen.getByTestId("pool4-band-1-h2")).toHaveTextContent("2球");
+	expect(screen.getByTestId("pool4-band-1-h2")).toHaveTextContent("40.0%");
+});
+
+test("selected pair shows matrix-aggregated joint, not marginal product", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await user.click(await screen.findByTestId("pool4-band-1-h1"));
+	await user.click(screen.getByTestId("pool4-band-1-a1"));
+	// 联合格值 h1a1=0.2（连乘口径会得 0.3×0.3=9%——格聚合钉死 20%）
+	const pairLine = await screen.findByTestId("pool4-pair-joint");
+	expect(pairLine).toHaveTextContent("h1/a1 = 20.0%");
+	expect(pairLine).toHaveTextContent("矩阵格聚合");
+});
+
+test("complete four matches unlock submit with ticket joint probability", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await pickDefaultPairs(user);
+	// 票级联合 = 0.2^4 = 0.16%（跨场独立假设披露）
+	expect((await screen.findAllByTestId("pool4-pair-joint")).length).toBe(4);
+	const count = screen.getByTestId("pool4-pick-count");
+	expect(count).toHaveTextContent("4/4");
+	await waitForText(count, "1 注");
+	expect(count).toHaveTextContent("0.2%");
+	expect(screen.getByTestId("pool4-submit-button")).toBeEnabled();
+});
+
+test("multi-band pick counts combinations and blocks single-pair advice", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await pickDefaultPairs(user);
+	await screen.findAllByTestId("pool4-pair-joint");
+	// 第 1 场主档复式（h0+h1）→ 组合数 2（mock 与后端同口径 |H|×|A| 积）
+	await user.click(screen.getByTestId("pool4-band-1-h0"));
+	const count = screen.getByTestId("pool4-pick-count");
+	await waitForText(count, "2 注");
+	expect(screen.getByTestId("pool4-submit-button")).toBeEnabled();
+	// 复式场仍显示联合命中概率（按配对求和），不出单一票级建议
+	expect(count).toHaveTextContent("跨场独立假设");
+});
+
+test("submit creates paper goals4 slip with backend-counted combinations", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await pickDefaultPairs(user);
+	await screen.findAllByTestId("pool4-pair-joint");
+	await user.click(screen.getByTestId("pool4-submit-button"));
+	const result = await screen.findByTestId("pool4-submit-result");
+	expect(result).toHaveTextContent("已建纸面池票 #901（1 注 × ¥2，合计 ¥2）");
+});
+
+test("incomplete picks keep submit disabled with honest hint", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	const button = await screen.findByTestId("pool4-submit-button");
+	expect(button).toBeDisabled();
+	// 只选主档不成配对：计数 0、按钮仍禁用
+	await user.click(await screen.findByTestId("pool4-band-1-h1"));
+	expect(screen.getByTestId("pool4-pick-count")).toHaveTextContent("0 注");
+	expect(button).toBeDisabled();
+	expect(button).toHaveTextContent("需 4 场各选主/客档");
+});
+
+/** 等到元素文本包含目标串（轮询避 flake；文本由查询回填异步更新）。 */
+async function waitForText(element: HTMLElement, text: string) {
+	await screen.findByText(
+		(_, el) => el === element && element.textContent?.includes(text) === true,
+		{},
+		{ timeout: 3000 },
+	);
+}
