@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence as qe
+from goalx_backend.data.ingest import sporttery
 from goalx_backend.data.today import HadQuoteStatus, TodayFixtureView
+from goalx_backend.models import ObservationInput
 
 
 def _row(
@@ -169,3 +174,90 @@ def test_morning_check_tolerates_missing_table(db: sqlite3.Connection) -> None:
     item = check_freshness_shadow(db)
     assert item.status == "ok"
     assert "未拍" in item.detail
+
+
+def _confirm_match() -> sporttery.ParsedMatch:
+    """票 03 复现载体：一场在售场，had 三向，源调盘时刻固定（两次同价）。"""
+    return sporttery.ParsedMatch(
+        source_match_id="m-confirm-1",
+        business_date="2026-11-05",
+        code="周四001",
+        league="英超",
+        league_all_name="英格兰超级联赛",
+        home_team="确认主队",
+        away_team="确认客队",
+        kickoff_utc="2026-11-05T19:00:00+00:00",
+        is_single=True,
+        markets=[
+            sporttery.MarketQuote(
+                market_code="had",
+                captured_at="2026-11-04T04:30:00+00:00",
+                prices={"h": 2.6, "d": 3.4, "a": 1.8},
+            )
+        ],
+        sell_status_raw="1",  # 1=在售（票 09 语义考据）
+    )
+
+
+def test_same_price_recapture_confirmation_clock(db: sqlite3.Connection) -> None:
+    """票 03（报告一案例 5）：同价重采去重保留（不落新快照行、不覆写
+    observed_at），观测钟读最近一次成功确认——16:30:10 查询 age=10s
+    （修复前 14410s=首见时刻）；查 15:00 仍只见 12:30 观测。"""
+    day = "2026-11-04"
+    match = _confirm_match()
+    obs_ids = [
+        fx_store.record_quote_observation(
+            db,
+            ObservationInput(
+                source="sporttery",
+                observed_at=f"{day}T{at}+00:00",
+                parse_version="test",
+                raw_sha256="a" * 64,
+            ),
+        )
+        for at in ("12:30:00", "16:30:00")
+    ]
+    first = sporttery.store_matches(
+        db, [match], observed_at=f"{day}T12:30:00+00:00", observation_id=obs_ids[0]
+    )
+    second = sporttery.store_matches(
+        db, [match], observed_at=f"{day}T16:30:00+00:00", observation_id=obs_ids[1]
+    )
+    assert first.snapshots == 3
+    assert second.snapshots == 0  # 同价重采不落新快照行（去重保留）
+    assert second.duplicate_snapshots == 3
+    fixture_id = int(
+        db.execute(
+            "SELECT id FROM fixtures WHERE kickoff_utc LIKE '2026-11-05%'"
+        ).fetchone()[0]
+    )
+    fresh = qe.adjudicate_had_quote(db, fixture_id, f"{day}T16:30:10+00:00")
+    assert fresh.jc_observed_at == f"{day}T16:30:00+00:00"
+    assert fresh.jc_observed_age_seconds == 10.0  # 正确值 10s
+    assert "stale_source" in fresh.reasons  # 规则钟不动：价 04:30 后未动
+    as_1500 = qe.adjudicate_had_quote(db, fixture_id, f"{day}T15:00:00+00:00")
+    assert as_1500.jc_observed_age_seconds == 9000.0  # 15:00 只见 12:30 观测
+    # 验收 4：影子"规则旧、观测新"分歧浮出该场景（分歧数不再恒 0）
+    view = _row(
+        fixture_id,
+        fresh.status,
+        fresh.reasons,
+        jc_age_seconds=fresh.jc_age_seconds,
+        jc_observed_age_seconds=fresh.jc_observed_age_seconds,
+    )
+    counts = qe.record_freshness_shadow(db, [view], day, as_of=f"{day}T16:30:10+00:00")
+    assert counts["rule_stale_observed_fresh"] == 1
+    # 幂等：同证据重解析不落重复确认行
+    sporttery.store_matches(
+        db, [match], observed_at=f"{day}T16:30:00+00:00", observation_id=obs_ids[1]
+    )
+    confirmations = db.execute(
+        "SELECT COUNT(*) AS n FROM had_quote_confirmations WHERE fixture_id = ?",
+        (fixture_id,),
+    ).fetchone()["n"]
+    assert confirmations == 2
+    # append-only 铁证（与 quote_observations/sale_statuses 同范式）
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        db.execute(
+            "DELETE FROM had_quote_confirmations WHERE fixture_id = ?", (fixture_id,)
+        )
