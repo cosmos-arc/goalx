@@ -2,10 +2,19 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
-import { basketActions, requestIdForLegs, useBasket } from "../lib/basket-store";
+import { basketActions, requestIdForLegs, useBasket, withFreshRequestIds } from "../lib/basket-store";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
 import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
-import { currentQuotes, errorText, localTime, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import {
+	betTermsLabel,
+	conflictRestoreMessage,
+	currentQuotes,
+	errorText,
+	intentConflict,
+	localTime,
+	SELECTION_LABELS,
+	TABULAR_NUMS,
+} from "../lib/ui";
 import {
 	isPickable,
 	kickoffInfo,
@@ -193,18 +202,36 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 			// singles 且 ≥2 腿 = 逐腿独立建注（同一注额），提交即票型，无静默切换
 			if (!(slipForm === "singles" && legs.length >= 2)) {
 				const bet = await post(legs);
-				setMessage(`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}）— 去投注页锁定`);
+				setMessage(
+					`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
+						`${betTermsLabel(bet)}）— 去投注页锁定`,
+				);
 				setLegs([]);
 				setBasketOpen(false);
 				invalidateBets(queryClient);
 				return;
 			}
 			const created: number[] = [];
+			const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
 			for (const [index, leg] of legs.entries()) {
 				try {
 					const bet = await post([leg]);
 					created.push(bet.id);
+					labels.push(betTermsLabel(bet));
 				} catch (error) {
+					// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、
+					// 该腿换新键留篮（改单重提不换键=双注反模式；冲突确认后才
+					// 换键），未提交腿不动；新意图待用户再点提交另建
+					const conflict = intentConflict(error);
+					if (conflict !== null) {
+						invalidateBets(queryClient);
+						setLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
+						setMessage(
+							conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
+								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
+						);
+						return;
+					}
 					const quotes = currentQuotes(error);
 					if (quotes !== null && quotes.length > 0) {
 						// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
@@ -240,12 +267,21 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 					return;
 				}
 			}
-			setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关）— 去投注页锁定`);
+			setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`);
 			setLegs([]);
 			setBasketOpen(false);
 			invalidateBets(queryClient);
 		},
 		onError: (error) => {
+			// 意图冲突（票 09，整注路径）：同键原提交其实已成功——恢复原结果、
+			// 腿换新键留篮，新意图待用户再点提交另建（不静默清篮冒充成功）
+			const conflict = intentConflict(error);
+			if (conflict !== null) {
+				invalidateBets(queryClient);
+				setLegs(withFreshRequestIds(legs));
+				setMessage(conflictRestoreMessage("", conflict));
+				return;
+			}
 			// 价变（票 04 裁决①）：清篮+刷新场次列表（新价随查询回到页面），
 			// 用户按新价重新选注——旧价不经确认直进成绩的红线在服务器侧
 			const quotes = currentQuotes(error);

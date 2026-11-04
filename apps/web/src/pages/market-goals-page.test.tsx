@@ -149,7 +149,7 @@ test("apply combo loads legs into the in-page basket; each leg submits as an ind
 	expect(drawerLegs[0]).toHaveTextContent("总进球 2");
 
 	await user.click(screen.getByTestId("goals-basket-submit"));
-	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议");
+	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议（纸面 ¥100.08）");
 	expect(captured.bodies).toHaveLength(1);
 	expect(captured.bodies[0]).toMatchObject({
 		mode: "paper",
@@ -201,7 +201,7 @@ test("basket drawer submits multiple singles and surfaces server rejection", asy
 	await user.selectOptions(screen.getByTestId("goals-basket-mode"), "live");
 	await user.click(screen.getByTestId("goals-basket-submit"));
 
-	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议");
+	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议（纸面 ¥100.08）");
 	expect(captured.bodies[0]).toMatchObject({ mode: "live", stake: 20, strategy_version: "goals-v1" });
 
 	// 服务器拒绝 = 唯一权威：400 detail 透出（票 06 逐腿语义：失败腿留篮可重试）
@@ -218,6 +218,80 @@ test("basket drawer submits multiple singles and surfaces server rejection", asy
 	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3");
 	await user.click(screen.getByText("继续浏览"));
 	await waitFor(() => expect(screen.queryByTestId("goals-basket-stake")).not.toBeInTheDocument());
+});
+
+test("票 09：意图冲突恢复原结果，该腿换新键留篮可另建", async () => {
+	const user = userEvent.setup();
+	await renderAt("/markets/goals");
+	await screen.findByTestId("goals-card-2");
+	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
+	await user.click(screen.getByTestId("goals-basket-open"));
+
+	const keys: string[] = [];
+	let conflictOnce = true;
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			const body = (await request.json()) as { client_request_id?: string };
+			if (body.client_request_id !== undefined) {
+				keys.push(body.client_request_id);
+			}
+			if (conflictOnce) {
+				conflictOnce = false;
+				return HttpResponse.json(
+					{
+						detail: {
+							message: "client_request_id 已绑定另一提交意图",
+							existing_bet: { id: 80, mode: "paper", stake: 2 },
+						},
+					},
+					{ status: 409 },
+				);
+			}
+			return HttpResponse.json(
+				{
+					id: 81,
+					slip_id: null,
+					mode: "live",
+					market_kind: "fixed",
+					purchased: false,
+					stake: 100.08,
+					actual_stake: null,
+					strategy_version: null,
+					placed_at: null,
+					locked_at: null,
+					created_at: "2026-11-04T10:00:00+00:00",
+					status: "open",
+					payout: null,
+					profit: null,
+					settled_at: null,
+					legs: [
+						{
+							fixture_id: 2,
+							market_code: "ttg",
+							selection_code: "2",
+							locked_odds: 4.5,
+							actual_odds: null,
+							goal_line: null,
+						},
+					],
+					review: null,
+				},
+				{ status: 201 },
+			);
+		}),
+	);
+	await user.click(screen.getByTestId("goals-basket-submit"));
+	const message = await screen.findByTestId("goals-market-message");
+	expect(message).toHaveTextContent("第 1 笔（周六002 2）原提交其实已成功：#80（纸面 ¥2）——已恢复原结果");
+	expect(message).toHaveTextContent("本次新条款未建立");
+	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3"); // 腿留篮（换新键）
+
+	// 再点提交：换新键 → 按新意图另建（消息展示服务器口径）
+	await user.click(screen.getByTestId("goals-basket-submit"));
+	expect(await screen.findByTestId("goals-market-message")).toHaveTextContent("已建 1 条单关建议（真金 ¥100.08）");
+	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("0/3");
+	expect(keys).toHaveLength(2);
+	expect(keys[1]).not.toBe(keys[0]); // 冲突确认后才换键
 });
 
 test("shows the honest empty combo when no positive EV exists", async () => {

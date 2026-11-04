@@ -272,7 +272,7 @@ export interface paths {
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
         /**
-         * 建注(注级建议; 校验 had 资格+纸面价绑定; 同 client_request_id 重放回带)
+         * 建注(注级建议; 校验 had 资格+纸面价绑定; 同键同意图回带/异意图409)
          * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
          *
          *     纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
@@ -280,9 +280,12 @@ export interface paths {
          *     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为
          *     manual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。
          *
-         *     幂等(票 06)：client_request_id 同键重复提交回带既有注(201 同体)，
-         *     不落双行——批量逐腿提交的重试安全网。重放在资格/价绑校验**之前**
-         *     短路：原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
+         *     幂等(票 06/09)：client_request_id 同键重复提交——同意图回带既有注
+         *     (201 同体)不落双行；异意图(改金额/模式/选注)409 带原注摘要，不静默
+         *     吞改。意图指纹=提交载荷业务字段规范形哈希(建注时一次落库)，比对
+         *     对象是不可变原始提交，不读锁票重绑后的行。存量无指纹行(v37 期)
+         *     无可比对 → 维持旧回带(降级)。重放在资格/价绑校验**之前**短路：
+         *     原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
          */
         post: operations["create_bet_api_v1_bets_post"];
         delete?: never;
@@ -3389,26 +3392,36 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description 纸面价与服务器当前有效报价不一致(返回新价; 按 server_odds 重提,或 allow_manual_price 走研究假设) */
+            /** @description 纸面价与服务器当前有效报价不一致(返回新价; 按 server_odds 重提,或 allow_manual_price 走研究假设); 或 client_request_id 已绑定不同提交意图(返回 existing_bet 原注摘要; 换新键按新意图另建) */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        message: string;
-                        current_quotes: {
-                            /** Fixture Id */
-                            fixture_id: number;
-                            /** Selection Code */
-                            selection_code: string;
-                            /** Server Odds */
-                            server_odds: number;
-                            /** Snapshot Id */
-                            snapshot_id: number;
-                            /** Observed At */
-                            observed_at: string;
-                        }[];
+                        detail: {
+                            message: string;
+                            current_quotes: {
+                                /** Fixture Id */
+                                fixture_id: number;
+                                /** Selection Code */
+                                selection_code: string;
+                                /** Server Odds */
+                                server_odds: number;
+                                /** Snapshot Id */
+                                snapshot_id: number;
+                                /** Observed At */
+                                observed_at: string;
+                            }[];
+                        } | {
+                            message: string;
+                            existing_bet: {
+                                id: number;
+                                /** @enum {string} */
+                                mode: "paper" | "live";
+                                stake: number;
+                            };
+                        };
                     };
                 };
             };
@@ -3486,19 +3499,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        message: string;
-                        current_quotes: {
-                            /** Fixture Id */
-                            fixture_id: number;
-                            /** Selection Code */
-                            selection_code: string;
-                            /** Server Odds */
-                            server_odds: number;
-                            /** Snapshot Id */
-                            snapshot_id: number;
-                            /** Observed At */
-                            observed_at: string;
-                        }[];
+                        detail: {
+                            message: string;
+                            current_quotes: {
+                                /** Fixture Id */
+                                fixture_id: number;
+                                /** Selection Code */
+                                selection_code: string;
+                                /** Server Odds */
+                                server_odds: number;
+                                /** Snapshot Id */
+                                snapshot_id: number;
+                                /** Observed At */
+                                observed_at: string;
+                            }[];
+                        };
                     };
                 };
             };

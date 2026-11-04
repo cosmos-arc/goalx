@@ -1999,6 +1999,19 @@ def _apply_v40(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_v41(conn: sqlite3.Connection) -> None:
+    """
+    v41（report-audit-20261104 票 09）：bets 增 intent_fingerprint。
+
+    提交意图规范化指纹（mode/stake/fixture/selection/market 哈希，人裁决
+    2026-11-04）——同 client_request_id 重放时比对：同意图回带既有注，
+    异意图 409 不静默吞改。NULL=未带键/存量行（v37 期旧行），重放走
+    旧回带（无指纹可比对的降级）。建注时一次写入，锁票重绑不改值。
+    """
+    if not _column_exists(conn, "bets", "intent_fingerprint"):
+        conn.execute("ALTER TABLE bets ADD COLUMN intent_fingerprint TEXT")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2040,6 +2053,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (38, _apply_v38),
     (39, _apply_v39),
     (40, _apply_v40),
+    (41, _apply_v41),
 )
 
 

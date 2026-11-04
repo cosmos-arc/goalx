@@ -78,6 +78,46 @@ export function currentQuotes(error: unknown): CurrentQuote[] | null {
 
 import type { CurrentQuote } from "../api/goalx";
 
+/** 建注 409 的原注摘要（票 09 意图冲突载荷）；非该形态返回 null。 */
+export type ExistingBetSummary = { id: number; mode: "paper" | "live"; stake: number };
+
+export function intentConflict(error: unknown): ExistingBetSummary | null {
+	if (typeof error !== "object" || error === null || !("detail" in error)) {
+		return null;
+	}
+	const detail = (error as { detail: unknown }).detail;
+	if (typeof detail !== "object" || detail === null || !("existing_bet" in detail)) {
+		return null;
+	}
+	const existing = (detail as { existing_bet: unknown }).existing_bet;
+	if (typeof existing !== "object" || existing === null) {
+		return null;
+	}
+	const { id, mode, stake } = existing as Record<string, unknown>;
+	if (typeof id !== "number" || (mode !== "paper" && mode !== "live") || typeof stake !== "number") {
+		return null;
+	}
+	return { id, mode, stake };
+}
+
+/** 服务器返回的注模式 → 中文（成功提示展示实际落库口径，票 09）。 */
+export function betModeLabel(mode: string): string {
+	return mode === "live" ? "真金" : "纸面";
+}
+
+/** 服务器返回的注条款标签（模式+金额）——成功提示/冲突摘要同款（票 09）。 */
+export function betTermsLabel(bet: { mode: string; stake: number }): string {
+	return `${betModeLabel(bet.mode)} ¥${bet.stake}`;
+}
+
+/** 意图冲突恢复消息（票 09）：had/进球三处提交路径共享同一措辞骨架。 */
+export function conflictRestoreMessage(prefix: string, conflict: ExistingBetSummary): string {
+	return (
+		`${prefix}原提交其实已成功：#${conflict.id}（${betTermsLabel(conflict)}）——已恢复原结果；` +
+		"本次新条款未建立，确认后再点提交将按新意图另建"
+	);
+}
+
 export function errorText(error: unknown): string {
 	if (typeof error === "object" && error !== null && "detail" in error) {
 		const detail = (error as { detail: unknown }).detail;

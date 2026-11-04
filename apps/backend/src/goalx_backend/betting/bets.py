@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -54,6 +55,35 @@ class BetEligibilityError(ValueError):
     """had 选择/锁定不满足服务端共享证据资格（票 36；界面禁用不替代本判定）。"""
 
 
+class IntentConflictError(Exception):
+    """
+    同 client_request_id 已绑定不同提交意图（票 09）。
+
+    域层重放判定（预检与 UNIQUE 竞态两路）发现既有注指纹与本次提交指纹
+    不符时抛出；HTTP 层映射 409 并以 detail() 附原注摘要。
+    """
+
+    def __init__(self, bet_id: int, mode: str, stake: float) -> None:
+        self.bet_id = bet_id
+        self.mode = mode
+        self.stake = stake
+        super().__init__(
+            f"client_request_id 已绑定另一提交意图：原注 #{bet_id}（{mode} ¥{stake}）"
+            + "已建立，本次新意图未建注——换新键另建或按原意图重提"
+        )
+
+    def detail(self) -> dict[str, object]:
+        """409 载荷（消息 + 原注摘要，恢复原结果用）。"""
+        return {
+            "message": str(self),
+            "existing_bet": {
+                "id": self.bet_id,
+                "mode": self.mode,
+                "stake": self.stake,
+            },
+        }
+
+
 class LegQuoteView(BaseModel):
     """一腿的服务器当前报价（价变 409 载荷）。"""
 
@@ -73,6 +103,45 @@ class BetDraft(BaseModel):
     strategy_version: str | None = None
     # 客户端建注幂等键（票 06）：同键重复提交不落双行（撞唯一索引回带）
     client_request_id: str | None = Field(default=None, max_length=200)
+    # 提交意图指纹（票 09）：键带则随行落库，重放比对防同键吞改
+    intent_fingerprint: str | None = None
+
+
+def intent_fingerprint(mode: BetMode, stake: float, legs: list[LegInput]) -> str:
+    """
+    提交意图规范化指纹（票 09，人裁决 2026-11-04）。
+
+    业务字段规范形（mode/stake + 逐腿 fixture/selection/market，含
+    goal_line 市场线）排序后哈希——腿序无关、不含 locked_odds（价随确认
+    重绑，非意图）与 note 等自由文本。建注时由提交载荷计算一次落库；
+    重放时重算比对，不读回绑后的行（比较对象=不可变原始提交快照）。
+    stake 归一 float（int/float 同值同哈希）；goal_line 排序键 None 在前
+    （None 与 float 不可比，correctness F1）。
+    """
+    canon = {
+        "mode": mode.value,
+        "stake": float(stake),
+        "legs": sorted(
+            (
+                {
+                    "fixture_id": leg.fixture_id,
+                    "market_code": leg.market_code,
+                    "selection_code": leg.selection_code,
+                    "goal_line": leg.goal_line,
+                }
+                for leg in legs
+            ),
+            key=lambda item: (
+                item["fixture_id"],
+                item["market_code"],
+                item["selection_code"],
+                item["goal_line"] is None,
+                item["goal_line"] or 0.0,
+            ),
+        ),
+    }
+    payload = json.dumps(canon, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ActualLegOdds(BaseModel):
@@ -223,13 +292,15 @@ def create_bet_with_legs(
     resolve_paper_price 裁定（live=live_backfill；缺省不落标签=旧行为，
     仅供既有内部调用）。
 
-    幂等（票 06）：draft.client_request_id 带键且已有同键注 → 直接回带
-    既有注 id（不落双行）；撞唯一索引的并发竞态同样回带（fail-safe）。
+    幂等（票 06/09）：draft.client_request_id 带键且已有同键注 → 意图
+    相符直接回带既有注 id（不落双行）；指纹不符（改金额/模式/选注）
+    抛 IntentConflictError——预检与撞唯一索引的并发竞态两路同比对，
+    竞态窗内不静默回旧。
     """
     if price_source is not None and price_source not in PRICE_SOURCES:
         raise ValueError(f"未知 price_source: {price_source}")
     if draft.client_request_id is not None:
-        existing = bt_store.bet_id_for_request(conn, draft.client_request_id)
+        existing = _replayable_bet_id(conn, draft)
         if existing is not None:
             return existing
     seen: set[int] = set()
@@ -252,9 +323,10 @@ def create_bet_with_legs(
                 ev_snapshot=snapshot,
                 price_source=price_source,
                 client_request_id=draft.client_request_id,
+                intent_fingerprint=draft.intent_fingerprint,
             )
         except sqlite3.IntegrityError as exc:
-            existing = _existing_for_request_race(conn, exc, draft.client_request_id)
+            existing = _existing_for_request_race(conn, exc, draft)
             if existing is None:
                 raise
             return existing
@@ -265,15 +337,40 @@ def create_bet_with_legs(
     return bet
 
 
+def _replayable_bet_id(conn: sqlite3.Connection, draft: BetDraft) -> int | None:
+    """
+    同键重放判定（票 06/09，域层）。
+
+    既有注同意图（或无指纹可比对）→ 回带 id；异意图 →
+    IntentConflictError（不静默回旧）；无既有注 → None。
+    """
+    existing_id = bt_store.bet_id_for_request(conn, draft.client_request_id or "")
+    if existing_id is None:
+        return None
+    row = bt_store.get_bet(conn, existing_id)
+    if row is None:
+        return None
+    stored = row["intent_fingerprint"]
+    if (
+        stored is not None
+        and draft.intent_fingerprint is not None
+        and stored != draft.intent_fingerprint
+    ):
+        raise IntentConflictError(int(row["id"]), str(row["mode"]), float(row["stake"]))
+    return int(row["id"])
+
+
 def _existing_for_request_race(
-    conn: sqlite3.Connection, exc: sqlite3.IntegrityError, request_id: str | None
+    conn: sqlite3.Connection, exc: sqlite3.IntegrityError, draft: BetDraft
 ) -> int | None:
     """
-    并发竞态判别（票 06）：同 client_request_id 唯一冲突 → 回带既有注 id。
+    并发竞态判别（票 06/09）：同 client_request_id 唯一冲突 → 回带既有注 id。
 
     判别 = UNIQUE 错误码 + 列名；非同键竞态（或键未带、回查落空）返回
-    None 由调用方重抛——任何其他唯一冲突照常冒出。
+    None 由调用方重抛——任何其他唯一冲突照常冒出。同键竞态与预检同一
+    指纹比对（票 09）：并发窗内异意图同样抛 IntentConflictError，不静默回旧。
     """
+    request_id = draft.client_request_id
     same_key_race = (
         request_id is not None
         and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE
@@ -281,7 +378,7 @@ def _existing_for_request_race(
     )
     if not same_key_race or request_id is None:
         return None
-    return bt_store.bet_id_for_request(conn, request_id)
+    return _replayable_bet_id(conn, draft)
 
 
 def _record_discovery_stages(

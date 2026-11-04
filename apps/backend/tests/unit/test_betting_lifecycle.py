@@ -11,7 +11,9 @@ from goalx_backend.betting.bets import (
     ActualLegOdds,
     ActualTerms,
     BetDraft,
+    IntentConflictError,
     create_bet_with_legs,
+    intent_fingerprint,
     record_purchase,
 )
 from goalx_backend.betting.settle import run_settlement
@@ -547,6 +549,77 @@ def test_same_key_race_returns_existing_bet(
     assert len(rows) == 1  # 不落双行
     assert returned == int(rows[0]["id"])  # 回带既有
     db.commit()  # 竞态处理后连接可继续正常工作（无残留失败语句）
+
+
+def test_same_key_race_intent_conflict_raises(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 09：同键异意图在竞态窗与串行预检两路都不静默回带——域层抛
+    IntentConflictError（HTTP 层映射 409）；无指纹竞态行（存量）仍回带。"""
+    _bet, fixture = make_bet(db)
+    legs = [
+        LegInput(
+            fixture_id=fixture, market_code="had", selection_code="h", locked_odds=2
+        )
+    ]
+    draft = BetDraft(
+        mode=BetMode.LIVE,
+        stake=10,
+        legs=legs,
+        client_request_id="race-key-2",
+        # 本次提交意图指纹（paper/¥2）
+        intent_fingerprint=intent_fingerprint(BetMode.PAPER, 2.0, legs),
+    )
+    raced_fp = intent_fingerprint(BetMode.LIVE, 200.0, legs)  # 既有注：live/¥200
+    original_create = bt.create_bet
+
+    def racing_create(conn: sqlite3.Connection, *args: object, **kwargs: object) -> int:
+        if not conn.execute(
+            "SELECT 1 FROM bets WHERE client_request_id = ?", ("race-key-2",)
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO bets (mode, market_kind, stake, created_at,"
+                " client_request_id, intent_fingerprint) VALUES"
+                " ('live', 'fixed', 200, '2026-11-04T00:00:00+00:00',"
+                " 'race-key-2', ?)",
+                (raced_fp,),
+            )
+        return original_create(conn, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(bt, "create_bet", racing_create)
+    # UNIQUE 竞态路：指纹不符 → IntentConflictError，不回带
+    with pytest.raises(IntentConflictError) as race_exc:
+        create_bet_with_legs(db, draft)
+    assert race_exc.value.stake == 200.0
+    # 串行预检路（既有行已在库）：同抛
+    with pytest.raises(IntentConflictError):
+        create_bet_with_legs(db, draft)
+    db.commit()
+
+
+def test_intent_fingerprint_canonicalization() -> None:
+    """票 09 correctness F1/F3：规范形哈希的健壮性——混合 goal_line 排序
+    不抛、int/float 同值同哈希、腿序无关。"""
+    leg_none = LegInput(
+        fixture_id=1, market_code="had", selection_code="h", locked_odds=2
+    )
+    leg_line = LegInput(
+        fixture_id=2,
+        market_code="had",
+        selection_code="h",
+        locked_odds=2,
+        goal_line=2.5,
+    )
+    # 混合 goal_line（None/float 并存）不抛 TypeError（F1）
+    assert intent_fingerprint(BetMode.PAPER, 2.0, [leg_none, leg_line])
+    # int/float 同值同哈希（F3：直传 int 的未来调用者不产假 409）
+    assert intent_fingerprint(BetMode.PAPER, 2, [leg_none]) == intent_fingerprint(
+        BetMode.PAPER, 2.0, [leg_none]
+    )
+    # 腿序无关（串关 A+B 与 B+A 同意图）
+    assert intent_fingerprint(BetMode.PAPER, 2.0, [leg_none, leg_line]) == (
+        intent_fingerprint(BetMode.PAPER, 2.0, [leg_line, leg_none])
+    )
 
 
 def test_other_unique_violation_still_raises(
