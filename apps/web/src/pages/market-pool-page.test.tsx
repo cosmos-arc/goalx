@@ -149,9 +149,9 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	expect(submit).toHaveTextContent("任9 需 ≥9 场");
 
 	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
-	expect(submit).toBeEnabled();
-	// 票 01：按钮注数 = 后端预览读数（异步回读后 1 注）
+	// 票 01/07：按钮注数 = 后端预览读数（异步回读后 1 注；预览新鲜才放行）
 	await waitFor(() => {
+		expect(submit).toBeEnabled();
 		expect(submit).toHaveTextContent("1 注 × ¥2");
 	});
 
@@ -191,6 +191,93 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	// 票 04：池票携带真实期次身份（详情视图 pool_period_id，替代硬编码 null）
 	expect(captured.pool_period_id).toBe(poolPeriodDetailFixture.pool_period_id);
 	expect(captured.picks?.[0]).toEqual({ match_seq: 1, selection_code: "3" });
+});
+
+test("submit gate holds while the preview for current picks is in flight (票 07)", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
+	const submit = screen.getByTestId("pool-submit");
+	// 9 场签名预览完成 → 按确认金额 1 注 ¥2 可提交
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+		expect(submit).toHaveTextContent("1 注 × ¥2");
+	});
+
+	// 加选第 10 场：新签名预览挂起（旧占位仍示 1 注）→ 提交门不放行
+	let release: (() => void) | undefined;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post("*/api/v1/pool-slips/preview", async ({ request }) => {
+			const body = (await request.json()) as { picks?: unknown[] };
+			if ((body.picks?.length ?? 0) > 9) {
+				await gate;
+			}
+			return HttpResponse.json({
+				market_code: "pick9",
+				combination_count: (body.picks?.length ?? 0) > 9 ? 10 : 1,
+				stake_per_combination: 2,
+				total_stake: (body.picks?.length ?? 0) > 9 ? 20 : 2,
+				combinations_sha256: "preview-fixture",
+			});
+		}),
+	);
+	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
+	expect(submit).toBeDisabled();
+	expect(submit).toHaveTextContent("预览更新中");
+	expect(screen.getByTestId("pool-preview-status")).toHaveTextContent("未完成前不可提交");
+
+	// 预览完成 → 按新金额 10 注 × ¥2 放行
+	release?.();
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+		expect(submit).toHaveTextContent("10 注 × ¥2");
+	});
+});
+
+test("preview failure blocks submit with an honest error until retry recovers (票 07)", async () => {
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+	await userEvent.click(screen.getByTestId("pool-prefill-recommended"));
+	const submit = screen.getByTestId("pool-submit");
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+	});
+
+	let fail = true;
+	server.use(
+		http.post("*/api/v1/pool-slips/preview", async ({ request }) => {
+			const body = (await request.json()) as { picks?: unknown[] };
+			const ten = (body.picks?.length ?? 0) > 9;
+			if (fail && ten) {
+				return HttpResponse.json({ detail: "preview down" }, { status: 500 });
+			}
+			return HttpResponse.json({
+				market_code: "pick9",
+				combination_count: ten ? 10 : 1,
+				stake_per_combination: 2,
+				total_stake: ten ? 20 : 2,
+				combinations_sha256: "preview-fixture",
+			});
+		}),
+	);
+	await userEvent.click(screen.getByTestId("pool-pick-10-h"));
+	await waitFor(() => {
+		expect(submit).toBeDisabled();
+		expect(submit).toHaveTextContent("预览失败");
+	});
+	expect(screen.getByTestId("pool-preview-status")).toHaveTextContent("旧金额不可提交");
+
+	// 重试接 refetch：恢复后按新金额放行
+	fail = false;
+	await userEvent.click(screen.getByTestId("pool-preview-status-retry"));
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+		expect(submit).toHaveTextContent("10 注 × ¥2");
+	});
 });
 
 test("evidence cards render states with honest degradation (票 14 V1)", async () => {

@@ -601,6 +601,34 @@ export const slipsFixture = [
 		pool_stake_total: 0,
 		quarantined_combinations: 0,
 	},
+	// 池票行（票 07 回读样本）：bet_count/stake_total 恒 0，组合口径才有事实
+	{
+		id: 2,
+		mode: "paper",
+		placed_at: null,
+		note: null,
+		created_at: "2026-09-18T07:00:00+00:00",
+		bet_count: 0,
+		stake_total: 0,
+		profit_total: 0,
+		combination_count: 10,
+		pool_stake_total: 20,
+		quarantined_combinations: 0,
+	},
+	// 全隔离池票（correctness F1 回归）：活口径组合 0 但隔离行在——仍按池票呈现
+	{
+		id: 3,
+		mode: "paper",
+		placed_at: null,
+		note: null,
+		created_at: "2026-09-19T07:00:00+00:00",
+		bet_count: 0,
+		stake_total: 0,
+		profit_total: 0,
+		combination_count: 0,
+		pool_stake_total: 0,
+		quarantined_combinations: 1,
+	},
 ] as const satisfies readonly DeepReadonly<Slip>[];
 
 export const drawResultsFixture = [

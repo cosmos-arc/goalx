@@ -570,23 +570,46 @@ export function BetsPage() {
 											</TableRow>
 										</TableHeader>
 										<TableBody>
-											{slips.data.map((slip) => (
-												<TableRow key={slip.id} data-testid="slip-row">
-													<TableCell className={TABULAR_NUMS}>{slip.id}</TableCell>
-													<TableCell>
-														<ModeBadge mode={slip.mode} />
-													</TableCell>
-													<TableCell className={TABULAR_NUMS}>{slip.bet_count}</TableCell>
-													<TableCell className={`${TABULAR_NUMS}`}>¥{slip.stake_total.toFixed(2)}</TableCell>
-													<TableCell className={`${TABULAR_NUMS} ${pnlClass(slip.profit_total)}`}>
-														{slip.profit_total >= 0 ? "+" : ""}
-														{slip.profit_total.toFixed(2)}
-													</TableCell>
-													<TableCell className={`${TABULAR_NUMS} text-muted-foreground`}>
-														{shortTime(slip.created_at)}
-													</TableCell>
-												</TableRow>
-											))}
+											{slips.data.map((slip) => {
+												// 池票回读（报告审计票 07 案例 4）：固定票 0 组合行，
+												// 池票 bet_count/stake_total 恒 0——注数/票金读组合口径。
+												// 判别含隔离行（全隔离池票活口径=0 但非固定票，correctness F1）
+												const isPoolSlip = slip.combination_count > 0 || slip.quarantined_combinations > 0;
+												return (
+													<TableRow key={slip.id} data-testid="slip-row">
+														<TableCell className={TABULAR_NUMS}>{slip.id}</TableCell>
+														<TableCell>
+															<ModeBadge mode={slip.mode} />
+														</TableCell>
+														<TableCell className={TABULAR_NUMS}>
+															{isPoolSlip ? slip.combination_count : slip.bet_count}
+														</TableCell>
+														<TableCell className={TABULAR_NUMS}>
+															¥{(isPoolSlip ? slip.pool_stake_total : slip.stake_total).toFixed(2)}
+														</TableCell>
+														<TableCell
+															className={
+																isPoolSlip
+																	? "whitespace-nowrap text-xs text-muted-foreground"
+																	: `${TABULAR_NUMS} whitespace-nowrap ${pnlClass(slip.profit_total)}`
+															}
+														>
+															{isPoolSlip ? (
+																// 奖金引擎未实现：默认零不是实绩，明示待结算（票 07）
+																<span data-testid="slip-pool-pending">待结算（奖金引擎未实现）</span>
+															) : (
+																<>
+																	{slip.profit_total >= 0 ? "+" : ""}
+																	{slip.profit_total.toFixed(2)}
+																</>
+															)}
+														</TableCell>
+														<TableCell className={`${TABULAR_NUMS} text-muted-foreground`}>
+															{shortTime(slip.created_at)}
+														</TableCell>
+													</TableRow>
+												);
+											})}
 										</TableBody>
 									</Table>
 								</div>
