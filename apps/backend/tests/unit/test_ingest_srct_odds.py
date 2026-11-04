@@ -700,12 +700,9 @@ def test_second_replace_failure_partial_publish_rerun_converges(
 
     措辞如实（票 11②）：发布前失败保全=上一轮逐字节不动；发布中失败
     可能部分更新——已替换分区保留新内容，完整重跑收敛。"""
-    import pyarrow.parquet as pq_read
 
     def _rows(root: Path, snapshot: dict[str, bytes]) -> dict[str, int]:
-        return {
-            k: pq_read.read_table(root / k / "data.parquet").num_rows for k in snapshot
-        }
+        return {k: pq.read_table(root / k / "data.parquet").num_rows for k in snapshot}
 
     store, _ = _collect_bronze(tmp_path, day2_league="西甲")
     root = store.root / "silver" / "srct" / srct_odds.ODDS_DATASET

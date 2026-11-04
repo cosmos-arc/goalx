@@ -510,11 +510,15 @@ class CorpusStore:
                     gzip.GzipFile(fileobj=raw_fh, mode="wb", mtime=0) as fh,
                 ):
                     fh.write(body)
-                # 台账写事务先于正式替换（票 11③）；嵌套调用方已持事务时
-                # 不再开新事务（docstring 串行前提的防御位）
+                # 台账写事务先于正式替换（票 11③）；已持外层事务=嵌套调用，
+                # commit/rollback 会波及外层——fail-fast 不静默兼容
                 conn = self._checkpoint()
-                if not conn.in_transaction:
-                    conn.execute("BEGIN IMMEDIATE")
+                if conn.in_transaction:
+                    raise RuntimeError(
+                        "ingest_raw 禁止嵌套于外层 checkpoint 事务"
+                        "（本路径 commit/rollback 自管事务边界）"
+                    )
+                conn.execute("BEGIN IMMEDIATE")
                 tmp.replace(path)
                 conn.execute(
                     """
