@@ -98,6 +98,7 @@ from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation import model_layers as mlp
 from goalx_backend.evaluation import multiline_bounds as mlb
 from goalx_backend.evaluation import news_signal as nsw
+from goalx_backend.evaluation import price_edge as pe
 from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
 from goalx_backend.evaluation.pool_replay import pool_replay_report
@@ -1034,6 +1035,57 @@ def _cmd_delay_audit(
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_price_edge_audit(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    价格存活检查点读数（票 09 预注册；双周检查点，11-13 首读）。
+
+    按预注册口径只读运行面库出报告，落语料树 reports/（JSON+MD 两视图），
+    JSON 同步 stdout。共识参考走 corpus duckdb（12 书均值+Shin，PIT
+    as-of 确认时刻）；--no-corpus 仅供无语料环境的口径冒烟（corpus 有链
+    场次全落 missing_reference，不冒充）。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    duck_con: duckdb.DuckDBPyConnection | None = None
+    if not args.no_corpus:
+        try:
+            duck_con = corpus_duckdb.connect(resolved)
+        except (duckdb.Error, OSError) as exc:
+            sys.stderr.write(f"corpus.duckdb 不可用（先跑 gold-build 建桥）: {exc}\n")
+            raise SystemExit(2) from exc
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        conn = connect(resolved.db_path, readonly=True)
+        try:
+            report = pe.build_price_edge_report(
+                conn,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                duck_con=duck_con,
+                store=store,
+            )
+        except sqlite3.OperationalError as exc:
+            # <v39 未迁移库（correctness F6）：记录面缺席=管道未部署，
+            # 干净退出给迁移提示，不裸栈
+            sys.stderr.write(f"运行面库缺记录面（先 migrate 到 v39）: {exc}\n")
+            raise SystemExit(2) from exc
+        finally:
+            conn.close()
+    finally:
+        store.close()
+        if duck_con is not None:
+            duck_con.close()
+    reports = store.root / pe.REPORTS_DIR
+    payload = {
+        **report,
+        "md_path": str(reports / f"{pe.REPORT_BASENAME}.md"),
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_repair_sale_status(
     args: argparse.Namespace, *, settings: Settings | None = None
 ) -> None:
@@ -1858,6 +1910,23 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="跳过收盘面(无语料环境口径冒烟;主指标收盘列如实置空)",
     )
+    price_edge = sub.add_parser(
+        "price-edge-audit",
+        help="价格存活检查点读数(票09;确认价EV中位数+簇bootstrap,预注册口径)",
+    )
+    price_edge.add_argument(
+        "--date-from",
+        required=True,
+        help="协议窗起始日 YYYY-MM-DD(含;累计销售日门槛自该日起算)",
+    )
+    price_edge.add_argument(
+        "--date-to", required=True, help="读数截止日 YYYY-MM-DD(含)"
+    )
+    price_edge.add_argument(
+        "--no-corpus",
+        action="store_true",
+        help="不开语料duckdb(参考仅legacy欧赔行可算;冒烟用,生产勿用)",
+    )
     sub.add_parser(
         "morning-check",
         help="09:05晨检代码化(ingest-orchestration票01/05;11项只读红绿面,任何fail退出1)",
@@ -1983,6 +2052,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-market": lambda: _cmd_srct_market(args),
         "srct-gate": lambda: _cmd_srct_gate(args),
         "delay-audit": lambda: _cmd_delay_audit(args),
+        "price-edge-audit": lambda: _cmd_price_edge_audit(args),
         "morning-check": _cmd_morning_check,
         "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),

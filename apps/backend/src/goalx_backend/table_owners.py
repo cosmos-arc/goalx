@@ -93,6 +93,7 @@ OWNERS: dict[str, set[str]] = {
         "bets",
         "bet_legs",
         "bet_slips",
+        "bet_price_timeline",
         "combinations",
         "pool_picks",
         "settlements",

@@ -57,6 +57,26 @@ L3_POSITIVE_PER_WEEK_STOP = 1.0
 
 SALE_DAY_GATE = 30  # 正式判读门槛（prereg §7）
 
+
+def count_on_sale_days(conn: sqlite3.Connection, date_from: str, date_to: str) -> int:
+    """
+    窗口内 JC 在售销售日数（票 09 价格存活协议共用口径）。
+
+    销售日定义 = 当日 sale_statuses 存在 ``on_sale`` 行的自然日（prereg
+    §7，与 _day_classes 的 sale_days_strict 同式）；姊妹协议判读门槛
+    对表共用此口径，不得各自另算。
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT substr(observed_at, 1, 10)) FROM sale_statuses
+        WHERE sale_state = 'on_sale'
+          AND substr(observed_at, 1, 10) BETWEEN ? AND ?
+        """,
+        (date_from, date_to),
+    ).fetchone()
+    return int(row[0])
+
+
 # 主指标收盘比对的身份白名单（票 03；与 betting.frozen 漂移白名单同源
 # 常量 quote_evidence.IDENTITY_COMPARABLE_CLASSES，单一来源）
 _METRIC_IDENTITY_CLASSES = qe.IDENTITY_COMPARABLE_CLASSES

@@ -1933,6 +1933,34 @@ def _apply_v38(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v39(conn: sqlite3.Connection) -> None:
+    """
+    v39（report-audit-20261103 票 09）：五价时点记录表。
+
+    纸面决策的价格存活仪器（预注册 prereg-price-edge）：每次建注/锁定/
+    回录事件自动落阶段价行——发现/决策/确认/票面四实时阶段，收盘参考
+    读数时按 PIT 从 odds_snapshots 派生（不建第二套快照）。odds NULL=
+    事件发生但价缺（诚实记缺）；UNIQUE(bet,fixture,stage) 吸收重跑与
+    幂等重放，不产生重复时间线。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bet_price_timeline (
+            id INTEGER PRIMARY KEY,
+            bet_id INTEGER NOT NULL REFERENCES bets(id),
+            fixture_id INTEGER NOT NULL,
+            selection_code TEXT NOT NULL,
+            stage TEXT NOT NULL
+                CHECK (stage IN ('discovery', 'decision', 'confirm', 'ticket')),
+            odds REAL,
+            snapshot_id INTEGER REFERENCES odds_snapshots(id),
+            recorded_at TEXT NOT NULL,
+            UNIQUE (bet_id, fixture_id, stage)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -1972,6 +2000,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (36, _apply_v36),
     (37, _apply_v37),
     (38, _apply_v38),
+    (39, _apply_v39),
 )
 
 

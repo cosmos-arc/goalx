@@ -157,7 +157,11 @@ def resolve_paper_price(
 
 
 def rebind_paper_price(
-    conn: sqlite3.Connection, legs: list[LegInput], *, allow_update: bool
+    conn: sqlite3.Connection,
+    legs: list[LegInput],
+    *,
+    allow_update: bool,
+    moment: str | None = None,
 ) -> list[LegInput]:
     """
     纸面锁定（票级回录）时的价重验（票 04 范围①"确认时"）。
@@ -166,8 +170,10 @@ def rebind_paper_price(
     raise PriceMismatchError（409 返回新价）；allow_update=True = 客户端
     已确认按服务器价落库——locked_odds 刷新为当前有效价并重绑快照身份。
     不可绑腿维持原样（锁定时点资格校验另由 validate_had_selections 把关）。
+    moment=决策时刻（票 09 五价记录传入同刻，保证 decision 阶段价与重绑
+    同一 PIT 面；缺省取当下）。
     """
-    moment = utc_now_iso()
+    moment = moment or utc_now_iso()
     mismatches: list[LegQuoteView] = []
     rebound: list[LegInput] = []
     for leg in legs:
@@ -232,7 +238,10 @@ def create_bet_with_legs(
             raise SameFixtureParlayError(f"fixture {leg.fixture_id} 重复出现在串关中")
         seen.add(leg.fixture_id)
     with atomic(conn):
-        snapshot = build_ev_snapshot(conn, draft.legs, duck_con=duck_con)
+        discovery_at = utc_now_iso()
+        snapshot = build_ev_snapshot(
+            conn, draft.legs, as_of=discovery_at, duck_con=duck_con
+        )
         try:
             bet = bt_store.create_bet(
                 conn,
@@ -245,24 +254,60 @@ def create_bet_with_legs(
                 client_request_id=draft.client_request_id,
             )
         except sqlite3.IntegrityError as exc:
-            # 并发竞态：另一请求已用同键落注——回带既有（不落双行）。
-            # 判别 = UNIQUE 错误码 + 列名（非 client_request_id 的唯一冲突照抛）
-            request_id = draft.client_request_id
-            same_key_race = (
-                request_id is not None
-                and getattr(exc, "sqlite_errorcode", None)
-                == sqlite3.SQLITE_CONSTRAINT_UNIQUE
-                and "client_request_id" in str(exc)
-            )
-            if request_id is None or not same_key_race:
-                raise
-            existing = bt_store.bet_id_for_request(conn, request_id)
+            existing = _existing_for_request_race(conn, exc, draft.client_request_id)
             if existing is None:
                 raise
             return existing
         for leg in draft.legs:
             bt_store.add_leg(conn, bet, leg)
+        if draft.mode is BetMode.PAPER:
+            _record_discovery_stages(conn, bet, draft.legs, recorded_at=discovery_at)
     return bet
+
+
+def _existing_for_request_race(
+    conn: sqlite3.Connection, exc: sqlite3.IntegrityError, request_id: str | None
+) -> int | None:
+    """
+    并发竞态判别（票 06）：同 client_request_id 唯一冲突 → 回带既有注 id。
+
+    判别 = UNIQUE 错误码 + 列名；非同键竞态（或键未带、回查落空）返回
+    None 由调用方重抛——任何其他唯一冲突照常冒出。
+    """
+    same_key_race = (
+        request_id is not None
+        and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+        and "client_request_id" in str(exc)
+    )
+    if not same_key_race or request_id is None:
+        return None
+    return bt_store.bet_id_for_request(conn, request_id)
+
+
+def _record_discovery_stages(
+    conn: sqlite3.Connection,
+    bet_id: int,
+    legs: list[LegInput],
+    *,
+    recorded_at: str,
+) -> None:
+    """
+    五价·发现价（票 09 预注册 §3）落行。
+
+    候选入篮提交时刻的承载价与建注绑定身份；manual/system 同记（记录
+    无偏，读数侧分母过滤）。live 不记。
+    """
+    for leg in legs:
+        bt_store.record_price_stage(
+            conn,
+            bet_id,
+            leg.fixture_id,
+            leg.selection_code,
+            "discovery",
+            odds=leg.locked_odds,
+            snapshot_id=leg.snapshot_id,
+            recorded_at=recorded_at,
+        )
 
 
 def validate_had_selections(
@@ -317,13 +362,40 @@ def _apply_actual_terms(
         raise ValueError(
             f"bet {bet['id']} actuals 引用了不存在的腿 fixture: {sorted(unknown_legs)}"
         )
+    if len({o.fixture_id for o in actual.leg_odds}) != len(actual.leg_odds):
+        # correctness F1：重复 fixture 两处落库口径分裂（actual_odds 后写
+        # 覆盖、时间线首写吸收）——同事件两份矛盾的账，fail-loud 拒收
+        raise ValueError(f"bet {bet['id']} actuals 存在重复腿 fixture，拒绝回录")
     bt_store.set_actual_terms(
         conn,
         int(bet["id"]),
         actual.stake,
         {o.fixture_id: o.odds for o in actual.leg_odds},
     )
+    for o in actual.leg_odds:
+        # 五价·票面价（票 09 预注册 §3）：实际条款是人工录入，无快照身份
+        # （snapshot_id 恒 NULL——诚实记缺，不虚构绑定）；recorded_at 恒
+        # 服务器时钟——placed_at 是客户端可回填字段，不作阶段时刻
+        # （correctness F3）
+        bt_store.record_price_stage(
+            conn,
+            int(bet["id"]),
+            o.fixture_id,
+            _selection_for_fixture(bet, o.fixture_id),
+            "ticket",
+            odds=o.odds,
+            snapshot_id=None,
+            recorded_at=utc_now_iso(),
+        )
     return actual.stake
+
+
+def _selection_for_fixture(bet: sqlite3.Row, fixture_id: int) -> str:
+    """一注内某 fixture 腿的 selection（actuals 校验已保证存在且唯一）。"""
+    for leg in json.loads(bet["legs"]):
+        if int(leg["fixture_id"]) == fixture_id:
+            return str(leg["selection_code"])
+    raise ValueError(f"bet {bet['id']} 无 fixture {fixture_id} 腿")
 
 
 def _load_purchasable_bets(
@@ -345,6 +417,16 @@ def _load_purchasable_bets(
     return bets
 
 
+def _leg_binding(
+    conn: sqlite3.Connection, leg: LegInput, moment: str
+) -> quote_evidence.QuoteBinding | None:
+    """该腿当前有效报价绑定（非 had / 绑不上返回 None）。"""
+    if leg.market_code != "had":
+        return None
+    binding = quote_evidence.had_quote_binding(conn, leg.fixture_id, moment)
+    return binding.get(leg.selection_code) if binding is not None else None
+
+
 def _rebind_paper_legs(
     conn: sqlite3.Connection, bets: list[sqlite3.Row], allow_price_update: bool
 ) -> None:
@@ -355,6 +437,10 @@ def _rebind_paper_legs(
     回滚）；确认则 locked_odds/snapshot_id 刷新为决策时点服务器价；
     价格一致也刷新快照身份（锁定时点才是决策时点）。手工研究假设/
     历史未分类自定价，不重验不改写。
+
+    票 09：重验同刻落 decision 阶段行（服务器重绑有效价；绑不上记
+    NULL 价——事件发生价缺）。409 未确认路径整票回滚不留时间线行
+    （未确认=未决策，预注册 §8）。
     """
     for bet in bets:
         if bet["price_source"] != PRICE_SOURCE_SYSTEM_PAPER:
@@ -369,13 +455,52 @@ def _rebind_paper_legs(
             )
             for leg in json.loads(bet["legs"])
         ]
-        rebound = rebind_paper_price(conn, legs, allow_update=allow_price_update)
+        decision_at = utc_now_iso()
+        rebound = rebind_paper_price(
+            conn, legs, allow_update=allow_price_update, moment=decision_at
+        )
         bet_id = int(bet["id"])
         for leg, new in zip(legs, rebound, strict=True):
+            binding = _leg_binding(conn, leg, decision_at)
+            bt_store.record_price_stage(
+                conn,
+                bet_id,
+                leg.fixture_id,
+                leg.selection_code,
+                "decision",
+                odds=binding.odds if binding is not None else None,
+                snapshot_id=binding.snapshot_id if binding is not None else None,
+                recorded_at=decision_at,
+            )
             if leg != new:
                 bt_store.update_leg_price_binding(
                     conn, bet_id, new.fixture_id, new.locked_odds, new.snapshot_id
                 )
+
+
+def _record_confirm_stages(
+    conn: sqlite3.Connection, bets: list[sqlite3.Row], confirm_at: str
+) -> None:
+    """
+    五价·确认价（票 09 预注册 §3）：锁票落库后按 bet_legs 终态记录。
+
+    system_paper 与重验同刻同取价，恒等是设计事实（可审计证明确认价=
+    服务器决策价）；manual/历史 NULL 承载客户端价（其 decision 行缺）。
+    须在 _rebind_paper_legs 之后调用（bet_legs 已刷新为终态）。
+    """
+    for bet in bets:
+        bet_id = int(bet["id"])
+        for leg in bt_store.legs_for_bet(conn, bet_id):
+            bt_store.record_price_stage(
+                conn,
+                bet_id,
+                int(leg["fixture_id"]),
+                str(leg["selection_code"]),
+                "confirm",
+                odds=float(leg["locked_odds"]),
+                snapshot_id=leg["snapshot_id"],
+                recorded_at=confirm_at,
+            )
 
 
 def record_purchase(
@@ -408,6 +533,7 @@ def record_purchase(
             raise ValueError(f"actuals 引用了不在本票内的 bet: {sorted(unknown)}")
         if mode is BetMode.PAPER:
             _rebind_paper_legs(conn, bets, allow_price_update)
+            _record_confirm_stages(conn, bets, confirm_at=utc_now_iso())
         slip = bt_store.create_slip(conn, mode, placed_at=at)
         bt_store.attach_bets_to_slip(conn, slip, bet_ids, at)
         for bet in bets:

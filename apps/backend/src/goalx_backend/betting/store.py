@@ -271,6 +271,84 @@ def update_leg_price_binding(
     )
 
 
+def legs_for_bet(conn: sqlite3.Connection, bet_id: int) -> list[sqlite3.Row]:
+    """一注的腿终态（票 09 confirm 阶段读源：bet_legs 当前值，按插入序）。"""
+    return conn.execute(
+        """
+        SELECT fixture_id, selection_code, locked_odds, snapshot_id
+        FROM bet_legs WHERE bet_id = ?
+        ORDER BY id
+        """,
+        (bet_id,),
+    ).fetchall()
+
+
+def record_price_stage(  # noqa: PLR0913 - 仓储原始层, 参数即列
+    conn: sqlite3.Connection,
+    bet_id: int,
+    fixture_id: int,
+    selection_code: str,
+    stage: str,
+    *,
+    odds: float | None,
+    snapshot_id: int | None,
+    recorded_at: str,
+) -> None:
+    """
+    落一行五价时点（票 09）：odds NULL=事件发生但价缺（诚实记缺）。
+
+    UNIQUE(bet, fixture, stage) INSERT OR IGNORE——重跑/幂等重放吸收，
+    不产生重复时间线（首行即事件首发生时刻，重放不覆盖）。
+    """
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO bet_price_timeline
+            (bet_id, fixture_id, selection_code, stage, odds, snapshot_id,
+             recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (bet_id, fixture_id, selection_code, stage, odds, snapshot_id, recorded_at),
+    )
+
+
+def official_paper_decision_legs(
+    conn: sqlite3.Connection, date_from: str, date_to: str
+) -> list[sqlite3.Row]:
+    """
+    正式纸面决策的腿级读数面（票 09 读数脚本的 betting 共享口径）。
+
+    分母=预注册 §2：paper 已锁（purchased）非 manual_research（历史 NULL
+    不排除），以 confirm 阶段行的 recorded_at 落窗（无时间线的存量注天然
+    不进）。discovery/confirm 两阶段价 LEFT JOIN 带出；decision/ticket 由
+    调用方按需另查（存活与 live 面协报告）。
+    """
+    return conn.execute(
+        """
+        SELECT b.id AS bet_id, b.price_source, b.placed_at, b.created_at,
+               l.fixture_id, l.market_code, l.selection_code,
+               l.locked_odds, l.snapshot_id AS leg_snapshot_id,
+               d.recorded_at AS discovery_at, d.odds AS discovery_odds,
+               d.snapshot_id AS discovery_snapshot_id,
+               c.recorded_at AS confirm_at, c.odds AS confirm_odds,
+               c.snapshot_id AS confirm_snapshot_id
+        FROM bets b
+        JOIN bet_legs l ON l.bet_id = b.id
+        LEFT JOIN bet_price_timeline d
+            ON d.bet_id = b.id AND d.fixture_id = l.fixture_id
+            AND d.selection_code = l.selection_code AND d.stage = 'discovery'
+        LEFT JOIN bet_price_timeline c
+            ON c.bet_id = b.id AND c.fixture_id = l.fixture_id
+            AND c.selection_code = l.selection_code AND c.stage = 'confirm'
+        WHERE b.mode = 'paper' AND b.purchased = 1
+          AND b.price_source IS NOT 'manual_research'
+          AND c.recorded_at IS NOT NULL
+          AND substr(c.recorded_at, 1, 10) BETWEEN ? AND ?
+        ORDER BY c.recorded_at, b.id, l.id
+        """,
+        (date_from, date_to),
+    ).fetchall()
+
+
 def add_leg(conn: sqlite3.Connection, bet_id: int, leg: LegInput) -> int:
     """Append one leg to a bet (锁定下注时赔率与让球线)。"""
     meta = (
