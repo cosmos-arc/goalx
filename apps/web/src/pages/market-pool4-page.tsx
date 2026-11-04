@@ -12,6 +12,7 @@ import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
+import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import {
 	bankrollKey,
@@ -203,6 +204,8 @@ export function MarketPool4Page() {
 		enabled: picksPayload.length > 0,
 		placeholderData: (previous) => previous,
 	});
+	// 票 07：提交门只认当前 picks 签名的预览（占位/未完成/失败不放行）
+	const previewGate = poolPreviewGate(previewQuery);
 	const comboCount = previewQuery.data?.combination_count ?? 0;
 
 	/** 每场配对面（联合概率 + 可得时的配对 EV），建议区展示。 */
@@ -487,16 +490,24 @@ export function MarketPool4Page() {
 							<button
 								type="button"
 								data-testid="pool4-submit-button"
-								disabled={!complete || submitMutation.isPending || !detail}
+								disabled={!complete || submitMutation.isPending || !detail || !previewGate.submittable}
 								className="mt-3 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
 								onClick={submitPaperSlip}
 							>
 								{submitMutation.isPending
 									? "提交中…"
-									: complete
-										? `提交纸面池票（${comboCount} 注 × ¥${STAKE_PER_COMBINATION}）`
-										: `提交（纸面，需 ${GOALS4_MATCHES} 场各选主/客档）`}
+									: !complete
+										? `提交（纸面，需 ${GOALS4_MATCHES} 场各选主/客档）`
+										: (poolPreviewBlockLabel(previewGate) ??
+											`提交纸面池票（${comboCount} 注 × ¥${STAKE_PER_COMBINATION}）`)}
 							</button>
+							{complete ? (
+								<PoolPreviewStatus
+									gate={previewGate}
+									onRetry={() => void previewQuery.refetch()}
+									testid="pool4-preview-status"
+								/>
+							) : null}
 							{submitResult ? (
 								<p className="mt-2 text-xs" data-testid="pool4-submit-result">
 									{submitResult}

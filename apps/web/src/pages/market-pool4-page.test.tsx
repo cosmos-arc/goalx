@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
+import { server } from "../mocks/server";
 import { router } from "../router";
 
 /**
@@ -98,6 +100,7 @@ test("submit creates paper goals4 slip with backend-counted combinations", async
 
 	await pickDefaultPairs(user);
 	await screen.findAllByTestId("pool4-pair-joint");
+	await waitFor(() => expect(screen.getByTestId("pool4-submit-button")).toBeEnabled());
 	await user.click(screen.getByTestId("pool4-submit-button"));
 	const result = await screen.findByTestId("pool4-submit-result");
 	expect(result).toHaveTextContent("已建纸面池票 #901（1 注 × ¥2，合计 ¥2）");
@@ -114,6 +117,52 @@ test("incomplete picks keep submit disabled with honest hint", async () => {
 	expect(screen.getByTestId("pool4-pick-count")).toHaveTextContent("0 注");
 	expect(button).toBeDisabled();
 	expect(button).toHaveTextContent("需 4 场各选主/客档");
+});
+
+test("submit gate holds until the preview for changed picks completes (票 07)", async () => {
+	await renderAt("/markets/pool4");
+	const user = userEvent.setup();
+
+	await pickDefaultPairs(user);
+	const submit = screen.getByTestId("pool4-submit-button");
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+		expect(submit).toHaveTextContent("1 注 × ¥2");
+	});
+
+	// 第 1 场主档复式（h0+h1）→ 新签名预览挂起：旧占位 1 注不可提交
+	let release: (() => void) | undefined;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post("*/api/v1/pool-slips/preview", async ({ request }) => {
+			const body = (await request.json()) as { picks?: unknown[] };
+			const multi = (body.picks?.length ?? 0) > 8;
+			if (multi) {
+				await gate;
+			}
+			return HttpResponse.json({
+				market_code: "goals4",
+				combination_count: multi ? 2 : 1,
+				stake_per_combination: 2,
+				total_stake: multi ? 4 : 2,
+				combinations_sha256: "preview-goals4-fixture",
+			});
+		}),
+	);
+	await user.click(screen.getByTestId("pool4-band-1-h0"));
+	await waitFor(() => {
+		expect(submit).toBeDisabled();
+		expect(submit).toHaveTextContent("预览更新中");
+	});
+	expect(screen.getByTestId("pool4-preview-status")).toHaveTextContent("未完成前不可提交");
+
+	release?.();
+	await waitFor(() => {
+		expect(submit).toBeEnabled();
+		expect(submit).toHaveTextContent("2 注 × ¥2");
+	});
 });
 
 /** 等到元素文本包含目标串（轮询避 flake；文本由查询回填异步更新）。 */

@@ -15,6 +15,7 @@ import { EvidenceCardSection } from "../components/evidence-card";
 import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
 import { PoolGenerator, PoolTargetPlanner } from "../components/pool-generators";
+import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
 import { bestSelection, type PoolPickEntry, PoolSlotList, selectionOf } from "../components/pool-slots";
 import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import {
@@ -22,6 +23,7 @@ import {
 	invalidatePoolViews,
 	poolPeriodDetailKey,
 	poolPeriodsKey,
+	poolSlipPreviewKey,
 	poolSyncStatusKey,
 	slipsKey,
 } from "../lib/query-keys";
@@ -117,7 +119,7 @@ export function MarketPoolPage() {
 		[picksPayload],
 	);
 	const previewQuery = useQuery({
-		queryKey: ["pool-slip-preview", activePeriod, picksSignature],
+		queryKey: poolSlipPreviewKey("pick9", activePeriod, picksSignature),
 		queryFn: () =>
 			previewPoolSlip({
 				market_code: "pick9",
@@ -127,6 +129,8 @@ export function MarketPoolPage() {
 		enabled: picksPayload.length > 0,
 		placeholderData: (previous) => previous,
 	});
+	// 票 07：提交门只认当前 picks 签名的预览（占位/未完成/失败不放行）
+	const previewGate = poolPreviewGate(previewQuery);
 	const comboCount = previewQuery.data?.combination_count ?? 0;
 	/** 三档输入：所选组合联合口径（parlayAdviceInput 正典——估计派彩赔率 Π × 联合 EV = Π(1+ev)−1）。 */
 	const adviceInput = useMemo(
@@ -413,7 +417,7 @@ export function MarketPoolPage() {
 					<button
 						type="button"
 						data-testid="pool-submit"
-						disabled={pickedEntries.length < PICK9 || submitMutation.isPending || !detail}
+						disabled={pickedEntries.length < PICK9 || submitMutation.isPending || !detail || !previewGate.submittable}
 						className="mt-3 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
 						onClick={submitPaperSlip}
 					>
@@ -421,8 +425,16 @@ export function MarketPoolPage() {
 							? "提交中…"
 							: pickedEntries.length < PICK9
 								? `提交（纸面，任9 需 ≥${PICK9} 场）`
-								: `提交纸面池票（${comboCount} 注 × ¥${STAKE_PER_COMBINATION}）`}
+								: (poolPreviewBlockLabel(previewGate) ??
+									`提交纸面池票（${comboCount} 注 × ¥${STAKE_PER_COMBINATION}）`)}
 					</button>
+					{pickedEntries.length >= PICK9 ? (
+						<PoolPreviewStatus
+							gate={previewGate}
+							onRetry={() => void previewQuery.refetch()}
+							testid="pool-preview-status"
+						/>
+					) : null}
 					{submitResult ? (
 						<p className="mt-2 text-xs" data-testid="pool-submit-result">
 							{submitResult}

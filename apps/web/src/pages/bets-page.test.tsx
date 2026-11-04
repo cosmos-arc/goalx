@@ -409,11 +409,25 @@ test("surfaces settlement errors", async () => {
 test("lists slip-level status with stake and profit totals", async () => {
 	renderBets();
 
-	const row = await screen.findByTestId("slip-row");
+	const rows = await screen.findAllByTestId("slip-row");
 	const section = screen.getByTestId("section-slips");
 	expect(section).toHaveTextContent("票级状态");
-	expect(row).toHaveTextContent("纸面");
-	expect(row).toHaveTextContent("¥100.00");
+	// 固定票行：注数/票金/盈亏读 bets 口径
+	const fixed = rows[0] as HTMLElement;
+	expect(fixed).toHaveTextContent("纸面");
+	expect(fixed).toHaveTextContent("¥100.00");
+	// 池票行（票 07 案例 4）：bet_count/stake_total 恒 0——回读组合口径
+	// 10 注 ¥20，奖金引擎未实现不把默认零当实绩
+	const pool = rows[1] as HTMLElement;
+	expect(pool).toHaveTextContent("10");
+	expect(pool).toHaveTextContent("¥20.00");
+	expect(within(pool).getByTestId("slip-pool-pending")).toHaveTextContent("待结算");
+	expect(pool).not.toHaveTextContent("+0.00");
+	// 全隔离池票（correctness F1）：活口径 0 组合但有隔离行——仍按池票待结算，
+	// 不冒充固定票把默认零当实绩
+	const quarantined = rows[2] as HTMLElement;
+	expect(within(quarantined).getByTestId("slip-pool-pending")).toHaveTextContent("待结算");
+	expect(quarantined).not.toHaveTextContent("+0.00");
 });
 
 test("shows empty states honestly when there are no bets", async () => {

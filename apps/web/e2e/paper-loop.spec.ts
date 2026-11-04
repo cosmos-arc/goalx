@@ -349,6 +349,51 @@ test("进球玩法页（票 wb-05）：模型 EV 组合 → ttg 独立单关落�
 	expect(Number(goalsBets[0]?.["n"])).toBe(1);
 });
 
+test("任九预览门与历史回读（票 07）：改选后旧金额不可提交，建票回读组合口径", async ({ page }) => {
+	await page.goto("/markets/pool");
+	await expect(page.getByTestId("pool-period-select")).toHaveValue("26999");
+	await page.getByTestId("pool-prefill-recommended").click();
+
+	// 9 场签名预览完成 → 按确认金额（1 注 ¥2）可提交
+	const submit = page.getByTestId("pool-submit");
+	await expect(submit).toBeEnabled();
+	await expect(submit).toContainText("1 注 × ¥2");
+
+	// 加选第 10 场：新签名预览挂起（路由延迟）→ 旧占位金额不可提交
+	let release: (() => void) | undefined;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route("**/api/v1/pool-slips/preview", async (route) => {
+		const body = route.request().postDataJSON() as { picks?: unknown[] };
+		if ((body.picks?.length ?? 0) === 10) {
+			await gate;
+		}
+		await route.continue();
+	});
+	await page.getByTestId("pool-pick-10-h").click();
+	await expect(submit).toBeDisabled();
+	await expect(submit).toContainText("预览更新中");
+	await expect(page.getByTestId("pool-preview-status")).toContainText("未完成前不可提交");
+
+	// 预览完成 → 按新金额 C(10,9)=10 注 × ¥2 确认建票
+	release?.();
+	await expect(submit).toBeEnabled();
+	await expect(submit).toContainText("10 注 × ¥2");
+	await submit.click();
+	const result = page.getByTestId("pool-submit-result");
+	await expect(result).toContainText("已建纸面池票");
+	await expect(result).toContainText("10 注 × ¥2，合计 ¥20");
+
+	// 历史回读（票 07 案例 4）：刷新后池票仍显示 10 注 ¥20（组合口径），
+	// 奖金引擎未实现 → 待结算，默认零不当实绩
+	await page.goto("/bets");
+	const poolRow = page.getByTestId("slip-row").filter({ hasText: "待结算" });
+	await expect(poolRow).toContainText("10");
+	await expect(poolRow).toContainText("¥20.00");
+	expect(Number(dbRows("SELECT COUNT(*) AS n FROM combinations WHERE quarantine_reason IS NULL")[0]?.["n"])).toBe(10);
+});
+
 test("票 06：选注草稿全站持久 + 一成一败重试同键不落双行", async ({ page }) => {
 	// 跨页研究两场：场次页选 001 主胜 → 胜平负页补 002 客胜（跨页构票）→ 研究页草稿仍在
 	await page.goto("/fixtures");
