@@ -834,10 +834,17 @@ def _adjudicate_jc(
     age = seconds_between(as_of, verdict.jc_source_updated_at)
     verdict.jc_age_seconds = age
     # 时钟①最近成功确认观测（票 08：影子口径的钟——stale_source 判定
-    # 仍只看 jc_age_seconds，规则零改动）
+    # 仍只看 jc_age_seconds，规则零改动）。票 03：快照行 observed_at 是
+    # 该价首见时刻（同价重采被自然键去重吸收），与确认关联表（v40）的
+    # 最近确认时刻取 max——无确认行的旧数据/直插种子回退首见口径。
     observed_times = [
         t for t in (effective_observed_at(r) for r in latest.values()) if t
     ]
+    confirmed_at = fx_store.latest_had_confirmation_asof(
+        conn, verdict.fixture_id, as_of
+    )
+    if confirmed_at is not None:
+        observed_times.append(confirmed_at)
     if observed_times:
         verdict.jc_observed_at = max(observed_times)
         verdict.jc_observed_age_seconds = seconds_between(as_of, verdict.jc_observed_at)

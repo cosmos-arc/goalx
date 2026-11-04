@@ -311,6 +311,41 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     return row_id
 
 
+def record_had_confirmation(
+    conn: sqlite3.Connection, fixture_id: int, observed_at: str, observation_id: int
+) -> None:
+    """
+    追加一条 had 报价确认观测关联（票 03；v40 表）。
+
+    每次成功观测（无论价格是否变化）都留 (observation, fixture) 关联——
+    同价重采被快照自然键去重后，本表仍是"最近一次成功确认"的证据源。
+    UNIQUE(observation_id, fixture_id) 吸收同证据重解析；observed_at 冗余
+    自观测行（as-of 单表 MAX 免 join，与 sale_statuses 同范式）。
+    """
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO had_quote_confirmations
+            (observation_id, fixture_id, observed_at, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (observation_id, fixture_id, observed_at, utc_now_iso()),
+    )
+
+
+def latest_had_confirmation_asof(
+    conn: sqlite3.Connection, fixture_id: int, as_of: str
+) -> str | None:
+    """as_of 前最近一次 had 报价成功确认的观测时刻（无行返回 None）。"""
+    row = conn.execute(
+        """
+        SELECT MAX(observed_at) AS latest FROM had_quote_confirmations
+        WHERE fixture_id = ? AND observed_at <= ?
+        """,
+        (fixture_id, as_of),
+    ).fetchone()
+    return str(row["latest"]) if row["latest"] else None
+
+
 def append_sale_status(conn: sqlite3.Connection, status: SaleStatusInput) -> int:
     """Append a sale-status observation (append-only 时序, 票 35)."""
     cur = conn.execute(

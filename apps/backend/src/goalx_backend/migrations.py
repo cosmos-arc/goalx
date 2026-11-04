@@ -1961,6 +1961,44 @@ def _apply_v39(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v40(conn: sqlite3.Connection) -> None:
+    """
+    v40（report-audit-20261104 票 03）：had 报价确认观测关联表。
+
+    快照自然键去重吸收同价重采（首见时刻留在快照行），本表按
+    (observation_id, fixture) 追加保留每次成功观测与所确认报价的关联
+    ——观测钟（jc_observed_at）读最近一次成功确认，"首次看到此价"与
+    "最近确认此价"分家。UNIQUE 吸收同证据重解析；不改快照自然键、
+    不覆写旧快照 observed_at（as-of 重放红线）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS had_quote_confirmations (
+            id INTEGER PRIMARY KEY,
+            observation_id INTEGER NOT NULL REFERENCES quote_observations(id),
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            observed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (observation_id, fixture_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_had_confirmations_lookup
+        ON had_quote_confirmations(fixture_id, observed_at)
+        """
+    )
+    for action in ("UPDATE", "DELETE"):
+        conn.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS had_quote_confirmations_no_{action.lower()}
+            BEFORE {action} ON had_quote_confirmations
+            BEGIN SELECT RAISE(ABORT, 'had_quote_confirmations is append-only'); END
+            """
+        )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2001,6 +2039,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (37, _apply_v37),
     (38, _apply_v38),
     (39, _apply_v39),
+    (40, _apply_v40),
 )
 
 

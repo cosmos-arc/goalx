@@ -10,10 +10,10 @@
 
 | 节 | 内容 |
 | --- | --- |
-| [1. 表速览](#t1) | 49 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
+| [1. 表速览](#t1) | 50 张表 × 域 × 用途 × 关键口径 × 生命周期，一张总表 |
 | [2. 硬不变量](#t2) | append-only 触发器 / 防前视红线 / 事实源层级等全局铁律 |
 | [3. 表间关系（ER）](#t3) | 主键与外键边总览（Mermaid） |
-| [4. 全列明细](#t4) | 按域分组的生成块（49 表） |
+| [4. 全列明细](#t4) | 按域分组的生成块（50 表） |
 
 <a id="t1"></a>
 ## 1. 表速览
@@ -29,6 +29,7 @@
 | `match_codes` | 官方销售编号 | 竞彩"周六001"/池期次场号；business_date=北京业务日；source_match_id=源站场次 id（一跳确定性键） | append+幂等 (kind,business_date,code) |
 | `odds_snapshots` | 报价快照 | source（sporttery / odds_api:<book>）、purpose（live_capture/closing）、observation_id→存证 | append+幂等，触发器禁改删 |
 | `quote_observations` | 原始报价观测存证（票 35） | endpoint+parse_version+raw_sha256；两次捕获可共用一次观测 | append-only |
+| `had_quote_confirmations` | had 报价确认观测关联（报告审计 2026-11-04 票 03） | (observation, fixture) 每次成功观测一行；观测钟读最近确认，同价重采去重后仍可回查 | append-only |
 | `sale_statuses` | 销售状态/单固资格时序 | 竞彩快照解析；observation_id 关联 | append |
 | `draw_results` | 开奖**唯一事实源** | upsert 可更正（必须走 revision 留痕）；void 标记在此 | upsert+revision |
 | `draw_result_revisions` | 开奖更正留痕 | previous/replacement/reason 全存 JSON | append |
@@ -97,7 +98,7 @@ as-of 纯函数重放即决策存证；EVAssessment 口径在视图与 betting �
 
 | # | 不变量 | 落点 |
 | --- | --- | --- |
-| 1 | append-only 铁证（触发器禁 UPDATE/DELETE） | odds_snapshots、forecasts、quote_observations、sale_statuses、intel_observations、draw_result_revisions、settlement_revisions、draw_sync_runs、pool_sync_runs、uniform_result_observations、draw_reconciliation_runs、understat_sync_runs |
+| 1 | append-only 铁证（触发器禁 UPDATE/DELETE） | odds_snapshots、forecasts、quote_observations、had_quote_confirmations、sale_statuses、intel_observations、draw_result_revisions、settlement_revisions、draw_sync_runs、pool_sync_runs、uniform_result_observations、draw_reconciliation_runs、understat_sync_runs |
 | 2 | 三时间口径（event/published/observed，不伪造） | odds_snapshots.observed_at/source_updated_at；understat_matches 无 published 列（源不提供） |
 | 3 | 防前视红线 | understat_matches.prior_* 只累计开球日严格早于本场的完场；Forecast as-of 读取（票 41） |
 | 4 | 事实源层级 | draw_results 唯一事实源（官方 uniform 终态导入）；源D/openfootball 仅审计对账，不落事实 |
@@ -193,6 +194,9 @@ erDiagram
         INTEGER id PK
     }
     funnel_fixture_days {
+        INTEGER id PK
+    }
+    had_quote_confirmations {
         INTEGER id PK
     }
     haircut_calibrations {
@@ -307,6 +311,8 @@ erDiagram
     fixtures }|--|| teams : home_team_id
     fixtures }|--|| competitions : competition_id
     forecasts }|--|| fixtures : fixture_id
+    had_quote_confirmations }|--|| fixtures : fixture_id
+    had_quote_confirmations }|--|| quote_observations : observation_id
     intel_observations }|--|| fixtures : fixture_id
     match_codes }|--|| fixtures : fixture_id
     odds_snapshots }|--|| selections : market_code
@@ -491,6 +497,27 @@ Pinnacle 锚（as-of observed_at）与销售态；append-only（删/结构列改
 
 append-only 触发器：`quote_observations_no_delete`、`quote_observations_no_update`
 <!-- schema-doc:END:table:quote_observations -->
+
+报告审计 2026-11-04 票 03（v40）：had 报价确认观测关联——快照自然键
+去重吸收同价重采（首见时刻留在快照行），本表按 (observation, fixture)
+追加保留每次成功观测；观测钟（jc_observed_at）读最近一次成功确认。
+UNIQUE 吸收同证据重解析；不覆写旧快照 observed_at（as-of 重放红线）。
+
+<!-- schema-doc:BEGIN:table:had_quote_confirmations -->
+#### `had_quote_confirmations`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `observation_id` | INTEGER | NOT NULL，FK→quote_observations.id |
+| `fixture_id` | INTEGER | NOT NULL，FK→fixtures.id |
+| `observed_at` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`observation_id`, `fixture_id`)`
+
+append-only 触发器：`had_quote_confirmations_no_delete`、`had_quote_confirmations_no_update`
+<!-- schema-doc:END:table:had_quote_confirmations -->
 <!-- schema-doc:BEGIN:table:sale_statuses -->
 #### `sale_statuses`
 

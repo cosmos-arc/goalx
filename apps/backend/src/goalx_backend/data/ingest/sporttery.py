@@ -479,6 +479,12 @@ def store_matches(
                         observation_id=observation_id,
                     ),
                 )
+                # 票 03：每次成功观测留确认关联（同价重采被快照去重吸收，
+                # 观测钟靠本表读"最近一次成功确认"）
+                if observation_id is not None:
+                    fx_store.record_had_confirmation(
+                        conn, fixture, observed, observation_id
+                    )
             elif quote.market_code in GOALS_MARKETS:
                 # 进球类单固（票 wb-04）：poolList 池级 single
                 _append_sale_status_once(
