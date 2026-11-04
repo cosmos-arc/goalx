@@ -19,7 +19,7 @@
 |---|---|---|---|---|---|
 | 源T 夜班采集（srct-night，恢复+补欠） | ✓ | ✓ | ✓ | — | PR#77/#178（[06087a9](https://github.com/cosmos-arc/goalx/commit/06087a9)）；补欠 fixture 89→5623；夜班台账 `srct_night_summaries`（10-28 夜 completed/39 请求/pending 0） |
 | 增量物化 srct-remat（rowid 水位+余量护栏） | ✓ | ✓ | ✓ | — | PR#177（[1c4af03](https://github.com/cosmos-arc/goalx/commit/1c4af03)）/PR#180（[7be6603](https://github.com/cosmos-arc/goalx/commit/7be6603)）；安静盒播种 2h56m；`srct_remat_state` 行在、10-27 08:15 incremental degraded=[] |
-| 同步报价账本（price_deviation_ledger） | ✓ | — | ✓ | — | PR#172（[1e54016](https://github.com/cosmos-arc/goalx/commit/1e54016)）；主库 555 行（10-20 起 23:30 sweep 日增）；A 线积累中，读数阶段未到 |
+| 同步报价账本（price_deviation_ledger） | ✓ | — | ✓ | — | PR#172（[1e54016](https://github.com/cosmos-arc/goalx/commit/1e54016)）；主库 555 行（10-20 起 23:30 sweep 日增）；A 线积累中，读数阶段未到。**注记（report-audit-20261103 收板，2026-11-04）**：旧前瞻负结果中"候选为零"部分系测量链路问题（拍点不在可购窗/候选过滤结构性零触发——延迟生存率首跑 L2=0 仪器面实证），非无信号结论；票 09 价格存活协议重开测量（五价时点+双周检查点，11-13 首读） |
 | 漏斗面（funnel + 轨二资格分层） | ✓ | — | ✓ | — | PR#181（[a05b1a8](https://github.com/cosmos-arc/goalx/commit/a05b1a8)）qualification 面；10-27 wrap 21 卡落库、10-27 起写分层字段 |
 | 冻结决策 write-once + 参考身份（v29/v31） | ✓ | — | ✓ | — | PR#167（[e8e8eaa](https://github.com/cosmos-arc/goalx/commit/e8e8eaa)）/PR#181 v31 anchor_ref+close_ref；159 行、10-27 起漂移按身份分层 |
 | 税后视图（归集计税只读面） | ✓ | ✓ | ✓ | — | PR#174（[a251de2](https://github.com/cosmos-arc/goalx/commit/a251de2)）；2026-10-28 口径核验 396 期次编号零错配/零跨期次组（本票 06）；面随 wrap 日落，奖金面至今全零未触及免征线 |
@@ -31,6 +31,10 @@
 | **陈盘信号（stale_line）** | ✓ | ✓ | **✗** | — | **同日补行：sharp 锚 `odds_api:pinnacle` 同死源**（票48 落地 9-21，源 9-25 摘除后主锚从未活过）；cid177 切换在修复板票 02。10-31 晚全部在售场 sharp_ref/drift=NULL 实证 |
 | **had 纸面下注闭环（join→quote→stake→bet）** | ✓ | — | **✗** | — | **同日补行：`bets` 表 0 行，闭环从未真实发生过**（闸门 fail-closed 全拒 + 输入断供双因）；修复板落地后首注即本行运行验收证据 |
 | 语料树（raw-first + checkpoint + silver/gold） | ✓ | ✓ | ✓ | — | PR#77 体系；12 个 raw 数据集、fixture_universe 48,952 行、_meta 新鲜（10-27T00:10Z） |
+| **五价时点记录 + 价格存活检查点（票 09）** | ✓ | — | — | — | PR#223（[091c3bc](https://github.com/cosmos-arc/goalx/commit/091c3bc)）v39 bet_price_timeline 四实时阶段钩子 + price-edge-audit CLI；预注册 docs/plans/report-audit-20261103/prereg-price-edge.md 判读规则冻结；运行验收=纸面决策流积累（11-13 首读） |
+| **新鲜度五时钟 + 300s 并行影子（票 08）** | ✓ | — | ◐ | — | PR#222（[95ca9ab 前](https://github.com/cosmos-arc/goalx)）v38 freshness_shadow 日拍挂采集流后拍点；规则红线零改动（stale_source 逐字节不动）；运行验收=读数归期（11-13 与票 09 共用） |
+| **首页无候选六桶归因（票 07）** | ✓ | — | ✓ | — | PR#221 /today/attribution 单源判定映射+晨检同源对账；随 serve 栈日渲染 |
+| **goals4 四场进球开面（票 10）** | ✓ | — | ◐ | — | PR#224（[95ca9ab](https://github.com/cosmos-arc/goalx/commit/95ca9ab)）同场联合=比分矩阵格聚合（一致性测试钉死）+/markets/pool4+构票贯通；运行验收待真实期次首笔纸面票 |
 | serve 栈 + 晨检（18 面注册 + 09:05 九项） | ✓ | — | ✓ | — | schedules.py；PR#186（[0f60040](https://github.com/cosmos-arc/goalx/commit/0f60040)）daily-capture-window 补进恢复清单，2026-10-31 12:36 重启注册 18 面（protocol-v1-window 在列，--only 日志行可证）；2026-10-28 七项全绿（见下节对账）；11-01 起第九项=纸面闭环首注观察 |
 
 ## 与 09:05 晨检七项对账（2026-10-28，建表时手跑）
