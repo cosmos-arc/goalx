@@ -26,8 +26,8 @@ def test_healthz_reports_ok(client: TestClient) -> None:
 def test_healthz_carries_runtime_fingerprint(tmp_path: Path) -> None:
     """票 06 运行隔离:/healthz 报进程加载代码的 git 身份+配置/库指纹。
 
-    自建已迁移库(共享 client fixture 不迁移库——那一路 schema=unknown
-    是正确降级,不在此断言)。
+    自建已迁移库断言 schema_version 数字面（共享 client fixture 的库是否
+    已迁移随套件执行序漂移——readyz 测试会迁移它，不在此断言那一路）。
     """
     from goalx_backend.db import connect, migrate
 
