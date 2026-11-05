@@ -1105,6 +1105,36 @@ def test_stake_money_fields_rounded_and_bounded(api_client: TestClient) -> None:
     assert deposit_rejected.status_code == 422
 
 
+def test_null_money_fields_are_422(api_client: TestClient) -> None:
+    """批B correctness F1：null/非标量金额走 422 float_type——BeforeValidator
+    里 float(None) 的裸 TypeError 不被 pydantic 转 422，曾回归成 500。"""
+    fixture_id = _fixture_id(api_client)
+    bet_null = api_client.post(
+        "/api/v1/bets", json={**_had_leg_payload(fixture_id, "h"), "stake": None}
+    )
+    assert bet_null.status_code == 422
+    slip_null = api_client.post(
+        "/api/v1/bet-slips",
+        json={
+            "bet_ids": [1],
+            "actuals": {"1": {"stake": None, "leg_odds": []}},
+        },
+    )
+    assert slip_null.status_code == 422
+    pool_null = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "stake_per_combination": None,
+            "picks": [{"match_seq": 1, "selection_code": "3"}],
+        },
+    )
+    assert pool_null.status_code == 422
+    deposit_null = api_client.post(
+        "/api/v1/bankroll/deposits", json={"amount_cny": None}
+    )
+    assert deposit_null.status_code == 422
+
+
 def test_timestamp_fields_reject_non_iso(api_client: TestClient) -> None:
     """审计批B #16：placed_at/occurred_at/published_at 收任意字符串 201 落
     TEXT——placed_at 坏值污染 decision_key 且在 clv 对账硬崩。"""

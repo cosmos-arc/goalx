@@ -16,8 +16,15 @@ from pydantic import (
 )
 
 
-def _round_cents(value: float) -> float:
-    """金额入口取整到分（失败抛 ValueError/TypeError → 422，同拒收）。"""
+def _round_cents(value: object) -> object:
+    """
+    金额入口取整到分；非标量原样放行，交核心 float 校验拒收。
+
+    pydantic 只把校验器里的 ValueError 转 422——float(None) 的裸
+    TypeError 会穿透成 500（correctness F1：null 金额回归实测）。
+    """
+    if not isinstance(value, (int, float, str)):
+        return value
     return round(float(value), 2)
 
 
