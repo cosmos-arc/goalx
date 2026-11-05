@@ -928,7 +928,7 @@ def test_slip_record_purchase_flow(api_client: TestClient) -> None:
 
 
 def test_slip_sum_fields_rounded_to_cents(api_client: TestClient) -> None:
-    """批A #19：SUM 聚合字段统一 round 到分——33.33+66.67 的浮点尾数
+    """批A #19：SUM 聚合字段统一 round 到分——28.10+35.95+35.95 的浮点尾数
     （100.00000000000001）不外漏（stake/profit 此前只对 pool 字段 round）。"""
     fixture_id = _fixture_id(api_client)
     bet_ids = [
@@ -947,11 +947,60 @@ def test_slip_sum_fields_rounded_to_cents(api_client: TestClient) -> None:
                 ],
             },
         ).json()["id"]
-        for selection, odds, stake in (("h", 6.5, 33.33), ("d", 5.0, 66.67))
+        for selection, odds, stake in (
+            ("h", 6.5, 28.10),
+            ("d", 5.0, 35.95),
+            ("a", 1.3, 35.95),
+        )
     ]
     slip = api_client.post("/api/v1/bet-slips", json={"bet_ids": bet_ids})
     assert slip.status_code == 201
     assert slip.json()["stake_total"] == 100.0
+
+    # 0:1 客胜：h/d 负、a 中（payout 35.95×1.3）——profit_total 非零面同走 round
+    api_client.post(
+        "/api/v1/draw-results",
+        json={
+            "results": [{"fixture_id": fixture_id, "home_goals": 0, "away_goals": 1}]
+        },
+    )
+    api_client.post("/api/v1/settlements/run")
+    listing = api_client.get("/api/v1/bet-slips").json()
+    assert listing[0]["profit_total"] == round(
+        -28.10 - 35.95 + round(35.95 * 1.3, 2) - 35.95, 2
+    )
+
+
+def test_slip_view_rounds_float_tails_on_all_sum_fields() -> None:
+    """批A #19 单位面：SUM 浮点尾数（若出现）在视图层统一 round 到分——三字段同法。
+
+    SQLite ≥3.43 SUM 用补偿求和，常规小 N 不产尾数（API 流程测试抓不到本守卫），
+    故直接钉 _slip_view 变换本身。"""
+    import sqlite3
+    from typing import cast
+
+    from goalx_backend.api.bets import _slip_view
+
+    row = cast(
+        "sqlite3.Row",
+        {
+            "id": 1,
+            "mode": "paper",
+            "placed_at": None,
+            "note": None,
+            "created_at": "2026-11-05T00:00:00+00:00",
+            "bet_count": 3,
+            "stake_total": 100.00000000000001,
+            "profit_total": -100.00000000000001,
+            "combination_count": 0,
+            "pool_stake_total": 8.000000000000002,
+            "quarantined_combinations": 0,
+        },
+    )
+    view = _slip_view(row)
+    assert view.stake_total == 100.0
+    assert view.profit_total == -100.0
+    assert view.pool_stake_total == 8.0
 
 
 def test_paper_slip_with_actuals_rejected(api_client: TestClient) -> None:
