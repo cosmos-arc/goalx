@@ -707,6 +707,45 @@ def test_gold_rebuild_defers_low_headroom(
     assert "market" not in payload  # 零写入让位，不是半程降级
 
 
+def test_gold_rebuild_midrun_low_headroom_defers_before_gold(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-11-05 OOM 收口：market 段成功后余量跌落（段间复探）——gold
+    段前 deferred 让位；market 段成果保留入账（完整单元），不硬闯 Crashed。"""
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    probes = iter([16 * 1024**3, 1 * 1024**3])  # 启动足量 → market 后跌落
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: next(probes))
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith(
+        "deferred_midrun_low_headroom_before_gold:"
+    )
+    assert "market" in payload  # market 段成果保留（完整单元非半写）
+
+
+def test_gold_rebuild_midrun_low_headroom_defers_before_duckdb(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同上（before_duckdb 分支）：gold 段成功后跌落——桥刷新段让位，
+    market+gold 两段成果都保留。"""
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    probes = iter([16 * 1024**3, 16 * 1024**3, 1 * 1024**3])
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: next(probes))
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith(
+        "deferred_midrun_low_headroom_before_duckdb:"
+    )
+    assert "market" in payload
+    assert "gold" in payload
+
+
 def test_gold_rebuild_low_headroom_defer_releases_budget(
     built: Built, monkeypatch: pytest.MonkeyPatch
 ) -> None:

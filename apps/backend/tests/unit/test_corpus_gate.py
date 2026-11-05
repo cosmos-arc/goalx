@@ -596,3 +596,38 @@ def test_cli_srct_gate_payload(
     run_fp = payload["run_fingerprint"]
     assert "admin_match_exclusions" in run_fp["db"]["tables"]
     assert run_fp["corpus"]["inventory"]["duckdb"] == {"present": True}
+
+
+def test_corpus_duckdb_memory_limit_capped(tmp_path) -> None:
+    """2026-11-05 gold-rebuild OOM 收口：消费连接设 memory_limit（缺省
+    ~80% RAM 会打穿 16GB 盒）+ 树内 spill 目录（超出落盘）。"""
+    from goalx_backend.config import Settings
+    from goalx_backend.data import corpus_duckdb
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.db import connect as db_connect
+    from goalx_backend.db import migrate
+
+    settings = Settings(
+        _env_file=None,
+        db_path=tmp_path / "face.db",
+        research_db_path=tmp_path / "r.db",
+        corpus_root=tmp_path / "corpus",
+    )
+    face = db_connect(settings.db_path)
+    migrate(face)
+    face.close()
+    store = CorpusStore(settings.corpus_root)
+    corpus_duckdb.build_corpus_duckdb(store)
+    store.close()
+    con = corpus_duckdb.connect(settings)
+    try:
+        limit = str(
+            con.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+        )  # duckdb 以人类可读回报（如 "2.7 GiB"）
+        temp = con.execute("SELECT current_setting('temp_directory')").fetchone()[0]
+    finally:
+        con.close()
+    # "2.7 GiB" < "3GB"：duckdb 取整到二进制单位，量级断言即可
+    assert limit.endswith("GiB")
+    assert float(limit.split(maxsplit=1)[0]) <= 3.0
+    assert temp == (tmp_path / "corpus" / "tmp").as_posix()
