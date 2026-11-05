@@ -696,7 +696,6 @@ def sync_fixture_links(
     for row in fx_store.fixtures_with_teams(conn):
         fixture_id = int(row["fixture_id"])
         # 无码场（business_date NULL）以开球日作时间信号——新非 JC 场不饿死
-        # 无码场以开球日（北京钟，+8h 再取日）作时间信号——新非 JC 场不饿死
         in_window = str(row["business_date"] or "") in scan_window or (
             row["business_date"] is None
             and str(row["kickoff_utc"] or "")[:10]

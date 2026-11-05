@@ -938,3 +938,23 @@ def test_deep_ledger_skips_partial_failure_days(tmp_path: Path) -> None:
         assert DATES[1] not in [day for _season, day in backfill]
     finally:
         store.close()
+
+
+def test_deep_ledger_seeds_on_clean_probe(tmp_path: Path) -> None:
+    """留案票 01③ correctness F1：干净存量 done 日（无完成账行）首夜探测
+    即记账——次夜候选扫描零探测（否则存量日永不收敛）。"""
+    seen, routes = _transport_spy()
+    _run(tmp_path, seen, routes)  # 夜1 完成三日（记账）
+    store = _store(tmp_path)
+    try:
+        # 模拟存量：抹掉完成账（三日深端点齐全但从未记账）
+        store._checkpoint().execute("DELETE FROM srct_deep_backfill_days")
+        store._checkpoint().commit()
+        first = srct_night._depth_backfill_dates(
+            store, TODAY, TEST_SEASONS, store.season_depths()
+        )
+        assert first == []  # 无缺口
+        # 探测即记账：再查完成账已落三日
+        assert store.srct_deep_days(srct_night._deep_endpoints_fp) == set(DATES)
+    finally:
+        store.close()

@@ -281,6 +281,11 @@ def _depth_backfill_dates(
                 for dataset in deep_datasets
             ):
                 backfill.append((season.label, day))
+            else:
+                # 探测即记账（留案票 01③ correctness F1）：干净存量 done 日
+                # 当场落完成账（记账判据=探测判据同一 has()），次夜起零探测
+                # ——首夜付全量探测后收敛，否则存量 3,960 日永不记账
+                store.set_srct_deep_day(day, _deep_endpoints_fp)
     return backfill
 
 
