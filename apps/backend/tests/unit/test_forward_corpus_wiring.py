@@ -202,8 +202,11 @@ def test_legacy_only_scoring_unchanged_with_wiring(tmp_path: Path, db) -> None:
 
 
 def test_dirty_issued_at_degrades_not_raises(tmp_path: Path, db) -> None:
-    """correctness F2：脏 issued_at 单对降级（不适用→字符串比较口径），
-    报告照出、该场次计入 no_market_baseline——不炸整份报告。"""
+    """correctness F2：脏 issued_at 不炸整份报告（批D #4 后语义升级）。
+
+    不可解析的发布时刻证不出"赛前"→不进赛前分母、不参与冻结挑选
+    （_issued_pre_kickoff 降级 False）；干净预报照常评分——此前字符串序
+    把脏行当赛前最大值冻结、再在评分侧降级计入 no_market_baseline。"""
     store, con = _build_corpus(tmp_path, [_envelope(FETCHED_1)])
     fixture = _seed_fixture(db)
     _link(db, fixture)
@@ -216,8 +219,8 @@ def test_dirty_issued_at_degrades_not_raises(tmp_path: Path, db) -> None:
         report = fwd.forward_skill_report(
             db, duck_con=con, asof_batch=srct_asof.batch_asof_resolver(store, con)
         ).model_dump()
-        assert report["coverage"]["no_market_baseline"] == 1
-        assert report["coverage"]["scored"] == 0
+        assert report["coverage"]["no_market_baseline"] == 0  # 脏行不入分母
+        assert report["coverage"]["scored"] == 1  # 干净预报照常评分
     finally:
         con.close()
         store.close()

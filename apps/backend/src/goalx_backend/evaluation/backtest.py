@@ -643,7 +643,10 @@ def _usable_ou(match: GoldMatch) -> tuple[float, float, float] | None:
     line = match.ou_line
     if line is None or not math.isfinite(line) or line >= OU_LINE_MAX:
         return None
-    if abs(line * 2 - round(line * 2)) >= HALF_STEP_EPS or line == int(line):
+    if (
+        abs(line * 2 - round(line * 2)) >= HALF_STEP_EPS
+        or abs(line - round(line)) < HALF_STEP_EPS
+    ):
         return None  # 四分线 / 整数线（push 面）
     waters = (match.ou_over_water, match.ou_under_water)
     lo, hi = WATER_SANITY_BAND
@@ -1141,7 +1144,12 @@ def _bucket_gate(cand: _Candidate) -> bool:
 
 
 def _random_gate(cand: _Candidate) -> bool:
-    """同接受率随机门（sid+selection 哈希 < 阈值；确定性）。"""
+    """
+    同注量随机门（sid+selection 哈希 < 阈值；确定性）。
+
+    标定口径=对齐 buckets 臂注量（附录⑨勘误：此前 docstring 写"同接受
+    率"，门控对齐的是注量；两臂接受率相等是票面不变量，见下方标定注）。
+    """
     digest = hashlib.sha256(
         f"{cand.match_key}:{cand.market_code}:{cand.selection_code}".encode()
     ).digest()

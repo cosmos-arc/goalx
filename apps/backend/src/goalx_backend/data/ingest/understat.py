@@ -539,28 +539,6 @@ def latest_sync_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def compare_rows(
-    conn: sqlite3.Connection, league: str, seasons: tuple[str, ...]
-) -> list[sqlite3.Row]:
-    """某联赛多季场次行，按开球时刻排序（对比语料读取；ADR-0008 SQL 归本包）。"""
-    wanted = set(seasons)
-    return [
-        row
-        for row in conn.execute(
-            """
-            SELECT match_id, season, datetime_utc, home_team_id, away_team_id,
-                   goals_home, goals_away, npxg_home, npxg_away,
-                   forecast_w, forecast_d, forecast_l
-            FROM understat_matches
-            WHERE league = ?
-            ORDER BY datetime_utc
-            """,
-            (league,),
-        ).fetchall()
-        if str(row["season"]) in wanted
-    ]
-
-
 def stats_dict(stats: UnderstatSyncStats) -> dict[str, Any]:
     """统计 → 可 JSON 化 dict（flow 返回值/日志用）。"""
     return {

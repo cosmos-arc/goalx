@@ -320,6 +320,8 @@ def srcb_collect() -> dict[str, object]:
         )
     return {
         "mids": len(stats.mids),
+        # infohub 段拒发数（审计批D #8）：>0 即 alias 面仍在窗外流动
+        "non_okooo_mids": stats.non_okooo_mids,
         "requests": stats.requests,
         "rows_added": stats.rows_added,
         "rows_absorbed": stats.rows_absorbed,

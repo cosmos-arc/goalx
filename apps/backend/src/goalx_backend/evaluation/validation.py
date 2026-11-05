@@ -37,7 +37,9 @@ MIN_FORWARD_SAMPLES = MIN_GROUP_SAMPLES
 # 复核门槛（票 review-20260928/03 裁决 2026-09-28）：误导类占比 ≤10% 且
 # done ≥10 条才过；无记录/样本不足恒不通过（三分类见 llm.review._VERDICTS）
 REVIEW_MIN_SAMPLES = 10
-REVIEW_MISLEADING_MAX = 0.10
+REVIEW_MISLEADING_MAX = (
+    0.10  # 严于 m3_report._MISLEADING_MAX_SHARE(0.20)：此处是逐条复核准入门
+)
 
 
 class BacktestRunView(BaseModel):

@@ -57,6 +57,12 @@ CORE_PIDS: tuple[str, ...] = (
 )
 # 滑动窗口加顶（票 57）：0.5s 间距≈120/min 持续，200/min 纯加顶零行为变化
 _RATE_CEILING = RateLimitItemPerMinute(200)
+# infohub 场次 id 段前缀（审计批D #8 守卫）：zucai_official 切官方源后
+# pool_matches.source_match_id 为 infohubMatchId（204x，主库 1,053 行）。
+# okooo 自家 mid 实测跨 132/133/134 多段（源B 时代 okooo.com 行 + 运行期
+# 2,745 变化页行），故守卫按"封 infohub 段"而非 okooo 白名单——防 alias
+# 打 okooo 的同时零误杀真 okooo mid（correctness F1）
+INFOHUB_ID_PREFIXES = ("204",)
 
 _ROW_PATTERNS = (
     r"<tr>\s*<td>\s*<span[^>]*>([\d.]+)</span>\s*"
@@ -88,6 +94,8 @@ class SrcbCollectStats:
     rows_added: int = 0
     rows_absorbed: int = 0
     failed: dict[str, str] = field(default_factory=dict)
+    # id 段守卫计数（审计批D #8）：段外 mid 拒发的数量（见 collect 侧注）
+    non_okooo_mids: int = 0
 
 
 def minutes_before_from_label(label: str) -> int | None:
@@ -211,10 +219,24 @@ def collect_srcb_changes(
     if not mids:
         _record_run(conn, stats, observed_at)
         return stats
+    # id 段守卫（审计批D #8）：infohub id（官方源 infohubMatchId）拿去打
+    # okooo 变化页=错误 id 打外部源（判死面缺省不注册，--only all/显式
+    # srcb-collect 触发的腐化面）；infohub 段拒发并计数（不 warmer、零
+    # 请求），其余段照常（okooo 多段见 INFOHUB_ID_PREFIXES 注）
+    okooo_mids = [mid for mid in mids if not mid.startswith(INFOHUB_ID_PREFIXES)]
+    stats.non_okooo_mids = len(mids) - len(okooo_mids)
+    if stats.non_okooo_mids:
+        logger.warning(
+            "srcb 拒发 infohub id 段 mid {} 个（alias id 不打 okooo）",
+            stats.non_okooo_mids,
+        )
+    if not okooo_mids:
+        _record_run(conn, stats, observed_at)
+        return stats
     limiter = default_limiter()
     throttle(limiter, _RATE_CEILING)  # 预热首页也是线上请求，先过闸
     warm_session(client, settings)
-    for mid in mids:
+    for mid in okooo_mids:
         for pid in pids:
             try:
                 throttle(limiter, _RATE_CEILING)

@@ -279,6 +279,10 @@ export interface paths {
          * 建注(注级建议; 校验 had 资格+纸面价绑定; 同键同意图回带/异意图409)
          * @description 创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
          *
+         *     live 注单唯一动线=赛前建行(本端点,开赛后新建被资格门拒)+赛后
+         *     POST /bet-slips slip 回录(事后记账,不重校验)——开赛后全新建 live
+         *     行不是受支持语义(审计 #10 裁决, 2026-11-05)。
+         *
          *     纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效
          *     had 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则
          *     system_paper 标签+腿级快照身份落库；报价不可得(或非 had)为

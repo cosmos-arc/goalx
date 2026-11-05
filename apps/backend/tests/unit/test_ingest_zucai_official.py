@@ -389,3 +389,27 @@ def test_backfill_counters_empty_periods_and_skipped_games(db) -> None:
     face = zucai_official.stats_dict(stats)
     assert face["empty_periods"] == 1
     assert face["skipped_games"] == 1
+
+
+def test_parse_match_list_missing_start_time_skipped() -> None:
+    """审计批D #12：缺 startTime 的行跳过不伪造——此前 NOT NULL 列兜底
+    now() 造假 kickoff，随同步 DELETE+INSERT 漂移可击穿 ±2 天映射守卫。"""
+    rows = zucai_official.parse_match_list(
+        [
+            {
+                "matchNum": 1,
+                "masterTeamAllName": "主",
+                "guestTeamAllName": "客",
+                "startTime": "2026-09-26",
+            },
+            {"matchNum": 2, "masterTeamAllName": "甲", "guestTeamAllName": "乙"},
+            {
+                "matchNum": 3,
+                "masterTeamAllName": "丙",
+                "guestTeamAllName": "丁",
+                "startTime": "",
+            },
+        ]
+    )
+    assert [r.match_seq for r in rows] == [1]  # 缺值/空串行都跳
+    assert rows[0].kickoff_utc == "2026-09-25T16:00:00+00:00"

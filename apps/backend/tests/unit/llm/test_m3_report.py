@@ -379,3 +379,41 @@ def test_ece_clean_computes_from_seeded_tracks(db: sqlite3.Connection) -> None:
             away_goals=(fixture_id + 1) % 3,
         )
     assert _ece_clean(db) is True
+
+
+def test_span_weeks_mixed_generation_kickoffs() -> None:
+    """审计批D #4：混代 kickoff（legacy naive + v2 aware）此前裸
+    fromisoformat 在 max()-min() 直接 TypeError 炸整份报告；统一读口后
+    按真时刻算跨度，不可解析样本不进跨度。"""
+    from goalx_backend.evaluation.forward_validation import ForwardSample
+    from goalx_backend.llm.m3_report import _span_weeks
+
+    def sample(fid: int, kickoff: str) -> ForwardSample:
+        return ForwardSample(
+            fixture_id=fid,
+            kickoff_utc=kickoff,
+            model_version="v",
+            issued_at="2026-01-01T00:00:00+00:00",
+            had_probs={"h": 0.4, "d": 0.3, "a": 0.3},
+            fair_probs={"h": 0.4, "d": 0.3, "a": 0.3},
+            ftr="h",
+            competition="E0",
+            season="2526",
+        )
+
+    # naive 09-12 20:00 北京 = 12:00Z 与 aware 09-19 12:00Z 相差 7 天
+    weeks = _span_weeks(
+        [1, 2],
+        {1: sample(1, "2026-09-12T20:00:00")},
+        {2: sample(2, "2026-09-19T12:00:00+00:00")},
+    )
+    assert weeks == 1
+    # 坏串样本跳过不炸（唯一可解析样本跨度 0）
+    assert (
+        _span_weeks(
+            [1, 2],
+            {1: sample(1, "garbage")},
+            {2: sample(2, "2026-09-19T12:00:00+00:00")},
+        )
+        == 0
+    )

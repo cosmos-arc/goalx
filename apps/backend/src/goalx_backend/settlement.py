@@ -277,46 +277,6 @@ def settle_fixed_bet(
     )
 
 
-def settle_pool_combination(
-    selections: Mapping[int, str],
-    results: Mapping[int, ResultFacts],
-    *,
-    market_code: str = "pick9",
-) -> tuple[bool | None, list[str]]:
-    """
-    判定一个复式组合（任9 等）：全部场次命中才中奖。
-
-    Returns ``(hit, notes)``；``hit=None`` 表示仍有场次未开赛果。
-    无效场次按「命中」近似（官方摇奖公告接入前，票 06 边界裁决）。
-    """
-    notes: list[str] = []
-    pending = False
-    for fixture_id, selection in selections.items():
-        result = results.get(fixture_id)
-        if result is None:
-            pending = True
-            continue
-        if result.void:
-            notes.append(f"void_fixture_{fixture_id}_counted_hit")
-            continue
-        outcome = judge_leg(
-            LegSpec(
-                fixture_id=fixture_id,
-                market_code=market_code,
-                selection_code=selection,
-                locked_odds=1.0,
-            ),
-            result,
-        )
-        if outcome.hit is None:
-            pending = True
-        elif not outcome.hit:
-            return False, notes
-    if pending:
-        return None, notes
-    return True, notes
-
-
 def detail_payload(outcome: SettlementOutcome) -> dict[str, Any]:
     """Serialize a settlement outcome for the settlements.detail column."""
     return {

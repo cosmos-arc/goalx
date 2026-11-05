@@ -149,7 +149,7 @@ def _clean_half_line(line: float | None) -> float | None:
 def half_line_only(line: float | None) -> float | None:
     """仅半线（x.5，无平局退款）；整数线（有 push）与四分线返回 None。"""
     clean = _clean_half_line(line)
-    if clean is None or clean == int(clean):
+    if clean is None or abs(clean - round(clean)) < HALF_STEP_EPS:
         return None
     return clean
 

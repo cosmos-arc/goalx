@@ -21,12 +21,14 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from pydantic import BaseModel
 
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.fixtures import kickoff_to_utc
 from goalx_backend.evaluation.metrics import evaluate_predictions
 from goalx_backend.markets import SELECTIONS
 from goalx_backend.modelling.forecast import (
@@ -120,6 +122,23 @@ def _corpus_replay_pairs(
     return sids, replayed
 
 
+def _issued_pre_kickoff(issued_at: str, kickoff_utc: str) -> bool:
+    """
+    预报发布是否早于开球（双代统一读口，审计批D #4）。
+
+    kickoff legacy=北京墙钟 naive，裸字符串字典序对 aware issued_at 会把
+    赛后发布判进"赛前冻结"分母；不可解析（任一侧）按赛后计——证不出
+    赛前就不进分母。issued_at naive 兜底按 UTC 贴签（写侧服务器生成恒
+    aware，现库 1274/1274 实测；naive legacy issued_at 无此代）。
+    """
+    try:
+        issued = datetime.fromisoformat(issued_at)
+    except ValueError:
+        return False
+    kickoff = kickoff_to_utc(kickoff_utc)
+    return kickoff is not None and issued.replace(tzinfo=issued.tzinfo or UTC) < kickoff
+
+
 def build_forward_samples(
     conn: sqlite3.Connection,
     *,
@@ -145,7 +164,7 @@ def build_forward_samples(
         fixture_id = int(row["fixture_id"])
         entry = by_fixture.setdefault(fixture_id, {"row": row, "pre": [], "post": 0})
         for forecast in forecasts_by_fixture.get(fixture_id, []):
-            if str(forecast["issued_at"]) < str(row["kickoff_utc"]):
+            if _issued_pre_kickoff(str(forecast["issued_at"]), str(row["kickoff_utc"])):
                 entry["pre"].append(forecast)
             else:
                 entry["post"] += 1

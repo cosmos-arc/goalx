@@ -41,6 +41,7 @@ import duckdb
 from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.evaluation.backtest import HALF_STEP_EPS
 from goalx_backend.evaluation.metrics import load_backtest_run
 
 REPORT_BASENAME = "signal-attribution"
@@ -264,8 +265,11 @@ def features_of(gold_row: dict[str, Any]) -> dict[str, float]:
         gold_row.get("ah_anchor_close_home_water"),
         gold_row.get("ah_anchor_close_away_water"),
     )
+    # 线值相等走容差（审计批D 顺手②）：两条来源各自的十进制解析可能带
+    # 浮点尾差，裸 == 漏配对；HALF_STEP_EPS 与 backtest 线型门同容差
     same_line = gold_row.get("q24hah_line") is not None and (
-        float(gold_row["q24hah_line"]) == float(gold_row["ah_anchor_close_line"])
+        abs(float(gold_row["q24hah_line"]) - float(gold_row["ah_anchor_close_line"]))
+        < HALF_STEP_EPS
         if gold_row.get("ah_anchor_close_line") is not None
         else False
     )

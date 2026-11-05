@@ -138,14 +138,15 @@ def test_collect_single_failure_does_not_abort(db) -> None:
     stats = srcb.collect_srcb_changes(
         db,
         _settings(),
-        _client({("1", "50"): SAMPLE_CHANGE}),  # ("2","50") 缺页 → 404
-        mids=["1", "2"],
+        # ("1348381","50") 缺页 → 404；mid 用 okooo 段（134 前缀过闸，批D #8）
+        _client({("1348380", "50"): SAMPLE_CHANGE}),
+        mids=["1348380", "1348381"],
         pids=("50",),
         now=datetime(2026, 9, 21, 7, 0, tzinfo=UTC),
         sleep_seconds=0,
     )
     assert stats.rows_added == 4  # 成功侧不受影响
-    assert stats.failed["2:50"].startswith("Client error '404")
+    assert stats.failed["1348381:50"].startswith("Client error '404")
 
 
 def test_upcoming_pool_mids_window(db) -> None:
@@ -227,3 +228,44 @@ def test_rows_survive_append_only_guard(db) -> None:
             raise AssertionError("run 行应 append-only")
         except sqlite3.IntegrityError:
             pass
+
+
+def test_collect_rejects_infohub_id_segment(db) -> None:
+    """审计批D #8（correctness F1 后反转）：pool_matches.source_match_id
+    切官方源后是 infohub id（204 段），拿它打 okooo 变化页=错误 id 打外
+    部源——infohub 段拒发并计数、不发任何请求（含 warm up）；okooo 自家
+    mid 实测跨 132/133/134 多段，全部照常过闸（白名单会误杀真 okooo）。"""
+    from datetime import UTC, datetime
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url.path))
+        return httpx.Response(200, text="home")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    stats = srcb.collect_srcb_changes(
+        db,
+        _settings(),
+        client,
+        mids=["2041234567", "1335531", "1328531", "1348380"],
+        pids=("50",),
+        now=datetime(2026, 9, 21, 7, 0, tzinfo=UTC),
+        sleep_seconds=0,
+    )
+    assert stats.non_okooo_mids == 1
+    assert stats.requests == 3  # okooo 三段（132/133/134）全过闸
+    # 变化页只被 okooo mid 命中（204 段不产生任何 mid 级请求）
+    assert sum("change.php" in p for p in seen) == 3
+    # 全 infohub：零请求零 warm，直接落 run 行
+    guard = srcb.collect_srcb_changes(
+        db,
+        _settings(),
+        client,
+        mids=["2041234567", "2049876543"],
+        pids=("50",),
+        now=datetime(2026, 9, 21, 7, 0, tzinfo=UTC),
+        sleep_seconds=0,
+    )
+    assert guard.non_okooo_mids == 2
+    assert guard.requests == 0
