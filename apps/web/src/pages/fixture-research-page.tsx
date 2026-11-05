@@ -354,8 +354,8 @@ export function FixtureResearchPage() {
 												: "—"}
 										</p>
 										<p className="mt-1 text-xs text-muted-foreground">
-											{data.model.model_version} · {localTime(data.model.issued_at)}（UTC）发出 · 模型 EV = 模型概率 ×
-											竞彩价 − 1
+											{data.model.model_version} · {localTime(data.model.issued_at)}（北京时间）发出 · 模型 EV =
+											模型概率 × 竞彩价 − 1
 										</p>
 									</>
 								) : (

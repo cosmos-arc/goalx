@@ -15,6 +15,7 @@ import {
 	SELECTION_LABELS,
 	TABULAR_NUMS,
 } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 import {
 	isPickable,
 	kickoffInfo,
@@ -517,6 +518,7 @@ export function BasketDrawer({
 		planTicketLegs,
 		planMissingEv,
 	} = basket;
+	const now = useNow(); // 抽屉倒计时共享滴答钟（B-2b 补面：不冻结在一次性渲染）
 	// 票级预览（票 02 单源）：抽屉里看到的数字 == 提交后落库口径
 	const planSingles = planTicketLegs !== null ? slipFormPlan(planTicketLegs, "singles") : null;
 	const planParlay = planTicketLegs !== null && legs.length >= 2 ? slipFormPlan(planTicketLegs, "parlay") : null;
@@ -539,7 +541,7 @@ export function BasketDrawer({
 					) : (
 						<ul className="space-y-2">
 							{legs.map((leg) => {
-								const countdown = kickoffInfo(leg.kickoff_utc, Date.now());
+								const countdown = kickoffInfo(leg.kickoff_utc, now); // 抽屉共享滴答钟（B-2b 补面）
 								return (
 									<li
 										key={leg.fixture_id}
