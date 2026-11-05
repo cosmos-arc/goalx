@@ -766,22 +766,18 @@ def gate3_xg_understat(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     for hist in hists:
         hist.league_key = u_league_by_code.get(hist.league_key, hist.league_key)
     matched = match_fixtures(corpus, hists)
-    u_index = {
-        (
-            u_league_by_code.get(str(r[0]), str(r[0])),
-            str(r[1]),
-            int(r[2]),
-            int(r[3]),
-        ): (float(r[4]), float(r[5]))
-        for r in u_rows
+    # npxG 按对象身份取（审计批B #2，照抄 gold._understat_pairing）：hists
+    # 与 u_rows 一一同序构造，(联赛,日,比分) 元组键在同联赛同日同比分时
+    # 坍缩（后行覆写前行），配对场拿错 npxG 连坐 MAE/异常/Pearson
+    u_xg_by_id = {
+        id(hist): (float(r[4]), float(r[5]))
+        for hist, r in zip(hists, u_rows, strict=True)
     }
     diffs: list[float] = []
     anomalies: list[dict[str, Any]] = []
     for fixture, hist in matched.pairs:
         xg_h, xg_a = xg_by_sid[fixture.sid]
-        under = u_index[
-            (hist.league_key, hist.match_date, hist.goals_home, hist.goals_away)
-        ]
+        under = u_xg_by_id[id(hist)]
         for side, corpus_xg, under_xg in (
             ("home", xg_h, under[0]),
             ("away", xg_a, under[1]),
@@ -800,7 +796,7 @@ def gate3_xg_understat(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
                     }
                 )
     mae = mean(diffs) if diffs else None
-    correlation = _pearson(matched, xg_by_sid, u_index)
+    correlation = _pearson(matched, xg_by_sid, u_xg_by_id)
     return {
         "threshold": None,  # 不设硬线（双源异构），供人工判读
         "pairs": len(matched.pairs),
@@ -817,17 +813,13 @@ def gate3_xg_understat(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
 def _pearson(
     matched: MatchResult,
     xg_by_sid: dict[str, tuple[float, float]],
-    u_index: dict[tuple[str, str, int, int], tuple[float, float]],
+    u_xg_by_id: dict[int, tuple[float, float]],
 ) -> float | None:
     """配对场的语料 xG 与 understat npxG 的皮尔逊相关（双侧合并）。"""
     xs: list[float] = []
     ys: list[float] = []
     for fixture, hist in matched.pairs:
-        under = u_index.get(
-            (hist.league_key, hist.match_date, hist.goals_home, hist.goals_away)
-        )
-        if under is None:
-            continue
+        under = u_xg_by_id[id(hist)]
         xg_h, xg_a = xg_by_sid[fixture.sid]
         xs.extend((xg_h, xg_a))
         ys.extend(under)
@@ -1002,7 +994,9 @@ def gate5_pipeline_health(
     summaries = store.night_summaries(limit=1000)
     stopped: dict[str, int] = {}
     for row in summaries:
-        reason = str(row.get("stopped") or "clean")
+        # 列名 stop_reason（审计批B #3）：错读 "stopped" 恒 None → 26.7%
+        # 夜班非 clean 停因（budget/circuit/window_closed）被记成 clean
+        reason = str(row.get("stop_reason"))
         stopped[reason] = stopped.get(reason, 0) + 1
     total_dates = len(phase1_dates(today))
     done_dates = store.day_status_dates("done")

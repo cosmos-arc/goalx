@@ -7,7 +7,7 @@ import sqlite3
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
@@ -29,14 +29,21 @@ from goalx_backend.data import corpus_duckdb
 from goalx_backend.data.pool import pool_period_exists
 from goalx_backend.db import atomic
 from goalx_backend.evaluation.bet_review import BetReviewView, review_views
-from goalx_backend.models import PRICE_SOURCE_LIVE_BACKFILL, BetMode, LegInput
+from goalx_backend.markets import LEG_MARKETS, LEG_SELECTIONS
+from goalx_backend.models import (
+    PRICE_SOURCE_LIVE_BACKFILL,
+    BetMode,
+    IsoTimestamp,
+    LegInput,
+    MoneyCny,
+)
 
 router = APIRouter(tags=["bets"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
 
 
 class LegPayload(BaseModel):
-    """一腿输入。"""
+    """一腿输入（市场/选项按 markets 闭集拒收，审计批B #7）。"""
 
     fixture_id: int
     market_code: str
@@ -44,12 +51,27 @@ class LegPayload(BaseModel):
     locked_odds: float = Field(gt=0)
     goal_line: float | None = None
 
+    @field_validator("market_code")
+    @classmethod
+    def _check_market(cls, value: str) -> str:
+        if value not in LEG_MARKETS:
+            raise ValueError(f"unsupported_market:{value}")
+        return value
+
+    @field_validator("selection_code")
+    @classmethod
+    def _check_selection(cls, value: str, info: ValidationInfo) -> str:
+        allowed = LEG_SELECTIONS.get(str(info.data.get("market_code")))
+        if allowed is not None and value not in allowed:
+            raise ValueError(f"unsupported_selection:{value}")
+        return value
+
 
 class BetCreate(BaseModel):
     """建注(建议或直接回录)输入。"""
 
     mode: BetMode
-    stake: float = Field(gt=0)
+    stake: MoneyCny
     legs: list[LegPayload] = Field(min_length=1)
     strategy_version: str | None = None
     # 手工研究假设通道(票 04 三分类③):客户端价不被系统报价约束,
@@ -70,7 +92,7 @@ class ActualLegOddsPayload(BaseModel):
 class ActualTermsPayload(BaseModel):
     """一注的实际执行条款（结算按实际，建议快照保留）。"""
 
-    stake: float = Field(gt=0)
+    stake: MoneyCny
     leg_odds: list[ActualLegOddsPayload] = Field(default_factory=list)
 
 
@@ -78,7 +100,7 @@ class SlipCreate(BaseModel):
     """票级回录输入：勾选实际购买的建议注子集；live 可附实际条款。"""
 
     bet_ids: list[int] = Field(min_length=1)
-    placed_at: str | None = None
+    placed_at: IsoTimestamp | None = None
     actuals: dict[str, ActualTermsPayload] = Field(default_factory=dict)
     # 价变确认(票 04 裁决①):锁定时服务器报价已变,409 返回新价后,
     # 客户端确认按服务器价落库则置 true 重提(None/False=未确认)
@@ -107,7 +129,7 @@ class PoolSlipCreate(BaseModel):
     pool_period_id: int | None = None
     market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
     note: str | None = None
-    stake_per_combination: float = Field(default=2.0, gt=0)
+    stake_per_combination: MoneyCny = 2.0
     # picks 上限（correctness F1）：存在性探测 IN 列表有界——>32766 去重 id
     # 超 SQLite 主机参数上限裸 500；64 覆盖 goals4 复式 4×8 极值
     picks: list[PoolPickPayload] = Field(min_length=1, max_length=64)
@@ -117,7 +139,7 @@ class PoolSlipPreviewRequest(BaseModel):
     """复式组合预览输入（票 01/10）：与创建同载荷减 mode/note/期次（只读）。"""
 
     market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
-    stake_per_combination: float = Field(default=2.0, gt=0)
+    stake_per_combination: MoneyCny = 2.0
     picks: list[PoolPickPayload] = Field(min_length=1, max_length=64)
 
 
@@ -548,17 +570,19 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
     注另做价重验（票 04）：报价已变 409 返回新价，确认后按服务器价落库；
     live 回录是事后记账（赛后仍可入账），由前瞻资格规则排除，不再校验。
     """
-    actuals: dict[int, ActualTerms] = {
-        int(bet_id): ActualTerms(
-            stake=terms.stake,
-            leg_odds=[
-                ActualLegOdds(fixture_id=leg.fixture_id, odds=leg.odds)
-                for leg in terms.leg_odds
-            ],
-        )
-        for bet_id, terms in payload.actuals.items()
-    }
     try:
+        # actuals 键推导在 try 内（审计批B #6）：非整数键 int() 的
+        # ValueError 复用下方 400 映射，此前在 try 外裸 500
+        actuals: dict[int, ActualTerms] = {
+            int(bet_id): ActualTerms(
+                stake=terms.stake,
+                leg_odds=[
+                    ActualLegOdds(fixture_id=leg.fixture_id, odds=leg.odds)
+                    for leg in terms.leg_odds
+                ],
+            )
+            for bet_id, terms in payload.actuals.items()
+        }
         bets_by_id: dict[int, sqlite3.Row] = {}
         for bet_id in payload.bet_ids:
             row = bt_store.get_bet(db, bet_id)

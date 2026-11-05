@@ -39,3 +39,27 @@ GOALS4_CODES = frozenset(f"{side}{band}" for side in ("h", "a") for band in rang
 # 任9/14场 官方池码闭集（票 08 单源，与 GOALS4_CODES 同住所）：3=胜
 # 1=平 0=负——betting 池票载荷守卫消费，两处硬写会漂。
 POOL_HAD_CODES = frozenset({"3", "1", "0"})
+
+# 半全场选项闭集（半场×全场三向九码；hafu 与 htft6 同码空间）
+HAFU_SELECTIONS: tuple[str, ...] = tuple(
+    f"{half}{full}" for half in "hda" for full in "hda"
+)
+
+# 腿级市场闭集与各市场选项闭集（审计批B #7 单源）：与 settlement
+# 判定面对齐，api 载荷校验消费——闭集外市场结算记
+# unsupported_market → hit=None → 注永远 open 每批重扫不收敛；闭集外
+# 选择在 had 下静默记输进台账，故入口直接拒收。
+LEG_MARKETS = frozenset(
+    {"had", "hhad", "crs", "ttg", "hafu", "htft6", "ttt14", "pick9", "goals4"}
+)
+LEG_SELECTIONS: dict[str, frozenset[str]] = {
+    "had": frozenset(SELECTIONS),
+    "hhad": frozenset(SELECTIONS),
+    "crs": frozenset(CRS_SELECTIONS),
+    "ttg": frozenset(TTG_SELECTIONS),
+    "hafu": frozenset(HAFU_SELECTIONS),
+    "htft6": frozenset(HAFU_SELECTIONS),
+    "ttt14": POOL_HAD_CODES,
+    "pick9": POOL_HAD_CODES,
+    "goals4": GOALS4_CODES,
+}

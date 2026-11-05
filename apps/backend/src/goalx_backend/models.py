@@ -2,9 +2,45 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict
+from annotated_types import Gt, Le
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    WithJsonSchema,
+)
+
+
+def _round_cents(value: float) -> float:
+    """金额入口取整到分（失败抛 ValueError/TypeError → 422，同拒收）。"""
+    return round(float(value), 2)
+
+
+# 金额标量（审计批B #5）：先取整再过区间约束——亚分级 stake 进台账后
+# 账面与流水（后者已 round）永久漂移；上界 1e9 挡 inf 入库。别名内
+# 约束会以 gt/le 原始键渗进 JSON schema，WithJsonSchema 钉回标准形
+MoneyCny = Annotated[
+    float,
+    BeforeValidator(_round_cents),
+    Gt(0),
+    Le(1e9),
+    WithJsonSchema({"type": "number", "exclusiveMinimum": 0, "maximum": 1e9}),
+]
+
+
+def _check_iso8601(value: str) -> str:
+    """ISO-8601 校验（审计批B #16）：坏串入口 422，不入库后崩消费端。"""
+    datetime.fromisoformat(value)
+    return value
+
+
+# 时间戳标量（placed_at/occurred_at/published_at 共用）
+IsoTimestamp = Annotated[str, AfterValidator(_check_iso8601)]
 
 
 class Tier(StrEnum):

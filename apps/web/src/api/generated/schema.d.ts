@@ -2180,7 +2180,7 @@ export interface components {
         };
         /**
          * LegPayload
-         * @description 一腿输入。
+         * @description 一腿输入（市场/选项按 markets 闭集拒收，审计批B #7）。
          */
         LegPayload: {
             /** Fixture Id */

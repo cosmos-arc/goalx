@@ -905,3 +905,36 @@ def test_sid_fallback_doubleheader_disambiguated_by_kickoff() -> None:
         is None
     )
     con.close()
+
+
+def test_reconcile_tolerates_bad_placed_at(db) -> None:
+    """审计批B #16：存量坏 placed_at 只坏本列 minutes（NULL），不硬崩
+    整批 CLV 对账——无守卫 fromisoformat 曾一行坏值中止全批。"""
+    fixture = seed_fixture(db)
+    seed_closing_snapshots(db, fixture, (2.0, 3.5, 3.5))
+    bet_id = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode=BetMode.PAPER,
+            stake=50.0,
+            legs=[
+                LegInput(
+                    fixture_id=fixture,
+                    market_code="had",
+                    selection_code="h",
+                    locked_odds=2.20,
+                )
+            ],
+        ),
+    )
+    db.execute("UPDATE bets SET placed_at = 'not-a-date' WHERE id = ?", (bet_id,))
+    db.commit()
+    settle_bet(db, bet_id, status="won")
+    stats = clv.reconcile_clv(db)  # 不抛即守卫生效
+    assert stats.recorded == 1
+    row = db.execute(
+        "SELECT minutes_to_kickoff FROM clv_records WHERE bet_id = ?", (bet_id,)
+    ).fetchone()
+    assert row["minutes_to_kickoff"] is None
+    # naive placed_at 与 aware kickoff 相减的 TypeError 同被吸收
+    assert clv._minutes_to_kickoff("2026-09-12T18:50:00", KICKOFF) is None

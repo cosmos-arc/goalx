@@ -1031,6 +1031,135 @@ def test_paper_slip_with_actuals_rejected(api_client: TestClient) -> None:
     assert bet["legs"][0]["actual_odds"] is None
 
 
+def test_actuals_non_integer_key_is_400_not_500(api_client: TestClient) -> None:
+    """审计批B #6：actuals 非整数键 int() 的 ValueError 走 400 映射——
+    此前推导式在 try 外，任何 DB 访问前裸 500。"""
+    response = api_client.post(
+        "/api/v1/bet-slips",
+        json={
+            "bet_ids": [1],
+            "actuals": {"abc": {"stake": 10.0, "leg_odds": []}},
+        },
+    )
+    assert response.status_code == 400
+    assert "abc" in str(response.json()["detail"])
+
+
+def test_leg_market_and_selection_closed_sets(api_client: TestClient) -> None:
+    """审计批B #7：market/selection 按 markets 闭集拒收——闭集外市场结算
+    hit=None → 注永远 open 每批重扫；闭集外选择在 had 下静默记输。"""
+    fixture_id = _fixture_id(api_client)
+    bad_market = api_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 2.0,
+            "legs": [
+                {
+                    "fixture_id": fixture_id,
+                    "market_code": "xyz",
+                    "selection_code": "h",
+                    "locked_odds": 2.0,
+                }
+            ],
+        },
+    )
+    assert bad_market.status_code == 422
+    bad_selection = api_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 2.0,
+            "legs": [
+                {
+                    "fixture_id": fixture_id,
+                    "market_code": "had",
+                    "selection_code": "z",
+                    "locked_odds": 2.0,
+                }
+            ],
+        },
+    )
+    assert bad_selection.status_code == 422
+
+
+def test_stake_money_fields_rounded_and_bounded(api_client: TestClient) -> None:
+    """审计批B #5：四 Money 入口取整到分+上界 1e9——亚分级 stake 进台账
+    后账面与流水（已 round）永久漂移；inf/巨值上界挡库外。"""
+    fixture_id = _fixture_id(api_client)
+    created = api_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 10.006,
+            "legs": [
+                {
+                    "fixture_id": fixture_id,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 6.5,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["stake"] == 10.01  # 入口取整，亚分不落库
+    for bad_stake in (1e308, 0.001):  # 上界 + 取整后归零
+        rejected = api_client.post(
+            "/api/v1/bets",
+            json={
+                "mode": "paper",
+                "stake": bad_stake,
+                "legs": [
+                    {
+                        "fixture_id": fixture_id,
+                        "market_code": "had",
+                        "selection_code": "h",
+                        "locked_odds": 6.5,
+                    }
+                ],
+            },
+        )
+        assert rejected.status_code == 422
+    deposit_rejected = api_client.post(
+        "/api/v1/bankroll/deposits", json={"amount_cny": 1e308}
+    )
+    assert deposit_rejected.status_code == 422
+
+
+def test_timestamp_fields_reject_non_iso(api_client: TestClient) -> None:
+    """审计批B #16：placed_at/occurred_at/published_at 收任意字符串 201 落
+    TEXT——placed_at 坏值污染 decision_key 且在 clv 对账硬崩。"""
+    fixture_id = _fixture_id(api_client)
+    bet_id = api_client.post(
+        "/api/v1/bets", json=_had_leg_payload(fixture_id, "h")
+    ).json()["id"]
+    bad_slip = api_client.post(
+        "/api/v1/bet-slips",
+        json={"bet_ids": [bet_id], "placed_at": "not-a-date"},
+    )
+    assert bad_slip.status_code == 422
+    bad_deposit = api_client.post(
+        "/api/v1/bankroll/deposits",
+        json={"amount_cny": 100.0, "occurred_at": "garbage"},
+    )
+    assert bad_deposit.status_code == 422
+    bad_draw = api_client.post(
+        "/api/v1/draw-results",
+        json={
+            "results": [
+                {
+                    "fixture_id": fixture_id,
+                    "home_goals": 1,
+                    "away_goals": 0,
+                    "published_at": "garbage",
+                }
+            ]
+        },
+    )
+    assert bad_draw.status_code == 422
+
+
 def test_lock_revalidates_sale_stop(tmp_path: Path) -> None:
     """票 36 验收 2：提交时服务端重新校验停售，不仅禁用按钮。"""
     from goalx_backend.data import fixtures as fx_store

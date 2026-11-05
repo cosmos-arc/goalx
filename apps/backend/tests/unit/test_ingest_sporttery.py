@@ -1014,3 +1014,26 @@ def test_odds_anchor_dense_probe_degrade_keeps_kickoff_leg(
     )
     out = tasks_mod.odds_anchor_dense()
     assert out["kickoff_anchor"]["events"] == 0  # kickoff 腿照走不牵连
+
+
+def test_observed_at_stamp_taken_after_fetch_returns(db) -> None:
+    """审计批B #1：observed_at=收到响应的时间——戳在 fetch 返回后取。
+    预盖章（fetch 前）会让 25s 超时窗内的网络耗时从观测时序里消失；
+    注入固定时钟的用例前后顺序不可分辨，须真实时钟钉时序。"""
+    import time
+    from datetime import timedelta
+
+    def slow_handler(_: httpx.Request) -> httpx.Response:
+        time.sleep(1.1)
+        return httpx.Response(200, json=SAMPLE)
+
+    client = httpx.Client(transport=httpx.MockTransport(slow_handler))
+    before = datetime.now(UTC)
+    stats = sporttery.capture_jingcai(db, Settings(), client)  # now=None 走真钟
+    obs = db.execute(
+        "SELECT observed_at FROM quote_observations WHERE id = ?",
+        (stats.observation_id,),
+    ).fetchone()
+    observed = datetime.fromisoformat(str(obs["observed_at"]))
+    # 预盖章时戳≈before（截秒后 < before+1s）；正确时序戳 ≥ 响应返回时刻
+    assert observed >= (before + timedelta(seconds=1)).replace(microsecond=0)
