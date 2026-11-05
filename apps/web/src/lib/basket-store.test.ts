@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import { __resetBasketForTests, basketActions, newRequestId, requestIdForLegs, useBasket } from "./basket-store";
 
@@ -117,4 +117,62 @@ test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢�
 	const { result: result2 } = renderHook(() => fresh2.useBasket());
 	expect(result2.current.hadLegs).toHaveLength(1);
 	expect(result2.current.hadLegs[0]?.probability).toBeUndefined();
+});
+
+// ---- 票 03：hadPending 全局冻结门 ----
+
+test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不落盘", () => {
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.setHadLegs([LEG]);
+		basketActions.beginHadFlight();
+		// 编辑入口（pick/换选/移除/带入）静默不动
+		basketActions.setHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(1);
+	expect(result.current.hadPending).toBe(true);
+	act(() => {
+		// 提交路径自写（清篮/冲突恢复腿）不受门
+		basketActions.replaceHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(0);
+	// 冻结标志不持久化（刷新即解冻的存储侧依据）
+	const persisted = JSON.parse(globalThis.localStorage.getItem("goalx:basket") ?? "{}");
+	expect(persisted.hadPending ?? false).toBe(false);
+	act(() => {
+		// 解冻后编辑写入恢复
+		basketActions.endHadFlight();
+		basketActions.setHadLegs([LEG]);
+	});
+	expect(result.current.hadLegs).toHaveLength(1);
+});
+
+test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个（correctness F1）", () => {
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.setHadLegs([LEG]);
+		basketActions.beginHadFlight(); // 提交 A 起飞
+		basketActions.beginHadFlight(); // 提交 B 重叠起飞
+	});
+	expect(result.current.hadPending).toBe(true);
+	act(() => {
+		basketActions.setHadLegs([]); // 仍冻结
+	});
+	expect(result.current.hadLegs).toHaveLength(1);
+	act(() => {
+		basketActions.endHadFlight(); // A settle：仍剩 B 在飞
+	});
+	expect(result.current.hadPending).toBe(true);
+	act(() => {
+		basketActions.setHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(1); // 冻结未解
+	act(() => {
+		basketActions.endHadFlight(); // B settle：全落
+	});
+	expect(result.current.hadPending).toBe(false);
+	act(() => {
+		basketActions.setHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(0);
 });

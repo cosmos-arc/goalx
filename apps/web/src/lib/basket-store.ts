@@ -21,6 +21,9 @@ type BasketState = {
 	stake: string;
 	strategyVersion: string;
 	mode: "paper" | "live";
+	/** had 提交飞行中（票 03 全局冻结）：跨页共享——提交期间任何页的
+	 * 篮编辑被门住；不持久化（刷新即解冻——mutation 随页面死）。 */
+	hadPending: boolean;
 };
 
 const EMPTY: BasketState = {
@@ -29,6 +32,7 @@ const EMPTY: BasketState = {
 	stake: "100",
 	strategyVersion: "",
 	mode: "paper",
+	hadPending: false,
 };
 
 /** 恢复形状守卫（correctness F4）：字段级校验——畸形腿直接过滤，
@@ -68,6 +72,7 @@ function sanitizeSnapshot<T extends { probability?: unknown }>(leg: T): T {
 }
 
 let state: BasketState = loadInitial();
+let hadInFlight = 0; // had 提交飞行计数（>0=冻结；刷新归零解冻）
 const listeners = new Set<() => void>();
 
 /** 宽容恢复：形状不对/存储损坏按空篮（隐私模式读失败同此）。 */
@@ -84,6 +89,7 @@ function loadInitial(): BasketState {
 			stake: typeof parsed.stake === "string" ? parsed.stake : EMPTY.stake,
 			strategyVersion: typeof parsed.strategyVersion === "string" ? parsed.strategyVersion : EMPTY.strategyVersion,
 			mode: parsed.mode === "live" ? "live" : "paper",
+			hadPending: false,
 		};
 	} catch {
 		return EMPTY;
@@ -93,7 +99,8 @@ function loadInitial(): BasketState {
 function commit(next: BasketState): void {
 	state = next;
 	try {
-		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
+		// 冻结标志不落盘（刷新后无在飞 mutation，门恒解冻）
+		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ ...next, hadPending: false }));
 	} catch {
 		// 存不进（隐私模式/满）——本次会话内状态仍生效
 	}
@@ -117,8 +124,31 @@ export function useBasket(): BasketState {
 }
 
 export const basketActions = {
+	/** 编辑入口（pick/换选/移除/带入）：飞行中被冻结门拦下（静默不动）。 */
 	setHadLegs(legs: Leg[]): void {
+		if (state.hadPending) {
+			return;
+		}
 		commit({ ...state, hadLegs: legs });
+	},
+	/** 提交路径自写（清篮/冲突恢复腿）：不受冻结门——门只挡用户编辑。 */
+	replaceHadLegs(legs: Leg[]): void {
+		commit({ ...state, hadLegs: legs });
+	},
+	/** 提交飞行起止（useHadBasket 的 mutation onMutate/onSettled 驱动）。
+	 * 引用计数非布尔（correctness F1）：重提交重叠时首个 settle 不得
+	 * 提前解冻仍飞行的第二个提交。 */
+	beginHadFlight(): void {
+		hadInFlight += 1;
+		if (!state.hadPending) {
+			commit({ ...state, hadPending: true });
+		}
+	},
+	endHadFlight(): void {
+		hadInFlight = Math.max(0, hadInFlight - 1);
+		if (hadInFlight === 0 && state.hadPending) {
+			commit({ ...state, hadPending: false });
+		}
 	},
 	setGoalsLegs(legs: GoalsLeg[]): void {
 		commit({ ...state, goalsLegs: legs });
@@ -163,6 +193,7 @@ export function withFreshRequestIds<T extends { request_id: string }>(legs: T[])
 /** 测试隔离：清内存态与存储（test/setup.ts afterEach 调用）。 */
 export function __resetBasketForTests(): void {
 	state = EMPTY;
+	hadInFlight = 0; // 飞行计数随隔离清零（否则上一测试未 settle 的飞行冻结后来者）
 	try {
 		globalThis.localStorage?.removeItem(STORAGE_KEY);
 	} catch {

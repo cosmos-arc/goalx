@@ -95,7 +95,9 @@ export function MarketHadPage() {
 		if (combo === null || combo.picks.length === 0 || comboPlans === null || comboSelected === null) {
 			return;
 		}
-		if (basket.createSuggestion.isPending) {
+		// 全局冻结门（票 03 correctness F2）：别页/前次飞行中本页 isPending
+		// 看不到——腿被 store 门拦下但金额/提示仍会写，整入口直接挡
+		if (basket.createSuggestion.isPending || basket.hadPending) {
 			return;
 		}
 		basket.setLegs(
