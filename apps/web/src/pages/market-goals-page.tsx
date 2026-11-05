@@ -52,7 +52,7 @@ export function MarketGoalsPage() {
 	const queryClient = useQueryClient();
 	const [market, setMarket] = useState<GoalsMarket>("ttg");
 	// 票 06：篮草稿走全站单源 store（与 had 三页共用一份草稿，路由/刷新不丢）
-	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs } = useBasket();
+	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs, goalsPending } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
@@ -126,7 +126,8 @@ export function MarketGoalsPage() {
 
 	/** 一键带入：组合腿就地进本页选注篮（每注独立单关，注额预填）。 */
 	function applyCombo() {
-		if (combo === null || combo.picks.length === 0 || createSuggestion.isPending) {
+		// 全局冻结门（票 04，同 had 侧 F2）：别页/前次飞行本页 isPending 看不到
+		if (combo === null || combo.picks.length === 0 || createSuggestion.isPending || goalsPending) {
 			return;
 		}
 		basketActions.setGoalsLegs(
@@ -152,6 +153,9 @@ export function MarketGoalsPage() {
 	}
 
 	const createSuggestion = useMutation({
+		// 全局冻结（票 04，同 had 侧票 03）：计数制起落，跨页编辑同被门住
+		onMutate: () => basketActions.beginGoalsFlight(),
+		onSettled: () => basketActions.endGoalsFlight(),
 		mutationFn: async (): Promise<{
 			created: number[];
 			failedAt: number | null;
@@ -186,7 +190,7 @@ export function MarketGoalsPage() {
 					const conflict = intentConflict(error);
 					if (conflict !== null) {
 						invalidateBets(queryClient);
-						basketActions.setGoalsLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
+						basketActions.replaceGoalsLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
 						setMessage(
 							conflictRestoreMessage(`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）`, conflict) +
 								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
@@ -195,7 +199,7 @@ export function MarketGoalsPage() {
 					}
 					// 失败腿起整段留篮（前面的已成注保留账面）；未提交 ≠ 失败，
 					// 分开计数（correctness F3）
-					basketActions.setGoalsLegs(legs.slice(created.length));
+					basketActions.replaceGoalsLegs(legs.slice(created.length));
 					if (created.length > 0) {
 						invalidateBets(queryClient);
 					}
@@ -211,7 +215,7 @@ export function MarketGoalsPage() {
 		onSuccess: ({ created, failedAt, labels }) => {
 			if (failedAt === null) {
 				setMessage(`已建 ${created.length} 条单关建议（${labels.join("、")}）— 去投注页锁定`);
-				basketActions.setGoalsLegs([]);
+				basketActions.replaceGoalsLegs([]);
 				setBasketOpen(false);
 			}
 			if (created.length > 0) {

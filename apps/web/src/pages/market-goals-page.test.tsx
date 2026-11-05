@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
@@ -362,4 +362,43 @@ test("bankroll 读取失败：组合注额建议诚实缺席，推荐流照常",
 	expect(within(combo).getByTestId("goals-combo-pending")).toHaveTextContent("资金池读取失败");
 	expect(within(combo).queryByTestId("goals-combo-apply")).not.toBeInTheDocument();
 	expect(within(screen.getByTestId("goals-feed")).getAllByTestId(/^goals-card-\d+$/)).toHaveLength(3);
+});
+
+// ---- 票 04：goals 提交飞行中的全局冻结（跨重挂载）----
+
+test("提交飞行中重挂载后编辑被门拦下；settle 后清篮（票 04 验收）", async () => {
+	const user = userEvent.setup();
+	// 服务器挂起：提交进入飞行，onMutate 已置全局 goalsPending
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post(
+			"*/api/v1/bets",
+			async () => {
+				await gate;
+				return HttpResponse.json({ id: 31, mode: "paper", stake: 100, legs: [], status: "open" }, { status: 201 });
+			},
+			{ once: true },
+		),
+	);
+	await renderAt("/markets/goals");
+	await screen.findByTestId("goals-card-2");
+	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
+	await user.click(screen.getByTestId("goals-basket-open"));
+	await user.click(screen.getByTestId("goals-basket-submit"));
+
+	// 重挂载（新页实例 isPending=false）：再选另一档被 store 冻结门拦下
+	cleanup();
+	await renderAt("/markets/goals");
+	await screen.findByTestId("goals-card-2");
+	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
+	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3"); // 仍只有飞行前那腿
+
+	// 服务器返回 201 → 提交自写清篮不受门，settle 解冻
+	release();
+	await waitFor(() => expect(screen.queryByTestId("goals-basket-count")).toHaveTextContent("0/3"));
+	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
+	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3"); // 解冻后可编辑
 });
