@@ -21,6 +21,9 @@ type BasketState = {
 	stake: string;
 	strategyVersion: string;
 	mode: "paper" | "live";
+	/** had 提交飞行中（票 03 全局冻结）：跨页共享——提交期间任何页的
+	 * 篮编辑被门住；不持久化（刷新即解冻——mutation 随页面死）。 */
+	hadPending: boolean;
 };
 
 const EMPTY: BasketState = {
@@ -29,6 +32,7 @@ const EMPTY: BasketState = {
 	stake: "100",
 	strategyVersion: "",
 	mode: "paper",
+	hadPending: false,
 };
 
 /** 恢复形状守卫（correctness F4）：字段级校验——畸形腿直接过滤，
@@ -84,6 +88,7 @@ function loadInitial(): BasketState {
 			stake: typeof parsed.stake === "string" ? parsed.stake : EMPTY.stake,
 			strategyVersion: typeof parsed.strategyVersion === "string" ? parsed.strategyVersion : EMPTY.strategyVersion,
 			mode: parsed.mode === "live" ? "live" : "paper",
+			hadPending: false,
 		};
 	} catch {
 		return EMPTY;
@@ -93,7 +98,8 @@ function loadInitial(): BasketState {
 function commit(next: BasketState): void {
 	state = next;
 	try {
-		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
+		// 冻结标志不落盘（刷新后无在飞 mutation，门恒解冻）
+		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ ...next, hadPending: false }));
 	} catch {
 		// 存不进（隐私模式/满）——本次会话内状态仍生效
 	}
@@ -117,8 +123,22 @@ export function useBasket(): BasketState {
 }
 
 export const basketActions = {
+	/** 编辑入口（pick/换选/移除/带入）：飞行中被冻结门拦下（静默不动）。 */
 	setHadLegs(legs: Leg[]): void {
+		if (state.hadPending) {
+			return;
+		}
 		commit({ ...state, hadLegs: legs });
+	},
+	/** 提交路径自写（清篮/冲突恢复腿）：不受冻结门——门只挡用户编辑。 */
+	replaceHadLegs(legs: Leg[]): void {
+		commit({ ...state, hadLegs: legs });
+	},
+	/** 提交飞行期标志（useHadBasket 的 mutation onMutate/onSettle 驱动）。 */
+	setHadPending(pending: boolean): void {
+		if (state.hadPending !== pending) {
+			commit({ ...state, hadPending: pending });
+		}
 	},
 	setGoalsLegs(legs: GoalsLeg[]): void {
 		commit({ ...state, goalsLegs: legs });

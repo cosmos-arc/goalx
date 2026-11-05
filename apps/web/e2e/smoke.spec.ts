@@ -273,15 +273,17 @@ test("goals market page renders the feed and combo or degrades honestly", async 
 	).toBeVisible({ timeout: 20_000 });
 });
 
-test("validation page renders verdict or degrades gracefully without backend", async ({ page }) => {
+test("validation page degrades gracefully without backend", async ({ page }) => {
+	// 票 03 根因钉死：原"双路径"版在常驻后端机上确定性挂——实测
+	// /api/v1/validation/progress 是无界重报表（真语料 201s），20s 内既非
+	// verdict 也非 error。钉死降级路径：路由级断 /api/**，重试快速走完进
+	// error 态；verdict 路径由 validation-page 组件测试（msw fixture）覆盖。
+	// 注：只断 /api/v1/**——宽glob **/api/** 会误杀 vite 模块 /src/api/*.ts 白屏
+	await page.route("**/api/v1/**", (route) => route.abort());
 	await page.goto("/validation");
 	await expect(page.getByRole("heading", { name: "GoalX · 验证" })).toBeVisible();
-	// 票 19：首屏换为状态结论行（三条件 x/3）——双路径（票 13 基调）：常驻后端时结论
-	// 照常渲染；后端不可达时 react-query 默认重试 3 次(指数退避)后才进入 error 态
-	// （放宽超时等重试走完）。18 号的 metric-回测 skill 契约保留（对比次级区，数据路径可见）。
-	await expect(page.getByTestId("validation-verdict").or(page.getByTestId("validation-error")).first()).toBeVisible({
-		timeout: 20_000,
-	});
+	// react-query 默认重试 3 次(指数退避)后才进入 error 态——放宽超时等重试走完
+	await expect(page.getByTestId("validation-error")).toBeVisible({ timeout: 20_000 });
 	await expect(page.getByTestId("metric-回测 skill").or(page.getByTestId("validation-error")).first()).toBeVisible();
 });
 

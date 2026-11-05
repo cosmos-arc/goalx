@@ -181,6 +181,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	}
 
 	const createSuggestion = useMutation({
+		// 全局冻结（票 03）：pending 下沉 store，跨页编辑同被门住
+		onMutate: () => basketActions.setHadPending(true),
+		onSettled: () => basketActions.setHadPending(false),
 		mutationFn: async () => {
 			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
 			const legPayload = (leg: Leg) => ({
@@ -207,7 +210,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 					`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
 						`${betTermsLabel(bet)}）— 去投注页锁定`,
 				);
-				setLegs([]);
+				basketActions.replaceHadLegs([]);
 				setBasketOpen(false);
 				invalidateBets(queryClient);
 				return;
@@ -226,7 +229,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 					const conflict = intentConflict(error);
 					if (conflict !== null) {
 						invalidateBets(queryClient);
-						setLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
+						basketActions.replaceHadLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
 						setMessage(
 							conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
 								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
@@ -239,7 +242,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 						// 路径同流；已建成的注保留账面（消息与列表可见）。
 						// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
 						// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
-						setLegs([]);
+						basketActions.replaceHadLegs([]);
 						setBasketOpen(false);
 						if (created.length > 0) {
 							invalidateBets(queryClient);
@@ -258,7 +261,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 						return;
 					}
 					// 非价变失败：已成注保留账面、失败腿留在篮内可重试
-					setLegs(legs.slice(created.length));
+					basketActions.replaceHadLegs(legs.slice(created.length));
 					if (created.length > 0) {
 						invalidateBets(queryClient); // 部分成注也要刷新列表（对账可见）
 					}
@@ -269,7 +272,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 				}
 			}
 			setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`);
-			setLegs([]);
+			basketActions.replaceHadLegs([]);
 			setBasketOpen(false);
 			invalidateBets(queryClient);
 		},
@@ -279,7 +282,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 			const conflict = intentConflict(error);
 			if (conflict !== null) {
 				invalidateBets(queryClient);
-				setLegs(withFreshRequestIds(legs));
+				basketActions.replaceHadLegs(withFreshRequestIds(legs));
 				setMessage(conflictRestoreMessage("", conflict));
 				return;
 			}
@@ -287,7 +290,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 			// 用户按新价重新选注——旧价不经确认直进成绩的红线在服务器侧
 			const quotes = currentQuotes(error);
 			if (quotes !== null && quotes.length > 0) {
-				setLegs([]);
+				basketActions.replaceHadLegs([]);
 				setBasketOpen(false);
 				// 前缀失效今日场次（键形 ["today-fixtures", days]）+ 逐场研究页
 				// 报价查询（票 06）——correctness F1：打错键=不刷新，页面停在

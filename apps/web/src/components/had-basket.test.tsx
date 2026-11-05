@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import type { TodayFixture } from "../api/goalx";
 import { __resetBasketForTests } from "../lib/basket-store";
 import { useHadBasket } from "./had-basket";
@@ -171,4 +171,53 @@ test("旧篮恢复腿（无快照）EV=依据缺失，不回退当前页列表 E
 	const restored = result.current.legs[0];
 	if (restored === undefined) throw new Error("leg missing");
 	expect(result.current.legEv(restored)).toBeNull();
+});
+
+// ---- 票 03：提交飞行中的全局冻结（pending 下沉 basket-store）----
+
+test("提交飞行中，别页编辑被门拦下；settle 后清腿落库（票 03 验收）", async () => {
+	const { HttpResponse, http } = await import("msw");
+	const { server } = await import("../mocks/server");
+	const { wrapper } = withClient();
+	const pageA = renderHook(() => useHadBasket(Date.now(), []), { wrapper });
+	act(() => {
+		pageA.result.current.pick(PICKABLE, "h", 1.92);
+	});
+	expect(pageA.result.current.legs).toHaveLength(1);
+
+	// 服务器挂起不响应：提交进入飞行，onMutate 已置全局 pending
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post(
+			"*/api/v1/bets",
+			async () => {
+				await gate;
+				return HttpResponse.json({ id: 9, mode: "paper", stake: 100, legs: [], status: "open" }, { status: 201 });
+			},
+			{ once: true },
+		),
+	);
+	await act(async () => {
+		pageA.result.current.createSuggestion.mutate();
+	});
+
+	// 别页（新 hook 实例 isPending=false）加腿：被 store 冻结门拦下
+	const pageB = renderHook(() => useHadBasket(Date.now(), []), { wrapper });
+	expect(pageB.result.current.createSuggestion.isPending).toBe(false);
+	act(() => {
+		pageB.result.current.pick(OTHER, "a", 3.1);
+	});
+	expect(pageB.result.current.legs).toHaveLength(1); // 仍只有飞行前那腿
+	expect(pageB.result.current.legs[0]?.fixture_id).toBe(1);
+
+	// 服务器返回 201 → 提交自写清腿不受门，settle 解冻
+	release();
+	await act(async () => {
+		await vi.waitFor(() => {
+			expect(pageB.result.current.legs).toHaveLength(0);
+		});
+	});
 });
