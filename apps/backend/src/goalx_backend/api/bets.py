@@ -656,17 +656,9 @@ def preview_pool_slip(payload: PoolSlipPreviewRequest, db: DbDep) -> PoolSlipPre
         bt_store.require_fixtures_exist(db, [pick.fixture_id for pick in payload.picks])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # ttt14 与创建侧同口径（len != 14，审计批C #9）：未满/超场都是
-    # 不可建的诚实 0，不再走通用连乘算出"可建的 N 注"再吃创建 400
-    incomplete = (
-        (payload.market_code == "pick9" and len(by_match) < bt_store.PICK9_LEGS)
-        or (payload.market_code == "ttt14" and len(by_match) != bt_store.TTT14_LEGS)
-        or (
-            payload.market_code == "goals4"
-            and not bt_store.goals4_selections_complete(by_match)
-        )
-    )
-    if incomplete:
+    # "未成票"=诚实 0（审计批C #9）：判定单源在 store（ttt14 与创建侧
+    # 同判 len != 14），不再走通用连乘算出"可建的 N 注"再吃创建 400
+    if bt_store.pool_slip_incomplete(by_match, payload.market_code):
         return PoolSlipPreview(
             market_code=payload.market_code,
             combination_count=0,
