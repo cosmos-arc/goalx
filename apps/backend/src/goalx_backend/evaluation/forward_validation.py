@@ -128,7 +128,8 @@ def _issued_pre_kickoff(issued_at: str, kickoff_utc: str) -> bool:
 
     kickoff legacy=北京墙钟 naive，裸字符串字典序对 aware issued_at 会把
     赛后发布判进"赛前冻结"分母；不可解析（任一侧）按赛后计——证不出
-    赛前就不进分母。
+    赛前就不进分母。issued_at naive 兜底按 UTC 贴签（写侧服务器生成恒
+    aware，现库 1274/1274 实测；naive legacy issued_at 无此代）。
     """
     try:
         issued = datetime.fromisoformat(issued_at)

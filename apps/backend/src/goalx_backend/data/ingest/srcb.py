@@ -57,6 +57,8 @@ CORE_PIDS: tuple[str, ...] = (
 )
 # 滑动窗口加顶（票 57）：0.5s 间距≈120/min 持续，200/min 纯加顶零行为变化
 _RATE_CEILING = RateLimitItemPerMinute(200)
+# okooo 场次 id 段（审计批D #8 守卫）：运行期实测 2,745 行 mid 全 134 前缀
+OKOOO_MID_PREFIX = "134"
 
 _ROW_PATTERNS = (
     r"<tr>\s*<td>\s*<span[^>]*>([\d.]+)</span>\s*"
@@ -215,9 +217,8 @@ def collect_srcb_changes(
         return stats
     # id 段守卫（审计批D #8）：pool_matches.source_match_id 切官方源后是
     # infohub id（204 前缀），拿它打 okooo 变化页=错误 id 打外部源（--only
-    # 显式触发/CLI 手跑的腐化面）；okooo 场次 id 段=134 前缀（运行期
-    # 2,745 行实测全 134），段外 mid 拒发并计数（不 warmer、零请求）
-    okooo_mids = [mid for mid in mids if mid.startswith("134")]
+    # 显式触发/CLI 手跑的腐化面）；段外 mid 拒发并计数（不 warmer、零请求）
+    okooo_mids = [mid for mid in mids if mid.startswith(OKOOO_MID_PREFIX)]
     stats.non_okooo_mids = len(mids) - len(okooo_mids)
     if stats.non_okooo_mids:
         logger.warning(
