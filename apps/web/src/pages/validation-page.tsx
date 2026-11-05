@@ -462,7 +462,9 @@ function BacktestRunTable({ runs }: { runs: BacktestRun[] }) {
 							<TableCell>{run.status}</TableCell>
 							<TableCell className={TABULAR_NUMS}>{asNumber(run.summary?.["predictions"]) ?? "—"}</TableCell>
 							<TableCell className={TABULAR_NUMS}>{asNumber(run.summary?.["bets"]) ?? "—"}</TableCell>
-							<TableCell className={TABULAR_NUMS}>{formatPct(asNumber(run.summary?.["roi"]))}</TableCell>
+							<TableCell className={TABULAR_NUMS}>
+								{formatPct(asNumber(run.summary?.["roi_stake_weighted"] ?? run.summary?.["roi"]))}
+							</TableCell>
 						</TableRow>
 					))}
 				</TableBody>

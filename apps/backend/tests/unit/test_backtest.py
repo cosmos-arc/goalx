@@ -271,6 +271,8 @@ def test_run_backtest_end_to_end(gold_env) -> None:
         summary = bt.run_summary(face, result.run_id)
         assert summary is not None
         assert summary["predictions"] == result.predictions
+        # 票 02 命名债：加权 roi 双键并存——新键正名，旧键供存量读方
+        assert summary["roi"] == summary["roi_stake_weighted"] == round(result.roi, 6)
         # era 分层与源声明随预测行落库
         preds = face.execute(
             "SELECT * FROM backtest_predictions WHERE run_id = ? ORDER BY match_date",

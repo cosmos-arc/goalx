@@ -875,7 +875,15 @@ export const backtestRunsFixture = [
 		status: "done",
 		created_at: "2026-09-13T10:00:00+00:00",
 		finished_at: "2026-09-13T10:05:00+00:00",
-		summary: { predictions: 4200, bets: 96, staked: 4500, profit: -120, roi: -0.027, skipped: {} },
+		summary: {
+			predictions: 4200,
+			bets: 96,
+			staked: 4500,
+			profit: -120,
+			roi: -0.027,
+			roi_stake_weighted: -0.027,
+			skipped: {},
+		},
 		overall_metrics: {
 			n: 4200,
 			rps_model: 0.2031,

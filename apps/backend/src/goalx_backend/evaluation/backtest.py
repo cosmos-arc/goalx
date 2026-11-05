@@ -1568,7 +1568,10 @@ def run_backtest(
                         "bets": result.bets,
                         "staked": round(result.staked, 2),
                         "profit": round(result.profit, 2),
+                        # 同值双键（票 02 命名债）：metrics 体系 roi=等权，
+                        # 本值是投入加权——新键正名，旧键并存写供存量读方
                         "roi": round(result.roi, 6),
+                        "roi_stake_weighted": round(result.roi, 6),
                         "skipped": result.skipped,
                     }
                     | (
