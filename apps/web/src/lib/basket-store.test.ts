@@ -125,7 +125,7 @@ test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不
 	const { result } = renderHook(() => useBasket());
 	act(() => {
 		basketActions.setHadLegs([LEG]);
-		basketActions.setHadPending(true);
+		basketActions.beginHadFlight();
 		// 编辑入口（pick/换选/移除/带入）静默不动
 		basketActions.setHadLegs([]);
 	});
@@ -141,8 +141,38 @@ test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不
 	expect(persisted.hadPending ?? false).toBe(false);
 	act(() => {
 		// 解冻后编辑写入恢复
-		basketActions.setHadPending(false);
+		basketActions.endHadFlight();
 		basketActions.setHadLegs([LEG]);
 	});
 	expect(result.current.hadLegs).toHaveLength(1);
+});
+
+test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个（correctness F1）", () => {
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.setHadLegs([LEG]);
+		basketActions.beginHadFlight(); // 提交 A 起飞
+		basketActions.beginHadFlight(); // 提交 B 重叠起飞
+	});
+	expect(result.current.hadPending).toBe(true);
+	act(() => {
+		basketActions.setHadLegs([]); // 仍冻结
+	});
+	expect(result.current.hadLegs).toHaveLength(1);
+	act(() => {
+		basketActions.endHadFlight(); // A settle：仍剩 B 在飞
+	});
+	expect(result.current.hadPending).toBe(true);
+	act(() => {
+		basketActions.setHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(1); // 冻结未解
+	act(() => {
+		basketActions.endHadFlight(); // B settle：全落
+	});
+	expect(result.current.hadPending).toBe(false);
+	act(() => {
+		basketActions.setHadLegs([]);
+	});
+	expect(result.current.hadLegs).toHaveLength(0);
 });

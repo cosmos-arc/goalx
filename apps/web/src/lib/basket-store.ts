@@ -72,6 +72,7 @@ function sanitizeSnapshot<T extends { probability?: unknown }>(leg: T): T {
 }
 
 let state: BasketState = loadInitial();
+let hadInFlight = 0; // had 提交飞行计数（>0=冻结；刷新归零解冻）
 const listeners = new Set<() => void>();
 
 /** 宽容恢复：形状不对/存储损坏按空篮（隐私模式读失败同此）。 */
@@ -134,10 +135,19 @@ export const basketActions = {
 	replaceHadLegs(legs: Leg[]): void {
 		commit({ ...state, hadLegs: legs });
 	},
-	/** 提交飞行期标志（useHadBasket 的 mutation onMutate/onSettle 驱动）。 */
-	setHadPending(pending: boolean): void {
-		if (state.hadPending !== pending) {
-			commit({ ...state, hadPending: pending });
+	/** 提交飞行起止（useHadBasket 的 mutation onMutate/onSettled 驱动）。
+	 * 引用计数非布尔（correctness F1）：重提交重叠时首个 settle 不得
+	 * 提前解冻仍飞行的第二个提交。 */
+	beginHadFlight(): void {
+		hadInFlight += 1;
+		if (!state.hadPending) {
+			commit({ ...state, hadPending: true });
+		}
+	},
+	endHadFlight(): void {
+		hadInFlight = Math.max(0, hadInFlight - 1);
+		if (hadInFlight === 0 && state.hadPending) {
+			commit({ ...state, hadPending: false });
 		}
 	},
 	setGoalsLegs(legs: GoalsLeg[]): void {
@@ -183,6 +193,7 @@ export function withFreshRequestIds<T extends { request_id: string }>(legs: T[])
 /** 测试隔离：清内存态与存储（test/setup.ts afterEach 调用）。 */
 export function __resetBasketForTests(): void {
 	state = EMPTY;
+	hadInFlight = 0; // 飞行计数随隔离清零（否则上一测试未 settle 的飞行冻结后来者）
 	try {
 		globalThis.localStorage?.removeItem(STORAGE_KEY);
 	} catch {

@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { TodayFixture } from "../api/goalx";
 import { __resetBasketForTests } from "../lib/basket-store";
+import { server } from "../mocks/server";
 import { useHadBasket } from "./had-basket";
 import type { PickableFixture } from "./had-quote-ui";
 
@@ -176,8 +178,6 @@ test("旧篮恢复腿（无快照）EV=依据缺失，不回退当前页列表 E
 // ---- 票 03：提交飞行中的全局冻结（pending 下沉 basket-store）----
 
 test("提交飞行中，别页编辑被门拦下；settle 后清腿落库（票 03 验收）", async () => {
-	const { HttpResponse, http } = await import("msw");
-	const { server } = await import("../mocks/server");
 	const { wrapper } = withClient();
 	const pageA = renderHook(() => useHadBasket(Date.now(), []), { wrapper });
 	act(() => {

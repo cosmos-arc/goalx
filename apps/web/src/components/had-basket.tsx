@@ -86,7 +86,7 @@ export type ProbabilityAtPick = (fixture: PickableFixture, selection: Selection)
 
 export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityAtPick?: ProbabilityAtPick) {
 	// 票 06：草稿单源——had 腿/金额/模式/策略版本全站一份（localStorage 持久化）
-	const { hadLegs: legs, stake, strategyVersion, mode } = useBasket();
+	const { hadLegs: legs, stake, strategyVersion, mode, hadPending } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	// 票型状态 = 全 app 一份记忆（读 localStorage，缺省单关合计）；卡/篮
@@ -181,9 +181,10 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	}
 
 	const createSuggestion = useMutation({
-		// 全局冻结（票 03）：pending 下沉 store，跨页编辑同被门住
-		onMutate: () => basketActions.setHadPending(true),
-		onSettled: () => basketActions.setHadPending(false),
+		// 全局冻结（票 03）：pending 下沉 store，跨页编辑同被门住；
+		// 计数制起落（correctness F1）——重叠提交全部 settle 才解冻
+		onMutate: () => basketActions.beginHadFlight(),
+		onSettled: () => basketActions.endHadFlight(),
 		mutationFn: async () => {
 			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
 			const legPayload = (leg: Leg) => ({
@@ -313,6 +314,8 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	return {
 		legs,
 		setLegs,
+		/** had 提交飞行中（store 全局，跨页可见；applyCombo 等入口门用）。 */
+		hadPending,
 		basketOpen,
 		setBasketOpen,
 		stake,
