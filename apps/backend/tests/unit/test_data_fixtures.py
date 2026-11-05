@@ -165,10 +165,6 @@ def test_odds_api_join_persisted(db: sqlite3.Connection) -> None:
     assert row is not None
     assert row["odds_api_event_id"] == "evt123"
     assert row["join_method"] == "time_window"
-    fx.unset_odds_api_join(db, fixture)
-    row = fx.get_fixture(db, fixture)
-    assert row is not None
-    assert row["odds_api_event_id"] is None
 
 
 def test_pending_jingcai_fixtures(db: sqlite3.Connection) -> None:

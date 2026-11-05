@@ -161,3 +161,18 @@ def test_groups_split_by_model_version(db) -> None:
     assert set(report["groups"]) == {"dc-a", "dc-b"}
     assert all(m["n"] == 1 for m in report["groups"].values())
     assert all(m["insufficient_samples"] for m in report["groups"].values())
+
+
+def test_issued_pre_kickoff_legacy_naive_kickoff() -> None:
+    """审计批D #4：kickoff 双代统一读口——legacy naive 北京墙钟此前走
+    裸字符串字典序，aware issued_at 赛后发布被判进"赛前冻结"分母。"""
+    from goalx_backend.evaluation.forward_validation import _issued_pre_kickoff
+
+    # legacy naive 02:00 北京 = 前日 18:00Z；发布 2026-09-13T01:00Z 已在
+    # 开赛后，字符串序却 "…01:00:00+00:00" < "2026-09-13T02:00:00" 误判赛前
+    assert not _issued_pre_kickoff("2026-09-13T01:00:00+00:00", "2026-09-13T02:00:00")
+    # 真赛前（前日 10:00Z < 18:00Z 开球）仍判赛前
+    assert _issued_pre_kickoff("2026-09-12T10:00:00+00:00", "2026-09-13T02:00:00")
+    # v2 aware kickoff 直读；坏串按赛后计（证不出赛前不进分母）
+    assert _issued_pre_kickoff("2026-09-12T10:00:00+00:00", "2026-09-12T18:00:00+00:00")
+    assert not _issued_pre_kickoff("2026-09-12T10:00:00+00:00", "not-a-date")

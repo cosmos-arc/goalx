@@ -70,7 +70,7 @@ class Record:
 def load_compare_matches(
     conn: sqlite3.Connection, league: str, seasons: tuple[str, ...]
 ) -> list[CompareMatch]:
-    """understat_matches → 对比语料（SQL 归 data/ingest/understat.compare_rows）。"""
+    """understat_matches → 对比语料（SQL 归 data/results.understat_compare_rows）。"""
     matches: list[CompareMatch] = []
     for row in rs_store.understat_compare_rows(conn, league, seasons):
         raw = (row["forecast_w"], row["forecast_d"], row["forecast_l"])

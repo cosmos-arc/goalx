@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence
+from goalx_backend.data.fixtures import kickoff_to_utc
 from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation.forward_validation import (
     AsOfBatch,
@@ -160,11 +161,14 @@ def _span_weeks(
     *samples_by_fixture: dict[int, ForwardSample],
 ) -> int:
     """配对样本覆盖的周跨度（最早到最晚开球，向下取整周）。"""
+    # 开球双代统一读口（审计批D #4）：裸 fromisoformat 混代 naive/aware
+    # 在 max()-min() 直接 TypeError 炸整份报告；不可解析样本不进跨度
     kickoffs = [
-        datetime.fromisoformat(str(s.kickoff_utc))
+        k
         for fid in fixture_ids
         for mapping in samples_by_fixture
         if (s := mapping.get(fid)) is not None
+        and (k := kickoff_to_utc(str(s.kickoff_utc))) is not None
     ]
     if not kickoffs:
         return 0
@@ -336,7 +340,9 @@ def review_blind_summary(conn: sqlite3.Connection) -> BlindReviewSummary:
 
 
 _REVIEW_MIN_SAMPLES = 10  # 复核结论低于此数视为未知
-_MISLEADING_MAX_SHARE = 0.20  # 误导类占比超过视为系统性错误
+# 误导类占比超过视为系统性错误（松于 validation.REVIEW_MISLEADING_MAX
+# =0.10 的逐条复核准入门——两阈值有意不同档）
+_MISLEADING_MAX_SHARE = 0.20
 _SEASON_MIN_WEEKS = 30  # 整赛季口径（周）
 
 

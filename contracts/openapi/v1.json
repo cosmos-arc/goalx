@@ -651,7 +651,7 @@
           "bets"
         ],
         "summary": "建注(注级建议; 校验 had 资格+纸面价绑定; 同键同意图回带/异意图409)",
-        "description": "创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。\n\n纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效\nhad 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则\nsystem_paper 标签+腿级快照身份落库；报价不可得(或非 had)为\nmanual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。\n\n幂等(票 06/09)：client_request_id 同键重复提交——同意图回带既有注\n(201 同体)不落双行；异意图(改金额/模式/选注)409 带原注摘要，不静默\n吞改。意图指纹=提交载荷业务字段规范形哈希(建注时一次落库)，比对\n对象是不可变原始提交，不读锁票重绑后的行。存量无指纹行(v37 期)\n无可比对 → 维持旧回带(降级)。重放在资格/价绑校验**之前**短路：\n原决策已落库，腿事后停售/价变不改变\"该请求已建注\"的事实。",
+        "description": "创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。\n\nlive 注单唯一动线=赛前建行(本端点,开赛后新建被资格门拒)+赛后\nPOST /bet-slips slip 回录(事后记账,不重校验)——开赛后全新建 live\n行不是受支持语义(审计 #10 裁决, 2026-11-05)。\n\n纸面价绑定(boundary-hardening 票 04)：paper 建注时服务器重取当前有效\nhad 报价与客户端价比对——价变 409 返回新价要求确认(裁决①)；一致则\nsystem_paper 标签+腿级快照身份落库；报价不可得(或非 had)为\nmanual_research(不进正式成绩面)；live 一律 live_backfill 不收紧。\n\n幂等(票 06/09)：client_request_id 同键重复提交——同意图回带既有注\n(201 同体)不落双行；异意图(改金额/模式/选注)409 带原注摘要，不静默\n吞改。意图指纹=提交载荷业务字段规范形哈希(建注时一次落库)，比对\n对象是不可变原始提交，不读锁票重绑后的行。存量无指纹行(v37 期)\n无可比对 → 维持旧回带(降级)。重放在资格/价绑校验**之前**短路：\n原决策已落库，腿事后停售/价变不改变\"该请求已建注\"的事实。",
         "operationId": "create_bet_api_v1_bets_post",
         "requestBody": {
           "required": true,

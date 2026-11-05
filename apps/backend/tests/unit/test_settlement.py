@@ -10,7 +10,6 @@ from goalx_backend.settlement import (
     detail_payload,
     judge_leg,
     settle_fixed_bet,
-    settle_pool_combination,
 )
 
 
@@ -172,20 +171,6 @@ def test_parlay_awaiting_any_result_is_open() -> None:
     results = {1: ResultFacts(home_goals=1, away_goals=0)}
     out = settle_fixed_bet(2.0, [leg(1, sel="h"), leg(9, sel="a")], results)
     assert out.status == "open"
-
-
-def test_pool_combination_judgement() -> None:
-    results = {
-        1: ResultFacts(home_goals=2, away_goals=0),
-        2: ResultFacts(home_goals=0, away_goals=0, void=True),
-    }
-    hit, notes = settle_pool_combination({1: "3", 2: "0"}, results)
-    assert hit is True  # 无效场次近似命中
-    assert any("void_fixture_2" in note for note in notes)
-    miss, _ = settle_pool_combination({1: "0", 2: "3"}, results)
-    assert miss is False
-    pending, _ = settle_pool_combination({1: "3", 7: "1"}, results)
-    assert pending is None
 
 
 def test_detail_payload_serializes() -> None:

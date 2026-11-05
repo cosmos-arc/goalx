@@ -256,15 +256,26 @@ class OfficialPeriod:
 
 
 def parse_match_list(match_list: object) -> list[pool_store.PoolMatchInput]:
-    """在售/历史 matchList → 对阵行（infohubMatchId=uniform 同族身份）。"""
+    """
+    在售/历史 matchList → 对阵行（infohubMatchId=uniform 同族身份）。
+
+    缺 startTime 的行跳过并计数告警（审计批D #12）：此前 NOT NULL 列兜底
+    ``now()`` 伪造开球时刻，假 kickoff 随每次同步 DELETE+INSERT 漂移、可
+    击穿 ±2 天映射守卫——缺账不造假（现库观测 0/1788，latent）。
+    """
     rows: list[pool_store.PoolMatchInput] = []
     if not isinstance(match_list, list):
         return rows
+    skipped_no_start = 0
     for row in cast("list[dict[str, Any]]", match_list):
         seq = row.get("matchNum")
         home = row.get("masterTeamAllName") or row.get("masterTeamName")
         away = row.get("guestTeamAllName") or row.get("guestTeamName")
         if seq is None or not home or not away:
+            continue
+        kickoff = _cst_naive_to_utc(row.get("startTime"))
+        if kickoff is None:
+            skipped_no_start += 1
             continue
         rows.append(
             pool_store.PoolMatchInput(
@@ -273,8 +284,7 @@ def parse_match_list(match_list: object) -> list[pool_store.PoolMatchInput]:
                     str(row["infohubMatchId"]) if row.get("infohubMatchId") else None
                 ),
                 league=str(row.get("matchName") or ""),
-                kickoff_utc=_cst_naive_to_utc(row.get("startTime"))
-                or datetime.now(UTC).isoformat(timespec="seconds"),
+                kickoff_utc=kickoff,
                 home_team=str(home),
                 away_team=str(away),
                 euro_odds=(
@@ -283,6 +293,11 @@ def parse_match_list(match_list: object) -> list[pool_store.PoolMatchInput]:
                     None,
                 ),  # 官方无欧指（源B 时代的页面值随判死消失）
             )
+        )
+    if skipped_no_start:
+        logger.warning(
+            "zucai official matchList：{} 行缺 startTime 跳行（不伪造 kickoff）",
+            skipped_no_start,
         )
     rows.sort(key=lambda m: m.match_seq)
     return rows

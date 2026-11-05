@@ -88,6 +88,8 @@ class SrcbCollectStats:
     rows_added: int = 0
     rows_absorbed: int = 0
     failed: dict[str, str] = field(default_factory=dict)
+    # id 段守卫计数（审计批D #8）：段外 mid 拒发的数量（见 collect 侧注）
+    non_okooo_mids: int = 0
 
 
 def minutes_before_from_label(label: str) -> int | None:
@@ -211,10 +213,24 @@ def collect_srcb_changes(
     if not mids:
         _record_run(conn, stats, observed_at)
         return stats
+    # id 段守卫（审计批D #8）：pool_matches.source_match_id 切官方源后是
+    # infohub id（204 前缀），拿它打 okooo 变化页=错误 id 打外部源（--only
+    # 显式触发/CLI 手跑的腐化面）；okooo 场次 id 段=134 前缀（运行期
+    # 2,745 行实测全 134），段外 mid 拒发并计数（不 warmer、零请求）
+    okooo_mids = [mid for mid in mids if mid.startswith("134")]
+    stats.non_okooo_mids = len(mids) - len(okooo_mids)
+    if stats.non_okooo_mids:
+        logger.warning(
+            "srcb 拒发非 okooo id 段 mid {} 个（infohub/异源 id 不打 okooo）",
+            stats.non_okooo_mids,
+        )
+    if not okooo_mids:
+        _record_run(conn, stats, observed_at)
+        return stats
     limiter = default_limiter()
     throttle(limiter, _RATE_CEILING)  # 预热首页也是线上请求，先过闸
     warm_session(client, settings)
-    for mid in mids:
+    for mid in okooo_mids:
         for pid in pids:
             try:
                 throttle(limiter, _RATE_CEILING)

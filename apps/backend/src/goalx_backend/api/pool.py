@@ -27,7 +27,7 @@ from goalx_backend.betting.pool_strategy import (
     target_plan,
 )
 from goalx_backend.data import pool as pool_store
-from goalx_backend.data.ingest import zucai
+from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.pool import PoolMatchView
 from goalx_backend.db import utc_now_iso
 
@@ -414,7 +414,7 @@ async def import_pool_state(
     触发方式=用户命令，不做自动定时。
     """
     pool_period_id = pool_store.pool_period_id(
-        db, zucai.PERIOD_MARKET, payload.period_no
+        db, zucai_official.MARKET_SFC, payload.period_no
     )
     if pool_period_id is None:
         raise HTTPException(

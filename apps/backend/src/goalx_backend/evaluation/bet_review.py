@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from goalx_backend.betting import bets
 from goalx_backend.betting import store as bt_store
 from goalx_backend.data import fixtures as fx_store
+from goalx_backend.data.fixtures import kickoff_to_utc
 from goalx_backend.evaluation import clv as clv_mod
 
 
@@ -52,8 +53,14 @@ def review_views(
         leg_fixtures = [int(leg["fixture_id"]) for leg in json.loads(row["legs"])]
         leg_kickoffs = [kickoffs[fid] for fid in leg_fixtures if fid in kickoffs]
         locked_at = row["locked_at"]
+        # 开球走双代统一读口（审计批D #4）：kickoff legacy=北京墙钟 naive，
+        # 此前 _parse_ts 按 UTC 贴签令锁定资格跨 8h 错位；locked_at 是服务
+        # 器生成的 aware UTC 串维持原读法
         pre_kickoff = (
-            all(_parse_ts(locked_at) < _parse_ts(k) for k in leg_kickoffs)
+            all(
+                _parse_ts(locked_at) < (kickoff_to_utc(str(k)) or _parse_ts(str(k)))
+                for k in leg_kickoffs
+            )
             if locked_at and leg_kickoffs
             else None
         )

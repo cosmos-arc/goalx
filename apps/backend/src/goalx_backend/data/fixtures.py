@@ -672,17 +672,6 @@ def set_odds_api_join(
     )
 
 
-def unset_odds_api_join(conn: sqlite3.Connection, fixture_id: int) -> None:
-    """Clear a stale join (re-join support)."""
-    conn.execute(
-        """
-            UPDATE fixtures SET odds_api_event_id = NULL, odds_api_sport_key = NULL,
-            join_method = NULL, joined_at = NULL WHERE id = ?
-        """,
-        (fixture_id,),
-    )
-
-
 def fixtures_for_events(
     conn: sqlite3.Connection, event_ids: list[str]
 ) -> list[sqlite3.Row]:
