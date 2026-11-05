@@ -495,6 +495,17 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
                 logger.warning("gold-rebuild {}", note)
                 return {"deferred": note}  # with 出口释放预算，明日定拍自愈
             market_report = srct_market.build_market_quotes(store)
+            # 段间余量复探（2026-11-05 OOM 收口）：market 段 Python 侧峰值
+            # ~3.2GB 已释放但 arena 未必还 OS——gold/duckdb 段前再探，
+            # 不足即 deferred（明日自愈）不硬闯 Crashed
+            headroom = srct_remat.headroom_bytes()
+            if headroom < srct_remat.FULL_REMAT_MIN_HEADROOM_BYTES:
+                note = (
+                    f"deferred_midrun_low_headroom_before_gold:"
+                    f" {headroom / 1024**3:.1f}GiB"
+                )
+                logger.warning("gold-rebuild {}", note)
+                return {"deferred": note, "market": asdict(market_report)}
             face = connect(resolved.db_path)
             try:
                 migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
@@ -508,6 +519,20 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
             # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
             # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
             # 短重试后仍占则记账跳过（明日自愈），不让日频面假红
+            # 桥重建段前同探（本段只 CREATE OR REPLACE VIEW=元数据级，
+            # 廉价；探的是后续首个消费方进场前的系统余量水位）
+            headroom = srct_remat.headroom_bytes()
+            if headroom < srct_remat.FULL_REMAT_MIN_HEADROOM_BYTES:
+                note = (
+                    f"deferred_midrun_low_headroom_before_duckdb:"
+                    f" {headroom / 1024**3:.1f}GiB"
+                )
+                logger.warning("gold-rebuild {}", note)
+                return {
+                    "deferred": note,
+                    "market": asdict(market_report),
+                    "gold": asdict(report),
+                }
             duckdb_note = "view_refresh_skipped:duck-lock"
             for attempt in range(3):
                 try:
