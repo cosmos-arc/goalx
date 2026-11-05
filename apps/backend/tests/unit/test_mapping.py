@@ -45,8 +45,11 @@ def seed_fixture(
     kickoff: str = KICKOFF_UTC,
     league: str = "英超",
     tier: Tier = Tier.TIER1,
-    business_date: str = "2026-09-12",
+    business_date: str | None = None,
 ) -> int:
+    # 缺省=北京当期业务日（留案票 01① 扫描活窗 ±2：静态旧日会被跳过）
+    if business_date is None:
+        business_date = fx_store.beijing_business_date()
     competition = fx_store.upsert_competition(db, league, tier=tier)
     home_id = fx_store.upsert_team(db, home)
     away_id = fx_store.upsert_team(db, away)
@@ -518,7 +521,7 @@ def test_live_universe_rows_projection() -> None:
 
 def test_sync_live_shift_links_on_sale_fixture(db) -> None:
     """universe 零命中 → live 两步法兜底落链（origin=live_shift）；连跑幂等。"""
-    fixture_id = seed_fixture(db)
+    fixture_id = seed_fixture(db, business_date="2026-09-12")
     duck_con = seed_universe([])  # 在售场未锚定：universe 空
     live = [
         mapping.UniverseRow(
@@ -554,7 +557,7 @@ def test_sync_live_shift_links_on_sale_fixture(db) -> None:
 
 def test_sync_live_shift_kickoff_gate_rejects(db) -> None:
     """live 命中但开球越界（>10min）→ 不入链（改期/错档），计拒数。"""
-    fixture_id = seed_fixture(db)  # 北京 09-13 03:00
+    fixture_id = seed_fixture(db, business_date="2026-09-12")  # 北京 09-13 03:00
     duck_con = seed_universe([])
     live = [
         mapping.UniverseRow(
@@ -574,7 +577,9 @@ def test_sync_live_shift_kickoff_gate_rejects(db) -> None:
 
 def test_sync_live_shift_ambiguous_candidates(db) -> None:
     """live 多候选 → ambiguous（origin=live_shift），候选进 meta 人工队列。"""
-    fixture_id = seed_fixture(db, kickoff="2026-09-13T10:00:00+00:00")  # 北京 18:00
+    fixture_id = seed_fixture(
+        db, kickoff="2026-09-13T10:00:00+00:00", business_date="2026-09-12"
+    )  # 北京 18:00
     duck_con = seed_universe([])
     live = [
         mapping.UniverseRow(
@@ -627,7 +632,7 @@ def test_sync_universe_precedes_live(db) -> None:
 
 def test_sync_live_variant_via_aliases(db) -> None:
     """live 变体命中（RB莱比锡型）：注入别名组参与两步法，meta 记变体路径。"""
-    fixture_id = seed_fixture(db, home="莱比锡红牛")
+    fixture_id = seed_fixture(db, home="莱比锡红牛", business_date="2026-09-12")
     duck_con = seed_universe([])
     live = [
         mapping.UniverseRow(
@@ -680,7 +685,7 @@ def test_sync_live_scope_gated_by_business_date(db) -> None:
 
 def test_sync_live_checkpoint_unknown_keeps_links(db) -> None:
     """空≠无（correctness F1）：live_rows=None（checkpoint 未知）不撤现有 live 链。"""
-    fixture_id = seed_fixture(db)
+    fixture_id = seed_fixture(db, business_date="2026-09-12")
     duck_con = seed_universe([])
     live = [
         mapping.UniverseRow(
@@ -705,7 +710,9 @@ def test_sync_live_checkpoint_unknown_keeps_links(db) -> None:
 
 def test_sync_live_link_does_not_align_kickoff(db) -> None:
     """live 链不校准 kickoff（correctness F2）：防与 JC 回灌互写摆动。"""
-    fixture_id = seed_fixture(db, kickoff="2026-09-12T19:05:00+00:00")  # 北京 03:05
+    fixture_id = seed_fixture(
+        db, kickoff="2026-09-12T19:05:00+00:00", business_date="2026-09-12"
+    )  # 北京 03:05
     duck_con = seed_universe([])
     live = [
         mapping.UniverseRow(
@@ -775,3 +782,40 @@ def test_srct_sids_chunk_merge_above_chunk_size(db) -> None:
     assert set(batch.values()) == {"3001"}
     # 广义 joined 门同口径：全量 id 门内=链集（无 odds_api 行）
     assert mapping.joined_fixture_ids(db, ids) == set(linked)
+
+
+def test_sync_scan_window_skips_stale_keeps_links(db) -> None:
+    """留案票 01①：扫描活窗 ±2——活窗外历史场跳过（stale_skipped 计数）
+    且既有链冻结保留（不再每拍重解析/撤链）；manual 行任何日期照常同步；
+    活窗内场（真缺口）照常撤改。"""
+    old_fid = seed_fixture(db, home="老场队", business_date="2026-09-12")
+    fresh_fid = seed_fixture(db, home="主队英超")  # 缺省 bd=当期，在活窗内
+    duck_con = seed_universe(
+        [
+            ("2790001", "老场队", "客队英超", "2026-09-13 03:00:00"),
+            ("2790002", "主队英超", "客队英超", "2026-09-13 03:00:00"),
+        ]
+    )
+    # 首拍带显式 live 窗（老业务日并入扫描窗）建链——模拟其在售期已链
+    mapping.sync_fixture_links(
+        db, duck_con, live_business_dates={"2026-09-12", "2026-09-13"}
+    )
+    assert mapping.srct_sid_for_fixture(db, old_fid) == "2790001"
+    assert mapping.srct_sid_for_fixture(db, fresh_fid) == "2790002"
+    # universe 重建后两场都不在：活窗内场撤链（真缺口照常镜像），
+    # 活窗外历史场跳过且既有链冻结（stale_skipped 计数缺账）
+    stats = mapping.sync_fixture_links(db, seed_universe([]))
+    assert stats.stale_skipped == 1
+    assert stats.fixtures == 1
+    assert mapping.srct_sid_for_fixture(db, old_fid) == "2790001"  # 冻结保留
+    assert mapping.srct_sid_for_fixture(db, fresh_fid) is None  # 活窗内撤链
+    # manual 行不受活窗限制：老业务日 manual 链照常同步
+    # 冻结链转 manual（人工认领这条旧链）
+    db.execute(
+        "UPDATE source_match_links SET method='manual'"
+        " WHERE fixture_id=? AND source='srct'",
+        (old_fid,),
+    )
+    stats2 = mapping.sync_fixture_links(db, seed_universe([]))
+    assert stats2.fixtures == 2  # fresh + manual（活窗外 manual 不跳过）
+    assert stats2.stale_skipped == 0

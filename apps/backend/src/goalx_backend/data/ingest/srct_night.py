@@ -224,6 +224,10 @@ def _record_probe(
         logger.info("srct night {}: 老季深度判定 shallow（12 月采样全零证据）", season)
 
 
+# 深端点集指纹（留案票 01③ 完成账键）：注册表扩容即变，老日自动重开
+_deep_endpoints_fp = ",".join(srct.deep_endpoint_datasets())
+
+
 def _depth_backfill_dates(
     store: CorpusStore,
     today: date,
@@ -252,14 +256,20 @@ def _depth_backfill_dates(
     ]
     if not candidates:
         return []
+    deep_datasets = srct.deep_endpoint_datasets()  # 注册表驱动（票 59 起）
+    # 完成账排除（留案票 01③）：该端点集指纹下已补齐的 done 日零探测；
+    # 注册表加新深端点 → 指纹失配 → 老日自动重开补采（真缺口不丢）
+    done = store.day_status_dates("done") - store.srct_deep_days(_deep_endpoints_fp)
+    # day_page 惰性解析：只为仍需探测的 done 日解析 JSON（4,779 行逐行
+    # 重解析随语料线性涨——留案票 01③）
     day_sids: dict[str, list[str]] = {}
     for line in store.iter_bronze_lines(srct.SRCT_PROVIDER, srct.DAY_DATASET):
         row = json.loads(line)
+        if str(row["sid"]) not in done:
+            continue
         payload = cast("dict[str, object] | None", row.get("payload"))
         if payload is not None:
             day_sids[str(row["sid"])] = srct.day_page_sids(payload)
-    done = store.day_status_dates("done")
-    deep_datasets = srct.deep_endpoint_datasets()  # 注册表驱动（票 59 起）
     backfill: list[tuple[str, str]] = []
     for season in candidates:
         for day in reversed(season_dates(season, today)):
@@ -271,6 +281,11 @@ def _depth_backfill_dates(
                 for dataset in deep_datasets
             ):
                 backfill.append((season.label, day))
+            else:
+                # 探测即记账（留案票 01③ correctness F1）：干净存量 done 日
+                # 当场落完成账（记账判据=探测判据同一 has()），次夜起零探测
+                # ——首夜付全量探测后收敛，否则存量 3,960 日永不记账
+                store.set_srct_deep_day(day, _deep_endpoints_fp)
     return backfill
 
 
@@ -438,6 +453,10 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
             stopped = True
             break
         store.set_day_status(day, "done")
+        # 完成账（留案票 01③）：仅零失败记账——部分传输失败日（stats.failed
+        # 非空但未触发熔断）不记，次夜 has() 扫描自愈重开（真缺口不丢）
+        if depth == srct.DEPTH_FULL and not stats.failed:
+            store.set_srct_deep_day(day, _deep_endpoints_fp)
         summary.dates_done += 1
         logger.info(
             "srct night {} {}: +{} raw / {} req（{} 剩余预算）",

@@ -132,6 +132,16 @@ CREATE TABLE IF NOT EXISTS jc_backfill_days (
     recorded_at TEXT NOT NULL
 )
 """
+# 留案票 01③ 深端点补欠完成账：day+端点集指纹——done 日全深端点已齐则记账，
+# 夜班候选扫描不再对 3,960 done 日 × 5 端点做 has() 点查；端点集扩容
+# （注册表加新深端点）指纹失配自动重开补采（真缺口不丢）
+_SRCT_DEEP_BACKFILL_DAYS_SQL = """
+CREATE TABLE IF NOT EXISTS srct_deep_backfill_days (
+    day TEXT PRIMARY KEY,
+    endpoints TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)
+"""
 # 票 65 当期班：sid 建档（联赛/开球/scope 资格——开售拍顺带取自 1x2d meta）；
 # 拍去重不在此表（raw checkpoint 键 @open/@daily-*/@close 即台账，has() 即判）
 _SRCT_SHIFT_MATCHES_SQL = """
@@ -277,6 +287,7 @@ _CHECKPOINT_TABLE_SQL = (
     _SRCT_SHIFT_MATCHES_SQL,
     _JC_SHIFT_MATCHES_SQL,
     _JC_BACKFILL_DAYS_SQL,
+    _SRCT_DEEP_BACKFILL_DAYS_SQL,
     _GUARDIAN_SYNC_STATE_SQL,
     _GUARDIAN_REQUEST_DAYS_SQL,
     _BRONZE_SIDS_SQL,
@@ -904,10 +915,39 @@ class CorpusStore:
         )
         return {str(row["day"]) for row in rows}
 
+    def set_srct_deep_day(self, day: str, endpoints: str) -> None:
+        """深端点补欠完成账（day+端点集指纹；幂等覆盖）。"""
+        self._checkpoint().execute(
+            """
+            INSERT OR REPLACE INTO srct_deep_backfill_days
+                (day, endpoints, recorded_at)
+            VALUES (?, ?, ?)
+            """,
+            (day, endpoints, utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def srct_deep_days(self, endpoints: str) -> set[str]:
+        """该端点集指纹下已补齐的 done 日（候选扫描排除集）。"""
+        rows = self._checkpoint().execute(
+            "SELECT day FROM srct_deep_backfill_days WHERE endpoints = ?",
+            (endpoints,),
+        )
+        return {str(row["day"]) for row in rows}
+
     def shift_matches(self) -> dict[str, dict[str, object]]:
         """当期班建档全表（sid → 行；拍决策的联赛/开球/scope 事实源）。"""
         rows = self._checkpoint().execute("SELECT * FROM srct_shift_matches")
         return {str(row["sid"]): dict(row) for row in rows}
+
+    def shift_match(self, sid: str) -> dict[str, object] | None:
+        """当期班单场点读（新 sid 拍决策——全表重读随班线性涨，留案票 01④）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT * FROM srct_shift_matches WHERE sid = ?", (sid,))
+            .fetchone()
+        )
+        return dict(row) if row is not None else None
 
     def record_night_summary(self, row: Mapping[str, object]) -> None:
         """落一夜摘要行（键 = _NIGHT_SUMMARY_COLUMNS；晨检口径）。"""
