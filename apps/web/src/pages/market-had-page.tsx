@@ -290,6 +290,7 @@ export function MarketHadPage() {
 												singlesPlan={comboPlans.singles}
 												parlayPlan={comboPlans.parlay}
 												testidPrefix="market-combo"
+												disabled={basket.hadPending}
 											/>
 										</div>
 									) : null}

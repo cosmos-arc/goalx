@@ -94,6 +94,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	const [slipForm, setSlipForm] = useState<SlipForm>(readStoredSlipForm);
 
 	function chooseSlipForm(form: SlipForm) {
+		if (hadPending) {
+			return; // 票 01：飞行中换票型=同篮跨票型重提（幂等键变，无法合并）——卡/抽屉同一入口门
+		}
 		setSlipForm(form);
 		persistSlipForm(form);
 	}
@@ -340,17 +343,20 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 }
 
 /** 抽屉底部三输入（模式/金额/策略版本）：had 篮与进球单关篮共用（票 08 批二），
- * testid 前缀与金额档（标签/最低注）经 prop 注入，e2e 锚不变。 */
+ * testid 前缀与金额档（标签/最低注）经 prop 注入，e2e 锚不变。
+ * disabled=提交飞行冻结（票 01）：三输入皆提交载荷——飞行中改值=重试口径漂移。 */
 export function BasketFormFields({
 	testid,
 	state,
 	stakeLabel,
 	stakeMin,
+	disabled = false,
 }: {
 	testid: string;
 	state: Pick<HadBasket, "mode" | "setMode" | "stake" | "setStake" | "strategyVersion" | "setStrategyVersion">;
 	stakeLabel: string;
 	stakeMin: number;
+	disabled?: boolean;
 }) {
 	const { mode, setMode, stake, setStake, strategyVersion, setStrategyVersion } = state;
 	return (
@@ -361,6 +367,7 @@ export function BasketFormFields({
 					data-testid={`${testid}-mode`}
 					className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
 					value={mode}
+					disabled={disabled}
 					onChange={(event) => setMode(event.target.value === "live" ? "live" : "paper")}
 				>
 					<option value="paper">纸面</option>
@@ -377,6 +384,7 @@ export function BasketFormFields({
 					data-testid={`${testid}-stake`}
 					className="w-24 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
 					value={stake}
+					disabled={disabled}
 					onChange={(event) => setStake(event.target.value)}
 				/>
 			</label>
@@ -387,6 +395,7 @@ export function BasketFormFields({
 					placeholder="手动"
 					className="w-32 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
 					value={strategyVersion}
+					disabled={disabled}
 					onChange={(event) => setStrategyVersion(event.target.value)}
 				/>
 			</label>
@@ -396,7 +405,45 @@ export function BasketFormFields({
 
 export type HadBasket = ReturnType<typeof useHadBasket>;
 
-/** 票型选择器（票 02，卡/篮两用）：两票型预览并列（单源摘要），当前票型可选。 */
+/** 提交钮（票 01 防重入，had 篮与进球篮共用）：门=store 全局 pending——切页
+ * 重挂载后本页 isPending=false 看不到别页飞行；同步入口检查兜 disabled
+ * 渲染前的连点窗口（检查须在 mutate 前：onMutate 已置 pending，放 onMutate
+ * 里会拦掉本次合法请求）。 */
+export function BasketSubmitButton({
+	testid,
+	pending,
+	disabled = false,
+	label,
+	onSubmit,
+}: {
+	testid: string;
+	/** store 全局飞行标志（hadPending/goalsPending）。 */
+	pending: boolean;
+	/** 与飞行无关的禁用因（如空篮）。 */
+	disabled?: boolean;
+	label: string;
+	onSubmit: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			data-testid={testid}
+			className="w-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+			disabled={pending || disabled}
+			onClick={() => {
+				if (pending) {
+					return;
+				}
+				onSubmit();
+			}}
+		>
+			{pending ? "提交中…" : label}
+		</button>
+	);
+}
+
+/** 票型选择器（票 02，卡/篮两用）：两票型预览并列（单源摘要），当前票型可选。
+ * disabled=提交飞行冻结（票 01）：飞行中换票型=同篮跨票型重提，幂等键不同无法合并。 */
 export function SlipFormChooser({
 	form,
 	onChoose,
@@ -404,6 +451,7 @@ export function SlipFormChooser({
 	parlayPlan,
 	testidPrefix,
 	missingEvNote = false,
+	disabled = false,
 }: {
 	form: SlipForm;
 	onChoose: (form: SlipForm) => void;
@@ -411,6 +459,7 @@ export function SlipFormChooser({
 	parlayPlan: SlipFormPlan | null;
 	testidPrefix: string;
 	missingEvNote?: boolean;
+	disabled?: boolean;
 }) {
 	return (
 		<div className="space-y-2 rounded-md border border-border p-3" data-testid={`${testidPrefix}-forms`}>
@@ -421,6 +470,7 @@ export function SlipFormChooser({
 						name={`${testidPrefix}-slip-form`}
 						data-testid={`${testidPrefix}-form-singles`}
 						checked={form === "singles"}
+						disabled={disabled}
 						onChange={() => onChoose("singles")}
 					/>
 					两笔单关
@@ -431,6 +481,7 @@ export function SlipFormChooser({
 						name={`${testidPrefix}-slip-form`}
 						data-testid={`${testidPrefix}-form-parlay`}
 						checked={form === "parlay"}
+						disabled={disabled}
 						onChange={() => onChoose("parlay")}
 					/>
 					一注 2串1
@@ -523,7 +574,9 @@ export function BasketDrawer({
 		chooseSlipForm,
 		planTicketLegs,
 		planMissingEv,
+		hadPending,
 	} = basket;
+	const { goalsPending } = useBasket(); // 共享提交参数跨族冻结（票 01 F1）
 	const now = useNow(); // 抽屉倒计时共享滴答钟（B-2b 补面：不冻结在一次性渲染）
 	// 票级预览（票 02 单源）：抽屉里看到的数字 == 提交后落库口径
 	const planSingles = planTicketLegs !== null ? slipFormPlan(planTicketLegs, "singles") : null;
@@ -604,6 +657,7 @@ export function BasketDrawer({
 								parlayPlan={planParlay}
 								testidPrefix="basket"
 								missingEvNote={planMissingEv}
+								disabled={hadPending}
 							/>
 						</div>
 					) : null}
@@ -621,16 +675,20 @@ export function BasketDrawer({
 					) : null}
 				</div>
 				<DrawerFooter>
-					<BasketFormFields testid="basket" state={basket} stakeLabel={stakeLabel} stakeMin={1} />
-					<button
-						type="button"
-						data-testid="basket-submit"
-						className="w-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
-						disabled={createSuggestion.isPending || legs.length === 0}
-						onClick={() => createSuggestion.mutate()}
-					>
-						{legs.length >= 2 && slipForm === "singles" ? `建 ${legs.length} 笔单关` : "建立建议"}
-					</button>
+					<BasketFormFields
+						testid="basket"
+						state={basket}
+						stakeLabel={stakeLabel}
+						stakeMin={1}
+						disabled={hadPending || goalsPending}
+					/>
+					<BasketSubmitButton
+						testid="basket-submit"
+						pending={hadPending}
+						disabled={legs.length === 0}
+						label={legs.length >= 2 && slipForm === "singles" ? `建 ${legs.length} 笔单关` : "建立建议"}
+						onSubmit={() => createSuggestion.mutate()}
+					/>
 					<div className="flex items-center justify-between text-xs">
 						<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
 							继续浏览

@@ -7,7 +7,7 @@ import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-ui";
-import { BasketFormFields } from "../components/had-basket";
+import { BasketFormFields, BasketSubmitButton } from "../components/had-basket";
 import { evClass, kickoffInfo, localTime } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { StakeAdviceNote } from "../components/stake-advice";
@@ -52,7 +52,7 @@ export function MarketGoalsPage() {
 	const queryClient = useQueryClient();
 	const [market, setMarket] = useState<GoalsMarket>("ttg");
 	// 票 06：篮草稿走全站单源 store（与 had 三页共用一份草稿，路由/刷新不丢）
-	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs, goalsPending } = useBasket();
+	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs, hadPending, goalsPending } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
@@ -580,16 +580,15 @@ export function MarketGoalsPage() {
 							}}
 							stakeLabel="每注金额(¥)"
 							stakeMin={2}
+							disabled={goalsPending || hadPending}
 						/>
-						<button
-							type="button"
-							data-testid="goals-basket-submit"
-							className="w-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
-							disabled={createSuggestion.isPending || legs.length === 0}
-							onClick={() => createSuggestion.mutate()}
-						>
-							建立 {legs.length > 0 ? `${legs.length} 注` : ""}单关建议
-						</button>
+						<BasketSubmitButton
+							testid="goals-basket-submit"
+							pending={goalsPending}
+							disabled={legs.length === 0}
+							label={`建立 ${legs.length > 0 ? `${legs.length} 注` : ""}单关建议`}
+							onSubmit={() => createSuggestion.mutate()}
+						/>
 						<div className="flex items-center justify-between text-xs">
 							<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
 								继续浏览

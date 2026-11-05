@@ -396,6 +396,11 @@ test("提交飞行中重挂载后编辑被门拦下；settle 后清篮（票 04 
 	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
 	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("1/3"); // 仍只有飞行前那腿
 
+	// 票 01 验收：提交钮接全局门——重开篮后禁用+"提交中"，无跨页重提入口
+	await user.click(screen.getByTestId("goals-basket-open"));
+	expect(screen.getByTestId("goals-basket-submit")).toBeDisabled();
+	expect(screen.getByTestId("goals-basket-submit")).toHaveTextContent("提交中");
+
 	// 服务器返回 201 → 提交自写清篮不受门，settle 解冻
 	release();
 	await waitFor(() => expect(screen.queryByTestId("goals-basket-count")).toHaveTextContent("0/3"));

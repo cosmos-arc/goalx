@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
@@ -238,6 +238,8 @@ test("applyCombo frozen while a submission is in flight (批A #20a：飞行中�
 	await user.click(screen.getByTestId("basket-submit"));
 	await waitFor(() => expect(screen.getByTestId("basket-submit")).toBeDisabled());
 	await expect(within(combo).getByTestId("market-combo-apply")).toBeDisabled();
+	// 票 01：卡上票型同冻——飞行中换 parlay=失败重试跨票型重提（幂等键变）
+	await expect(within(combo).getByTestId("market-combo-form-parlay")).toBeDisabled();
 	expect(screen.queryByTestId("market-message")).toBeNull();
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 });
@@ -565,4 +567,57 @@ test("stale line read-only field renders per fixture (票 48)", async () => {
 	expect(field).toHaveTextContent("sharp 参考 客胜 +8.1%（主锚）");
 	// 只读信号：无交互元素、不参与流程
 	expect(field.querySelector("button")).toBeNull();
+});
+
+// ---- 票 01：同篮跨页提交防重入（评审 A 动态探针回归）----
+
+test("慢响应提交两笔单关 → 切页重开：票型/金额/提交冻结，只落原两笔，失败腿同键可重试", async () => {
+	const user = userEvent.setup();
+	// 逐笔慢响应：第 1 笔 201、第 2 笔 500、同键重试 201
+	const posts: { legs: { fixture_id: number }[]; client_request_id: string | null }[] = [];
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post("*/api/v1/bets", async ({ request }) => {
+			const body = (await request.json()) as { legs: { fixture_id: number }[]; client_request_id: string | null };
+			posts.push(body);
+			await gate;
+			return posts.length === 2
+				? HttpResponse.json({ detail: "boom" }, { status: 500 })
+				: HttpResponse.json({ id: 90 + posts.length, mode: "paper", stake: 100, legs: [] }, { status: 201 });
+		}),
+	);
+	await renderAt("/markets/had");
+	await screen.findByTestId("market-pick-1-h");
+	await user.click(screen.getByTestId("market-pick-1-h"));
+	await user.click(screen.getByTestId("market-pick-2-h")); // 两腿,默认票型=两笔单关
+	await user.click(screen.getByTestId("basket-open"));
+	await user.click(screen.getByTestId("basket-submit"));
+	await waitFor(() => expect(screen.getByTestId("basket-submit")).toBeDisabled()); // 飞行开始
+
+	// 切页重挂载（新页实例 isPending=false,看不到别页飞行）→ 重开篮
+	cleanup();
+	await renderAt("/markets/had");
+	await screen.findByTestId("basket-open");
+	await user.click(screen.getByTestId("basket-open"));
+	const submit = screen.getByTestId("basket-submit");
+	expect(submit).toBeDisabled(); // 无跨票型重提入口
+	expect(submit).toHaveTextContent("提交中");
+	expect(screen.getByTestId("basket-form-parlay")).toBeDisabled(); // 抽屉票型:无法改成 2串1
+	expect(screen.getByTestId("basket-stake")).toBeDisabled(); // 金额冻结
+	expect(screen.getByTestId("basket-mode")).toBeDisabled(); // 模式冻结
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
+
+	release(); // 第 1 笔 201 → 第 2 笔 500
+	await waitFor(() => expect(screen.getByTestId("basket-count")).toHaveTextContent("1/2")); // 失败腿留篮
+	expect(screen.getByTestId("basket-submit")).toBeEnabled(); // 失败返回后能正常重试
+
+	// 重试同键补发失败腿 → 清篮;全程只有单关请求,无串关（跨票型）请求
+	await user.click(screen.getByTestId("basket-submit"));
+	await waitFor(() => expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2"));
+	expect(posts).toHaveLength(3);
+	expect(posts.every((post) => post.legs.length === 1)).toBe(true);
+	expect(posts[2]?.client_request_id).toBe(posts[1]?.client_request_id); // 同键重试,服务端幂等可合并
 });

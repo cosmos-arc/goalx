@@ -179,6 +179,34 @@ test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个
 
 // ---- 票 04：goalsPending 冻结门（与 had 各自独立）----
 
+test("共享提交参数（金额/模式/策略版本）任一飞行中都冻结，settle 后恢复（票 01 F1）", () => {
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.beginHadFlight();
+		basketActions.setStake("999");
+		basketActions.setMode("live");
+		basketActions.setStrategyVersion("drift");
+	});
+	// had 飞行中从任何页改共享参数：静默不动（防失败重提口径漂移）
+	expect(result.current.stake).toBe("100");
+	expect(result.current.mode).toBe("paper");
+	expect(result.current.strategyVersion).toBe("");
+	act(() => {
+		basketActions.endHadFlight();
+		basketActions.beginGoalsFlight();
+		basketActions.setStake("999");
+		basketActions.setMode("live");
+	});
+	// goals 飞行同拦（对称面）
+	expect(result.current.stake).toBe("100");
+	expect(result.current.mode).toBe("paper");
+	act(() => {
+		basketActions.endGoalsFlight();
+		basketActions.setStake("150");
+	});
+	expect(result.current.stake).toBe("150"); // 解冻后可改
+});
+
 test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 had 门互不干扰", () => {
 	const goalsLeg = {
 		fixture_id: 9,
