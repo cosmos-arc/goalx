@@ -25,6 +25,7 @@ import { basketActions, newRequestId, useBasket, withFreshRequestIds } from "../
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
 import { bankrollKey, goalsMarketKey, invalidateBets } from "../lib/query-keys";
 import { betTermsLabel, conflictRestoreMessage, dayNoteOf, errorText, intentConflict, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 wb-05：进球玩法页 `/markets/goals`——玩法轴第二页（ttg/crs）。
@@ -54,7 +55,7 @@ export function MarketGoalsPage() {
 	const { goalsLegs: legs, stake, strategyVersion, mode, hadLegs } = useBasket();
 	const [basketOpen, setBasketOpen] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const rows = goalsQuery.data ?? [];
 	const feedOrder = goalsQuery.data !== undefined ? rankGoalsFixturesForFeed(rows) : [];

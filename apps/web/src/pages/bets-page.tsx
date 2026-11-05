@@ -47,6 +47,7 @@ import {
 	stakeText,
 	TABULAR_NUMS,
 } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 16：投注生命周期落地（票 06 定稿 = 唯一事实源）。
@@ -212,7 +213,7 @@ export function BetsPage() {
 	const drawSync = useQuery({ queryKey: drawSyncKey, queryFn: () => fetchDrawSyncStatus() });
 	const today = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
 	const slips = useQuery({ queryKey: slipsKey, queryFn: () => fetchSlips() });
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const allBets = bets.data ?? [];
 	const kickoffById = new Map((today.data ?? []).map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));

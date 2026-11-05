@@ -667,6 +667,7 @@ def preview_pool_slip(payload: PoolSlipPreviewRequest, db: DbDep) -> PoolSlipPre
     )
     try:
         bt_store.validate_pool_selection_codes(by_match, payload.market_code)
+        bt_store.require_fixtures_exist(db, [pick.fixture_id for pick in payload.picks])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     incomplete = (
@@ -751,6 +752,8 @@ def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
         # 预览/创建同校验（票 08）：闭集 + ttt14 14 场完备——创建不收
         # "未选完整"票；预览端点的宽松态只在预览侧保留
         bt_store.require_pool_slip_creatable(by_match, payload.market_code)
+        # pick 的 fixture_id 须真实存在（票 08 预存注记收口：裸 FK 500 → 400）
+        bt_store.require_fixtures_exist(db, [pick.fixture_id for pick in payload.picks])
         if payload.pool_period_id is not None:
             # 已指定期次 → 场次归属（票 08）：跨期 match_seq 不落库
             bt_store.validate_pool_period_ownership(

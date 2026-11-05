@@ -23,6 +23,7 @@ import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { bankrollKey, fixtureResearchKey } from "../lib/query-keys";
 import { pct, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 wb-02：单场研究页 `/fixtures/$id`。研究动线 = 公司间定价分歧 → 去水共识 →
@@ -78,7 +79,7 @@ export function FixtureResearchPage() {
 	});
 	// 票 wb-06：选注篮建议仓位需要 bankroll（读取失败时建议块诚实降级）
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const data = research.data;
 	const canPick = data ? isPickable(data, now) : false;

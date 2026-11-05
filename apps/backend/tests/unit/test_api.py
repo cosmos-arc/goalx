@@ -1262,6 +1262,23 @@ def test_pool_slip_pick9_requires_nine_matches(api_client: TestClient) -> None:
     assert api_client.get("/api/v1/bet-slips").json() == []
 
 
+def test_pool_slip_unknown_fixture_rejected_not_500(api_client: TestClient) -> None:
+    """票 08 预存注记收口：pick 带不存在 fixture_id → 400 明示（原裸 FK
+    500）；预览/创建同校验。"""
+    picks = [
+        {"match_seq": seq, "selection_code": "3", "fixture_id": 999999}
+        for seq in range(1, 10)
+    ]
+    for path in ("/api/v1/pool-slips/preview", "/api/v1/pool-slips"):
+        body = {"mode": "paper", "picks": picks}
+        if path.endswith("preview"):
+            body = {"picks": picks}  # 预览载荷无 mode/期次
+        response = api_client.post(path, json=body)
+        assert response.status_code == 400, (path, response.text)
+        assert "fixture" in response.json()["detail"]
+    assert api_client.get("/api/v1/bet-slips").json() == []  # 无半写落库
+
+
 @pytest.mark.parametrize(
     ("n", "count", "total"),
     [

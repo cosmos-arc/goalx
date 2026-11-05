@@ -606,6 +606,31 @@ def validate_pool_period_ownership(
         )
 
 
+def require_fixtures_exist(
+    conn: sqlite3.Connection, fixture_ids: list[int | None]
+) -> None:
+    """
+    池票 pick 的 fixture 存在性守卫（票 08 预存注记收口）。
+
+    fixture_id 可空（期次场次未链映射时带 null）；带值时须真实存在——
+    否则 add_pool_pick 撞 FK 裸 500。预览/创建同校验（票 08 模式）。
+    """
+    wanted = sorted({fid for fid in fixture_ids if fid is not None})
+    if not wanted:
+        return
+    placeholders = ",".join("?" * len(wanted))
+    found = {
+        int(row["id"])
+        for row in conn.execute(
+            f"SELECT id FROM fixtures WHERE id IN ({placeholders})",  # noqa: S608
+            wanted,
+        )
+    }
+    missing = [fid for fid in wanted if fid not in found]
+    if missing:
+        raise ValueError(f"fixture {missing} 不存在（pick 的 fixture_id 须为真实场次）")
+
+
 def _goals4_sides(picks: list[str]) -> tuple[list[str], list[str]]:
     """
     goals4 一场的双侧档位（票 10）：返回 (主档升序, 客档升序)。

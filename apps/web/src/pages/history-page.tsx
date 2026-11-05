@@ -11,6 +11,7 @@ import { StatusBadge } from "../components/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { betsKey, todayFixturesKey } from "../lib/query-keys";
 import { cssVar, legText, pnlClass, shortTime, signedCny, stakeText, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 17：历史复盘页落地（票 07 定稿 = 唯一事实源）。分析优先：五指标卡 + 盈亏累计
@@ -167,7 +168,7 @@ export function HistoryPage() {
 	const [strategy, setStrategy] = useState("");
 	const [status, setStatus] = useState("");
 	const [detailOpen, setDetailOpen] = useState(false);
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const allBets = betsQuery.data ?? [];
 	// 样本口径：已锁定且已结算（票 07 定稿；与票 16 已结算段同判定）

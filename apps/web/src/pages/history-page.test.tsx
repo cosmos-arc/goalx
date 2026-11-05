@@ -183,9 +183,9 @@ test("累计曲线：≥2 点出图，option 按结算时点升序累计并带 0
 
 	// 纯函数口径：乱序入参按 settled_at 升序（9-11, 9-12, 9-13）累计 → [2.5, 12.5, 8.5]
 	expect(buildCumulativePoints(bets)).toEqual([
-		{ label: "09-11 10:00", value: 2.5 },
-		{ label: "09-12 10:00", value: 12.5 },
-		{ label: "09-13 10:00", value: 8.5 },
+		{ label: "09-11 18:00", value: 2.5 },
+		{ label: "09-12 18:00", value: 12.5 },
+		{ label: "09-13 18:00", value: 8.5 },
 	]);
 
 	await screen.findByTestId("history-chart");
@@ -198,7 +198,7 @@ test("累计曲线：≥2 点出图，option 按结算时点升序累计并带 0
 	};
 	expect(option.series[0]?.data).toEqual([2.5, 12.5, 8.5]);
 	expect(option.series[0]?.markLine.data).toEqual([{ yAxis: 0 }]);
-	expect(option.xAxis.data).toEqual(["09-11 10:00", "09-12 10:00", "09-13 10:00"]);
+	expect(option.xAxis.data).toEqual(["09-11 18:00", "09-12 18:00", "09-13 18:00"]);
 	expect(screen.queryByTestId("history-chart-empty")).not.toBeInTheDocument();
 });
 
@@ -420,14 +420,14 @@ test("查看明细同页展开：五列与投注页已结算行同构，收起�
 	expect(wonRow).toHaveTextContent("¥2.00");
 	expect(wonRow).toHaveTextContent("胜");
 	expect(wonRow).toHaveTextContent("+26.60");
-	expect(wonRow).toHaveTextContent("09-13 12:00");
+	expect(wonRow).toHaveTextContent("09-13 20:00");
 	const lostRow = rows[0] as HTMLElement;
 	expect(lostRow).toHaveTextContent("#1 客胜@1.30→1.20");
 	expect(lostRow).toHaveTextContent("¥10.00→¥12.00");
 	expect(lostRow).toHaveTextContent("负");
 	expect(lostRow).toHaveTextContent("-12.00");
 	expect(within(lostRow).getByText("-12.00")).toHaveClass("text-loss");
-	expect(lostRow).toHaveTextContent("09-13 14:00");
+	expect(lostRow).toHaveTextContent("09-13 22:00");
 
 	await user.click(screen.getByTestId("detail-toggle"));
 	expect(screen.queryByTestId("history-detail")).not.toBeInTheDocument();

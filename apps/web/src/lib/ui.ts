@@ -149,18 +149,46 @@ export function signedCnyAlways(value: number): string {
 	return `${value >= 0 ? "+" : "-"}¥${Math.abs(value).toFixed(2)}`;
 }
 
-/** ISO 串 → MM-DD HH:mm；空值 → "—"。 */
+/** ISO 串 → 北京时区 "MM-DD HH:mm"（原实现切片 ISO=UTC 显示，报告二
+ * §八 UI 小件收口：显式 Asia/Shanghai，浏览器/CI 时区无关）；空值 → "—"。 */
 export function shortTime(iso: string | null): string {
-	return iso ? iso.slice(5, 16).replace("T", " ") : "—";
+	return bjTime(iso, "MM-DD HH:mm");
 }
 
-/** UTC 时刻 → 本地 HH:MM（非法 → "—"）；had-quote-ui 与 bets 页同口径（review-20260928 票 08 收敛）。 */
+/** UTC 时刻 → 北京时区 HH:MM（非法 → "—"）；had-quote-ui 与 bets 页同口径
+ * （review-20260928 票 08 收敛；报告二 §八：显式 Asia/Shanghai 不随浏览器漂移）。 */
 export function localTime(utc: string): string {
-	const date = new Date(utc);
+	return bjTime(utc, "HH:mm");
+}
+
+const _BJ_CACHE = new Map<string, Intl.DateTimeFormat>();
+/** ISO 时刻 → 北京时区格式化（HH:mm / MM-DD HH:mm 两种形状；非法/空 → "—"）。 */
+function bjTime(iso: string | null, shape: "HH:mm" | "MM-DD HH:mm"): string {
+	if (!iso) {
+		return "—";
+	}
+	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) {
 		return "—";
 	}
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+	let fmt = _BJ_CACHE.get(shape);
+	if (fmt === undefined) {
+		fmt = new Intl.DateTimeFormat(
+			"en-CA",
+			shape === "HH:mm"
+				? { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+				: {
+						timeZone: "Asia/Shanghai",
+						month: "2-digit",
+						day: "2-digit",
+						hour: "2-digit",
+						minute: "2-digit",
+						hourCycle: "h23",
+					},
+		);
+		_BJ_CACHE.set(shape, fmt);
+	}
+	return shape === "HH:mm" ? fmt.format(date) : fmt.format(date).replace(", ", " ");
 }
 
 /** 跨日标签（推荐流跨 3 日窗口）：业务日非今天时给"明天/后天"提示，今天 → undefined。 */
