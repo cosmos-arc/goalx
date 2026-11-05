@@ -24,6 +24,8 @@ type BasketState = {
 	/** had 提交飞行中（票 03 全局冻结）：跨页共享——提交期间任何页的
 	 * 篮编辑被门住；不持久化（刷新即解冻——mutation 随页面死）。 */
 	hadPending: boolean;
+	/** goals 提交飞行中（票 04，与 had 同族同语义、计数各自独立）。 */
+	goalsPending: boolean;
 };
 
 const EMPTY: BasketState = {
@@ -33,6 +35,7 @@ const EMPTY: BasketState = {
 	strategyVersion: "",
 	mode: "paper",
 	hadPending: false,
+	goalsPending: false,
 };
 
 /** 恢复形状守卫（correctness F4）：字段级校验——畸形腿直接过滤，
@@ -73,6 +76,7 @@ function sanitizeSnapshot<T extends { probability?: unknown }>(leg: T): T {
 
 let state: BasketState = loadInitial();
 let hadInFlight = 0; // had 提交飞行计数（>0=冻结；刷新归零解冻）
+let goalsInFlight = 0; // goals 提交飞行计数（票 04；与 had 各自独立）
 const listeners = new Set<() => void>();
 
 /** 宽容恢复：形状不对/存储损坏按空篮（隐私模式读失败同此）。 */
@@ -90,6 +94,7 @@ function loadInitial(): BasketState {
 			strategyVersion: typeof parsed.strategyVersion === "string" ? parsed.strategyVersion : EMPTY.strategyVersion,
 			mode: parsed.mode === "live" ? "live" : "paper",
 			hadPending: false,
+			goalsPending: false,
 		};
 	} catch {
 		return EMPTY;
@@ -100,7 +105,7 @@ function commit(next: BasketState): void {
 	state = next;
 	try {
 		// 冻结标志不落盘（刷新后无在飞 mutation，门恒解冻）
-		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ ...next, hadPending: false }));
+		globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ ...next, hadPending: false, goalsPending: false }));
 	} catch {
 		// 存不进（隐私模式/满）——本次会话内状态仍生效
 	}
@@ -150,8 +155,29 @@ export const basketActions = {
 			commit({ ...state, hadPending: false });
 		}
 	},
+	/** goals 编辑入口（票 04 同族冻结）：飞行中被门拦下（静默不动）。 */
 	setGoalsLegs(legs: GoalsLeg[]): void {
+		if (state.goalsPending) {
+			return;
+		}
 		commit({ ...state, goalsLegs: legs });
+	},
+	/** goals 提交路径自写：不受冻结门。 */
+	replaceGoalsLegs(legs: GoalsLeg[]): void {
+		commit({ ...state, goalsLegs: legs });
+	},
+	/** goals 提交飞行起止（引用计数，同 beginHadFlight 语义）。 */
+	beginGoalsFlight(): void {
+		goalsInFlight += 1;
+		if (!state.goalsPending) {
+			commit({ ...state, goalsPending: true });
+		}
+	},
+	endGoalsFlight(): void {
+		goalsInFlight = Math.max(0, goalsInFlight - 1);
+		if (goalsInFlight === 0 && state.goalsPending) {
+			commit({ ...state, goalsPending: false });
+		}
 	},
 	setStake(stake: string): void {
 		commit({ ...state, stake });
@@ -194,6 +220,7 @@ export function withFreshRequestIds<T extends { request_id: string }>(legs: T[])
 export function __resetBasketForTests(): void {
 	state = EMPTY;
 	hadInFlight = 0; // 飞行计数随隔离清零（否则上一测试未 settle 的飞行冻结后来者）
+	goalsInFlight = 0;
 	try {
 		globalThis.localStorage?.removeItem(STORAGE_KEY);
 	} catch {

@@ -176,3 +176,55 @@ test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个
 	});
 	expect(result.current.hadLegs).toHaveLength(0);
 });
+
+// ---- 票 04：goalsPending 冻结门（与 had 各自独立）----
+
+test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 had 门互不干扰", () => {
+	const goalsLeg = {
+		fixture_id: 9,
+		market: "ttg",
+		selection: "2",
+		odds: 3.1,
+		request_id: "g1",
+		kickoff_utc: "2026-11-07T11:00:00Z",
+	} as never;
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.setGoalsLegs([goalsLeg]);
+		basketActions.beginGoalsFlight();
+		// goals 编辑入口被门；had 编辑不受 goals 飞行影响（计数独立）
+		basketActions.setGoalsLegs([]);
+		basketActions.setHadLegs([LEG]);
+	});
+	expect(result.current.goalsLegs).toHaveLength(1);
+	expect(result.current.hadLegs).toHaveLength(1);
+	expect(result.current.goalsPending).toBe(true);
+	expect(result.current.hadPending).toBe(false);
+	act(() => {
+		basketActions.replaceGoalsLegs([]); // 提交自写放行
+	});
+	expect(result.current.goalsLegs).toHaveLength(0);
+	const persisted = JSON.parse(globalThis.localStorage.getItem("goalx:basket") ?? "{}");
+	expect(persisted.goalsPending ?? false).toBe(false); // 标志不落盘
+	act(() => {
+		basketActions.endGoalsFlight();
+		basketActions.setGoalsLegs([goalsLeg]); // 解冻后写入恢复
+	});
+	expect(result.current.goalsLegs).toHaveLength(1);
+});
+
+test("goals 重叠提交计数制：首个 settle 不解冻第二个", () => {
+	const { result } = renderHook(() => useBasket());
+	act(() => {
+		basketActions.beginGoalsFlight();
+		basketActions.beginGoalsFlight();
+	});
+	act(() => {
+		basketActions.endGoalsFlight();
+	});
+	expect(result.current.goalsPending).toBe(true); // 仍剩一个在飞
+	act(() => {
+		basketActions.endGoalsFlight();
+	});
+	expect(result.current.goalsPending).toBe(false);
+});
