@@ -213,3 +213,22 @@ def test_goals4_band_adjudication_matches_pool_code_space() -> None:
     assert judge_leg(leg(1, "goals4", "h3"), result).hit is False
     # 闭集外码不可判定（不误判；构票侧已拒，此处守判定面）
     assert judge_leg(leg(1, "goals4", "h9"), result).hit is None
+
+
+def test_refund_and_lost_paths_round_to_cents() -> None:
+    """审计批B #5：退款/输注裸值路径与流水 round 同口径——亚分级 stake
+    （存量/内部调用）在 payout=stake / profit=-stake 处不再裸落台账。"""
+    sub_cent = 10.005
+    void = settle_fixed_bet(
+        sub_cent,
+        [leg(1, sel="h")],
+        {1: ResultFacts(home_goals=0, away_goals=0, void=True)},
+    )
+    assert void.payout == round(sub_cent, 2)
+    assert void.profit == 0.0
+    lost = settle_fixed_bet(
+        sub_cent, [leg(1, sel="d")], {1: ResultFacts(home_goals=1, away_goals=0)}
+    )
+    assert lost.profit == round(-sub_cent, 2)
+    empty = settle_fixed_bet(sub_cent, [], {})
+    assert empty.payout == round(sub_cent, 2)

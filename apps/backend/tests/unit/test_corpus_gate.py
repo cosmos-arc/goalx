@@ -631,3 +631,84 @@ def test_corpus_duckdb_memory_limit_capped(tmp_path) -> None:
     assert limit.endswith("GiB")
     assert float(limit.split(maxsplit=1)[0]) <= 3.0
     assert temp == (tmp_path / "corpus" / "tmp").as_posix()
+
+
+def test_gate3_xg_same_day_same_score_no_key_collapse() -> None:
+    """审计批B #2：同联赛同日同比分两行 npxG 不坍缩——(联赛,日,比分)
+    元组键后行覆写前行，配对场拿同一场 npxG 连坐 MAE/异常/Pearson；
+    修法照抄 gold 的对象身份键（hists 与 u_rows 一一同序构造）。"""
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE SCHEMA goalx")
+        con.execute(
+            "CREATE TABLE fixture_universe (sid VARCHAR, league VARCHAR, "
+            "kickoff TIMESTAMP, home_goals INT, away_goals INT)"
+        )
+        con.execute(
+            "CREATE TABLE xg_observation (sid VARCHAR, has_xg BOOLEAN, "
+            "xg_home DOUBLE, xg_away DOUBLE)"
+        )
+        con.execute(
+            "CREATE TABLE goalx.understat_matches (league VARCHAR, season VARCHAR, "
+            "datetime_utc TIMESTAMP, goals_home INT, goals_away INT, "
+            "npxg_home DOUBLE, npxg_away DOUBLE)"
+        )
+        # 两场语料场同比分（10-02/10-03 ±1 窗内均可配），xG 各异
+        con.execute(
+            "INSERT INTO fixture_universe VALUES "
+            "('s1', '英超', TIMESTAMP '2025-10-02 20:00:00', 2, 1), "
+            "('s2', '英超', TIMESTAMP '2025-10-03 20:00:00', 2, 1)"
+        )
+        con.execute(
+            "INSERT INTO xg_observation VALUES "
+            "('s1', TRUE, 1.0, 1.0), ('s2', TRUE, 1.5, 0.8)"
+        )
+        # 两行 understat 同联赛同日同比分（元组键撞车）：一行≈语料，一行远端
+        con.execute(
+            "INSERT INTO goalx.understat_matches VALUES "
+            "('epl', '2025', TIMESTAMP '2025-10-02 12:00:00', 2, 1, 1.0, 1.0), "
+            "('epl', '2025', TIMESTAMP '2025-10-02 12:00:00', 2, 1, 5.0, 5.0)"
+        )
+        gate3 = corpus_gate.gate3_xg_understat(con)
+        assert gate3["pairs"] == 2
+        assert gate3["value_comparisons"] == 4
+        # 身份键：各配对拿各自行的 npxG——恰一场（远端行侧）2 个异常侧；
+        # 元组键坍缩时两场同拿末行 (5,5) → 4 个异常侧
+        assert len(gate3["anomalies"]) == 2
+        assert gate3["pearson_r"] is not None
+    finally:
+        con.close()
+
+
+def test_gate5_stop_reasons_read_real_column(tmp_path: Path) -> None:
+    """审计批B #3：门⑤停因读 stop_reason 列——错读 "stopped" 恒 None，
+    现网 150 行夜班摘要中 40 行（budget/circuit/window_closed）被记成 clean。"""
+    from goalx_backend.data.corpus_store import _NIGHT_SUMMARY_COLUMNS
+
+    store = CorpusStore(tmp_path)
+    try:
+        store.ensure_tree()
+        for night_date, reason in (
+            ("2025-10-01", "completed"),
+            ("2025-10-02", "budget"),
+        ):
+            row: dict[str, object] = dict.fromkeys(_NIGHT_SUMMARY_COLUMNS, 0)
+            row.update(
+                night_date=night_date,
+                started_at=f"{night_date}T21:00:00+00:00",
+                ended_at=f"{night_date}T23:30:00+00:00",
+                stop_reason=reason,
+                failed_json="[]",
+            )
+            store.record_night_summary(row)
+        gate5 = corpus_gate.gate5_pipeline_health(
+            store, GATE_TODAY, settled={"2025-10-03"}
+        )
+        assert gate5["night_summaries"]["stopped_reasons"] == {
+            "completed": 1,
+            "budget": 1,
+        }
+    finally:
+        store.close()

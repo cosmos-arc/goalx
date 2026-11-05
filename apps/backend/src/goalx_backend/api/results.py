@@ -18,7 +18,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.ingest import uniform
 from goalx_backend.data.ingest.results import import_draw_results
-from goalx_backend.models import DrawResultInput
+from goalx_backend.models import DrawResultInput, IsoTimestamp, MoneyCny
 
 router = APIRouter(tags=["results"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -34,7 +34,7 @@ class DrawResultPayload(BaseModel):
     half_away_goals: int | None = Field(default=None, ge=0)
     void: bool = False
     void_reason: str | None = None
-    published_at: str | None = None
+    published_at: IsoTimestamp | None = None
     correction_reason: str | None = None
 
 
@@ -144,8 +144,8 @@ class BankrollResponse(BaseModel):
 class DepositPayload(BaseModel):
     """一笔入金输入。"""
 
-    amount_cny: float = Field(gt=0, description="入金金额(人民币, 必须 > 0)")
-    occurred_at: str | None = Field(
+    amount_cny: MoneyCny = Field(description="入金金额(人民币, 必须 > 0)")
+    occurred_at: IsoTimestamp | None = Field(
         default=None, description="发生时点(UTC ISO); 缺省取服务器当前时间"
     )
     note: str | None = None

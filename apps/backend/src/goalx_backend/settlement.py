@@ -133,6 +133,7 @@ def _actual_selection(
         code = _hafu_code(result)
         note = None if code else "missing_half_score"
     else:
+        # 新市场接入时同步 markets.LEG_MARKETS/LEG_SELECTIONS（API 载荷闭集）
         note = f"unsupported_market:{market}"
     return code, note
 
@@ -209,7 +210,7 @@ def settle_fixed_bet(
         return SettlementOutcome(
             status="void",
             stake=stake,
-            payout=stake,
+            payout=round(stake, 2),  # 与流水 delta 同口径（审计批B #5）
             profit=0.0,
             notes=["empty_bet_refund"],
         )
@@ -233,7 +234,7 @@ def settle_fixed_bet(
         return SettlementOutcome(
             status="void",
             stake=stake,
-            payout=stake,
+            payout=round(stake, 2),  # 退款与流水 round 同口径（审计批B #5）
             profit=0.0,
             legs=leg_outcomes,
             notes=[note],
@@ -257,7 +258,7 @@ def settle_fixed_bet(
             status="lost",
             stake=stake,
             payout=0.0,
-            profit=-stake,
+            profit=round(-stake, 2),  # 与流水 delta 同口径（审计批B #5）
             legs=leg_outcomes,
             notes=["leg_missed"],
         )

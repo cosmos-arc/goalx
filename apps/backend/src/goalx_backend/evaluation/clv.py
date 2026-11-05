@@ -211,12 +211,20 @@ def _odds_api_close(
 
 
 def _minutes_to_kickoff(placed_at: str | None, kickoff_utc: str) -> float | None:
-    """下注时距开赛分钟数（无 placed_at 返回 None）。"""
+    """
+    下注时距开赛分钟数。
+
+    无/坏 placed_at 返回 None——存量坏值只坏本列 minutes，不硬崩整批
+    CLV 对账（审计批B #16）。
+    """
     if not placed_at:
         return None
-    placed = datetime.fromisoformat(str(placed_at))
-    kickoff = datetime.fromisoformat(kickoff_utc)
-    return (kickoff - placed).total_seconds() / 60.0
+    try:
+        placed = datetime.fromisoformat(str(placed_at))
+        kickoff = datetime.fromisoformat(kickoff_utc)
+        return (kickoff - placed).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return None
 
 
 def reconcile_clv(

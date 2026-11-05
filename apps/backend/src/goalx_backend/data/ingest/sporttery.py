@@ -538,8 +538,10 @@ def _capture_pipeline(
     now: datetime | None,
 ) -> tuple[IngestStats, list[ParsedMatch], int]:
     """Fetch → 原始证据 → 观测行 → 解析入库（capture_jingcai/探测共用）。"""
-    observed = (now or datetime.now(UTC)).isoformat(timespec="seconds")
     fetched = fetch_calculator(settings, client)
+    # observed_at = 收到响应的时间（审计批B #1）：戳取在 fetch 返回之后，
+    # 预盖章会让 25s 超时窗内的网络耗时从观测时序里消失
+    observed = (now or datetime.now(UTC)).isoformat(timespec="seconds")
     matches = parse_matches(fetched.payload)
     sha, raw_ref = (
         observations.save_raw(raw_root, "sporttery", fetched.raw)

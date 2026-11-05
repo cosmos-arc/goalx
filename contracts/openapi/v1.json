@@ -2161,6 +2161,7 @@
         "properties": {
           "stake": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Stake"
           },
@@ -2679,6 +2680,7 @@
           },
           "stake": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Stake"
           },
@@ -3736,6 +3738,7 @@
         "properties": {
           "amount_cny": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount Cny",
             "description": "入金金额(人民币, 必须 > 0)"
@@ -5267,7 +5270,7 @@
           "locked_odds"
         ],
         "title": "LegPayload",
-        "description": "一腿输入。"
+        "description": "一腿输入（市场/选项按 markets 闭集拒收，审计批B #7）。"
       },
       "M3ProtocolReport": {
         "properties": {
@@ -5981,6 +5984,7 @@
           },
           "stake_per_combination": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Stake Per Combination",
             "default": 2.0
@@ -6051,6 +6055,7 @@
           },
           "stake_per_combination": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Stake Per Combination",
             "default": 2.0
