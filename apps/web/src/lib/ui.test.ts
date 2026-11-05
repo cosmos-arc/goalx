@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addDays, beijingBusinessDate, dayLabel, errorText } from "./ui";
+import { addDays, beijingBusinessDate, dayLabel, errorText, localTime, shortTime } from "./ui";
 
 /**
  * 票 wb-03：日期/错误工具从 fixtures-page 下沉到 lib/ui 后的纯函数单测
@@ -40,5 +40,23 @@ describe("errorText", () => {
 		expect(errorText({ detail: "fixture 1 不可投" })).toBe("fixture 1 不可投");
 		expect(errorText({ detail: { reason: "sale_stopped" } })).toBe('{"reason":"sale_stopped"}');
 		expect(errorText(new Error("boom"))).toContain("boom");
+	});
+});
+
+describe("localTime/shortTime（报告二 §八：显式 Asia/Shanghai）", () => {
+	test("固定北京时区字面（原 shortTime 切 ISO=UTC、localTime 随浏览器）", () => {
+		// 2026-09-11T10:00:00Z = 北京 18:00
+		expect(localTime("2026-09-11T10:00:00+00:00")).toBe("18:00");
+		expect(shortTime("2026-09-11T10:00:00+00:00")).toBe("09-11 18:00");
+		// 2026-09-12T16:00:00Z = 北京 09-13 00:00（跨日界 + 零点不出 24:xx）
+		expect(shortTime("2026-09-12T16:00:00+00:00")).toBe("09-13 00:00");
+		expect(localTime("2026-09-12T16:00:00+00:00")).toBe("00:00");
+		// 带偏移输入按绝对时刻换算（非字面平移）
+		expect(localTime("2026-09-11T18:00:00+08:00")).toBe("18:00");
+	});
+
+	test("非法/空 → 占位", () => {
+		expect(localTime("not-a-date")).toBe("—");
+		expect(shortTime(null)).toBe("—");
 	});
 });

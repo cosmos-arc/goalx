@@ -24,6 +24,7 @@ import {
 } from "../lib/combo-engine";
 import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
 import { dayNoteOf, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 wb-03：胜平负玩法页 `/markets/had`——玩法轴第一页。
@@ -48,7 +49,7 @@ export function MarketHadPage() {
 		queryFn: () => fetchTodayFixtures(undefined, MARKET_WINDOW_DAYS),
 	});
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 	const fixtures = fixturesQuery.data ?? [];
 	const basket = useHadBasket(now, fixtures);
 	const { legs, message, pick, slipForm, chooseSlipForm } = basket;

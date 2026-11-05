@@ -11,6 +11,7 @@ from itertools import combinations, product
 from typing import Any
 
 from goalx_backend.betting.snapshot import EMPTY_SNAPSHOT, BetEvSnapshot
+from goalx_backend.data import fixtures as fx
 from goalx_backend.data.pool import pool_matches_for_period
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.markets import GOALS4_CODES, POOL_HAD_CODES
@@ -604,6 +605,25 @@ def validate_pool_period_ownership(
         raise ValueError(
             f"场次 {foreign} 不属于期次 {pool_period_id}（已指定期次须用该期场次）"
         )
+
+
+def require_fixtures_exist(
+    conn: sqlite3.Connection, fixture_ids: list[int | None]
+) -> None:
+    """
+    池票 pick 的 fixture 存在性守卫（票 08 预存注记收口）。
+
+    fixture_id 可空（期次场次未链映射时带 null）；带值时须真实存在——
+    否则 add_pool_pick 撞 FK 裸 500。预览/创建同校验（票 08 模式）。
+    """
+    wanted = sorted({fid for fid in fixture_ids if fid is not None})
+    if not wanted:
+        return
+    # 存在性探测走 data 包函数（ADR-0008：包外不裸写 fixtures SQL）
+    found = fx.kickoffs_for_fixtures(conn, wanted)
+    missing = [fid for fid in wanted if fid not in found]
+    if missing:
+        raise ValueError(f"fixture {missing} 不存在（pick 的 fixture_id 须为真实场次）")
 
 
 def _goals4_sides(picks: list[str]) -> tuple[list[str], list[str]]:

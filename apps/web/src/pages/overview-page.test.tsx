@@ -450,6 +450,18 @@ test("票 07：六桶归因面板渲染 + 点击桶下钻场次；断供失败�
 	expect(within(section).getByTestId("attribution-bucket-samples-window_closed")).toHaveTextContent("sale_stopped");
 });
 
+test("归因 board_coverage=0：桶未统计（≠ 观察为零）明示", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/today/attribution", () =>
+			HttpResponse.json({ ...attributionFixture, board_coverage: [0, 0] }),
+		),
+	);
+	await renderAt("/");
+	const note = await screen.findByTestId("attribution-not-measured");
+	expect(note).toHaveTextContent("桶未统计");
+	expect(note).toHaveTextContent("≠ 观察为零");
+});
+
 test("票 07：归因端点失败 → 面板诚实降级不硬判，核心区不受影响", async () => {
 	server.use(
 		http.get("*/api/v1/fixtures/today/attribution", () =>

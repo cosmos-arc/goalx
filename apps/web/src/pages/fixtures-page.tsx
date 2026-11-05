@@ -25,6 +25,7 @@ import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
 import { addDays, beijingBusinessDate, dayLabel, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 wb-01：今日页升级为"场次"页（票 14 的信息分层与编码硬约束全部继承）。
@@ -73,7 +74,7 @@ export function FixturesPage() {
 	// 票 wb-06：选注篮建议仓位需要 bankroll（读取失败时建议块诚实降级）
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: fetchBankroll });
 	const [selectedDay, setSelectedDay] = useState<string | null>(null);
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 	const fixtures = fixturesQuery.data ?? [];
 	const basket = useHadBasket(now, fixtures);
 	const { legs, message, pick } = basket;

@@ -24,6 +24,7 @@ import {
 	validationProgressKey,
 } from "../lib/query-keys";
 import { earliestKickoffMs, openBetFixtureIds, pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
+import { useNow } from "../lib/use-now";
 
 /**
  * 票 15：总览 Dashboard（票 05 定稿 = 唯一事实源）。总览 = 分诊（票 03）：
@@ -166,7 +167,7 @@ export function OverviewPage() {
 		queryFn: () => fetchNoCandidateAttribution(undefined, 1),
 	});
 	const [openBucket, setOpenBucket] = useState<string | null>(null);
-	const now = Date.now();
+	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const fixtures = todayQuery.data ?? [];
 	const bets = betsQuery.data ?? [];
@@ -387,6 +388,14 @@ export function OverviewPage() {
 								>
 									欧赔读面本请求缺席（被物化锁占或库缺席）——"国际参考断供"桶可能混入读面缺席
 									而非真断供，对账以晨检为准。
+								</p>
+							) : null}
+							{attributionQuery.data && attributionQuery.data.board_coverage[0] === 0 ? (
+								<p
+									className="mb-3 rounded bg-warning/10 px-2 py-1 text-xs text-foreground"
+									data-testid="attribution-not-measured"
+								>
+									今日板覆盖 0 场——桶未统计（≠ 观察为零）：窗口内无可归因场次，计数零是缺分母非判读。
 								</p>
 							) : null}
 							{attributionQuery.isError ? (
