@@ -81,10 +81,11 @@ test("balancePoints：只取近 30 天且时间正序，窗口外/不可解析�
 	expect(points.map((point) => point.balance)).toEqual([5000, 5004.2]);
 });
 
-test("balanceCurveOption：单线 + 余额数据映射，x 轴 MM-DD", () => {
+test("balanceCurveOption：单线 + 余额数据映射，x 轴北京业务日 MM-DD（批A #14）", () => {
 	const points = [
 		{ date: "2026-09-01T00:00:00Z", balance: 5000 },
-		{ date: "2026-09-13T12:00:00Z", balance: 5004.2 },
+		// 17:00Z = 北京 09-14 01:00：UTC 切片会把这笔记成 09-13
+		{ date: "2026-09-13T17:00:00Z", balance: 5004.2 },
 	];
 	const option = balanceCurveOption(points, "#2563eb", "#6b7280");
 	const series = option.series as Array<{ name: string; type: string; data: number[] }>;
@@ -92,7 +93,7 @@ test("balanceCurveOption：单线 + 余额数据映射，x 轴 MM-DD", () => {
 	expect(series[0]?.name).toBe("余额");
 	expect(series[0]?.data).toEqual([5000, 5004.2]);
 	const xAxis = option.xAxis as { data: string[] };
-	expect(xAxis.data).toEqual(["09-01", "09-13"]);
+	expect(xAxis.data).toEqual(["09-01", "09-14"]);
 });
 
 test("amountTone：投注/兑付按盈亏红绿，出入金/成本中性", () => {

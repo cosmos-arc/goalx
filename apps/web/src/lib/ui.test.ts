@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addDays, beijingBusinessDate, dayLabel, errorText, localTime, shortTime } from "./ui";
+import { addDays, beijingBusinessDate, currentQuotes, dayLabel, errorText, localTime, shortTime } from "./ui";
 
 /**
  * 票 wb-03：日期/错误工具从 fixtures-page 下沉到 lib/ui 后的纯函数单测
@@ -40,6 +40,35 @@ describe("errorText", () => {
 		expect(errorText({ detail: "fixture 1 不可投" })).toBe("fixture 1 不可投");
 		expect(errorText({ detail: { reason: "sale_stopped" } })).toBe('{"reason":"sale_stopped"}');
 		expect(errorText(new Error("boom"))).toContain("boom");
+	});
+});
+
+describe("currentQuotes（批A #20b：逐字段校验对齐 intentConflict）", () => {
+	const quote = {
+		fixture_id: 1,
+		selection_code: "h",
+		server_odds: 2.05,
+		snapshot_id: 7,
+		observed_at: "2026-11-05T10:00:00Z",
+	};
+
+	test("合法价变载荷 → 数组", () => {
+		expect(currentQuotes({ detail: { message: "报价已变", current_quotes: [quote] } })).toEqual([quote]);
+	});
+
+	test("非该形态 / 空数组 → null", () => {
+		expect(currentQuotes({ detail: "别的错" })).toBeNull();
+		expect(currentQuotes({ detail: { current_quotes: [] } })).toBeNull();
+		expect(currentQuotes(new Error("x"))).toBeNull();
+	});
+
+	test("字段畸形 → 整体 null（不 partial 放行，防消费者 .toFixed 自崩）", () => {
+		const badOdds = { ...quote, server_odds: "2.05" };
+		const badCode = { ...quote, selection_code: 3 };
+		const nullElement = null;
+		expect(currentQuotes({ detail: { current_quotes: [quote, badOdds] } })).toBeNull();
+		expect(currentQuotes({ detail: { current_quotes: [badCode] } })).toBeNull();
+		expect(currentQuotes({ detail: { current_quotes: [nullElement] } })).toBeNull();
 	});
 });
 

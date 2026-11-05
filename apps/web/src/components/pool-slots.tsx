@@ -1,5 +1,5 @@
 import type { PoolMatch, PoolSelection } from "../api/goalx";
-import { SELECTION_LABELS, SELECTIONS, TABULAR_NUMS } from "../lib/ui";
+import { SELECTION_LABELS, SELECTIONS, shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 彩池页 14 场槽位列表（review-20260928 票 07 自 market-pool-page 拆出）：
@@ -58,14 +58,9 @@ function coldWorthySelection(match: PoolMatch): { code: string; ev: number } | n
 	return best;
 }
 
-/** 开赛时间（北京时间口径展示）。 */
+/** 开赛时间（北京时间口径展示）——shortTime 显式 Asia/Shanghai，不随浏览器时区漂移。 */
 function formatTime(utc: string): string {
-	return new Date(utc).toLocaleString("zh-CN", {
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-	});
+	return shortTime(utc);
 }
 
 export function PoolSlotList({

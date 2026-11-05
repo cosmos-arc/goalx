@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { reviewQueueFixture } from "../mocks/handlers";
+import { fixtureEvidenceFixture, reviewQueueFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -77,6 +77,36 @@ test("blind review picks a card, reveals tracks, and posts the choice", async ()
 	expect(await within(panel).findByTestId("blind-reveal-甲")).toBeVisible();
 	expect(within(panel).getByTestId("blind-reveal-乙")).toBeVisible();
 	expect(within(panel).getByTestId("blind-result")).toHaveTextContent("已记录");
+});
+
+test("blind review: absent track shows 无产出 honestly and is unpickable (批A #13 宁缺毋假)", async () => {
+	const posted: number[] = [];
+	server.use(
+		http.post("*/api/v1/blind-reviews", () => {
+			posted.push(1);
+			return HttpResponse.json({ recorded: true });
+		}),
+		// fused/llm 双缺席：情报侧卡不得伪造全零分布（0% 会把"缺席=自动通过"伪装成方向性判断）
+		http.get("*/api/v1/fixtures/:id/evidence", () =>
+			HttpResponse.json({ ...fixtureEvidenceFixture, tracks: { ml: fixtureEvidenceFixture.tracks.ml } }),
+		),
+	);
+	await renderAt("/review");
+
+	const panel = await screen.findByTestId("review-blind");
+	await within(panel).findByTestId("blind-fixture-select");
+	const absent = await within(panel).findByTestId(/blind-absent-(甲|乙)/);
+	expect(absent).toHaveTextContent("—（该轨无产出，不可投）");
+	const label = absent.dataset["testid"]?.slice("blind-absent-".length) ?? "";
+	const pick = within(panel).getByTestId(`blind-pick-${label}`);
+	expect(pick).toBeDisabled();
+	await userEvent.click(pick);
+	// 另一侧照常可投且显真实概率
+	const other = label === "甲" ? "乙" : "甲";
+	expect(within(panel).getByTestId(`blind-card-${other}`)).toHaveTextContent(/胜 \d+%/);
+	expect(within(panel).getByTestId(`blind-pick-${other}`)).toBeEnabled();
+
+	await waitFor(() => expect(posted).toHaveLength(0));
 });
 
 test("empty queue degrades honestly and blind panel explains", async () => {

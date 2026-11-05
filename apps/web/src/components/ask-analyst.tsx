@@ -2,7 +2,7 @@ import { useChat } from "@ai-sdk/react";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { createAskTransport } from "../api/agui-transport";
 import type { IntelItem } from "../api/goalx";
-import { TABULAR_NUMS } from "../lib/ui";
+import { shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 15：追问 analyst（AG-UI 1.0 流式交互面，V4 产品形态定案）。
@@ -88,7 +88,7 @@ export function AskAnalystPanel({ fixtureId, intels }: { fixtureId: number; inte
 											className="rounded bg-info/10 px-1 text-xs text-info"
 											title={intel.text}
 										>
-											{intel.source} · {intel.collected_at.slice(5, 16).replace("T", " ")}
+											{intel.source} · {shortTime(intel.collected_at)}
 										</span>
 									))}
 								</span>

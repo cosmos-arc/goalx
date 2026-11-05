@@ -123,7 +123,7 @@ export function MarketPool4Page() {
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
 			setSubmitResult(
-				`已建纸面池票 #${slip.id}（${slip.combination_count} 注 × ¥${STAKE_PER_COMBINATION}，合计 ¥${slip.pool_stake_total}）`,
+				`已建纸面池票 #${slip.id}（${slip.combination_count} 注 × ¥${STAKE_PER_COMBINATION}，合计 ¥${slip.pool_stake_total.toFixed(2)}）`,
 			);
 			void queryClient.invalidateQueries({ queryKey: slipsKey });
 		},

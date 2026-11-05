@@ -253,6 +253,58 @@ test("rule ③: open bet with all leg results present is settleable; far kickoff
 	expect(screen.queryByTestId("todo-pending-results")).not.toBeInTheDocument();
 });
 
+test("rule ④ 10点门取北京时：UTC 凌晨 = 北京上午过 10 点 → 照常触发（批A #14）", async () => {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date("2026-09-15T02:30:00Z")); // 北京 10:30（旧本地时口径在 UTC 机器会判"未过 10 点"）
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json([
+				makeFixture({ fixture_id: 91, jc_updated_at: null, joined: false, books: 0, eu_prob: null, ev: null }),
+			]),
+		),
+	);
+	await renderAt("/");
+
+	expect(await screen.findByTestId("todo-data-anomaly")).toHaveTextContent("数据异常");
+});
+
+test("today's live pnl buckets by Beijing business day, not UTC/local midnight (批A #14)", async () => {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date("2026-09-15T18:30:00Z")); // 北京 09-16 02:30
+	mockAll({
+		fixtures: [makeFixture({ fixture_id: 1 })],
+		bets: [],
+		bankroll: {
+			balance: 900,
+			events: [
+				{
+					id: 2,
+					occurred_at: "2026-09-15T17:30:00Z", // 北京 09-16 01:30 → 今日
+					kind: "bet_stake",
+					amount_cny: -100,
+					balance_after: 900,
+					bet_id: 7,
+					note: null,
+				},
+				{
+					id: 1,
+					occurred_at: "2026-09-15T13:00:00Z", // 北京 09-15 21:00 → 昨日（旧 UTC 口径会算进"今天"）
+					kind: "bet_payout",
+					amount_cny: 50,
+					balance_after: 1000,
+					bet_id: 6,
+					note: null,
+				},
+			],
+		},
+	});
+	await renderAt("/");
+
+	// 仅 -100 计入今日（北京日界 00:00）：同 UTC 日 ≠ 同北京业务日
+	const pnl = await screen.findByTestId("live-pnl-today");
+	expect(pnl).toHaveTextContent("-¥100.00");
+});
+
 test("rule ④: after 10:00 with the whole snapshot missing, the item appears with ingest guidance", async () => {
 	vi.useFakeTimers({ toFake: ["Date"] });
 	vi.setSystemTime(new Date(2026, 8, 15, 11, 5, 0)); // 本地 11:05，已过 10 点

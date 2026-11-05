@@ -927,6 +927,33 @@ def test_slip_record_purchase_flow(api_client: TestClient) -> None:
     assert missing.status_code == 404
 
 
+def test_slip_sum_fields_rounded_to_cents(api_client: TestClient) -> None:
+    """批A #19：SUM 聚合字段统一 round 到分——33.33+66.67 的浮点尾数
+    （100.00000000000001）不外漏（stake/profit 此前只对 pool 字段 round）。"""
+    fixture_id = _fixture_id(api_client)
+    bet_ids = [
+        api_client.post(
+            "/api/v1/bets",
+            json={
+                "mode": "paper",
+                "stake": stake,
+                "legs": [
+                    {
+                        "fixture_id": fixture_id,
+                        "market_code": "had",
+                        "selection_code": selection,
+                        "locked_odds": odds,
+                    }
+                ],
+            },
+        ).json()["id"]
+        for selection, odds, stake in (("h", 6.5, 33.33), ("d", 5.0, 66.67))
+    ]
+    slip = api_client.post("/api/v1/bet-slips", json={"bet_ids": bet_ids})
+    assert slip.status_code == 201
+    assert slip.json()["stake_total"] == 100.0
+
+
 def test_paper_slip_with_actuals_rejected(api_client: TestClient) -> None:
     """票 01（报告一案例 1）：system_paper 6.5 锁票传 actual 99 → 400，
     票/绑定/actual 列零部分写入；99 无法以 system_paper 身份进价格链。"""

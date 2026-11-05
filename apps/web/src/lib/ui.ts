@@ -63,7 +63,7 @@ export type AppRoute =
 	| "/review"
 	| "/settings";
 
-/** API 错误 → 可读文本（detail 字符串/对象都处理，不显示 [object Object]）。 */
+/** 价变 409 的逐腿报价载荷；非该形态（含畸形字段——消费者直接 .toFixed）返回 null。 */
 export function currentQuotes(error: unknown): CurrentQuote[] | null {
 	if (typeof error !== "object" || error === null || !("detail" in error)) {
 		return null;
@@ -73,7 +73,18 @@ export function currentQuotes(error: unknown): CurrentQuote[] | null {
 		return null;
 	}
 	const quotes = (detail as { current_quotes: unknown }).current_quotes;
-	return Array.isArray(quotes) ? (quotes as CurrentQuote[]) : null;
+	if (!Array.isArray(quotes) || quotes.length === 0) {
+		return null;
+	}
+	// 逐字段校验（对齐 intentConflict）：一条畸形即整体按非价变处理，不让坏行崩确认流
+	const wellFormed = quotes.every(
+		(quote) =>
+			typeof quote === "object" &&
+			quote !== null &&
+			typeof (quote as Record<string, unknown>)["selection_code"] === "string" &&
+			typeof (quote as Record<string, unknown>)["server_odds"] === "number",
+	);
+	return wellFormed ? (quotes as CurrentQuote[]) : null;
 }
 
 import type { CurrentQuote } from "../api/goalx";

@@ -266,7 +266,7 @@ export function BetsPage() {
 				allow_price_update: input.allowPriceUpdate,
 			}),
 		onSuccess: (slip) => {
-			setMessage(`已锁定纸面票 #${slip.id}（¥${slip.stake_total}，不产生真金流水）`);
+			setMessage(`已锁定纸面票 #${slip.id}（¥${slip.stake_total.toFixed(2)}，不产生真金流水）`);
 			setPriceConfirm(null);
 			refresh();
 		},

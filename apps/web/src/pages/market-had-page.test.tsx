@@ -211,6 +211,37 @@ test("two positive-EV picks: slip form explicit (default singles), preview == su
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("0/2");
 });
 
+test("applyCombo frozen while a submission is in flight (批A #20a：飞行中所见即所提交)", async () => {
+	const user = userEvent.setup();
+	// fixture 4 给正向 EV → 组合卡两腿可带入
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json(
+				todayFixture.map((row) => (row.fixture_id === 4 ? { ...row, ev: { h: 0.06, d: -0.109, a: -0.076 } } : row)),
+			),
+		),
+		// 提交永不返回 → createSuggestion.isPending 挂住
+		http.post("*/api/v1/bets", () => new Promise(() => {})),
+	);
+	await renderAt("/markets/had");
+
+	const combo = await screen.findByTestId("market-combo");
+	await user.click(within(combo).getByTestId("market-combo-apply"));
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
+
+	// 提交前先把一腿换成 fixture 2（篮内容 ≠ 组合卡），消息清空
+	await user.click(screen.getAllByLabelText(/移除/)[0]!);
+	await user.click(screen.getByTestId("market-pick-2-h"));
+	expect(screen.queryByTestId("market-message")).toBeNull();
+
+	// 提交（挂起）→ 飞行中一键带入应被冻结忽略：不覆写篮、不出"已带入"消息
+	await user.click(screen.getByTestId("basket-submit"));
+	await waitFor(() => expect(screen.getByTestId("basket-submit")).toBeDisabled());
+	await user.click(within(combo).getByTestId("market-combo-apply"));
+	expect(screen.queryByTestId("market-message")).toBeNull();
+	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
+});
+
 test("slip form explicitly switched to parlay: one 2串1 bet at the parlay caliber", async () => {
 	const user = userEvent.setup();
 	server.use(
