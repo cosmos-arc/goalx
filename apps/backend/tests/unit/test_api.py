@@ -1089,36 +1089,14 @@ def test_stake_money_fields_rounded_and_bounded(api_client: TestClient) -> None:
     fixture_id = _fixture_id(api_client)
     created = api_client.post(
         "/api/v1/bets",
-        json={
-            "mode": "paper",
-            "stake": 10.006,
-            "legs": [
-                {
-                    "fixture_id": fixture_id,
-                    "market_code": "had",
-                    "selection_code": "h",
-                    "locked_odds": 6.5,
-                }
-            ],
-        },
+        json={**_had_leg_payload(fixture_id, "h"), "stake": 10.006},
     )
     assert created.status_code == 201
     assert created.json()["stake"] == 10.01  # 入口取整，亚分不落库
     for bad_stake in (1e308, 0.001):  # 上界 + 取整后归零
         rejected = api_client.post(
             "/api/v1/bets",
-            json={
-                "mode": "paper",
-                "stake": bad_stake,
-                "legs": [
-                    {
-                        "fixture_id": fixture_id,
-                        "market_code": "had",
-                        "selection_code": "h",
-                        "locked_odds": 6.5,
-                    }
-                ],
-            },
+            json={**_had_leg_payload(fixture_id, "h"), "stake": bad_stake},
         )
         assert rejected.status_code == 422
     deposit_rejected = api_client.post(
