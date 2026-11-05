@@ -364,3 +364,16 @@ def test_values_match_half_side_null_treated_incomparable() -> None:
         "half_away_goals": None,
     }
     assert _values_match(stored_no_half, obs(1, 0)) is True
+
+    # correctness F2：0 是真值不是哨兵——0:0 全等行修前 `0 or -1` 判不一致
+    import dataclasses
+
+    stored_nil = {
+        "void": 0,
+        "home_goals": 0,
+        "away_goals": 0,
+        "half_home_goals": None,
+        "half_away_goals": None,
+    }
+    obs_nil = dataclasses.replace(obs(0, 0), home_goals=0, away_goals=0, full_raw="0:0")
+    assert _values_match(stored_nil, obs_nil) is True
