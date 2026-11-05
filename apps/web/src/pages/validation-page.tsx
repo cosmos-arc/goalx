@@ -451,7 +451,7 @@ function BacktestRunTable({ runs }: { runs: BacktestRun[] }) {
 						<TableHead>状态</TableHead>
 						<TableHead>场数</TableHead>
 						<TableHead>注数</TableHead>
-						<TableHead>ROI</TableHead>
+						<TableHead>ROI(注金加权)</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>

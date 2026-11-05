@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { ClvReport, ForwardSkillReport } from "../api/goalx";
-import { validationProgressFixture } from "../mocks/handlers";
+import { backtestRunsFixture, validationProgressFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 import {
@@ -292,6 +292,34 @@ test("下钻层：契约类型指标映射行带词典 tooltip", async () => {
 	const constraints = within(drilldown).getByTestId("sample-constraints");
 	expect(constraints).toHaveTextContent("另有 2 条未购买在途建议");
 	expect(within(constraints).getByTestId("sample-paper")).toHaveTextContent("11");
+});
+
+// ---- 渲染：summary roi 双键（票 02 命名债）----
+
+test("回测表 ROI：新键优先，存量旧行回退旧键不空", async () => {
+	await renderAt("/validation");
+	const rows = await screen.findAllByTestId("backtest-run-row");
+	// 默认 fixture 双键同值：新键直出
+	expect(rows[0]).toHaveTextContent("-2.7%");
+
+	// 存量旧行（仅 roi 无新键）：回退读不炸不空
+	cleanup();
+	server.use(
+		http.get("*/api/v1/backtest/runs", () =>
+			HttpResponse.json([
+				{
+					...backtestRunsFixture[0],
+					summary: { predictions: 10, bets: 2, staked: 100, profit: -5, roi: -0.05, skipped: {} },
+				},
+			]),
+		),
+		http.get("*/api/v1/validation/progress", () =>
+			HttpResponse.json({ ...validationProgressFixture, latest_run: null }),
+		),
+	);
+	await renderAt("/validation");
+	const legacy = await screen.findAllByTestId("backtest-run-row");
+	expect(legacy[0]).toHaveTextContent("-5.0%");
 });
 
 // ---- 渲染：回测 vs 前瞻对比 ----

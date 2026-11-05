@@ -123,7 +123,7 @@ _MIN_PARLAY_SINGLES = 2  # 串关需要的合格单关数
 DEFAULT_MAX_SIM_ODDS = 50.0
 # 市场隐含概率下限：1X2 → 比分分布的反推在极低概率尾部不可辨识（不同 λ 组合
 # 拟合出同一 1X2，尾部概率却相差数倍），低于该下限的选项不定价不下注。
-ODDS_SANITY = 1.0  # 三向赔率下界（devig 前提；与 clv_decade 同名同值）
+ODDS_SANITY = 1.0  # 三向赔率下界（devig 前提；clv_decade 同用此单源）
 MIN_MARKET_PROB = 0.02
 HHAD_LINE_RANGE = range(-3, 4)  # 竞彩整数让球线搜索范围
 
