@@ -457,14 +457,26 @@ def test_list_runs_mixed_generation_fitted_at_order(tmp_path) -> None:
     rows = synthetic_rows(n=120, seed=5)
     run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
     dcm.save_run(run, tmp_path)
-    # 同 train_window_end 两代工件：legacy naive 20:00 本地（=12:00Z）早于
-    # 新 aware 12:30Z——字典序却 "12:30…" < "20:00…"，字符串排序选错
+    # 相对时钟构造（防时间炸弹：真实 save_run 件 fitted_at=当下）：fresh
+    # 定在当下+1h（恒晚于真实件）；legacy naive 墙钟=北京墙钟再晚 30min
+    # （字典序压过 fresh），真时刻却早 8h+30min——字符串排序选错即本命题
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    fresh_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+    # legacy 串=fresh UTC 时刻再晚 30min 的裸墙钟（字典序压过 fresh），
+    # 按北京墙钟读回即早 8h−30min——真时刻更旧，字符串序却更大
+    legacy_at = (
+        (now + timedelta(hours=1, minutes=30))
+        .replace(tzinfo=None)
+        .isoformat(timespec="seconds")
+    )
     legacy = run.to_payload()
-    legacy["base"]["fitted_at"] = "2026-11-05T20:00:00"
+    legacy["base"]["fitted_at"] = legacy_at
     fresh = run.to_payload()
-    fresh["base"]["fitted_at"] = "2026-11-05T12:30:00+00:00"
+    fresh["base"]["fitted_at"] = fresh_at
     for name, payload in (("E0-legacy.json", legacy), ("E0-fresh.json", fresh)):
         (tmp_path / "E0" / name).write_text(json.dumps(payload), encoding="utf-8")
     latest = dcm.load_latest_run(tmp_path, "E0")
     assert latest is not None
-    assert latest.base.fitted_at == "2026-11-05T12:30:00+00:00"
+    assert latest.base.fitted_at == fresh_at

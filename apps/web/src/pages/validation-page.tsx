@@ -451,7 +451,7 @@ function BacktestRunTable({ runs }: { runs: BacktestRun[] }) {
 						<TableHead>状态</TableHead>
 						<TableHead>场数</TableHead>
 						<TableHead>注数</TableHead>
-						<TableHead>ROI</TableHead>
+						<TableHead>ROI(注金加权)</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
@@ -462,7 +462,9 @@ function BacktestRunTable({ runs }: { runs: BacktestRun[] }) {
 							<TableCell>{run.status}</TableCell>
 							<TableCell className={TABULAR_NUMS}>{asNumber(run.summary?.["predictions"]) ?? "—"}</TableCell>
 							<TableCell className={TABULAR_NUMS}>{asNumber(run.summary?.["bets"]) ?? "—"}</TableCell>
-							<TableCell className={TABULAR_NUMS}>{formatPct(asNumber(run.summary?.["roi"]))}</TableCell>
+							<TableCell className={TABULAR_NUMS}>
+								{formatPct(asNumber(run.summary?.["roi_stake_weighted"] ?? run.summary?.["roi"]))}
+							</TableCell>
 						</TableRow>
 					))}
 				</TableBody>

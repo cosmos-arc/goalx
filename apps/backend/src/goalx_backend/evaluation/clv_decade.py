@@ -35,12 +35,11 @@ import duckdb
 from goalx_backend import run_fingerprint as rfp
 from goalx_backend.data import gold_reader
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.evaluation.backtest import MIN_MARKET_PROB
+from goalx_backend.evaluation.backtest import MIN_MARKET_PROB, ODDS_SANITY
 from goalx_backend.evaluation.metrics import load_backtest_run
 
 REPORT_BASENAME = "clv-decade"
 MIN_EARLY_SAMPLES = 30  # 早锁面低于此 n 只计数不下结论
-ODDS_SANITY = 1.0  # devig 前提：三向赔率均 >1
 # 结构性恒等式容差（腿价由浮点构造，非逐位比较）
 STRUCT_TOL = 0.005
 
