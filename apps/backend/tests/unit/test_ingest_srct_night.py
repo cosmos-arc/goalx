@@ -917,3 +917,24 @@ def test_deep_backfill_completion_ledger(tmp_path: Path) -> None:
         assert DATES[0] in [day for _season, day in backfill]
     finally:
         store2.close()
+
+
+def test_deep_ledger_skips_partial_failure_days(tmp_path: Path) -> None:
+    """留案票 01③ correctness：部分深端点传输失败（未触发熔断）的 done 日
+    不记完成账——次夜 has() 扫描自愈重开（真缺口不丢）。"""
+    seen, routes = _transport_spy()
+    routes[f"ah:{DATE_TO_SID[DATES[0]]}"] = httpx.Response(500, text="boom")
+    summary = _run(tmp_path, seen, routes)
+    assert summary.dates_done == 3  # 单端点失败不阻断整日
+    store = _store(tmp_path)
+    try:
+        marked = store.srct_deep_days(srct_night._deep_endpoints_fp)
+        assert DATES[0] not in marked  # 失败日不记账
+        assert {DATES[1], DATES[2]} <= marked  # 干净日照记
+        backfill = srct_night._depth_backfill_dates(
+            store, TODAY, TEST_SEASONS, store.season_depths()
+        )
+        assert DATES[0] in [day for _season, day in backfill]  # 自愈重开
+        assert DATES[1] not in [day for _season, day in backfill]
+    finally:
+        store.close()

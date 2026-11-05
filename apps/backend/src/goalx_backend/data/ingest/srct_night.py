@@ -448,9 +448,9 @@ def run_night(  # noqa: PLR0912, PLR0913, PLR0915, C901 接缝与逐日编排分
             stopped = True
             break
         store.set_day_status(day, "done")
-        if depth == srct.DEPTH_FULL:
-            # 深端点补欠完成账（留案票 01③）：本日全深端点已齐，记账后
-            # 候选扫描零探测（端点集指纹失配自动重开）
+        # 完成账（留案票 01③）：仅零失败记账——部分传输失败日（stats.failed
+        # 非空但未触发熔断）不记，次夜 has() 扫描自愈重开（真缺口不丢）
+        if depth == srct.DEPTH_FULL and not stats.failed:
             store.set_srct_deep_day(day, _deep_endpoints_fp)
         summary.dates_done += 1
         logger.info(

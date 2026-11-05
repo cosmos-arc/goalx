@@ -315,6 +315,7 @@ class MappingSyncStats:
             "kickoff_conflicts": self.kickoff_conflicts,
             "live_linked": self.live_linked,
             "live_kickoff_rejected": self.live_kickoff_rejected,
+            "stale_skipped": self.stale_skipped,
             "srct_alias_pairs": len(self.srct_alias_pairs),
             "degraded": self.degraded,
         }
@@ -692,13 +693,14 @@ def sync_fixture_links(
     live_unknown = live_rows is None
     live_index = SidIndex.build(live_rows or ())
     aliases: MappingABC[int, set[str]] = team_aliases or {}
-    scan_floor = (today - timedelta(days=2)).isoformat()
     for row in fx_store.fixtures_with_teams(conn):
         fixture_id = int(row["fixture_id"])
         # 无码场（business_date NULL）以开球日作时间信号——新非 JC 场不饿死
+        # 无码场以开球日（北京钟，+8h 再取日）作时间信号——新非 JC 场不饿死
         in_window = str(row["business_date"] or "") in scan_window or (
             row["business_date"] is None
-            and str(row["kickoff_utc"] or "")[:10] >= scan_floor
+            and str(row["kickoff_utc"] or "")[:10]
+            >= (today - timedelta(days=3)).isoformat()
         )
         if not in_window and fixture_id not in manual_ids:
             stats.stale_skipped += 1
