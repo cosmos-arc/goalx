@@ -300,6 +300,9 @@ class MappingSyncStats:
     live_kickoff_rejected: int = 0
     srct_alias_pairs: list[tuple[int, str]] = field(default_factory=list)
     degraded: str | None = None
+    # 扫描活窗外跳过的场次（留案票 01①）：活窗±2 天+manual 行之外
+    # 的历史场每拍跳过——既有链冻结保留（不撤不重解析），计数缺账可见
+    stale_skipped: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         """统计 → 日志/CLI 字典（alias 对不回显全清单，只给计数）。"""
@@ -666,17 +669,40 @@ def sync_fixture_links(
         logger.warning("mapping sync degraded, fixture_universe unavailable: {}", exc)
         stats.degraded = str(exc)
         return stats
+    today = date.fromisoformat(fx_store.beijing_business_date())
     if live_business_dates is None:
-        today = date.fromisoformat(fx_store.beijing_business_date())
         live_business_dates = {
             (today + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)
         }
     live_window = frozenset(live_business_dates)
+    # 扫描活窗（留案票 01①）：±2 天（live 兜底窗 ±1 外再加一天余量——
+    # universe 行滞后补齐的次日仍可自动链）∪ 调用方显式声明的 live 窗
+    # （声明的活日天然属活窗）；manual 行任何日期照常同步
+    scan_window = frozenset(
+        (today + timedelta(days=offset)).isoformat() for offset in (-2, -1, 0, 1, 2)
+    ) | frozenset(live_business_dates)
+    manual_ids = {
+        int(row[0])
+        for row in conn.execute(
+            "SELECT fixture_id FROM source_match_links WHERE source = ? AND method = ?",
+            (SRCT_SOURCE, METHOD_MANUAL),
+        )
+    }
     # 空≠无：None=checkpoint 未知（窗口内零动作不撤链）；[]/iterable=已知，正常兜底
     live_unknown = live_rows is None
     live_index = SidIndex.build(live_rows or ())
     aliases: MappingABC[int, set[str]] = team_aliases or {}
+    scan_floor = (today - timedelta(days=2)).isoformat()
     for row in fx_store.fixtures_with_teams(conn):
+        fixture_id = int(row["fixture_id"])
+        # 无码场（business_date NULL）以开球日作时间信号——新非 JC 场不饿死
+        in_window = str(row["business_date"] or "") in scan_window or (
+            row["business_date"] is None
+            and str(row["kickoff_utc"] or "")[:10] >= scan_floor
+        )
+        if not in_window and fixture_id not in manual_ids:
+            stats.stale_skipped += 1
+            continue
         stats.fixtures += 1
         home_variants = (
             str(row["home_name"]),

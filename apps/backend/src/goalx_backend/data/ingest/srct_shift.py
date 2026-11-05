@@ -721,7 +721,8 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             stats.missing_kickoff += 1
         _upsert_match(store, sid, payload, kickoff=kickoff)
         stats.open_beats += 1
-        row = store.shift_matches().get(sid, {"sid": sid})
+        # 点读（留案票 01④）：每新 sid 全表重读 3k+ 行随班线性涨
+        row = store.shift_match(sid) or {"sid": sid}
         if kickoff is None or not row.get("in_scope"):
             if row.get("league"):
                 stats.out_scope += 1

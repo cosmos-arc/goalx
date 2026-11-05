@@ -18,10 +18,11 @@ fair probs，as-of observed_at——sharp_probs_asof 同口径）× 最新销售
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import duckdb
+from loguru import logger
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
@@ -30,6 +31,9 @@ from goalx_backend.data.quote_evidence import (
     srct_pinnacle_asof_triplet,
 )
 from goalx_backend.models import SnapshotInput
+
+# 参考回填重查窗（留案票 01②）：NULL 行最多重查这么多天
+REFERENCE_BACKFILL_MAX_AGE = timedelta(days=14)
 
 
 def record_jc_observation(
@@ -102,7 +106,11 @@ def backfill_missing_reference(
     计算无前视；只处理 p_sharp_h IS NULL 的行，已填行不动。
     """
     moment = datetime.now(UTC).isoformat(timespec="seconds")
-    pending = conn.execute(
+    # 账龄截断（留案票 01②）：永不可解行不再每日对 2.7 亿行底表重查——
+    # 锚=分母内最新行（非墙钟：账龄=落后最新观测的程度），落后超 14 天的
+    # NULL 行冻结（参考证据正常 <1 日可得；陈年行事后回填价值趋零）。
+    # 升级路径：尝试计数列。
+    all_pending = conn.execute(
         " ".join(
             (
                 "SELECT id, fixture_id, observed_at FROM price_deviation_ledger",
@@ -110,6 +118,21 @@ def backfill_missing_reference(
             )
         )
     ).fetchall()
+    pending: list[sqlite3.Row] = []
+    stale_skipped = 0
+    if all_pending:
+        newest = max(str(r["observed_at"]) for r in all_pending)
+        cutoff = (
+            datetime.fromisoformat(newest) - REFERENCE_BACKFILL_MAX_AGE
+        ).isoformat()
+        pending = [r for r in all_pending if str(r["observed_at"]) >= cutoff]
+        stale_skipped = len(all_pending) - len(pending)
+        if stale_skipped:
+            logger.warning(
+                "price sweep 账龄截断：{} 行落后最新观测超 {} 天，NULL 冻结不再重查",
+                stale_skipped,
+                REFERENCE_BACKFILL_MAX_AGE.days,
+            )
     filled = 0
     for row in pending:
         probs, anchor_ref = _reference_asof(

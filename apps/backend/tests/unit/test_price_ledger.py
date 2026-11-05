@@ -313,3 +313,56 @@ def test_backfill_via_srct_corpus_asof(db) -> None:
     assert row["p_sharp_h"] > row["p_sharp_a"]  # 2.05 低赔侧概率高
     assert 0.4 < row["p_sharp_h"] < 0.6
     duck.close()
+
+
+def test_sweep_age_cutoff_freezes_stale_null_rows(db: sqlite3.Connection) -> None:
+    """留案票 01②：账龄截断（锚=最新行）——落后最新观测超 14 天的 NULL
+    行冻结不重查（不再每日对 2.7 亿行底表点查），新鲜行照常回填。"""
+    old_fixture = _seed(db, 1)
+    fresh_fixture = _seed(db, 2)
+    fresh_observed = "2026-11-05T14:00:00+00:00"  # 比旧行新 20 天
+    for fixture, odds, observed in (
+        (old_fixture, 2.5, OBSERVED),  # 2026-10-16：落后 20 天 → 冻结
+        (fresh_fixture, 2.6, fresh_observed),
+    ):
+        sid = fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code="h",
+                source="sporttery",
+                odds=odds,
+                captured_at=observed,
+                observed_at=observed,
+                source_updated_at=observed,
+            ),
+        )
+        pl.record_jc_observation(
+            db,
+            SnapshotInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code="h",
+                source="sporttery",
+                odds=odds,
+                captured_at=observed,
+                observed_at=observed,
+                source_updated_at=observed,
+            ),
+            snapshot_id=sid,
+        )
+    # 两行的参考锚都已可得（早于各自 observed）
+    _add_anchor(db, old_fixture, {"h": 2.0, "d": 3.4, "a": 4.0}, at=ANCHOR_TIME)
+    _add_anchor(
+        db,
+        fresh_fixture,
+        {"h": 2.1, "d": 3.4, "a": 4.0},
+        at="2026-11-05T13:00:00+00:00",
+    )
+    assert pl.backfill_missing_reference(db) == 1  # 只回填新鲜行
+    rows = db.execute(
+        "SELECT fixture_id, p_sharp_h FROM price_deviation_ledger"
+        " WHERE p_sharp_h IS NULL"
+    ).fetchall()
+    assert [int(r["fixture_id"]) for r in rows] == [old_fixture]  # 旧行冻结

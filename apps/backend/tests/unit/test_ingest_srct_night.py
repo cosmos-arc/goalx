@@ -725,18 +725,20 @@ def test_phase1_done_day_backfills_new_spec_endpoints(tmp_path: Path) -> None:
     _run(tmp_path, seen, routes)  # 夜1：六端点规格完成三日
     wire_after_night1 = len(seen)
     store = _store(tmp_path)
-    # 模拟旧三端点时代的存量日：抹去四新端点的 raw/checkpoint/bronze
+    # 模拟旧三端点时代的存量日：抹去四新端点的 raw/checkpoint/bronze +
+    # 完成账（留案票 01③——旧时代完成 = 旧端点指纹/无账，新指纹下才重开）
     for dataset in ("asian_odds", "over_down", "match_detail", "match_analysis"):
         conn = store._checkpoint()
         conn.execute(
             "DELETE FROM raw_artifacts WHERE provider='srct' AND dataset=?",
             (dataset,),
         )
-        conn.commit()
         shutil.rmtree(store.root / "raw" / "srct" / dataset, ignore_errors=True)
         (store.root / "bronze" / "srct" / f"{dataset}.ndjson.gz").unlink(
             missing_ok=True
         )
+    conn.execute("DELETE FROM srct_deep_backfill_days")
+    conn.commit()
     store.close()
     night2 = _run(tmp_path, seen, routes)
     assert night2.pending_before == 0  # 无新 pending——纯补抓
@@ -875,3 +877,43 @@ def test_monthly_probe_cross_month_evidence_upgrades_full(tmp_path: Path) -> Non
     paths = _deep_paths(seen)
     assert "/shijian/910001.htm" in paths
     assert "/shijian/910000.htm" in paths
+
+
+def test_deep_backfill_completion_ledger(tmp_path: Path) -> None:
+    """留案票 01③：完成账——全深完成的 done 日记账后候选扫描零探测；
+    端点集指纹失配（注册表扩新深端点）自动重开（真缺口不丢）。"""
+    seen, routes = _transport_spy()
+    _run(tmp_path, seen, routes)  # 夜1：三日全深完成 → 完成账落行
+    store = _store(tmp_path)
+    try:
+        fp = srct_night._deep_endpoints_fp
+        assert store.srct_deep_days(fp) == set(DATES)
+        # 已记账：候选扫描直接排除（不逐 sid×端点 has() 探测）
+        assert (
+            srct_night._depth_backfill_dates(
+                store, TODAY, TEST_SEASONS, store.season_depths()
+            )
+            == []
+        )
+        # 指纹失配（模拟注册表新增深端点）：排除集清零，done 日重开补采
+        assert store.srct_deep_days(fp + ",new_deep_endpoint") == set()
+        # 未记账指纹下：三日全部回到候选（has() 探测照常发现缺口）
+        missing = [d for d in DATES if d not in store.srct_deep_days(fp + ",x")]
+        assert missing == list(DATES)
+    finally:
+        store.close()
+    # 挖缺口回归（票验收）：删一日的深端点 raw + 抹该日完成账 → 扫描重新发现
+    store2 = _store(tmp_path)
+    try:
+        conn = store2._checkpoint()
+        conn.execute(
+            "DELETE FROM raw_artifacts WHERE provider='srct' AND dataset='asian_odds'"
+        )
+        conn.execute("DELETE FROM srct_deep_backfill_days WHERE day=?", (DATES[0],))
+        conn.commit()
+        backfill = srct_night._depth_backfill_dates(
+            store2, TODAY, TEST_SEASONS, store2.season_depths()
+        )
+        assert DATES[0] in [day for _season, day in backfill]
+    finally:
+        store2.close()

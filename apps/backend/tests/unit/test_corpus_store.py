@@ -463,3 +463,30 @@ def test_ingest_raw_publish_crossing_prevented(tmp_path: Path) -> None:
         # 台账跟 B；盘/账不一致的旧交叉形态在此断言下必炸
     finally:
         check.close()
+
+
+def test_shift_match_point_read(tmp_path) -> None:
+    """留案票 01④：单场点读——新 sid 拍决策不再全表重读（随班线性涨）。"""
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        assert store.shift_match("91001") is None
+        store.upsert_shift_match(
+            {
+                "sid": "91001",
+                "league": "英超",
+                "home": "主",
+                "away": "客",
+                "kickoff_utc": "2026-11-06T19:00:00+00:00",
+                "in_scope": True,
+                "beats": 1,
+                "last_beat_at": "2026-11-05T10:00:00+00:00",
+            }
+        )
+        row = store.shift_match("91001")
+        assert row is not None
+        assert row["league"] == "英超"
+        assert row["in_scope"] == 1
+        assert store.shift_match("91999") is None
+        assert store.shift_matches()["91001"]["league"] == "英超"  # 全表口径不破
+    finally:
+        store.close()

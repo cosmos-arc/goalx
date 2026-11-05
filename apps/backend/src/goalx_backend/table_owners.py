@@ -56,6 +56,7 @@ OWNERS: dict[str, set[str]] = {
         "jc_shift_matches",
         # 票 67 JC 回填日账（done 日不重枚举）
         "jc_backfill_days",
+        "srct_deep_backfill_days",
         # 票 55/56 切片 14/15：corpus.duckdb 银层四视图（data 包建视图并查询）
         "fixture_universe",
         "xg_observation",
