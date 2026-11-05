@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from goalx_backend.api.deps import get_db
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
-    ActualLegOdds,
     ActualTerms,
     BetDraft,
     BetEligibilityError,
@@ -21,6 +20,7 @@ from goalx_backend.betting.bets import (
     create_bet_with_legs,
     intent_fingerprint,
     record_purchase,
+    replay_bet_id,
     resolve_paper_price,
     validate_had_selections,
 )
@@ -82,26 +82,14 @@ class BetCreate(BaseModel):
     client_request_id: str | None = Field(default=None, max_length=200)
 
 
-class ActualLegOddsPayload(BaseModel):
-    """真实回录一腿的实际赔率。"""
-
-    fixture_id: int
-    odds: float = Field(gt=0)
-
-
-class ActualTermsPayload(BaseModel):
-    """一注的实际执行条款（结算按实际，建议快照保留）。"""
-
-    stake: MoneyCny
-    leg_odds: list[ActualLegOddsPayload] = Field(default_factory=list)
-
-
 class SlipCreate(BaseModel):
     """票级回录输入：勾选实际购买的建议注子集；live 可附实际条款。"""
 
     bet_ids: list[int] = Field(min_length=1)
     placed_at: IsoTimestamp | None = None
-    actuals: dict[str, ActualTermsPayload] = Field(default_factory=dict)
+    # 域模型直用（审计批C 附录⑦ 收敛）：ActualTerms 金额约束单一来源，
+    # API 层不再维护同形副本
+    actuals: dict[str, ActualTerms] = Field(default_factory=dict)
     # 价变确认(票 04 裁决①):锁定时服务器报价已变,409 返回新价后,
     # 客户端确认按服务器价落库则置 true 重提(None/False=未确认)
     allow_price_update: bool | None = None
@@ -394,24 +382,20 @@ def _replay_or_conflict(
     fingerprint: str | None,
 ) -> BetView | None:
     """
-    同键重放判定（票 06/09，串行预检）。
+    同键重放判定（票 06/09，API 视图层）。
 
-    同意图 → 既有注视图（201 同体回带）；异意图 → IntentConflictError
-    （HTTP 层统一映射 409，不静默吞改）；无既有注/存量无指纹行 → None
-    走正常建注（v37 期旧行无可比对，降级旧回带）。并发竞态窗由域层
-    同一异常兜底。
+    判定单源在域层 replay_bet_id（审计批C 附录⑦ 收敛），本函数只补
+    BetView 呈现：同意图 → 既有注视图（201 同体回带）；异意图 →
+    IntentConflictError（HTTP 层统一映射 409，不静默吞改）；无既有注/
+    存量无指纹行 → None 走正常建注（v37 期旧行无可比对，降级旧回带）。
+    并发竞态窗由域层同一异常兜底。
     """
-    existing_id = bt_store.bet_id_for_request(db, client_request_id)
+    existing_id = replay_bet_id(db, client_request_id, fingerprint)
     if existing_id is None:
         return None
     existing = bt_store.get_bet(db, existing_id)
     if existing is None:
         return None
-    stored = existing["intent_fingerprint"]
-    if stored is not None and stored != fingerprint:
-        raise IntentConflictError(
-            int(existing["id"]), str(existing["mode"]), float(existing["stake"])
-        )
     return _bet_view(existing, review_views(db, [existing]).get(existing_id))
 
 
@@ -574,45 +558,20 @@ async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
         # actuals 键推导在 try 内（审计批B #6）：非整数键 int() 的
         # ValueError 复用下方 400 映射，此前在 try 外裸 500
         actuals: dict[int, ActualTerms] = {
-            int(bet_id): ActualTerms(
-                stake=terms.stake,
-                leg_odds=[
-                    ActualLegOdds(fixture_id=leg.fixture_id, odds=leg.odds)
-                    for leg in terms.leg_odds
-                ],
-            )
-            for bet_id, terms in payload.actuals.items()
+            int(bet_id): terms for bet_id, terms in payload.actuals.items()
         }
-        bets_by_id: dict[int, sqlite3.Row] = {}
-        for bet_id in payload.bet_ids:
-            row = bt_store.get_bet(db, bet_id)
-            if row is None:
-                raise LookupError(f"bet {bet_id} 不存在")
-            bets_by_id[bet_id] = row
-        if all(str(row["mode"]) == "paper" for row in bets_by_id.values()):
-            with corpus_duckdb.reader() as duck_con:
-                for row in bets_by_id.values():
-                    validate_had_selections(
-                        db,
-                        [
-                            LegInput(
-                                fixture_id=int(leg["fixture_id"]),
-                                market_code=str(leg["market_code"]),
-                                selection_code=str(leg["selection_code"]),
-                                locked_odds=float(leg["locked_odds"]),
-                                goal_line=leg["goal_line"],
-                            )
-                            for leg in json.loads(row["legs"])
-                        ],
-                        duck_con=duck_con,
-                    )
-        slip_id = record_purchase(
-            db,
-            payload.bet_ids,
-            payload.placed_at,
-            actuals=actuals,
-            allow_price_update=bool(payload.allow_price_update),
-        )
+        # had 资格校验在购买事务内（审计批C 附录④，域层 record_purchase
+        # 承担）：此前在事务外预检，校验与落库之间留 TOCTOU 窗；bet 存在
+        # 性同样由域层 _load_purchasable_bets 判（404 映射不变）
+        with corpus_duckdb.reader() as duck_con:
+            slip_id = record_purchase(
+                db,
+                payload.bet_ids,
+                payload.placed_at,
+                actuals=actuals,
+                allow_price_update=bool(payload.allow_price_update),
+                duck_con=duck_con,
+            )
     except PriceMismatchError as exc:
         raise HTTPException(
             status_code=409,
@@ -697,13 +656,9 @@ def preview_pool_slip(payload: PoolSlipPreviewRequest, db: DbDep) -> PoolSlipPre
         bt_store.require_fixtures_exist(db, [pick.fixture_id for pick in payload.picks])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    incomplete = (
-        payload.market_code == "pick9" and len(by_match) < bt_store.PICK9_LEGS
-    ) or (
-        payload.market_code == "goals4"
-        and not bt_store.goals4_selections_complete(by_match)
-    )
-    if incomplete:
+    # "未成票"=诚实 0（审计批C #9）：判定单源在 store（ttt14 与创建侧
+    # 同判 len != 14），不再走通用连乘算出"可建的 N 注"再吃创建 400
+    if bt_store.pool_slip_incomplete(by_match, payload.market_code):
         return PoolSlipPreview(
             market_code=payload.market_code,
             combination_count=0,

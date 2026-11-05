@@ -14,17 +14,18 @@ from pathlib import Path
 
 import pytest
 
+from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     BetDraft,
     create_bet_with_legs,
-    record_purchase,
     resolve_paper_price,
 )
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence as qe
-from goalx_backend.db import connect, migrate
+from goalx_backend.db import connect, migrate, utc_now_iso
 from goalx_backend.evaluation import price_edge as pe
 from goalx_backend.models import (
+    BetMode,
     LegInput,
     MatchCodeInput,
     SaleStatusInput,
@@ -89,6 +90,23 @@ def _seed_fixture(
     return fixture_id
 
 
+def _purchase_unchecked(conn: sqlite3.Connection, bet_id: int) -> None:
+    """record_purchase 的无校验形态：资格校验已入购买事务（审计批C 附录④）
+    按当下时钟判开赛——本报告面的注子挂历史开球场（成熟面分母）恒拒，
+    直复刻价重验/确认阶段/票态落库（报告读 confirm 阶段价）。"""
+    from goalx_backend.betting.bets import _rebind_paper_legs, _record_confirm_stages
+    from goalx_backend.db import atomic
+
+    with atomic(conn):
+        bet = bt_store.get_bet(conn, bet_id)
+        assert bet is not None
+        _rebind_paper_legs(conn, [bet], allow_price_update=True)
+        at = utc_now_iso()
+        slip = bt_store.create_slip(conn, BetMode.PAPER, placed_at=at)
+        bt_store.attach_bets_to_slip(conn, slip, [bet_id], at)
+        _record_confirm_stages(conn, [bet], confirm_at=at)
+
+
 def _lock_paper_bet(conn: sqlite3.Connection, fixture_id: int, jc_h: float) -> int:
     """走完整决策链：建注（发现）→ 锁定（决策+确认）；返回 bet id。"""
     legs = [
@@ -104,7 +122,7 @@ def _lock_paper_bet(conn: sqlite3.Connection, fixture_id: int, jc_h: float) -> i
     bet_id = create_bet_with_legs(
         conn, BetDraft(mode="paper", stake=2.0, legs=bound), price_source=source
     )
-    record_purchase(conn, [bet_id])
+    _purchase_unchecked(conn, bet_id)
     return bet_id
 
 
@@ -289,7 +307,7 @@ def test_manual_research_excluded_from_denominator(tmp_path: Path) -> None:
         bet_id = create_bet_with_legs(
             conn, BetDraft(mode="paper", stake=2.0, legs=bound), price_source=source
         )
-        record_purchase(conn, [bet_id])
+        _purchase_unchecked(conn, bet_id)
 
         report = pe.build_price_edge_report(
             conn, date_from=_today(), date_to=_today(), duck_con=None
@@ -319,7 +337,7 @@ def test_null_price_source_bet_included(tmp_path: Path) -> None:
         bet_id = create_bet_with_legs(
             conn, BetDraft(mode="paper", stake=2.0, legs=legs)
         )
-        record_purchase(conn, [bet_id])
+        _purchase_unchecked(conn, bet_id)
         source = conn.execute(
             "SELECT price_source FROM bets WHERE id = ?", (bet_id,)
         ).fetchone()

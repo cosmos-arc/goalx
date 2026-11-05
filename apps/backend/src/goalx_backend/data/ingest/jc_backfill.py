@@ -133,12 +133,10 @@ def backfill_range(  # noqa: C901, PLR0912, PLR0913, PLR0915 日循环+日账+�
         for mid in missing:
             before = jc.JcCollectStats()
             try:
+                # 先扣后发（审计批C 附录③，srct._gated 同法）：missing mid
+                # 恒一次请求，触顶时该请求不发出；上限不再超一请求
+                budget.charge(1)
                 jc.collect_match(store, settings, client, mid, stats=before)
-            except srct.NightStop as stop:
-                stats.stopped = stop.reason
-                return stats
-            try:
-                budget.charge(before.requests)  # 触顶=正常停（进度已落库）
             except srct.NightStop as stop:
                 stats.stopped = stop.reason
                 return stats

@@ -569,15 +569,29 @@ def _values_match(stored: sqlite3.Row, obs: UniformObservation) -> bool:
         return False
     if obs.void:
         return True
-    if int(stored["home_goals"]) != (obs.home_goals or -1):
-        return False
-    if int(stored["away_goals"]) != (obs.away_goals or -1):
-        return False
-    if obs.half_home_goals is None or stored["half_home_goals"] is None:
+    # 终场比分（correctness F2）：0 是真值不是哨兵——修前 `0 or -1` 把
+    # 0:0 全等行判不一致（仅 unchanged 计数受损）；观测侧缺值=不可比宽让。
+    if obs.home_goals is None or obs.away_goals is None:
         return True
-    return int(stored["half_home_goals"]) == obs.half_home_goals and int(
-        stored["half_away_goals"] or -1
-    ) == (obs.half_away_goals or -2)
+    if (
+        int(stored["home_goals"]) != obs.home_goals
+        or int(stored["away_goals"]) != obs.away_goals
+    ):
+        return False
+    # 半场宽让对称化（审计批C 附录②）：四个半场值任一缺=不可比，判一致
+    # （与 reconcile_draw_results 同判）——此前只宽让 half_home，half_away
+    # 一侧/双侧 NULL 走哨兵比较恒不等，两仪器对同行不同判。
+    if (
+        obs.half_home_goals is None
+        or obs.half_away_goals is None
+        or stored["half_home_goals"] is None
+        or stored["half_away_goals"] is None
+    ):
+        return True
+    return (
+        int(stored["half_home_goals"]) == obs.half_home_goals
+        and int(stored["half_away_goals"]) == obs.half_away_goals
+    )
 
 
 def _record_sync_run(

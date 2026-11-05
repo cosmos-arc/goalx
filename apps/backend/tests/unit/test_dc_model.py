@@ -448,3 +448,23 @@ def test_resave_after_mutation_rejected(tmp_path) -> None:
         loaded.to_payload()
     with pytest.raises(ValueError, match="冻结身份失效"):
         dcm.save_run(loaded, tmp_path)
+
+
+def test_list_runs_mixed_generation_fitted_at_order(tmp_path) -> None:
+    """审计批C correctness F1：legacy naive 本地墙钟与新 UTC aware 的
+    fitted_at 混代排序——裸字符串字典序会把 legacy 旧件排到新件之后，
+    load_latest_run 捡到陈旧模型；真 datetime 比较（naive 按本地贴签）。"""
+    rows = synthetic_rows(n=120, seed=5)
+    run = dcm.TrainingRun(base=dcm.fit_dc_model(rows, competition="E0"), seed=42)
+    dcm.save_run(run, tmp_path)
+    # 同 train_window_end 两代工件：legacy naive 20:00 本地（=12:00Z）早于
+    # 新 aware 12:30Z——字典序却 "12:30…" < "20:00…"，字符串排序选错
+    legacy = run.to_payload()
+    legacy["base"]["fitted_at"] = "2026-11-05T20:00:00"
+    fresh = run.to_payload()
+    fresh["base"]["fitted_at"] = "2026-11-05T12:30:00+00:00"
+    for name, payload in (("E0-legacy.json", legacy), ("E0-fresh.json", fresh)):
+        (tmp_path / "E0" / name).write_text(json.dumps(payload), encoding="utf-8")
+    latest = dcm.load_latest_run(tmp_path, "E0")
+    assert latest is not None
+    assert latest.base.fitted_at == "2026-11-05T12:30:00+00:00"

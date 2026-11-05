@@ -2137,7 +2137,7 @@
   },
   "components": {
     "schemas": {
-      "ActualLegOddsPayload": {
+      "ActualLegOdds": {
         "properties": {
           "fixture_id": {
             "type": "integer",
@@ -2154,10 +2154,10 @@
           "fixture_id",
           "odds"
         ],
-        "title": "ActualLegOddsPayload",
-        "description": "真实回录一腿的实际赔率。"
+        "title": "ActualLegOdds",
+        "description": "真实回录时一腿的实际赔率（按 fixture 定位；一注内 fixture 不重复）。"
       },
-      "ActualTermsPayload": {
+      "ActualTerms": {
         "properties": {
           "stake": {
             "type": "number",
@@ -2167,7 +2167,7 @@
           },
           "leg_odds": {
             "items": {
-              "$ref": "#/components/schemas/ActualLegOddsPayload"
+              "$ref": "#/components/schemas/ActualLegOdds"
             },
             "type": "array",
             "title": "Leg Odds"
@@ -2177,8 +2177,8 @@
         "required": [
           "stake"
         ],
-        "title": "ActualTermsPayload",
-        "description": "一注的实际执行条款（结算按实际，建议快照保留）。"
+        "title": "ActualTerms",
+        "description": "一注的实际执行条款；结算按实际条款，原建议快照保留可追溯。"
       },
       "AffectedBetPreviewView": {
         "properties": {
@@ -6531,7 +6531,7 @@
           },
           "actuals": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/ActualTermsPayload"
+              "$ref": "#/components/schemas/ActualTerms"
             },
             "type": "object",
             "title": "Actuals"

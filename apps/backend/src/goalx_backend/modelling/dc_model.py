@@ -24,7 +24,7 @@ import math
 import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from importlib import metadata
 from pathlib import Path
 
@@ -32,6 +32,7 @@ from numpy import random as np_random
 from penaltyblog.models import DixonColesGoalModel
 
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.fixtures import beijing_naive_to_utc
 from goalx_backend.data.hygiene import admin_exclusions, is_admin_excluded
 from goalx_backend.modelling.score_matrix import MATRIX_SIZE, ScoreMatrix
 
@@ -131,7 +132,8 @@ def fit_dc_model(
         rho=float(params["rho"]),
         data_fingerprint=_rows_fingerprint(rows),
         loglikelihood=float(model.loglikelihood) if model.loglikelihood else None,
-        fitted_at=datetime.now(tz=None).isoformat(timespec="seconds"),
+        # UTC 盖章（审计批C 附录⑧）：此前 naive 本地时区，跨时区排序/对账歧义
+        fitted_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
 
 
@@ -361,6 +363,30 @@ def save_run(run: TrainingRun, models_dir: str | Path) -> Path:
     return path
 
 
+def _fitted_at_key(value: str) -> datetime:
+    """
+    fitted_at 排序键（审计批C correctness F1）。
+
+    新工件 UTC aware（附录⑧），legacy 工件 naive 墙钟——裸字符串字典序
+    混代比较会把旧工件排到新工件之后（aware ``12:30+00:00`` 字典序 <
+    naive ``20:00``），load_latest_run 捡到陈旧模型。naive 按北京墙钟
+    读（仓库双模读口惯例，与生产机时区一致——写侧 ``now(tz=None)`` 的
+    本地即北京），真 datetime 比较，机器时区无关。
+    """
+    naive = beijing_naive_to_utc(value)
+    if naive is not None:
+        return naive
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return (
+        parsed.astimezone(UTC)
+        if parsed.tzinfo is not None
+        else parsed.replace(tzinfo=UTC)
+    )
+
+
 def list_runs(
     models_dir: str | Path, competition: str
 ) -> list[tuple[TrainingRun, Path]]:
@@ -380,7 +406,12 @@ def list_runs(
             runs.append((TrainingRun.from_payload(payload), path))
         except (ValueError, OSError, json.JSONDecodeError) as exc:
             logger.warning("跳过坏工件 %s: %s", path, exc)
-    runs.sort(key=lambda item: (item[0].base.train_window_end, item[0].base.fitted_at))
+    runs.sort(
+        key=lambda item: (
+            item[0].base.train_window_end,
+            _fitted_at_key(item[0].base.fitted_at),
+        )
+    )
     return runs
 
 

@@ -968,24 +968,24 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
-         * ActualLegOddsPayload
-         * @description 真实回录一腿的实际赔率。
+         * ActualLegOdds
+         * @description 真实回录时一腿的实际赔率（按 fixture 定位；一注内 fixture 不重复）。
          */
-        ActualLegOddsPayload: {
+        ActualLegOdds: {
             /** Fixture Id */
             fixture_id: number;
             /** Odds */
             odds: number;
         };
         /**
-         * ActualTermsPayload
-         * @description 一注的实际执行条款（结算按实际，建议快照保留）。
+         * ActualTerms
+         * @description 一注的实际执行条款；结算按实际条款，原建议快照保留可追溯。
          */
-        ActualTermsPayload: {
+        ActualTerms: {
             /** Stake */
             stake: number;
             /** Leg Odds */
-            leg_odds?: components["schemas"]["ActualLegOddsPayload"][];
+            leg_odds?: components["schemas"]["ActualLegOdds"][];
         };
         /**
          * AffectedBetPreviewView
@@ -2667,7 +2667,7 @@ export interface components {
             placed_at?: string | null;
             /** Actuals */
             actuals?: {
-                [key: string]: components["schemas"]["ActualTermsPayload"];
+                [key: string]: components["schemas"]["ActualTerms"];
             };
             /** Allow Price Update */
             allow_price_update?: boolean | null;

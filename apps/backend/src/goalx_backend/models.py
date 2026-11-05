@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Field,
     WithJsonSchema,
 )
 
@@ -339,7 +340,9 @@ class LegInput(BaseModel):
     fixture_id: int
     market_code: str
     selection_code: str
-    locked_odds: float
+    # 正赔率（审计批C 附录⑦ api-store 收敛）：域层入口与 API LegPayload
+    # 同拒非正价，非 API 调用者不再绕过
+    locked_odds: float = Field(gt=0, allow_inf_nan=False)
     snapshot_id: int | None = None
     goal_line: float | None = None
 

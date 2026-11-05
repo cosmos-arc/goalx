@@ -656,6 +656,23 @@ def goals4_selections_complete(by_match: dict[int, list[str]]) -> bool:
     return True
 
 
+def pool_slip_incomplete(by_match: dict[int, list[str]], market_code: str) -> bool:
+    """
+    池票"未成票"单源判定（预览诚实 0 用；审计批C #9）。
+
+    与创建侧完备守卫同口径（ttt14 与 require_pool_slip_creatable 同判
+    ``len != 14``），规则集中本模块——预览端点只消费布尔，不再各市场
+    inline 级联。
+    """
+    if market_code == "pick9":
+        return len(by_match) < PICK9_LEGS
+    if market_code == "ttt14":
+        return len(by_match) != TTT14_LEGS
+    if market_code == "goals4":
+        return not goals4_selections_complete(by_match)
+    return False
+
+
 def _count_goals4(by_match: dict[int, list[str]]) -> int:
     """goals4 组合数：每场 |主档|×|客档| 之积（4 场固定，双侧齐才成形）。"""
     if len(by_match) != GOALS4_MATCHES:
