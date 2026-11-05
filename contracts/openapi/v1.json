@@ -5990,6 +5990,7 @@
               "$ref": "#/components/schemas/PoolPickPayload"
             },
             "type": "array",
+            "maxItems": 64,
             "minItems": 1,
             "title": "Picks"
           }
@@ -6059,6 +6060,7 @@
               "$ref": "#/components/schemas/PoolPickPayload"
             },
             "type": "array",
+            "maxItems": 64,
             "minItems": 1,
             "title": "Picks"
           }

@@ -108,7 +108,9 @@ class PoolSlipCreate(BaseModel):
     market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
     note: str | None = None
     stake_per_combination: float = Field(default=2.0, gt=0)
-    picks: list[PoolPickPayload] = Field(min_length=1)
+    # picks 上限（correctness F1）：存在性探测 IN 列表有界——>32766 去重 id
+    # 超 SQLite 主机参数上限裸 500；64 覆盖 goals4 复式 4×8 极值
+    picks: list[PoolPickPayload] = Field(min_length=1, max_length=64)
 
 
 class PoolSlipPreviewRequest(BaseModel):
@@ -116,7 +118,7 @@ class PoolSlipPreviewRequest(BaseModel):
 
     market_code: Literal["pick9", "ttt14", "goals4"] = "pick9"
     stake_per_combination: float = Field(default=2.0, gt=0)
-    picks: list[PoolPickPayload] = Field(min_length=1)
+    picks: list[PoolPickPayload] = Field(min_length=1, max_length=64)
 
 
 class PoolSlipPreview(BaseModel):
