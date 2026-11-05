@@ -142,7 +142,15 @@ def daily_wrap_flow() -> dict[str, object]:
     """日终收尾：结算批跑 + 漏斗/冻结决策日拍 + 冻结对账 + CLV 对账 + 账务核查。"""
     settlement = settlement_flow()
     funnel = tasks.funnel_day()
-    m3 = tasks.m3_evaluation()
+    # 票 02：M3 独立异常边界（同 freshness_shadow 先例，L128-132）：报告读
+    # corpus 追加窗口可撞并发读 EOFError（写完重读正常，非永久损坏）——
+    # 降级不拖其后的冻结对账/CLV/账本回填/账务核查；失败不得记成通过
+    # （结算在 M3 之前已执行，受影响的是后续对账审计）。
+    try:
+        m3 = tasks.m3_evaluation()
+    except Exception as exc:
+        logger.warning("m3 evaluation degraded: {}", exc)
+        m3 = {"error": str(exc), "degraded": True}
     frozen_recon = tasks.frozen_reconcile()
     with tasks.task_conn() as conn:
         # 票 75：odds_api closing 判死后，收盘锚由源T cid177 接管
@@ -173,6 +181,9 @@ def daily_wrap_flow() -> dict[str, object]:
     return {
         "settlement": settlement,
         "funnel": funnel,
+        # 票 02：M3 面（含降级 error 标记）进返回体——失败在结果里可见，
+        # 不只埋在日志（验收：注入异常 → 返回体含 error）
+        "m3": m3,
         "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
         "audit_findings": findings,
