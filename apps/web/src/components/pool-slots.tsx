@@ -58,11 +58,6 @@ function coldWorthySelection(match: PoolMatch): { code: string; ev: number } | n
 	return best;
 }
 
-/** 开赛时间（北京时间口径展示）——shortTime 显式 Asia/Shanghai，不随浏览器时区漂移。 */
-function formatTime(utc: string): string {
-	return shortTime(utc);
-}
-
 export function PoolSlotList({
 	matches,
 	picks,
@@ -90,7 +85,8 @@ export function PoolSlotList({
 							<br />
 							{match.home_team} vs {match.away_team}
 							<br />
-							{formatTime(match.kickoff_utc)}
+							{/* 开赛时间：shortTime 显式 Asia/Shanghai（北京口径），不随浏览器时区漂移 */}
+							{shortTime(match.kickoff_utc)}
 						</span>
 						<span className="flex flex-wrap gap-1" data-testid={`pool-pick-${match.match_seq}`}>
 							{SELECTIONS.map((sel) => {

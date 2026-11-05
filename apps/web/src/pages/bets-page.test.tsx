@@ -94,7 +94,7 @@ test("locks a paper suggestion as a slip without touching bankroll", async () =>
 	renderBets();
 
 	await user.click(await screen.findByTestId("lock-1"));
-	expect(await screen.findByTestId("bets-message")).toHaveTextContent("已锁定纸面票 #1");
+	expect(await screen.findByTestId("bets-message")).toHaveTextContent("已锁定纸面票 #1（¥100.00");
 	expect(screen.getByTestId("bets-message")).toHaveTextContent("不产生真金流水");
 });
 

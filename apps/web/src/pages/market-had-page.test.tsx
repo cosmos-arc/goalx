@@ -234,10 +234,10 @@ test("applyCombo frozen while a submission is in flight (批A #20a：飞行中�
 	await user.click(screen.getByTestId("market-pick-2-h"));
 	expect(screen.queryByTestId("market-message")).toBeNull();
 
-	// 提交（挂起）→ 飞行中一键带入应被冻结忽略：不覆写篮、不出"已带入"消息
+	// 提交（挂起）→ 飞行中一键带入应被冻结忽略：按钮禁用、不覆写篮、不出"已带入"消息
 	await user.click(screen.getByTestId("basket-submit"));
 	await waitFor(() => expect(screen.getByTestId("basket-submit")).toBeDisabled());
-	await user.click(within(combo).getByTestId("market-combo-apply"));
+	await expect(within(combo).getByTestId("market-combo-apply")).toBeDisabled();
 	expect(screen.queryByTestId("market-message")).toBeNull();
 	expect(screen.getByTestId("basket-count")).toHaveTextContent("2/2");
 });
