@@ -184,7 +184,7 @@ test("submit wires pool-slips as paper-only and reports the created slip", async
 	);
 	await userEvent.click(submit);
 	// 票 01：提交结果带后端回读的组合数/金额（三方一致的回读面）
-	expect(await screen.findByTestId("pool-submit-result")).toHaveTextContent("已建纸面池票 #902（1 注 × ¥2，合计 ¥2");
+	expect(await screen.findByTestId("pool-submit-result")).toHaveTextContent("已建纸面池票 #902（1 注 × ¥2，合计 ¥2.00");
 	// 提交载荷：mode=paper + 任9 Market + 官方池码（h→3/d→1/a→0）
 	expect(captured.mode).toBe("paper");
 	expect(captured.market_code).toBe("pick9");

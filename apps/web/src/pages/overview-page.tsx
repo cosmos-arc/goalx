@@ -23,7 +23,14 @@ import {
 	todayFixturesKey,
 	validationProgressKey,
 } from "../lib/query-keys";
-import { earliestKickoffMs, openBetFixtureIds, pnlClass, signedCnyAlways, TABULAR_NUMS } from "../lib/ui";
+import {
+	beijingBusinessDate,
+	earliestKickoffMs,
+	openBetFixtureIds,
+	pnlClass,
+	signedCnyAlways,
+	TABULAR_NUMS,
+} from "../lib/ui";
 import { useNow } from "../lib/use-now";
 
 /**
@@ -59,14 +66,10 @@ function signedPct(value: number): string {
 	return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 }
 
-function startOfLocalDay(ms: number): number {
-	const date = new Date(ms);
-	return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function isSameLocalDay(iso: string, now: number): boolean {
+/** 北京业务日同日判定（今日盈亏分桶口径）——浏览器本地零点在 UTC 机器上会错 8h。 */
+function isSameBeijingDay(iso: string, now: number): boolean {
 	const at = new Date(iso).getTime();
-	return !Number.isNaN(at) && startOfLocalDay(at) === startOfLocalDay(now);
+	return !Number.isNaN(at) && beijingBusinessDate(at) === beijingBusinessDate(now);
 }
 
 /** 待办行：状态点 + 一句话 + （琥珀紧迫/就地指引）+ 动作链接。 */
@@ -252,7 +255,8 @@ export function OverviewPage() {
 
 	// ④ 数据异常：10 点后当日竞彩/欧赔整份快照缺（eu 用 joined 覆盖近似，票 14 同口径）→ 就地指引。
 	// 仅在今日数据加载成功时判定——请求失败 ≠ 快照缺（失败走 notes 降级，不做真空异常）。
-	const afterTen = new Date(now).getHours() >= 10;
+	// 10 点门取北京时（后端 schedules.py 拍班同口径），浏览器本地时区不可信
+	const afterTen = new Date(now + 8 * 3_600_000).getUTCHours() >= 10;
 	const jcMissing = fixtures.every((fixture) => !fixture.jc_updated_at);
 	const euMissing = fixtures.every((fixture) => !fixture.joined);
 	if (todayQuery.isSuccess && afterTen && (jcMissing || euMissing)) {
@@ -288,7 +292,7 @@ export function OverviewPage() {
 	// ---- 快照四卡 ----
 	const balance = bankrollQuery.data ? bankrollQuery.data.balance : null;
 	const todayLivePnlEvents = (bankrollQuery.data?.events ?? []).filter(
-		(event) => (event.kind === "bet_stake" || event.kind === "bet_payout") && isSameLocalDay(event.occurred_at, now),
+		(event) => (event.kind === "bet_stake" || event.kind === "bet_payout") && isSameBeijingDay(event.occurred_at, now),
 	);
 	const todayLivePnl =
 		todayLivePnlEvents.length > 0 ? todayLivePnlEvents.reduce((acc, event) => acc + event.amount_cny, 0) : null;
@@ -301,7 +305,7 @@ export function OverviewPage() {
 
 	const paperBets = bets.filter((bet) => bet.mode === "paper");
 	const paperSettledToday = paperBets.filter(
-		(bet) => bet.profit !== null && bet.settled_at !== null && isSameLocalDay(bet.settled_at, now),
+		(bet) => bet.profit !== null && bet.settled_at !== null && isSameBeijingDay(bet.settled_at, now),
 	);
 	const todayPaperPnl =
 		paperSettledToday.length > 0 ? paperSettledToday.reduce((acc, bet) => acc + (bet.profit ?? 0), 0) : null;

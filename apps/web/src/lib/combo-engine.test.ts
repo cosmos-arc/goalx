@@ -462,4 +462,9 @@ describe("slipFormPlan 两口径黄金样例（票 02）", () => {
 		expect(slipFormPlan(single, "parlay").expectedProfit).toBe(2);
 		expect(() => slipFormPlan([], "singles")).toThrow();
 	});
+
+	test("负 EV 摘要带符号（批A #19）：手选入篮无 EV>0 过滤，不得显 '预期 +¥-5.00'", () => {
+		expect(slipFormSummary(slipFormPlan([{ ev: -0.25, stake: 20 }], "singles"))).toContain("预期 -¥5.00");
+		expect(slipFormSummary(slipFormPlan([{ ev: -0.25, stake: 20 }], "parlay"))).toContain("预期 -¥5.00");
+	});
 });

@@ -104,7 +104,7 @@ test("submit creates paper goals4 slip with backend-counted combinations", async
 	await waitFor(() => expect(screen.getByTestId("pool4-submit-button")).toBeEnabled());
 	await user.click(screen.getByTestId("pool4-submit-button"));
 	const result = await screen.findByTestId("pool4-submit-result");
-	expect(result).toHaveTextContent("已建纸面池票 #901（1 注 × ¥2，合计 ¥2）");
+	expect(result).toHaveTextContent("已建纸面池票 #901（1 注 × ¥2，合计 ¥2.00）");
 });
 
 test("incomplete picks keep submit disabled with honest hint", async () => {

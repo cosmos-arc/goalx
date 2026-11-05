@@ -15,7 +15,7 @@ import { EmptyState } from "../components/empty-state";
 import { Button } from "../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { bankrollKey, costsKey } from "../lib/query-keys";
-import { cssVar, errorText, TABULAR_NUMS } from "../lib/ui";
+import { beijingBusinessDate, cssVar, errorText, shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 20：资金页重设计落地（票 09 定稿 = 唯一事实源）。
@@ -72,7 +72,8 @@ export function balanceCurveOption(points: BalancePoint[], lineColor: string, ax
 		tooltip: { trigger: "axis" },
 		xAxis: {
 			type: "category",
-			data: points.map((point) => point.date.slice(5, 10)),
+			// x 轴取北京业务日（UTC 切片会把北京 0-8 点事件落前一天）
+			data: points.map((point) => beijingBusinessDate(new Date(point.date).getTime()).slice(5, 10)),
 			axisLine: { lineStyle: { color: axisColor } },
 			axisTick: { show: false },
 			axisLabel: { color: axisColor, fontSize: 11 },
@@ -365,9 +366,7 @@ export function BankrollPage() {
 											const tone = amountTone(event.kind, event.amount_cny);
 											return (
 												<tr key={event.id} data-testid="bankroll-event">
-													<td className={`${TABULAR_NUMS} text-muted-foreground`}>
-														{event.occurred_at.slice(0, 16).replace("T", " ")}
-													</td>
+													<td className={`${TABULAR_NUMS} text-muted-foreground`}>{shortTime(event.occurred_at)}</td>
 													<td>{KIND_LABELS[event.kind] ?? event.kind}</td>
 													<td className={`${TABULAR_NUMS} font-medium ${TONE_CLASS[tone]}`}>
 														{event.amount_cny >= 0 ? "+" : ""}

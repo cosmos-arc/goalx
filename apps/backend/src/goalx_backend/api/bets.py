@@ -618,10 +618,11 @@ def _slip_view(row: sqlite3.Row) -> SlipView:
         note=row["note"],
         created_at=str(row["created_at"]),
         bet_count=int(row["bet_count"]),
-        stake_total=float(row["stake_total"]),
-        profit_total=float(row["profit_total"]),
+        # SUM 聚合字段统一 round 到分（票 01 三方一致；浮点尾差不外漏——
+        # 此前只 round 了 pool 字段，stake/profit 裸 float 会渗出 8.000000000000002）
+        stake_total=round(float(row["stake_total"]), 2),
+        profit_total=round(float(row["profit_total"]), 2),
         combination_count=int(row["combination_count"]),
-        # 与预览端点同舍入口径（票 01 三方一致；SUM 浮点尾差不外漏）
         pool_stake_total=round(float(row["pool_stake_total"]), 2),
         quarantined_combinations=int(row["quarantined_combinations"]),
     )

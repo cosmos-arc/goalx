@@ -1,5 +1,5 @@
 import type { GoalsFixture, TodayFixture } from "../api/goalx";
-import { SELECTIONS, type Selection } from "./ui";
+import { SELECTIONS, type Selection, signedCny } from "./ui";
 
 /**
  * 组合引擎 v1（票 wb-03 胜平负 / 票 wb-05 进球类，纯函数、前端侧）。
@@ -146,11 +146,12 @@ export function slipFormPlan(legs: Array<{ ev: number; stake: number }>, form: S
 	};
 }
 
-/** 票型摘要行（票 02）：组合卡两行预览、带入消息、篮内预览同一文案单源。 */
+/** 票型摘要行（票 02）：组合卡两行预览、带入消息、篮内预览同一文案单源。
+ * 预期收益带符号（signedCny）：手选入篮无 EV>0 过滤，负 EV 不得显 "预期 +¥-5.00"。 */
 export function slipFormSummary(plan: SlipFormPlan): string {
 	return plan.form === "singles"
-		? `${plan.bets} 注 · 总注 ¥${plan.totalStake.toFixed(2)} · 预期 +¥${plan.expectedProfit.toFixed(2)}（EV 线性合计） · ${plan.hitCondition}`
-		: `注金 ¥${plan.totalStake.toFixed(2)} · 联合 EV ${plan.jointEv !== null ? `${(plan.jointEv * 100).toFixed(1)}%` : "—"} · 预期 +¥${plan.expectedProfit.toFixed(2)} · ${plan.hitCondition}`;
+		? `${plan.bets} 注 · 总注 ¥${plan.totalStake.toFixed(2)} · 预期 ${signedCny(plan.expectedProfit)}（EV 线性合计） · ${plan.hitCondition}`
+		: `注金 ¥${plan.totalStake.toFixed(2)} · 联合 EV ${plan.jointEv !== null ? `${(plan.jointEv * 100).toFixed(1)}%` : "—"} · 预期 ${signedCny(plan.expectedProfit)} · ${plan.hitCondition}`;
 }
 
 /** 置信 = 样本厚度（books 线性放大，截断 1；无 book 无共识 → 0 不入组合）。 */

@@ -6,6 +6,7 @@ import {
 	type ReviewQueueItem,
 	submitBlindReview,
 	submitReviewVerdict,
+	type TrackTriple,
 } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
@@ -169,7 +170,7 @@ function BlindReviewPanel() {
 										label={label}
 										side={side}
 										text={text}
-										probs={probs ?? { h: 0, d: 0, a: 0 }}
+										probs={probs ?? null}
 										revealed={revealed}
 										pending={blind.isPending}
 										onPick={() => blind.mutate(side)}
@@ -207,7 +208,8 @@ function BlindPickCard({
 	label: string;
 	side: "ml" | "llm";
 	text: string;
-	probs: { h: number; d: number; a: number };
+	/** 该轨概率产出；缺席 = null（宁缺毋假：不伪造全零分布，不可投）。 */
+	probs: TrackTriple | null;
 	revealed: boolean;
 	pending: boolean;
 	onPick: () => void;
@@ -223,13 +225,19 @@ function BlindPickCard({
 				) : null}
 			</p>
 			<p className="text-xs text-muted-foreground">{text}</p>
-			<p className={`${TABULAR_NUMS} mt-2`}>
-				胜 {pct(probs.h)} / 平 {pct(probs.d)} / 负 {pct(probs.a)}
-			</p>
+			{probs === null ? (
+				<p className="mt-2 text-xs text-muted-foreground" data-testid={`blind-absent-${label}`}>
+					—（该轨无产出，不可投）
+				</p>
+			) : (
+				<p className={`${TABULAR_NUMS} mt-2`}>
+					胜 {pct(probs.h)} / 平 {pct(probs.d)} / 负 {pct(probs.a)}
+				</p>
+			)}
 			<button
 				type="button"
 				data-testid={`blind-pick-${label}`}
-				disabled={pending || revealed}
+				disabled={pending || revealed || probs === null}
 				className="mt-2 rounded-md border border-info px-2 py-1 text-xs text-info disabled:opacity-40"
 				onClick={onPick}
 			>

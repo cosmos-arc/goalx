@@ -28,7 +28,7 @@ import {
 	poolSyncStatusKey,
 	slipsKey,
 } from "../lib/query-keys";
-import { errorText, TABULAR_NUMS } from "../lib/ui";
+import { errorText, shortTime, TABULAR_NUMS } from "../lib/ui";
 
 /**
  * 票 43：14场任9 页点亮（wb-07 骨架毕业）；票 review-20260928/07 按区块拆分
@@ -93,7 +93,7 @@ export function MarketPoolPage() {
 		onSuccess: (slip) => {
 			// 票 01 三方一致的回读面：注数/金额直出后端聚合（隔离史行已排除）
 			setSubmitResult(
-				`已建纸面池票 #${slip.id}（${slip.combination_count} 注 × ¥${STAKE_PER_COMBINATION}，合计 ¥${slip.pool_stake_total}）`,
+				`已建纸面池票 #${slip.id}（${slip.combination_count} 注 × ¥${STAKE_PER_COMBINATION}，合计 ¥${slip.pool_stake_total.toFixed(2)}）`,
 			);
 			void queryClient.invalidateQueries({ queryKey: slipsKey });
 		},
@@ -224,7 +224,7 @@ export function MarketPoolPage() {
 				<section className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
 					<span data-testid="pool-sync-info">
 						{lastRun
-							? `上次同步 ${lastRun.observed_at.slice(0, 16).replace("T", " ")}（${lastRun.source}，${lastRun.matches} 场/${lastRun.share_rows} 份额行）`
+							? `上次同步 ${shortTime(lastRun.observed_at)}（${lastRun.source}，${lastRun.matches} 场/${lastRun.share_rows} 份额行）`
 							: "尚未同步过彩池数据"}
 					</span>
 					<button

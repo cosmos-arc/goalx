@@ -88,9 +88,14 @@ export function MarketHadPage() {
 				: { ev: combo?.picks[0]?.ev ?? null, odds: combo?.picks[0]?.odds ?? null };
 
 	/** 一键带入：组合腿就地进本页选注篮并展开（引擎已保证同场不重复、≤2 腿）；
-	 * 票型按卡上显式选择随腿带入（票 02：带入什么票型就提交什么票型）。 */
+	 * 票型按卡上显式选择随腿带入（票 02：带入什么票型就提交什么票型）。
+	 * 提交中冻结（票 02 correctness F1 同族）：飞行中带入会用替换快照覆写
+	 * 提交闭包里的篮——失败路径按提交时快照回写，新腿丢失/旧腿复活。 */
 	function applyCombo() {
 		if (combo === null || combo.picks.length === 0 || comboPlans === null || comboSelected === null) {
+			return;
+		}
+		if (basket.createSuggestion.isPending) {
 			return;
 		}
 		basket.setLegs(
@@ -297,7 +302,8 @@ export function MarketHadPage() {
 									<button
 										type="button"
 										data-testid="market-combo-apply"
-										className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+										className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+										disabled={basket.createSuggestion.isPending}
 										onClick={applyCombo}
 									>
 										一键带入选注篮
