@@ -15,17 +15,25 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
+from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     PRICE_SOURCE_SYSTEM_PAPER,
     BetDraft,
     create_bet_with_legs,
-    record_purchase,
 )
 from goalx_backend.betting.store import list_bets
 from goalx_backend.evaluation.bet_review import review_views
 from goalx_backend.models import BetMode, LegInput
 
 NOW = datetime.now(UTC)
+
+
+def _mark_purchased(db: sqlite3.Connection, bet_id: int, mode: BetMode) -> None:
+    """直写已购票态：record_purchase 已带 had 资格校验（审计批C 附录④），
+    本文件要造"锁定晚于开赛"等历史异常形态（校验按当下时钟恒拒），按文件
+    头口径 SQL/库直改是诚实造态。"""
+    slip = bt_store.create_slip(db, mode, placed_at=NOW.isoformat(timespec="seconds"))
+    bt_store.attach_bets_to_slip(db, slip, [bet_id], NOW.isoformat(timespec="seconds"))
 
 
 def _seed_fixtures(db: sqlite3.Connection) -> None:
@@ -87,25 +95,25 @@ def test_forward_classification_matrix(db: sqlite3.Connection) -> None:
 
     # 2. 已购买但无锁定时点（slip 缺失的历史形态）→ unknown；locked_pre_kickoff None
     unknown = _create_bet(db, fixture_id=1)
-    record_purchase(db, [unknown])
+    _mark_purchased(db, unknown, BetMode.PAPER)
     db.execute("UPDATE bets SET slip_id = NULL WHERE id = ?", (unknown,))
 
     # 3. live 单独分组——挂在已开赛场次上，钉住 live 判定先于 post_kickoff
     #    （test_api:912 断言复制扩全：那边挂未来场，钉不到这一对）
     live_post = _create_bet(db, fixture_id=2, mode=BetMode.LIVE)
-    record_purchase(db, [live_post])
+    _mark_purchased(db, live_post, BetMode.LIVE)
 
     # 4. 已购买 paper、锁定晚于开赛 → excluded_post_kickoff，旗 = False
     post = _create_bet(db, fixture_id=2)
-    record_purchase(db, [post])
+    _mark_purchased(db, post, BetMode.PAPER)
 
     # 5. 赛前锁定但无 closing 记录 → missing_closing（test_api:725 断言复制）
     missing = _create_bet(db, fixture_id=1)
-    record_purchase(db, [missing])
+    _mark_purchased(db, missing, BetMode.PAPER)
 
     # 6. 赛前锁定 + closing 完整 → included，两旗均 True
     included = _create_bet(db, fixture_id=1)
-    record_purchase(db, [included])
+    _mark_purchased(db, included, BetMode.PAPER)
     _seed_closing(db, included, fixture_id=1)
 
     views = review_views(db, list_bets(db))
@@ -144,7 +152,7 @@ def test_closing_counts_legs_not_bets(db: sqlite3.Connection) -> None:
         ),
         price_source=PRICE_SOURCE_SYSTEM_PAPER,
     )
-    record_purchase(db, [bet_id])
+    _mark_purchased(db, bet_id, BetMode.PAPER)
     _seed_closing(db, bet_id, fixture_id=1)  # 只补第一腿
 
     # 腿 2 已开赛 → 整注先折在 post_kickoff 分支（两腿混合时短板先短路）

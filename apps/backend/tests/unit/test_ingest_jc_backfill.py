@@ -98,10 +98,14 @@ def test_day_ledger_records_and_skips_on_rerun(tmp_path: Any) -> None:
 
 
 def test_budget_stop_returns_not_raises(tmp_path: Any) -> None:
-    """预算触顶=正常返回（stopped=budget），进度已落库（CLI/夜班统一接）。"""
+    """预算触顶=正常返回（stopped=budget），进度已落库（CLI/夜班统一接）。
+
+    先扣后发（审计批C 附录③）：cap=3 时枚举(1)+mid1(1) 后 mid2 触顶——
+    该请求不发出（此前请求后扣，cap 可超一请求、mid2 已抓才停）。"""
     stats, store, budget = _run(tmp_path, budget=srct.NightBudget(request_cap=3))
     assert stats.stopped == "budget"
     assert budget.requests == 3
+    assert stats.matches_collected == 1  # mid2 未采集：触顶在请求发出前
     assert store.jc_backfill_days("done") == set()  # 半途日不入账
 
 

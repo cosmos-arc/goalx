@@ -724,3 +724,43 @@ def test_research_backfill_constraint_violation_is_loud_and_atomic(tmp_path) -> 
         check.close()
     assert n_runs == 0
     assert n_preds == 0
+
+
+def test_apply_chain_concurrent_migrate_applies_once(tmp_path) -> None:
+    """审计批C #11：并发 migrate 的 check-then-apply 竞态——每版本
+    check+apply+记账包 BEGIN IMMEDIATE，第二个连接在写锁内复查已施用
+    即跳过；非幂等迁移恰施用一次（不再输家 duplicate column 崩一次）。"""
+    import threading
+    import time
+
+    path = tmp_path / "race.db"
+    calls = 0
+
+    def non_idempotent(conn: sqlite3.Connection) -> None:
+        nonlocal calls
+        calls += 1
+        time.sleep(0.1)  # 撑开竞态窗：无写锁串行时两线程都会进入本函数
+
+    chain = (
+        (1, lambda conn: conn.execute("CREATE TABLE t (x)")),
+        (2, non_idempotent),
+    )
+    results: dict[str, int] = {}
+    conns: dict[str, sqlite3.Connection] = {}
+
+    def run(name: str) -> None:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        conns[name] = conn
+        try:
+            results[name] = db._apply_chain(conn, chain)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=run, args=(name,)) for name in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results == {"a": 2, "b": 2}
+    assert calls == 1  # 无锁版此处=2（两线程都过 applied 检查都施用）

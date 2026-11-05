@@ -23,6 +23,16 @@ from goalx_backend.models import BetMode, DrawResultInput, LegInput
 from goalx_backend.settlement import LegSpec, ResultFacts, settle_fixed_bet
 
 
+def _purchase_paper_unchecked(db: sqlite3.Connection, bet: int) -> None:
+    """paper 直写票态：record_purchase 已带 had 资格校验（审计批C 附录④，
+    按当下时钟判开赛），本文件 paper 注挂 2026-09 固定开球场（结算/台账
+    焦点）恒拒——直写 slip/attach 与校验前路径等价（paper 无 bankroll 事件）。"""
+    from goalx_backend.db import utc_now_iso
+
+    slip = bt.create_slip(db, BetMode.PAPER)
+    bt.attach_bets_to_slip(db, slip, [bet], utc_now_iso())
+
+
 def make_bet(db: sqlite3.Connection, mode: BetMode = BetMode.LIVE) -> tuple[int, int]:
     competition = fx.upsert_competition(db, "test")
     home = fx.upsert_team(db, "home")
@@ -127,7 +137,10 @@ def test_loss_to_win_correction_and_audit(
     from goalx_backend.betting.ledger_audit import audit_ledger
 
     bet, fixture = make_bet(db, mode)
-    record_purchase(db, [bet])
+    if mode is BetMode.PAPER:
+        _purchase_paper_unchecked(db, bet)
+    else:
+        record_purchase(db, [bet])
     import_draw_results(
         db, [DrawResultInput(fixture_id=fixture, home_goals=0, away_goals=2)]
     )
@@ -425,7 +438,7 @@ def test_paper_lock_with_actuals_rejected_zero_write(
             },
         )
     assert list(db.iterdump()) == before
-    record_purchase(db, [bet])
+    _purchase_paper_unchecked(db, bet)
     assert bt.get_bet(db, bet)["purchased"] == 1
 
 
@@ -437,7 +450,7 @@ def test_paper_actuals_never_reach_formal_results(db: sqlite3.Connection) -> Non
     bet, fixture = make_bet(db, BetMode.PAPER)
     db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
     db.commit()
-    record_purchase(db, [bet])
+    _purchase_paper_unchecked(db, bet)
     bt.set_actual_terms(db, bet, 200, {fixture: 99})  # 模拟旧行落列
     import_draw_results(
         db, [DrawResultInput(fixture_id=fixture, home_goals=2, away_goals=0)]
@@ -463,7 +476,7 @@ def test_correction_converges_legacy_paper_actuals_settlement(
     bet, fixture = make_bet(db, BetMode.PAPER)
     db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
     db.commit()
-    record_purchase(db, [bet])
+    _purchase_paper_unchecked(db, bet)
     bt.set_actual_terms(db, bet, 200, {fixture: 99})  # 旧行落列
     import_draw_results(
         db, [DrawResultInput(fixture_id=fixture, home_goals=2, away_goals=0)]
@@ -505,7 +518,7 @@ def test_review_excludes_paper_actuals_anomaly(db: sqlite3.Connection) -> None:
     bet, fixture = make_bet(db, BetMode.PAPER)
     db.execute("UPDATE bets SET price_source='system_paper' WHERE id=?", (bet,))
     db.commit()
-    record_purchase(db, [bet])
+    _purchase_paper_unchecked(db, bet)
     bt.set_actual_terms(db, bet, 200, {fixture: 99})
     view = review_views(db, [bt.get_bet(db, bet)])[bet]
     assert view.forward == "excluded_actual_terms"

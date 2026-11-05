@@ -24,7 +24,7 @@ import math
 import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from importlib import metadata
 from pathlib import Path
 
@@ -131,7 +131,8 @@ def fit_dc_model(
         rho=float(params["rho"]),
         data_fingerprint=_rows_fingerprint(rows),
         loglikelihood=float(model.loglikelihood) if model.loglikelihood else None,
-        fitted_at=datetime.now(tz=None).isoformat(timespec="seconds"),
+        # UTC 盖章（审计批C 附录⑧）：此前 naive 本地时区，跨时区排序/对账歧义
+        fitted_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
 
 

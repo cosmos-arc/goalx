@@ -21,6 +21,7 @@ from goalx_backend.models import (
     BetMode,
     LegInput,
     MarketKind,
+    MoneyCny,
 )
 
 # 价格来源三分类词表在 models.py（store 与本用例层共用，ADR-0008 归属）；
@@ -154,7 +155,8 @@ class ActualLegOdds(BaseModel):
 class ActualTerms(BaseModel):
     """一注的实际执行条款；结算按实际条款，原建议快照保留可追溯。"""
 
-    stake: float = Field(gt=0, allow_inf_nan=False)
+    # 金额约束收敛到域模型（审计批C 附录⑦）：API 层复用本类，单一来源
+    stake: MoneyCny
     leg_odds: list[ActualLegOdds] = Field(default_factory=list)
 
 
@@ -300,7 +302,9 @@ def create_bet_with_legs(
     if price_source is not None and price_source not in PRICE_SOURCES:
         raise ValueError(f"未知 price_source: {price_source}")
     if draft.client_request_id is not None:
-        existing = _replayable_bet_id(conn, draft)
+        existing = replay_bet_id(
+            conn, draft.client_request_id, draft.intent_fingerprint
+        )
         if existing is not None:
             return existing
     seen: set[int] = set()
@@ -337,25 +341,26 @@ def create_bet_with_legs(
     return bet
 
 
-def _replayable_bet_id(conn: sqlite3.Connection, draft: BetDraft) -> int | None:
+def replay_bet_id(
+    conn: sqlite3.Connection,
+    client_request_id: str | None,
+    fingerprint: str | None,
+) -> int | None:
     """
-    同键重放判定（票 06/09，域层）。
+    同键重放判定（票 06/09 单源；审计批C 附录⑦ 收敛）。
 
-    既有注同意图（或无指纹可比对）→ 回带 id；异意图 →
-    IntentConflictError（不静默回旧）；无既有注 → None。
+    API 预检与域层建注/竞态两路共用：既有注同意图（或任一侧无指纹可比对
+    →降级旧回带）→ 回带 id；异意图 → IntentConflictError（不静默回旧）；
+    无既有注 → None。
     """
-    existing_id = bt_store.bet_id_for_request(conn, draft.client_request_id or "")
+    existing_id = bt_store.bet_id_for_request(conn, client_request_id or "")
     if existing_id is None:
         return None
     row = bt_store.get_bet(conn, existing_id)
     if row is None:
         return None
     stored = row["intent_fingerprint"]
-    if (
-        stored is not None
-        and draft.intent_fingerprint is not None
-        and stored != draft.intent_fingerprint
-    ):
+    if stored is not None and fingerprint is not None and stored != fingerprint:
         raise IntentConflictError(int(row["id"]), str(row["mode"]), float(row["stake"]))
     return int(row["id"])
 
@@ -378,7 +383,7 @@ def _existing_for_request_race(
     )
     if not same_key_race or request_id is None:
         return None
-    return _replayable_bet_id(conn, draft)
+    return replay_bet_id(conn, request_id, draft.intent_fingerprint)
 
 
 def _record_discovery_stages(
@@ -524,6 +529,20 @@ def _leg_binding(
     return binding.get(leg.selection_code) if binding is not None else None
 
 
+def _bet_legs(bet: sqlite3.Row) -> list[LegInput]:
+    """注行 legs JSON → LegInput 列表（回录路径重建腿输入）。"""
+    return [
+        LegInput(
+            fixture_id=int(leg["fixture_id"]),
+            market_code=str(leg["market_code"]),
+            selection_code=str(leg["selection_code"]),
+            locked_odds=float(leg["locked_odds"]),
+            goal_line=leg["goal_line"],
+        )
+        for leg in json.loads(bet["legs"])
+    ]
+
+
 def _rebind_paper_legs(
     conn: sqlite3.Connection, bets: list[sqlite3.Row], allow_price_update: bool
 ) -> None:
@@ -542,16 +561,7 @@ def _rebind_paper_legs(
     for bet in bets:
         if bet["price_source"] != PRICE_SOURCE_SYSTEM_PAPER:
             continue
-        legs = [
-            LegInput(
-                fixture_id=int(leg["fixture_id"]),
-                market_code=str(leg["market_code"]),
-                selection_code=str(leg["selection_code"]),
-                locked_odds=float(leg["locked_odds"]),
-                goal_line=leg["goal_line"],
-            )
-            for leg in json.loads(bet["legs"])
-        ]
+        legs = _bet_legs(bet)
         decision_at = utc_now_iso()
         rebound = rebind_paper_price(
             conn, legs, allow_update=allow_price_update, moment=decision_at
@@ -607,6 +617,7 @@ def record_purchase(
     actuals: dict[int, ActualTerms] | None = None,
     *,
     allow_price_update: bool = False,
+    duck_con: quote_evidence.DuckCon | None = None,
 ) -> int:
     """
     票级回录：勾选实际购买子集，生成一张票；live 注按实际条款扣减 bankroll。
@@ -614,6 +625,9 @@ def record_purchase(
     paper 锁定即正式赛前决策（票 04）：同事务内重验服务器当前有效报价——
     价变且未确认（allow_price_update=False）raise PriceMismatchError 整票
     回滚；确认更新则 locked_odds/snapshot_id 刷新为决策时点服务器价。
+
+    had 资格校验在本事务内执行（票 36 锁定再校验；审计批C 附录④ 自 API
+    层挪入）：校验与落库之间不再有 TOCTOU 窗，非 API 调用者同样受校验。
     """
     if not bet_ids or len(set(bet_ids)) != len(bet_ids):
         raise ValueError("bet_ids 必须非空且不能重复")
@@ -636,6 +650,8 @@ def record_purchase(
                 raise ValueError(
                     "paper 注不接受实际条款(actuals); 手工情景走 manual_research 分类"
                 )
+            for bet in bets:
+                validate_had_selections(conn, _bet_legs(bet), duck_con=duck_con)
             _rebind_paper_legs(conn, bets, allow_price_update)
             _record_confirm_stages(conn, bets, confirm_at=utc_now_iso())
         slip = bt_store.create_slip(conn, mode, placed_at=at)

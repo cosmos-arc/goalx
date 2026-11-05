@@ -149,10 +149,32 @@ def test_create_bet_rejects_same_fixture_parlay(db: sqlite3.Connection) -> None:
         create_bet_with_legs(db, draft)
 
 
-def test_paper_full_loop(db: sqlite3.Connection) -> None:
+def test_paper_full_loop(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """票 23 验收：建议 → 回录 → 开奖导入 → 结算 → 复盘列表。"""
     fixture_ids = seed(db)
     arsenal, liverpool = fixture_ids
+    # 回录资格校验已入购买事务（审计批C 附录④）：域层直调也走真实时钟判
+    # 停售/开赛/单固——钉到报价更新(12:00Z)后、开赛(18:00Z)前的时刻，并补
+    # 在售观测行（固定日期种子无 sale_statuses 行则单关判"非单固"）
+    monkeypatch.setattr(
+        "goalx_backend.betting.bets.utc_now_iso", lambda: "2026-09-12T12:30:00+00:00"
+    )
+    from goalx_backend.data import fixtures as fx_store
+    from goalx_backend.models import SaleStatusInput
+
+    fx_store.append_sale_status(
+        db,
+        SaleStatusInput(
+            fixture_id=arsenal,
+            market_code="had",
+            sale_state="on_sale",
+            single_eligible=True,
+            observed_at="2026-09-12T12:00:00+00:00",
+        ),
+    )
+    db.commit()
 
     # 建议：阿森纳主胜单关 + 利物浦×阿森纳 2串1
     single = create_bet_with_legs(
@@ -476,3 +498,54 @@ def test_today_view_price_band_flag_readonly(db: sqlite3.Connection) -> None:
     # 仅平局价在段（十年口径不计平局）且两侧 <2.0 → 不标
     assert PRICE_BAND_FLAG not in view[0].flags
     assert PRICE_BAND_FLAG not in view[1].flags
+
+
+def test_record_purchase_validates_had_eligibility_in_transaction(
+    db: sqlite3.Connection,
+) -> None:
+    """审计批C 附录④：资格校验入购买事务（域层单源）——非 API 调用者的
+    paper 回录同样被拒（已开赛 had 腿 BetEligibilityError），不再只靠
+    API 层预检（TOCTOU 窗关闭）。"""
+    from goalx_backend.betting.bets import BetEligibilityError
+
+    fixture_ids = seed(db)
+    bet = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode="paper",  # type: ignore[arg-type]
+            stake=2.0,
+            legs=[
+                LegInput(
+                    fixture_id=fixture_ids[0],
+                    market_code="had",
+                    selection_code="h",
+                    locked_odds=6.5,
+                )
+            ],
+        ),
+    )
+    # 固定日期种子（2026-09 开球）对真实时钟恒"已开赛"——无需冻结时钟
+    with pytest.raises(BetEligibilityError, match="不可投"):
+        record_purchase(db, [bet])
+    assert bt_store.list_bets(db)[0]["purchased"] == 0  # 事务回滚零半写
+
+
+def test_domain_input_constraints() -> None:
+    """审计批C 附录⑦：域模型补约束——LegInput 非正赔率、ActualTerms 非法
+    金额在域层即拒（非 API 调用者不再绕过；ActualTerms 现为 API 单源）。"""
+    from pydantic import ValidationError
+
+    from goalx_backend.betting.bets import ActualTerms
+
+    with pytest.raises(ValidationError):
+        LegInput(fixture_id=1, market_code="had", selection_code="h", locked_odds=0)
+    with pytest.raises(ValidationError):
+        LegInput(
+            fixture_id=1,
+            market_code="had",
+            selection_code="h",
+            locked_odds=float("nan"),
+        )
+    with pytest.raises(ValidationError):
+        ActualTerms(stake=1e308)
+    assert ActualTerms(stake=10.006).stake == 10.01  # MoneyCny 取整单源

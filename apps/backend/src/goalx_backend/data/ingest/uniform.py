@@ -573,11 +573,20 @@ def _values_match(stored: sqlite3.Row, obs: UniformObservation) -> bool:
         return False
     if int(stored["away_goals"]) != (obs.away_goals or -1):
         return False
-    if obs.half_home_goals is None or stored["half_home_goals"] is None:
+    # 半场宽让对称化（审计批C 附录②）：四个半场值任一缺=不可比，判一致
+    # （与 reconcile_draw_results 同判）——此前只宽让 half_home，half_away
+    # 一侧/双侧 NULL 走哨兵比较恒不等，两仪器对同行不同判。
+    if (
+        obs.half_home_goals is None
+        or obs.half_away_goals is None
+        or stored["half_home_goals"] is None
+        or stored["half_away_goals"] is None
+    ):
         return True
-    return int(stored["half_home_goals"]) == obs.half_home_goals and int(
-        stored["half_away_goals"] or -1
-    ) == (obs.half_away_goals or -2)
+    return (
+        int(stored["half_home_goals"]) == obs.half_home_goals
+        and int(stored["half_away_goals"]) == obs.half_away_goals
+    )
 
 
 def _record_sync_run(

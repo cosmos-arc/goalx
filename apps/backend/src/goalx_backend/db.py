@@ -94,13 +94,22 @@ version INTEGER PRIMARY KEY,
     for version, apply_fn in chain:
         if version in applied:
             continue
-        apply_fn(conn)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, applied_at)"  # noqa: S608
-            + " VALUES (?, ?)",
-            (version, utc_now_iso()),
-        )
-        conn.commit()
+        # 并发迁移竞态（审计批C #11）：applied 集在事务外读——定拍多任务同
+        # 分钟各自 migrate 时双双过检、都执行非幂等 ALTER，输家 duplicate
+        # column 崩一次。每版本 check+apply+记账包 BEGIN IMMEDIATE（atomic
+        # 先例），写锁内复查未记账才施用；applied 集只是免开写事务的快道。
+        with atomic(conn):
+            done = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+            ).fetchone()
+            if done is not None:
+                continue
+            apply_fn(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, applied_at)"  # noqa: S608
+                + " VALUES (?, ?)",
+                (version, utc_now_iso()),
+            )
     return current_version(conn)
 
 

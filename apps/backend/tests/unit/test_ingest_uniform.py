@@ -28,6 +28,7 @@ from goalx_backend.data.fixtures import (
 )
 from goalx_backend.data.ingest import uniform
 from goalx_backend.data.ingest.results import import_draw_results
+from goalx_backend.data.ingest.uniform import _values_match
 from goalx_backend.models import DrawResultInput, MatchCodeInput
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -313,3 +314,53 @@ def test_sync_zero_cost_skip_still_records_run(db) -> None:
     ).fetchone()
     assert row["source"] == "sporttery.cn"
     assert int(row["compared"]) == 0
+
+
+def test_values_match_half_side_null_treated_incomparable() -> None:
+    """审计批C 附录②：半场值任一缺=不可比判一致（与 reconcile 同判）——
+    此前只宽让 half_home，half_away 一侧/双侧 NULL 走哨兵比较恒不等，
+    两仪器对同行不同判。"""
+
+    def obs(half_home: int | None, half_away: int | None) -> uniform.UniformObservation:
+        return uniform.UniformObservation(
+            match_id=1,
+            match_num_str="六001",
+            match_date="2026-09-20",
+            league_id=None,
+            league_name="英超",
+            result_status="2",
+            pool_status="payoff",
+            full_raw="2:1",
+            half_raw="1:0",
+            home_goals=2,
+            away_goals=1,
+            half_home_goals=half_home,
+            half_away_goals=half_away,
+            win_flag="3",
+            odds_h="",
+            odds_d="",
+            odds_a="",
+            goal_line="",
+            betting_single=None,
+        )
+
+    stored_full = {
+        "void": 0,
+        "home_goals": 2,
+        "away_goals": 1,
+        "half_home_goals": 1,
+        "half_away_goals": 0,
+    }
+    assert _values_match(stored_full, obs(1, 0)) is True  # 全值相等
+    assert _values_match(stored_full, obs(1, 1)) is False  # 全值在场，比分不同
+    # 半场一侧/双侧缺：不可比=一致（本修主命题；修前 half_away 缺恒 False）
+    assert _values_match(stored_full, obs(1, None)) is True
+    assert _values_match(stored_full, obs(None, 0)) is True
+    stored_no_half = {
+        "void": 0,
+        "home_goals": 2,
+        "away_goals": 1,
+        "half_home_goals": None,
+        "half_away_goals": None,
+    }
+    assert _values_match(stored_no_half, obs(1, 0)) is True

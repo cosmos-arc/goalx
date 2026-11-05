@@ -1543,6 +1543,43 @@ def test_pool_slip_preview_multi_pick_and_under_nine(api_client: TestClient) -> 
     assert under.json()["total_stake"] == 0.0
 
 
+def test_pool_slip_preview_ttt14_incomplete_honest_zero(
+    api_client: TestClient,
+) -> None:
+    """审计批C #9：ttt14 未满 14 场预览=诚实 0+空选择摘要——不再通用连乘
+    算出"9 注真数"（创建侧 400"需 14 场"的落差）；与 pick9 <9 场同口径。"""
+    from goalx_backend.betting import store as bt_store
+
+    response = api_client.post(
+        "/api/v1/pool-slips/preview",
+        json={
+            "market_code": "ttt14",
+            "stake_per_combination": 2.0,
+            "picks": [
+                {"match_seq": seq, "selection_code": sel}
+                for seq in (1, 2)
+                for sel in ("3", "1", "0")
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["combination_count"] == 0
+    assert body["total_stake"] == 0.0
+    assert body["combinations_sha256"] == bt_store.EMPTY_SELECTIONS_SHA256
+    # 同载荷创建侧依旧 400"需 14 场"（预览诚实 0 ≠ 可建）
+    create = api_client.post(
+        "/api/v1/pool-slips",
+        json={
+            "mode": "paper",
+            "market_code": "ttt14",
+            "picks": [{"match_seq": 1, "selection_code": "3"}],
+        },
+    )
+    assert create.status_code == 400
+    assert "14 场" in create.json()["detail"]
+
+
 def test_pool_slip_preview_ttt14_cartesian(api_client: TestClient) -> None:
     """ttt14 玩法 = 整体连乘（14 场全单选 = 1 注；双选场放大 2 倍）。"""
     response = api_client.post(
@@ -2090,14 +2127,15 @@ def test_pool_slip_payload_guards(demo_client: TestClient) -> None:
         )
         assert preview_bad.status_code == 400, (market, preview_bad.text)
 
-    # 合法码但不完备：预览允许（"未选完整"预览态），创建拒绝
+    # 合法码但不完备：预览=诚实 0（审计批C #9：不再通用连乘报"可建的
+    # N 注"再吃创建 400），创建拒绝
     partial = [{"match_seq": seq, "selection_code": "3"} for seq in (1, 2)]
     partial_preview = demo_client.post(
         "/api/v1/pool-slips/preview",
         json={"market_code": "ttt14", "picks": partial},
     )
     assert partial_preview.status_code == 200
-    assert partial_preview.json()["combination_count"] == 1
+    assert partial_preview.json()["combination_count"] == 0
     partial_create = demo_client.post(
         "/api/v1/pool-slips",
         json={
