@@ -131,20 +131,44 @@ def test_summary_reads_dual_coverage(db: sqlite3.Connection) -> None:
 
 
 def test_morning_check_item_reports_and_tolerates_empty(db: sqlite3.Connection) -> None:
-    """票 08：晨检项只读消费——未拍不硬判；有拍报双口径覆盖+分歧。"""
+    """票 08/票 03(d)：晨检项只读消费——未拍=未开始积累不硬判；有拍报
+    双口径覆盖+分歧;采集在拍而影子零样本=degraded;采样断流=degraded。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend.db import utc_now_iso
     from goalx_backend.morning_check import check_freshness_shadow
 
     empty = check_freshness_shadow(db)
-    assert empty.status == "ok"
-    assert "未拍" in empty.detail
+    assert empty.status == "ok"  # 采集侧亦无证据：观察不硬判
+    assert "未开始积累" in empty.detail
+    # 票 03(d)：采集侧 2 日内有证据而影子零样本——"未拍也绿"不再，判降级
+    obs_id = fx_store.record_quote_observation(
+        db,
+        ObservationInput(
+            source="sporttery",
+            observed_at=utc_now_iso(),
+            parse_version="test",
+            raw_sha256="a" * 64,
+        ),
+    )
+    assert obs_id is not None
+    capturing = check_freshness_shadow(db)
+    assert capturing.status == "degraded"
+    assert "测量断线" in capturing.detail
+
     rows = [_row(1, "valid", [], jc_age_seconds=60.0, jc_observed_age_seconds=60.0)]
     qe.record_freshness_shadow(
         db, rows, "2026-11-04", as_of="2026-11-04T12:00:00+00:00"
     )
-    item = check_freshness_shadow(db)
-    assert item.status == "ok"  # 观察项不判红
+    item = check_freshness_shadow(db, now=datetime(2026, 11, 4, 12, tzinfo=UTC))
+    assert item.status == "ok"  # 当日有拍：观察项不判红
     assert "规则新鲜 1/1" in item.detail
     assert "观测新鲜 1/1" in item.detail
+    # 票 03(d)：最新拍落后超两个销售日=采样断流（详情带日期，防长期正常）
+    stale = check_freshness_shadow(db, now=datetime(2026, 11, 10, 12, tzinfo=UTC))
+    assert stale.status == "degraded"
+    assert "采样断流" in stale.detail
+    assert "2026-11-04" in stale.detail
 
 
 def test_past_date_replay_refused(db: sqlite3.Connection) -> None:
@@ -165,15 +189,15 @@ def test_past_date_replay_refused(db: sqlite3.Connection) -> None:
 
 
 def test_morning_check_tolerates_missing_table(db: sqlite3.Connection) -> None:
-    """票 08 correctness F3：v38 前旧库（表未建）晨检项降级'未拍'不抛
-    ——只读连接无法自 migrate，缺表部署窗不该打灭整张红绿面。"""
+    """票 08 correctness F3：v38 前旧库（表未建）晨检项降级'未开始积累'
+    不抛——只读连接无法自 migrate，缺表部署窗不该打灭整张红绿面。"""
     from goalx_backend.morning_check import check_freshness_shadow
 
     db.execute("DROP TABLE IF EXISTS freshness_shadow")
     db.commit()
     item = check_freshness_shadow(db)
     assert item.status == "ok"
-    assert "未拍" in item.detail
+    assert "未开始积累" in item.detail
 
 
 def _confirm_match() -> sporttery.ParsedMatch:

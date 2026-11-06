@@ -366,3 +366,12 @@ def test_sweep_age_cutoff_freezes_stale_null_rows(db: sqlite3.Connection) -> Non
         " WHERE p_sharp_h IS NULL"
     ).fetchall()
     assert [int(r["fixture_id"]) for r in rows] == [old_fixture]  # 旧行冻结
+    # 票 03(b) 连续两轮回归：NULL 集只剩旧行——修复前锚随 NULL 子集回退到
+    # 旧行自身，旧行重进扫描被回填（冻结失稳）；修复后锚恒=整本账 11-05，
+    # 旧行第二轮仍冻结
+    assert pl.backfill_missing_reference(db) == 0
+    rows = db.execute(
+        "SELECT fixture_id, p_sharp_h FROM price_deviation_ledger"
+        " WHERE p_sharp_h IS NULL"
+    ).fetchall()
+    assert [int(r["fixture_id"]) for r in rows] == [old_fixture]

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Sequence
@@ -117,7 +118,9 @@ def parse_probs(content: str) -> tuple[float, float, float, str] | None:
             probs = (float(raw_h), float(raw_d), float(raw_a))
         except (KeyError, TypeError, ValueError):
             continue
-        if any(p < 0 or p > 1 for p in probs):
+        if any(not math.isfinite(p) or p < 0 or p > 1 for p in probs):
+            # 票 03(c)：NaN 比较恒 False 穿透范围检查（"NaN" 字符串可 float()
+            # 成功）——非有限数整条拒绝，异常输出不进主链
             continue
         total = sum(probs)
         if total <= 1 - _SUM_TOLERANCE or total >= 1 + _SUM_TOLERANCE:

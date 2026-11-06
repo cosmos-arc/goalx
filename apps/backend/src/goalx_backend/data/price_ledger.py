@@ -107,9 +107,9 @@ def backfill_missing_reference(
     """
     moment = datetime.now(UTC).isoformat(timespec="seconds")
     # 账龄截断（留案票 01②）：永不可解行不再每日对 2.7 亿行底表重查——
-    # 锚=分母内最新行（非墙钟：账龄=落后最新观测的程度），落后超 14 天的
-    # NULL 行冻结（参考证据正常 <1 日可得；陈年行事后回填价值趋零）。
-    # 升级路径：尝试计数列。
+    # 锚=整本账最新观测（非墙钟：账龄=落后最新观测的程度；票 03(b) 改整
+    # 本账口径保单调），落后超 14 天的 NULL 行冻结（参考证据正常 <1 日
+    # 可得；陈年行事后回填价值趋零）。升级路径：尝试计数列。
     all_pending = conn.execute(
         " ".join(
             (
@@ -121,7 +121,13 @@ def backfill_missing_reference(
     pending: list[sqlite3.Row] = []
     stale_skipped = 0
     if all_pending:
-        newest = max(str(r["observed_at"]) for r in all_pending)
+        # 锚=整本账最新观测（票 03(b) 单调），非 NULL 子集——上轮回填缩小
+        # NULL 集不拉低锚，被 14 天规则跳过的旧行不会第二轮重进扫描
+        newest = str(
+            conn.execute(
+                "SELECT MAX(observed_at) AS m FROM price_deviation_ledger"
+            ).fetchone()["m"]
+        )
         cutoff = (
             datetime.fromisoformat(newest) - REFERENCE_BACKFILL_MAX_AGE
         ).isoformat()
