@@ -1,8 +1,9 @@
 # GitHub main 分支服务端门禁
 
-**状态（2026-11-06）**：`main` 服务端保护尚未配置——本地 `no-commit-to-branch`
-hook + CI 只是客户端约束，服务端无强制。本文是 ruleset 配置模板与验证步骤，
-由 V1 发布收口按 §2 落地执行。
+**状态（2026-11-06）**：**已配置**——ruleset `main-protection`（id 26675911，
+enforcement=active）按 §2 模板落地，随 V1 发布收口生效；必须 PR 合入、
+必需检查（`CI gate`/`base-must-be-main`）绿才可合、禁强推/删除，无人可绕。
+本文保留为配置模板与验证步骤记录。
 
 ## 1. 为什么
 
