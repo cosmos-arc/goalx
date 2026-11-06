@@ -666,11 +666,17 @@ def test_empty_corpus_degrades(tmp_path: Path) -> None:
     assert meta["degraded"] == report.degraded
 
 
-def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_gold_build(
+    built: Built, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """CLI gold-build（=tasks.gold_rebuild 单一实现）：market 保鲜→gold→桥刷新。"""
     import argparse
 
     from goalx_backend.cli import _cmd_gold_build
+    from goalx_backend.data.ingest import srct_remat
+
+    # 余量探测=真系统面,全流程测试钉足量防环境负载假 deferred(合跑实录)
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
 
     store, settings, _report = built
     store.close()
@@ -758,6 +764,34 @@ def test_gold_rebuild_low_headroom_defer_releases_budget(
     store.close()
     monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 * 1024**3)
     assert "deferred" in tasks_mod.gold_rebuild(settings=settings)
+
+
+def test_gold_rebuild_child_lost_defers(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 04 段级进程隔离：子进程硬死（OOM 等）→ BrokenProcessPool →
+    deferred 让位明日自愈，不硬闯 Crashed；market 段成果保留入账。"""
+    from concurrent.futures.process import BrokenProcessPool
+
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
+    real_run = tasks_mod._run_segment_in_child
+
+    def boom(
+        func: object, settings: object
+    ) -> object:  # pragma: no cover - 分支由 raise 覆盖
+        if func is tasks_mod._gold_rebuild_gold_worker:
+            raise BrokenProcessPool("child lost")
+        return real_run(func, settings)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tasks_mod, "_run_segment_in_child", boom)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_segment_child_lost_gold:")
+    assert "market" in payload  # market 段成果保留(完整单元)
     probe = CorpusStore(settings.corpus_root)
     try:
         row = (
@@ -839,9 +873,11 @@ def test_gold_rebuild_view_refresh_lock_degrades(
     import duckdb as duckdb_mod
 
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
     calls = {"n": 0}
 
     def boom(_store: object) -> Path:
@@ -863,9 +899,11 @@ def test_gold_rebuild_view_refresh_retry_recovers(
     import duckdb as duckdb_mod
 
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
     real = tasks_mod.corpus_duckdb.build_corpus_duckdb
     calls = {"n": 0}
 
@@ -929,3 +967,27 @@ def test_degraded_rebuild_cleans_stale_snapshot(built: Built) -> None:
     finally:
         con.close()
     assert stale == 0  # 无 parquet 即无视图——不服务旧数据
+
+
+def test_gold_rebuild_lock_busy_defers(built: Built) -> None:
+    """correctness B（2026-11-06）：预占锁行 → gold_rebuild 整轮
+    deferred_silver_build_lock_busy，零段执行零写入（让位不并行）。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.corpus_store import CorpusStore
+
+    store, settings, _report = built
+    store.close()
+    lock_store = CorpusStore(settings.corpus_root)
+    lock_store._checkpoint().execute(
+        "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+        " VALUES (1, 424242, ?, 'peer-run')",
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+    lock_store._checkpoint().commit()
+    lock_store.close()
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_silver_build_lock_busy:")
+    assert "424242" in str(payload["deferred"])
+    assert "market" not in payload

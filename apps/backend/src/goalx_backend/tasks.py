@@ -11,12 +11,16 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import multiprocessing
 import sqlite3
 import time
 from collections.abc import Callable, Generator
+from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 import duckdb
 import httpx
@@ -461,7 +465,74 @@ def settlement_sweep() -> dict[str, int]:
         return run_settlement(conn)
 
 
-def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
+def _gold_rebuild_market_worker(
+    settings: Settings,
+) -> srct_market.SilverMarketReport:
+    """段体（market）：子进程内自建 store，退出即由 OS 全额回收。"""
+    store = CorpusStore(settings.corpus_root)
+    try:
+        return srct_market.build_market_quotes(store)
+    finally:
+        store.close()
+
+
+def _gold_rebuild_gold_worker(settings: Settings) -> gold.GoldBuildReport:
+    """段体（gold）：face 迁移 + 语料桥连接 + 全量重算，全在子进程内。"""
+    store = CorpusStore(settings.corpus_root)
+    try:
+        face = connect(settings.db_path)
+        try:
+            migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
+            duck_con = corpus_duckdb.connect(settings)
+            try:
+                return gold.build_match_features(store, face, duck_con)
+            finally:
+                duck_con.close()
+        finally:
+            face.close()
+    finally:
+        store.close()
+
+
+def _run_segment_in_child[T](func: Callable[[Settings], T], settings: Settings) -> T:
+    """
+    段级进程隔离（gold-rebuild 内存收口票 04，票 03 裁决 P2）。
+
+    重段各起独立 spawn 子进程：段退出 OS 全额回收，Python arena 高水位
+    残留根治（gunicorn max_requests 同哲学；2026-11-06 晨间 30GB swap
+    实录的挤压根因）。ProcessPoolExecutor 会复用 worker，必须**每段独立
+    with 块**——段末 shutdown 退出进程才回收。子进程不持锁：父进程全程
+    独占 silver_build_lock，窗口语义不变。
+    """
+    ctx = multiprocessing.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=ctx) as ex:
+        return ex.submit(func, settings).result()
+
+
+def _segment_in_child_or_defer[T](
+    func: Callable[[Settings], T],
+    settings: Settings,
+    tag: str,
+    payload: dict[str, object],
+) -> tuple[T | None, dict[str, object] | None]:
+    """
+    段子进程执行；硬死（OOM 等）→（None, deferred 报告）让位明日自愈。
+
+    只捕 BrokenProcessPool：spawn 基建本身失败（executor 信号量 OSError
+    等）不转 deferred 而硬闯 Crashed——环境级故障需人眼，静默让位会把
+    每日定拍变成永久跳过（correctness 2026-11-06 裁决=fail-loud）。
+    """
+    try:
+        return _run_segment_in_child(func, settings), None
+    except BrokenProcessPool as exc:
+        note = f"deferred_segment_child_lost_{tag}: {exc}"
+        logger.warning("gold-rebuild {}", note)
+        return None, {**payload, "deferred": note}
+
+
+def gold_rebuild(  # noqa: PLR0911 deferred 状态机：锁忙/三探/两段子进程硬死，线性分支即审计面
+    *, settings: Settings | None = None
+) -> dict[str, object]:
     """
     Gold 日频重算（misprice 票 03①）：market_quote 保鲜 + gold 全量重建。
 
@@ -471,10 +542,10 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
     bronze 幂等全量）再 gold 全量重算，08:40 定拍赶在 09:05 晨检 gold
     新鲜度面前。settings 注入口只服务测试接缝。
 
-    内存护栏（票 03 运行实录 2026-11-02 首班）：build_market_quotes 峰值
-    ~3.2GB，余量不足时整轮 deferred 零写入让位（与手工跑/其他重载并发
-    会 OOM Crashed，remat 票 13 同款防线）——明日定拍自愈，晨检 gold
-    新鲜度面（36h 绿）兜底可见。
+    内存护栏（票 03 运行实录 2026-11-02 首班；票 04 内存收口）：market/
+    gold 两重段各起 spawn 子进程执行——段退出 OS 全额回收，arena 残留
+    根治；子进程硬死（OOM 等）→ BrokenProcessPool → deferred 让位明日
+    自愈，不硬闯 Crashed。
 
     构建互斥（boundary-hardening 票 02）：market_quote 面与手工
     srct-market/srct-odds 同走 silver_build_lock（同一把 srct_remat_lock）
@@ -496,10 +567,16 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
                 note = f"deferred_low_headroom: {headroom / 1024**3:.1f}GiB"
                 logger.warning("gold-rebuild {}", note)
                 return {"deferred": note}  # with 出口释放预算，明日定拍自愈
-            market_report = srct_market.build_market_quotes(store)
-            # 段间余量复探（2026-11-05 OOM 收口）：market 段 Python 侧峰值
-            # ~3.2GB 已释放但 arena 未必还 OS——gold/duckdb 段前再探，
-            # 不足即 deferred（明日自愈）不硬闯 Crashed
+            market_report, deferred = _segment_in_child_or_defer(
+                _gold_rebuild_market_worker, resolved, "market", {}
+            )
+            if deferred is not None:
+                return deferred
+            market_report = cast(
+                "srct_market.SilverMarketReport", market_report
+            )  # helper 契约：二者恰一非 None，cast 仅收窄
+            # 段间余量复探（2026-11-05 OOM 收口）：子进程退出=OS 全额回收，
+            # 复探见真值；不足即 deferred（明日自愈）不硬闯 Crashed
             headroom = srct_remat.headroom_bytes()
             if headroom < srct_remat.FULL_REMAT_MIN_HEADROOM_BYTES:
                 note = (
@@ -508,16 +585,15 @@ def gold_rebuild(*, settings: Settings | None = None) -> dict[str, object]:
                 )
                 logger.warning("gold-rebuild {}", note)
                 return {"deferred": note, "market": asdict(market_report)}
-            face = connect(resolved.db_path)
-            try:
-                migrate(face)  # admin_match_exclusions 缺表即 fail-closed 的前提
-                duck_con = corpus_duckdb.connect(resolved)
-                try:
-                    report = gold.build_match_features(store, face, duck_con)
-                finally:
-                    duck_con.close()
-            finally:
-                face.close()
+            report, deferred = _segment_in_child_or_defer(
+                _gold_rebuild_gold_worker,
+                resolved,
+                "gold",
+                {"market": asdict(market_report)},
+            )
+            if deferred is not None:
+                return deferred
+            report = cast("gold.GoldBuildReport", report)  # 同上
             # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
             # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
             # 短重试后仍占则记账跳过（明日自愈），不让日频面假红
