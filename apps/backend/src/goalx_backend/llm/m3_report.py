@@ -9,7 +9,9 @@ M3 评测协议（票 13，票 05 冻结阈值的工程化）。
   ≥52% + LLM 轨 ECE 无劣化（vs ML 同期）；DM p 值如实报告不设门槛。
 - Tier B（真钱切换）：整赛季 + ≥500 配对场 + DM p<0.05 且融合方向更优
   （票 03 方向核验：DM 双侧只测"有差异"，显著更差与显著更好曾同判
-  "达标候选"）+ 复核无系统性错误 + 盲评定性不负面；缺一不可。
+  "达标候选"）+ 复核无系统性错误 + 盲评定性不负面（票 05：两档分层
+  进判定——缺席/平局自动通过，方向性须人工确认后计入，未确认=未达标）；
+  缺一不可。
 
 盲评定性两档分层（report-audit-20261103 Not-yet-specified 收口）：
 - **自动通过**：盲评样本缺席或平局（无方向性证据）——"不负面"按缺省
@@ -24,6 +26,7 @@ M3 评测协议（票 13，票 05 冻结阈值的工程化）。
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import UTC, datetime
 
@@ -34,13 +37,14 @@ from goalx_backend.data import quote_evidence
 from goalx_backend.data.fixtures import kickoff_to_utc
 from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation.forward_validation import (
+    MIN_GROUP_SAMPLES,
     AsOfBatch,
     ForwardSample,
     ForwardSkillReport,
     build_forward_samples,
     forward_skill_report,
 )
-from goalx_backend.evaluation.metrics import diebold_mariano, rps
+from goalx_backend.evaluation.metrics import diebold_mariano, evaluate_predictions, rps
 from goalx_backend.llm.review import blind_review_counts, verdict_counts
 from goalx_backend.llm.store import intel_summary_by_fixture
 from goalx_backend.modelling.forecast import forecasts_for_track
@@ -195,15 +199,22 @@ def _tier_a(paired: PairedFusedVsMl, ece_clean: bool | None) -> TierStatus:
     return TierStatus(checks=checks, verdict=verdict, dm_p_reported=paired.dm_p)
 
 
-def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
+def _tier_b(
+    paired: PairedFusedVsMl,
+    review_clean: bool | None,
+    blind_not_negative: bool | None,
+) -> TierStatus:
     """
     Tier B 达标状态行（真钱切换；缺一不可）。
 
     票 03 方向核验：DM 检验双侧（metrics.diebold_mariano 显式双侧），
     显著只代表"有差异"不代表"更好"——此前 600 场融合显著更差也会判
     "达标候选"。现在融合更优（mean_rps_delta<0 且 dm_stat<0 同向；二者
-    按构造同号，双查防口径漂移）为必要条件，判词三态：达标候选 /
-    未达标 / 方向反向（融合显著更差）——未达标。
+    按构造同号，双查防口径漂移）为必要条件。
+
+    票 05 盲评两档进判定（判词与模块 docstring 契约对齐）：缺席/平局
+    自动通过；方向性结果无论方向须人工确认（m3_protocol_report 的
+    blind_review_confirmed 入参）后计入——未确认=未达标单列判词。
     """
     checks = {
         "full_season": paired.span_weeks >= _SEASON_MIN_WEEKS,
@@ -213,6 +224,7 @@ def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
         and paired.mean_rps_delta < 0
         and paired.dm_stat < 0,
         "review_no_systematic_error": review_clean is True,
+        "blind_review_not_negative": blind_not_negative is True,
     }
     sufficient = checks["pairs_ge_500"]
     if not sufficient:
@@ -221,6 +233,8 @@ def _tier_b(paired: PairedFusedVsMl, review_clean: bool | None) -> TierStatus:
         verdict = "达标候选（须用户显式裁决切换）"
     elif checks["dm_p_lt_005"] and not checks["fused_better_direction"]:
         verdict = "方向反向（融合显著更差）——未达标"
+    elif not checks["blind_review_not_negative"]:
+        verdict = "未达标（盲评方向性待人工确认）"
     else:
         verdict = "未达标"
     return TierStatus(checks=checks, verdict=verdict)
@@ -232,46 +246,104 @@ def _ece_clean(
     duck_con: quote_evidence.DuckCon | None = None,
     asof_batch: AsOfBatch | None = None,
 ) -> bool | None:
-    """LLM 轨 ECE 无劣化：与 ML 同分母比较（样本不足 None=未知）。"""
-    ml = forward_skill_report(
+    """
+    LLM 轨 ECE 无劣化（票 05 缺口 A）：相同场次集合上双侧同分母比较。
+
+    交集 fixture 集上各算各的 ECE 再比——ML 30 场 / LLM 30 场交集 0 时
+    旧口径仍各自报告再比（同概率恒过），不能解读为"相同场次相同信息
+    条件下无劣化"。交集为空/交集样本不足 → None=不可比（不默认通过）。
+    """
+    ml_samples = build_forward_samples(
         conn, track="ml", duck_con=duck_con, asof_batch=asof_batch
-    )
-    llm = forward_skill_report(
+    )[0]
+    llm_samples = build_forward_samples(
         conn, track="llm", duck_con=duck_con, asof_batch=asof_batch
-    )
-    ml_n = sum(g.n_fixtures for g in ml.groups.values())
-    llm_n = sum(g.n_fixtures for g in llm.groups.values())
-    if llm_n < _REVIEW_MIN_SAMPLES * 3 or ml_n < _REVIEW_MIN_SAMPLES * 3:
+    )[0]
+    common = {s.fixture_id for s in ml_samples} & {s.fixture_id for s in llm_samples}
+    # 交集下限=MIN_GROUP_SAMPLES（30）：交集小于此数时任何一侧都凑不出
+    # 充分组，_mean_ece_over 必然 None——这里先挡省一次空算
+    if len(common) < MIN_GROUP_SAMPLES:
         return None
-    ml_ece = _mean_ece(ml)
-    llm_ece = _mean_ece(llm)
+    ml_ece, ml_counted = _mean_ece_over(ml_samples, common)
+    llm_ece, llm_counted = _mean_ece_over(llm_samples, common)
     if ml_ece is None or llm_ece is None:
+        return None
+    if ml_counted != llm_counted:
+        # correctness F1：两侧实际计权场次必须一致——一侧不足组剔除的
+        # 场次不得让该侧逃过反证（同分母被破坏=不可比，不默认通过）
         return None
     return llm_ece <= ml_ece * 1.10  # 10% 容差内的口径噪声
 
 
-def _mean_ece(report: ForwardSkillReport) -> float | None:
+def _mean_ece_over(
+    samples: list[ForwardSample], fixture_ids: set[int]
+) -> tuple[float | None, frozenset[int]]:
     """
-    报告组内 ECE 加权平均（票 03 已修复：原桩恒 None 不再）。
+    样本流限制在 fixture 子集上的组级重建 ECE（票 05 交集口径）。
 
-    口径（人裁决 2026-11-03"按 pair 对数加权"，票 06 docstring 自荐
-    同向）：组内三键（ece_h/ece_d/ece_a，各已是组内样本加权）等权
-    平均 → 组间按样本数（场次数 n_fixtures）加权——整体期望校准误差
-    口径。跨组无法还原原始样本流，以组级指标按场次数权重构整体口径。
-
-    样本不足组（insufficient_samples，forward_validation 冻结
-    MIN_GROUP_SAMPLES=30 以下"不作通过依据"）不计权——correctness F1：
-    两个各 25 场的不足组不可聚合成 50 场的通过证据；无充分组返回
-    None（未知，fail-closed）。
+    与 _ece_clean 配套，替代原报告级 _mean_ece。口径承票 03 人裁决：
+    组内三键（ece_h/d/a）等权 → 组间按场次数加权；过滤后样本 <
+    MIN_GROUP_SAMPLES 的组不计权（correctness F1：不足组聚合不作通过
+    依据），无充分组返回 None（fail-closed）。返回 (ECE, 实际计权
+    fixture 集)——两侧集不同即同分母破坏，由调用方判不可比。
     """
+    groups: dict[str, list[ForwardSample]] = {}
+    for sample in samples:
+        if sample.fixture_id in fixture_ids:
+            groups.setdefault(sample.model_version, []).append(sample)
     weighted = 0.0
     total = 0
-    for group in report.groups.values():
-        if group.insufficient_samples or group.n_fixtures <= 0:
+    counted: set[int] = set()
+    for _version, group in sorted(groups.items()):
+        n_fixtures = len({s.fixture_id for s in group})
+        if len(group) < MIN_GROUP_SAMPLES or n_fixtures <= 0:
             continue
-        weighted += group.n_fixtures * (group.ece_h + group.ece_d + group.ece_a) / 3
-        total += group.n_fixtures
-    return weighted / total if total else None
+        metrics = evaluate_predictions(
+            [
+                {
+                    "had_probs": s.had_probs,
+                    "fair_probs": s.fair_probs,
+                    "ftr": s.ftr,
+                    "competition": s.competition,
+                    "season": s.season,
+                }
+                for s in group
+            ]
+        )
+        weighted += (
+            n_fixtures * (metrics["ece_h"] + metrics["ece_d"] + metrics["ece_a"]) / 3
+        )
+        total += n_fixtures
+        counted |= {s.fixture_id for s in group}
+    return (weighted / total if total else None), frozenset(counted)
+
+
+# 盲评方向性显著水平（双侧精确二项）——小样本下最少全同 6 票才触发
+_BLIND_ALPHA = 0.05
+
+
+def _blind_directional(counts: dict[str, int]) -> bool:
+    """
+    盲评方向性（两档分层的机械判，docstring 契约）。
+
+    缺席/平局=非方向性；任一侧显著占优（双侧精确二项 p<α）=方向性。
+    统计力弱：只作两档归属，不作证明支柱。
+    """
+    llm = counts.get("llm", 0)
+    ml = counts.get("ml", 0)
+    n = llm + ml
+    if n == 0 or llm == ml:
+        return False
+    k = min(llm, ml)
+    p_value = 2 * sum(math.comb(n, i) for i in range(k + 1)) / 2**n
+    return p_value < _BLIND_ALPHA
+
+
+def _blind_review_gate(counts: dict[str, int], confirmed: bool | None) -> bool:
+    """盲评定性门（两档分层）：缺席/平局=自动通过；方向性=人工确认后计入。"""
+    if not _blind_directional(counts):
+        return True
+    return confirmed is True
 
 
 def intel_quality(conn: sqlite3.Connection) -> IntelQuality:
@@ -360,16 +432,23 @@ def m3_protocol_report(
     *,
     duck_con: quote_evidence.DuckCon | None = None,
     asof_batch: AsOfBatch | None = None,
+    blind_review_confirmed: bool | None = None,
 ) -> M3ProtocolReport:
     """
     M3 评测协议总报告（三列参考 + 两档达标状态 + 情报/盲评列）。
 
     票 05：duck_con/asof_batch 透传 corpus 行源——同一 asof_batch 实例
     在内部多次样本构建间复用（青铜扫 memo 摊销）。
+
+    blind_review_confirmed（票 05 缺口 B）：盲评方向性结果的人工确认
+    状态——缺席/平局自动通过不依赖此参；方向性未确认（缺省 None）=
+    Tier B 盲评检查不通过（判词单列"待人工确认"），确认后计入。
     """
     paired = paired_fused_vs_ml(conn, duck_con=duck_con, asof_batch=asof_batch)
     ece_clean = _ece_clean(conn, duck_con=duck_con, asof_batch=asof_batch)
     review_clean = _review_systematic_error(conn)
+    blind = review_blind_summary(conn)
+    blind_gate = _blind_review_gate(blind.counts, blind_review_confirmed)
     return M3ProtocolReport(
         rule="m3_protocol_v1（票 05 冻结阈值，不得放宽）",
         tracks={
@@ -380,11 +459,11 @@ def m3_protocol_report(
         },
         paired_fused_vs_ml=paired,
         tier_a=_tier_a(paired, ece_clean),
-        tier_b=_tier_b(paired, review_clean),
+        tier_b=_tier_b(paired, review_clean, blind_gate),
         llm_ece_clean=ece_clean,
         review_clean=review_clean,
         intel_quality=intel_quality(conn),
-        blind_review=review_blind_summary(conn),
+        blind_review=blind,
         note="LLM/Fused 为参考列；真钱资格只读 ML 轨（票 04 冻结）",
         generated_at=datetime.now(UTC).isoformat(),
     )
