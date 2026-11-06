@@ -36,7 +36,10 @@ def seed_corpus_duck() -> duckdb.DuckDBPyConnection:
         )
         """
     )
-    con.execute("CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)")
+    con.execute(
+        "CREATE TABLE bookmaker ("
+        "bookmaker_id VARCHAR, match_count BIGINT, name_en VARCHAR)"
+    )
     events = [
         (ANCHOR, 2.0, 3.5, 3.2),
         ("srct:1x2:281", 2.05, 3.45, 3.25),
@@ -46,8 +49,8 @@ def seed_corpus_duck() -> duckdb.DuckDBPyConnection:
             "INSERT INTO odds_change_event VALUES ('3001', ?, '1x2', ?, ?, ?, ?, ?, 1)",
             [book, OBSERVED - timedelta(hours=2), OBSERVED, h, d, a],
         )
-    con.execute("INSERT INTO bookmaker VALUES (?, 100)", [ANCHOR])
-    con.execute("INSERT INTO bookmaker VALUES ('srct:1x2:281', 90)")
+    con.execute("INSERT INTO bookmaker VALUES (?, 100, NULL)", [ANCHOR])
+    con.execute("INSERT INTO bookmaker VALUES ('srct:1x2:281', 90, NULL)")
     return con
 
 
@@ -263,14 +266,17 @@ def test_prefetched_rows_respect_age_gate(db: sqlite3.Connection) -> None:
         " market VARCHAR, published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,"
         " odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE, source_order INTEGER)"
     )
-    con.execute("CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)")
+    con.execute(
+        "CREATE TABLE bookmaker ("
+        "bookmaker_id VARCHAR, match_count BIGINT, name_en VARCHAR)"
+    )
     stale_obs = OBSERVED - timedelta(hours=3)  # as_of 前 3h>60min
     con.execute(
         "INSERT INTO odds_change_event VALUES"
         " ('3001', ?, '1x2', ?, ?, 2.0, 3.5, 3.2, 1)",
         [ANCHOR, stale_obs - timedelta(hours=1), stale_obs],
     )
-    con.execute("INSERT INTO bookmaker VALUES (?, 100)", [ANCHOR])
+    con.execute("INSERT INTO bookmaker VALUES (?, 100, NULL)", [ANCHOR])
     prefetched = quote_evidence.srct_snapshot_rows_bulk(con, ["3001"], AS_OF)
     gated = quote_evidence.adjudicate_had_quote(
         db, fixture_id, AS_OF, duck_con=con, sid="3001", rows=prefetched["3001"]

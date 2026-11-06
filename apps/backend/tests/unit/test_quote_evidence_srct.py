@@ -23,6 +23,7 @@ ANCHOR = quote_evidence.SRCT_PINNACLE_BOOK
 def seed_corpus(
     events: list[tuple[str, str, datetime, datetime, float, float, float]],
     book_counts: dict[str, int] | None = None,
+    book_names: dict[str, str] | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """内存 corpus：odds_change_event + bookmaker 维度最小投影。"""
     con = duckdb.connect(":memory:")
@@ -36,14 +37,21 @@ def seed_corpus(
         )
         """
     )
-    con.execute("CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)")
+    con.execute(
+        "CREATE TABLE bookmaker ("
+        "bookmaker_id VARCHAR, match_count BIGINT, name_en VARCHAR)"
+    )
     for sid, book, published, observed, h, d, a in events:
         con.execute(
             "INSERT INTO odds_change_event VALUES (?, ?, '1x2', ?, ?, ?, ?, ?, 1)",
             [sid, book, published, observed, h, d, a],
         )
+    names = book_names or {}
     for book, count in (book_counts or {}).items():
-        con.execute("INSERT INTO bookmaker VALUES (?, ?)", [book, count])
+        con.execute(
+            "INSERT INTO bookmaker VALUES (?, ?, ?)",
+            [book, count, names.get(book) or None],
+        )
     return con
 
 
@@ -379,4 +387,23 @@ def _reset_dim_cache() -> None:
     from goalx_backend.data.quote_evidence import _dim_cache
 
     _dim_cache.counts = {}
+    _dim_cache.names = {}
     _dim_cache.at = 0.0
+
+
+def test_book_display_names_join_and_fallbacks() -> None:
+    """研究页书商直名（票 13）：字典有名→返回；空名/legacy 源不返回（前端回退 cid）。"""
+    duck_con = seed_corpus(
+        [],
+        {ANCHOR: 100, "srct:1x2:281": 90},
+        book_names={ANCHOR: "Pinnacle", "srct:1x2:281": ""},
+    )
+    names = quote_evidence.book_display_names(
+        duck_con, [ANCHOR, "srct:1x2:281", "odds_api:pin"]
+    )
+    assert names == {ANCHOR: "Pinnacle"}
+
+
+def test_book_display_names_degrades_without_corpus() -> None:
+    """corpus 缺席（reader 派发 None）→ 空映射，前端回退 cid 展示。"""
+    assert quote_evidence.book_display_names(None, [ANCHOR]) == {}

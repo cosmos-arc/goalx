@@ -388,3 +388,34 @@ test("票 08 correctness：corpus 链两源时差按量级人类可读并注记�
 	expect(clocks).toHaveTextContent("两源时差 2.0天");
 	expect(clocks).toHaveTextContent("出版时滞口径可跨日");
 });
+
+test("research books prefer dictionary name, fall back to cid (票 13)", async () => {
+	server.use(
+		http.get("*/api/v1/fixtures/:id/research", () =>
+			HttpResponse.json({
+				...researchFixture,
+				books: [
+					{
+						book: "srct:1x2:104",
+						name: "Pinnacle",
+						odds: { h: 1.9, d: 3.6, a: 3.8 },
+						captured_at: "2026-11-06T10:00:00+00:00",
+					},
+					{
+						book: "srct:1x2:281",
+						odds: { h: 1.95, d: 3.5, a: 3.75 },
+						captured_at: "2026-11-06T10:00:00+00:00",
+					},
+				],
+			}),
+		),
+	);
+	await renderAt("/fixtures/1");
+	const books = await screen.findByTestId("research-books");
+	// 字典名直显（2026-11-06 解禁）；无名书回退尾段 cid
+	expect(within(books).getByText("Pinnacle")).toBeInTheDocument();
+	expect(within(books).getByText("281")).toBeInTheDocument();
+	expect(within(books).queryByText("srct:1x2:281")).not.toBeInTheDocument();
+	// 悬浮 title 保留原始 source 串（可追溯 cid ↔ 书商名）
+	expect(within(books).getByText("Pinnacle").closest("td")).toHaveAttribute("title", "srct:1x2:104");
+});
