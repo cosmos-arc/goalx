@@ -24,6 +24,7 @@ from loguru import logger
 
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data.corpus_store import GOLD_DATASET, GOLD_PROVIDER, CorpusStore
+from goalx_backend.data.duck_limits import apply_mem_limits
 from goalx_backend.data.ingest import (
     archive538,
     elo_silver,
@@ -69,17 +70,9 @@ _GOLD_VIEWS: tuple[tuple[str, str, str], ...] = (
 _ALL_VIEWS = _SILVER_VIEWS + _GOLD_VIEWS
 
 
-# DuckDB 内存上限（gold-rebuild OOM 收口 2026-11-05）：缺省 ~80% RAM，
-# gold 构建的 2.77 亿行 odds_change_event 扫描会把 16GB 盒打穿（08:40
-# 定拍连续 Crashed 实录）。上限 + 语料树内 spill 目录=超出部分落盘换
-# 时间；建库（写）与消费（读）连接同口径。
-DUCKDB_MEMORY_LIMIT = "3GB"
-
-
-def _apply_mem_limits(con: duckdb.DuckDBPyConnection, spill_dir: Path) -> None:
-    spill_dir.mkdir(parents=True, exist_ok=True)  # 消费侧连接时树内 tmp 可能缺席
-    con.execute(f"SET memory_limit='{DUCKDB_MEMORY_LIMIT}'")
-    con.execute(f"SET temp_directory='{spill_dir.as_posix()}'")
+# DuckDB 资源帽(memory_limit + spill + threads 帽)自 data.duck_limits 共享:
+# 建库(写)/消费(读)/silver 选轨(market 段)连接同口径(2026-11-06 票 04
+# 起;threads 帽=gold-rebuild 内存收口 P3,详见 duck_limits 模块注释)。
 
 
 def corpus_duckdb_path(root: Path) -> Path:
@@ -97,7 +90,7 @@ def build_corpus_duckdb(store: CorpusStore) -> Path:
     store.ensure_tree()  # duckdb/ 目录随首建落地
     path = corpus_duckdb_path(store.root)
     con = duckdb.connect(str(path))
-    _apply_mem_limits(con, store.root / "tmp")
+    apply_mem_limits(con, store.root / "tmp")
     try:
         for view, provider, dataset in _ALL_VIEWS:
             dataset_dir = (
@@ -133,7 +126,7 @@ def connect(settings: Settings) -> duckdb.DuckDBPyConnection:
     DuckDB 拒绝。调用方负责 close()。
     """
     con = duckdb.connect(str(corpus_duckdb_path(settings.corpus_root)), read_only=True)
-    _apply_mem_limits(con, settings.corpus_root / "tmp")
+    apply_mem_limits(con, settings.corpus_root / "tmp")
     face = settings.db_path.resolve().as_posix()
     con.execute(
         f"""ATTACH IF NOT EXISTS '{face}'

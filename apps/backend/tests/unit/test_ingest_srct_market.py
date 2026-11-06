@@ -355,6 +355,92 @@ def _tree_digest(root: Path) -> str:
     return sha.hexdigest()
 
 
+def _asian_envelope(
+    sid: str, fetched_at: str, parser_version: str, close_water: float
+) -> dict[str, object]:
+    """手工 asian_odds bronze 信封(单书盘1;close 水位可辨)。"""
+    return {
+        "provider": srct.SRCT_PROVIDER,
+        "dataset": srct.ASIANODDS_DATASET,
+        "sid": sid,
+        "fetched_at": fetched_at,
+        "parser_version": parser_version,
+        "payload": {
+            "books": [
+                {
+                    "cid": 8,
+                    "multi": "盘1",
+                    "initial": {
+                        "line": "受让平手/半球",
+                        "home_water": 0.9,
+                        "away_water": 0.9,
+                    },
+                    "latest": {
+                        "line": "受让平手/半球",
+                        "home_water": 0.9,
+                        "away_water": 0.9,
+                    },
+                    "close": {
+                        "line": "受让平手/半球",
+                        "home_water": close_water,
+                        "away_water": close_water,
+                    },
+                }
+            ]
+        },
+    }
+
+
+def test_market_selection_last_fetch_version_and_orphan(tmp_path: Path) -> None:
+    """票 04 选轨语义等价钉死(与 latest_bronze_rows 口径全同):
+
+    - 后行胜出按**文件序**非 fetched_at(追加行 fetched_at 更早仍胜出);
+    - 旧 parser_version 行不可见;
+    - 孤儿 sid(无 fixture)落 _unknown 分区、kickoff None、报告计数。"""
+    from datetime import UTC, datetime
+
+    store = _build_corpus(tmp_path)
+    good = srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET]
+    early = datetime(2025, 9, 1, 12, 0, tzinfo=UTC).isoformat()  # 早于采集行
+    try:
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ASIANODDS_DATASET,
+            [
+                # 91001:更早 fetched_at、更晚文件序 → 胜出(单书替两盘)
+                _asian_envelope("91001", early, good, 1.5),
+                # 91002:版本不匹配 → 不可见(原两盘保留)
+                _asian_envelope("91002", early, f"{good}-bogus", 1.5),
+                # 孤儿场:无 fixture → kickoff None
+                _asian_envelope("99999", early, good, 1.5),
+            ],
+        )
+        report = srct_market.build_market_quotes(store)
+    finally:
+        store.close()
+    rows = _read_table(store, srct_market.MARKET_DATASET)
+    ah = [r for r in rows if r["market"] == "ah"]
+    sid1 = [r for r in ah if r["sid"] == "91001"]
+    assert len(sid1) == 1  # 新单书替旧两盘=后行胜出
+    assert sid1[0]["close_home_water"] == 1.5
+    sid2 = [r for r in ah if r["sid"] == "91002"]
+    assert len(sid2) == 2  # bogus 版本不可见,原两盘在
+    assert {r["multi"]: r["close_home_water"] for r in sid2} == {
+        "盘1": 0.80,
+        "盘2": 1.20,
+    }
+    orphan = [r for r in ah if r["sid"] == "99999"]
+    assert len(orphan) == 1
+    assert orphan[0]["kickoff"] is None
+    orphan_part = next(
+        p
+        for p in (store.root / "silver" / "srct" / "market_quote").glob("**/*.parquet")
+        if "_unknown" in str(p)
+    )
+    assert pq.read_table(orphan_part).num_rows >= 1  # 孤儿落 _unknown 分区
+    assert report.orphan_sids == 1
+
+
 def test_cli_srct_market_payload(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

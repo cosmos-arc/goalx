@@ -304,6 +304,41 @@ def iter_bronze_envelopes_for_sids(
             yield row
 
 
+def iter_latest_bronze_envelopes(
+    store: CorpusStore,
+    provider: str,
+    dataset: str,
+    version: str,
+) -> Iterator[dict[str, object]]:
+    """
+    选轨信封流（latest_bronze_rows 的零物化版，gold-rebuild 内存收口票 04）。
+
+    两遍法：pass1=latest_bronze_ledger（sid→选中行号，前缀扫描）；pass2=
+    流式过 bronze，行号命中账本才 json.loads 并 yield。选轨口径与
+    latest_bronze_rows 精确全同（指定 parser_version、后行胜出）；内存=
+    账本 + 单信封，与语料总量无关——GB 级载荷选轨不再整表装 Python dict
+    （旧路 ~3.2GB 实录）。emit 序由调用方支配（本迭代器按文件序 yield）。
+    """
+    ledger = latest_bronze_ledger(store, provider, dataset, version)
+    for lineno, line in enumerate(store.iter_bronze_lines(provider, dataset)):
+        matched = _ENVELOPE_PREFIX_RE.match(line)
+        if matched is not None:
+            if (
+                matched.group("provider") == provider
+                and matched.group("dataset") == dataset
+                and matched.group("version") == version
+                and ledger.get(matched.group("sid")) == lineno
+            ):
+                yield json.loads(line)
+            continue
+        row = json.loads(line)  # 慢路径：键序/格式漂移行
+        if (
+            row.get("parser_version") == version
+            and ledger.get(str(row.get("sid"))) == lineno
+        ):
+            yield row
+
+
 def bronze_envelopes_for_sid(
     store: CorpusStore, provider: str, dataset: str, version: str, sid: str
 ) -> list[dict[str, object]]:

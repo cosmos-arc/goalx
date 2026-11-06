@@ -758,6 +758,34 @@ def test_gold_rebuild_low_headroom_defer_releases_budget(
     store.close()
     monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 1 * 1024**3)
     assert "deferred" in tasks_mod.gold_rebuild(settings=settings)
+
+
+def test_gold_rebuild_child_lost_defers(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 04 段级进程隔离：子进程硬死（OOM 等）→ BrokenProcessPool →
+    deferred 让位明日自愈，不硬闯 Crashed；market 段成果保留入账。"""
+    from concurrent.futures.process import BrokenProcessPool
+
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
+
+    store, settings, _report = built
+    store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
+    real_run = tasks_mod._run_segment_in_child
+
+    def boom(
+        func: object, settings: object
+    ) -> object:  # pragma: no cover - 分支由 raise 覆盖
+        if func is tasks_mod._gold_rebuild_gold_worker:
+            raise BrokenProcessPool("child lost")
+        return real_run(func, settings)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tasks_mod, "_run_segment_in_child", boom)
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_segment_child_lost_gold:")
+    assert "market" in payload  # market 段成果保留(完整单元)
     probe = CorpusStore(settings.corpus_root)
     try:
         row = (
