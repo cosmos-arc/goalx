@@ -16,6 +16,7 @@
     "e2e": "playwright test",
     "e2e:loop": "playwright test -c playwright.loop.config.ts",
     "e2e:corpus": "playwright test -c playwright.corpus.config.ts",
+    "e2e:guide": "playwright test -c playwright.guide.config.ts",
     "gen:api": "bash scripts/gen-api.sh"
   },
   "dependencies": {
