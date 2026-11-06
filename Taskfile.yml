@@ -177,6 +177,12 @@ tasks:
       - bun run e2e:corpus {{.CLI_ARGS}}
     dir: apps/web
 
+  web-guide-shots:
+    desc: 使用手册截图重拍(serve 栈真实数据页→docs/user-guide/, v1rel 票 11)
+    cmds:
+      - bun run e2e:guide {{.CLI_ARGS}}
+    dir: apps/web
+
   check-web:
     desc: Everything the web app must pass
     cmds:
