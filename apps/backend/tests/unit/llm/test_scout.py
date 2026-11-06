@@ -120,6 +120,10 @@ def test_parse_probs_variants() -> None:
         parse_probs('{"h": 0.25, "d": 0.25, "a": 0.25}') is not None
     )  # 和=0.75 容忍归一
     assert parse_probs('{"h": 0.1, "d": 0.1, "a": 0.1}') is None  # 和=0.3 超容忍
+    # 票 03(c)：NaN 字符串可 float() 成功且比较恒 False 穿透范围检查——
+    # 非有限数整条拒绝,异常输出不进主链
+    assert parse_probs('{"h": "NaN", "d": 0.3, "a": 0.3}') is None
+    assert parse_probs('{"h": 0.5, "d": "Infinity", "a": 0.3}') is None
 
 
 def test_scout_fixture_inserts_forecast(

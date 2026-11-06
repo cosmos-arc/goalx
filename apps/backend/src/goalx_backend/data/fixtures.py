@@ -311,6 +311,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     return row_id
 
 
+def latest_observation_time(conn: sqlite3.Connection) -> str | None:
+    """最新原始观测时刻（无行 None）——采集活性读数（晨检消费，ADR-0008）。"""
+    row = conn.execute(
+        "SELECT MAX(observed_at) AS m FROM quote_observations"
+    ).fetchone()
+    return None if row is None or row["m"] is None else str(row["m"])
+
+
 def record_had_confirmation(
     conn: sqlite3.Connection, fixture_id: int, observed_at: str, observation_id: int
 ) -> None:

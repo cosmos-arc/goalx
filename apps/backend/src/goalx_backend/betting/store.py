@@ -844,7 +844,12 @@ def _slip_aggregates() -> str:
     """
     return """
         (SELECT COUNT(*) FROM bets b WHERE b.slip_id = s.id) AS bet_count,
-        (SELECT COALESCE(SUM(b.stake), 0) FROM bets b WHERE b.slip_id = s.id)
+        -- 票 03(a)：票金按有效执行金额聚合——live 回录 actual_stake 优先
+        -- （缺失回退建议金额），paper 恒建议金额；注级 stake 原始建议快照保留
+        (SELECT COALESCE(SUM(CASE WHEN b.mode = 'live'
+                                  AND b.actual_stake IS NOT NULL
+                             THEN b.actual_stake ELSE b.stake END), 0)
+         FROM bets b WHERE b.slip_id = s.id)
         AS stake_total,
         (SELECT COALESCE(SUM(b.profit), 0) FROM bets b
          WHERE b.slip_id = s.id AND b.status != 'open') AS profit_total,

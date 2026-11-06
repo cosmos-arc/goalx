@@ -123,6 +123,10 @@ def test_record_purchase_actual_terms_flow(db: sqlite3.Connection, demo) -> None
     settled_view = {b.bet_id: b for b in bt_store.settled_purchased_bets(db)}[bet]
     assert settled_view.stake == 12.0  # 验证口径取实际条款
     assert settled_view.legs[0].locked_odds == 1.9
+    # 票 03(a)：票级票金按有效执行金额聚合——三面一致（票金 12 = 流水
+    # −12 = 结算 12×1.9）；修复前 stake_total 仍显建议金额 ¥10
+    slip_row = bt_store.get_slip(db, row["slip_id"])
+    assert slip_row["stake_total"] == pytest.approx(12.0)
 
 
 def test_record_purchase_rejects_unknown_actual_leg(

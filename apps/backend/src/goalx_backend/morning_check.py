@@ -55,6 +55,10 @@ _CORPUS_FRESH_HOURS = 36
 _GOLD_FRESH_HOURS = 36
 _GOLD_STALE_HOURS = 60
 _GOALS4_STALE_DAYS = 7
+# 票 03(d) 影子面窗口：daily-capture 日频定拍——零样本判"采集在拍而影子
+# 断线"的证据窗 2 日；有拍后最新业务日落后超 2 个销售日=采样断流
+_SHADOW_EXPECTED_WINDOW_DAYS = 2
+_SHADOW_MAX_LAG_DAYS = 2
 _SERVE_LOG_TAIL_BYTES = 200_000
 _SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
 # 票 05 等源T：临界=开球 ≤2h 仍未链（视界=补缺 GAP_HORIZON 同源）
@@ -268,27 +272,50 @@ def check_bets(conn: sqlite3.Connection) -> CheckItem:
     return CheckItem("bets", OK, f"累计 {bets_store.bets_total(conn)} 注")
 
 
-def check_freshness_shadow(conn: sqlite3.Connection) -> CheckItem:
+def check_freshness_shadow(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> CheckItem:
     """
-    项 14 新鲜度双口径影子读数（票 08 观察项：只报数不判红）。
+    项 14 新鲜度双口径影子读数（票 08 观察项；票 03(d) 口径纠正）。
 
     规则口径=300s 调盘龄（现行 stale_source）；观测口径=同 300s 观测龄
-    （最尖对照）。读最新已拍业务日的双口径新鲜覆盖与分歧计数——分歧=
-    规则判旧而观测判新（"价久未变但刚确认过"）；覆盖分母=可比行（两钟
-    都可算）。未拍显示未拍不硬判（daily-wrap 落拍；读数时点与票 09
-    预注册检查点对齐，11-13 首读）。
+    （最尖对照）。拍点挂 daily-capture 定拍（10:00/12:30/16:30/19:00，
+    flows.py）——非 daily-wrap。无样本=「未开始积累/未验收」，不绿冒充
+    测量健康：采集侧 2 日内有证据而影子零样本、或最新拍落后超两个销售
+    日 = DEGRADED；详情恒带最新采样日期（防"曾经有一条便长期正常"）。
     """
+    resolved = now or datetime.now(UTC)
     latest = quote_evidence.latest_freshness_shadow_date(conn)
     if latest is None:
-        return CheckItem("freshness_shadow", OK, "未拍（daily-wrap 首跑后出现）")
+        recent_capture = fx_store.latest_observation_time(conn)
+        capturing = (
+            recent_capture is not None
+            and recent_capture
+            >= (resolved - timedelta(days=_SHADOW_EXPECTED_WINDOW_DAYS)).isoformat()
+        )
+        return CheckItem(
+            "freshness_shadow",
+            DEGRADED if capturing else OK,
+            "未开始积累/未验收（拍点=daily-capture 10:00/12:30/16:30/19:00；"
+            + (
+                f"采集侧最新证据 {recent_capture}，影子零样本=测量断线"
+                if capturing
+                else "采集侧近期亦无证据"
+            )
+            + "）",
+        )
     summary = quote_evidence.freshness_shadow_summary(conn, latest)
     if summary is None:
         return CheckItem("freshness_shadow", OK, f"{latest} 未拍")
     comparable = summary["n_comparable"]
+    today = fx_store.beijing_business_date(resolved)
+    lag_days = (datetime.fromisoformat(today) - datetime.fromisoformat(latest)).days
+    stale = lag_days > _SHADOW_MAX_LAG_DAYS
     return CheckItem(
         "freshness_shadow",
-        OK,
-        f"{latest} 规则新鲜 {summary['rule_fresh']}/{comparable}"
+        DEGRADED if stale else OK,
+        (f"采样断流：最新拍 {latest} 落后 {lag_days} 天；" if stale else "")
+        + f"{latest} 规则新鲜 {summary['rule_fresh']}/{comparable}"
         + f" · 观测新鲜 {summary['observed_fresh']}/{comparable}"
         + f" · 分歧(规则旧/观测新) {summary['divergent_rule_stale_observed_fresh']}"
         + f" · 已拍 {summary['n']}",
@@ -422,7 +449,7 @@ def run_morning_check(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
                 check_bets(conn),
-                check_freshness_shadow(conn),
+                check_freshness_shadow(conn, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,
