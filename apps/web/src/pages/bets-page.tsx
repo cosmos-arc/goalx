@@ -716,7 +716,7 @@ export function BetsPage() {
 											type="button"
 											aria-label={`录入 ${fixture.match_code}`}
 											className="ml-auto rounded-md border border-border px-2 py-0.5 text-xs transition-colors hover:bg-muted"
-											onClick={() => setDrawForm({ ...drawForm, fixtureId: String(fixture.fixture_id) })}
+											onClick={() => setDrawForm({ ...EMPTY_DRAW_FORM, fixtureId: String(fixture.fixture_id) })}
 										>
 											录入
 										</button>

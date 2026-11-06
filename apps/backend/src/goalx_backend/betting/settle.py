@@ -284,11 +284,14 @@ def preview_draw_result_change(
         stake, leg_specs = _effective_terms(bet)
         if not any(spec.fixture_id in overlaid for spec in leg_specs):
             continue
-        facts = {
-            fid: overlaid[fid]
-            for fid in (spec.fixture_id for spec in leg_specs)
-            if fid in overlaid
-        }
+        leg_fids = {spec.fixture_id for spec in leg_specs}
+        facts = {fid: overlaid[fid] for fid in leg_fids if fid in overlaid}
+        # 投影域 = 注的全部腿 fixture（票 A1）：payload 外的腿用现有事实补齐，
+        # 仍缺事实的腿保持 awaiting——否则多腿更正预览恒报 open，冲正绕过审批门。
+        for fid, row in rs_store.draw_results_for_fixtures(
+            conn, sorted(leg_fids - overlaid.keys())
+        ).items():
+            facts[fid] = _result_facts(row)
         projected = settle_fixed_bet(stake, leg_specs, facts)
         settled_now = bet["status"] != "open"
         affected.append(

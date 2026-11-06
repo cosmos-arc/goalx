@@ -317,6 +317,10 @@ async def build_target_plan(payload: TargetPlanPayload, db: DbDep) -> TargetPlan
     if payload.market_code not in {"ttt14", "pick9"}:
         # 同搏冷护栏：一场一选语义（pool-mapping-goals4/02）
         raise HTTPException(422, detail="生成器未接该玩法（一场一选语义）")
+    if payload.market_code == "pick9" and payload.risk == "steady":
+        # 任9 稳档保留 14 全选而奖金只看 9：est_odds 多除 ~5 个份额（≈5 个
+        # 数量级）。人裁决（iterate-20261106 票 A10）：直接拒绝，不做正确估算。
+        raise HTTPException(422, detail="任9 不支持稳档（14 全选与任9 奖金口径错配）")
     pool_period_id = pool_store.pool_period_id(
         db, payload.market_code, payload.period_no
     )
