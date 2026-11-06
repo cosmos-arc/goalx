@@ -48,7 +48,7 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 | deployment | cron | 内容 | 成本 |
 |---|---|---|---|
 | guardian-sync | `40 9 * * *` | 卫报新闻语料（500 请求/日预算，断点续跑） | 免费 |
-| pool-snapshot | `20 10,16,22 * * *` | 彩池期次/对阵/官方上期彩果（2026-10 起官方源） | 0 |
+| pool-snapshot | `20 10,16,22 * * *` | 彩池期次/对阵/官方上期彩果（2026-09 起官方源） | 0 |
 | srct-night | `0 1 * * *` | 源T 夜间批量回填推进（预算/熔断/断点续传，摘要落语料台账） | 语料请求预算 |
 | official-reconcile | `30 8 * * *` | 赛果日终审计（双参照源，不落事实；pending_manual 告警） | 0 |
 | understat-sync | `20 9 * * *` | Understat xG 特征（五大当前季） | 0 |
@@ -63,7 +63,7 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 
 全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `schedules.py`（组合任务）或 `datasets.py`（注册表任务）的 cron。
 
-**M3 degraded 语义**：daily-wrap 内 M3 评测是独立异常边界——报告读 corpus 追加窗口可撞并发读 EOFError（写完重读正常，非永久损坏），降级只标记 `m3.degraded` 进返回体，不拖其后的冻结对账/CLV/账本回填/账务核查；**失败不得记成通过**。freshness_shadow 同款边界（挂采集流后拍摄，影子失败不拖采集）。
+**M3 degraded 语义**：daily-wrap 内 M3 评测是独立异常边界——报告读 corpus 追加窗口可撞并发读 EOFError（写完重读正常，非永久损坏），降级只标记 `m3.degraded` 进返回体，不拖其后的冻结对账/CLV/账本回填/账务核查；**失败不得记成通过**。freshness_shadow 同款边界（挂采集流后拍快照，影子失败不拖采集）。
 
 ## 3. 手工 CLI 命令
 
@@ -117,7 +117,7 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 | sporttery calculator/uniform 族 | 竞彩报价/销售状态/单固 + 赛果落事实主链（官方 void 兜底） | `sporttery_calculator_url` 等 | 常规自动 |
 | **源T 六端点**（语料主链） | 国际书商赔率轨迹/赛果/xG/阵容：夜间批量回填+当期采集+silver 物化+gold；欧赔共识与 CLV 收盘锚（cid177）全走此链 | 语料树 `GOALX_CORPUS_ROOT`（repo 外 `~/goalx-data/`） | srct-night/srct-shift/srct-remat/gold-rebuild 四项自动 |
 | 官方开奖 | 唯一事实源 | — | UI/API 人工录入，更正必带原因 |
-| 体彩官方（传统足彩） | 彩池期次/对阵/上期彩果（2026-10 起官方源） | — | 每日三次快照，自动 |
+| 体彩官方（传统足彩） | 彩池期次/对阵/上期彩果（2026-09 起官方源） | — | 每日三次快照，自动 |
 | 官方彩池销量/滚存 | 无自动源 | — | AI 代采（见 §8） |
 | 卫报 open platform | 新闻语料（football 段 ~20 万篇） | `guardian_api_key`（免费 500 请求/日） | 每日 09:40 快照 |
 | Understat | xG 特征（五大当前季） | — | 每日 09:20 快照 |

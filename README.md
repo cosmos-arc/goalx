@@ -77,6 +77,8 @@ Taskfile.yml     # go-task 任务入口（全部开发命令经 task）
 能力边界以 [docs/plans/capability-registry.md](docs/plans/capability-registry.md) 为单一认知面。
 `.scratch/`（gitignored）是本地工作记忆：进行中的票、日志与探针数据，克隆不含，以 docs/plans 为准。
 
+指标口径以 [docs/plans/goalx-quant/glossary.md](docs/plans/goalx-quant/glossary.md) 正式版词典为准（页面内另有 tooltip 词典）；结算与更正口径（单关无效退款、串关无效腿按 1、更正必带原因原子重算+冲正）见 RUNBOOK §5 与 CONTEXT.md 词条。
+
 ## 当前状态（V1，2026-11-06）
 
 V1 功能范围已冻结（冻结矩阵见 capability-registry 与 USER-GUIDE §2）：HAD 今日/研究/单关/串关/纸面锁定结算复盘 = 正式核心；前瞻验证与价格测量 = 正式测量工具；非 HAD = 研究入口；彩池 = 研究构票；LLM/融合 = 辅助参考。live 回录 = 赛前建建议 + 赛后人工回录，不开自动真实执行。经济性判读（≥30 销售日价格实验）独立于软件验收，另线按预注册协议推进。

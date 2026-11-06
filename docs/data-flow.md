@@ -20,8 +20,7 @@ flowchart LR
 
     subgraph 采集与生成["采集与生成（llm / data.ingest / modelling）"]
         C1[jingcai 快照解析]
-        C2[ srct 夜间回填/当期采集
-/增量物化/gold]
+        C2[ srct 夜间批量回填/当期采集\n/增量物化/gold]
         C3[fdhist/understat/clubelo 导入]
         C4[彩池同步 官方化]
         C5[赛果同步 uniform]
@@ -74,7 +73,7 @@ flowchart LR
 | 1 | sporttery 官方 | 竞彩在售 JSON（五玩法）+ calculator | `data/ingest/sporttery.py` | fixtures/match_codes/odds_snapshots(purpose=live)/sale_statuses + quote_observations | 观测 raw_sha256 + 业务唯一键 | 解析失败抛错（daily-capture 红） |
 | 2 | 官方 uniform 族 | 赛果/彩池开奖 | `data/ingest/results.py` | draw_results(+revisions)/draw_sync_runs | 业务键 upsert；更正走 revision 留痕 | pending_manual 人工清单 |
 | 3 | **源T 六端点**（语料主链） | 轨迹/赛果/xG/阵容页 | `data/ingest/srct_*` + CorpusStore | `~/goalx-data/` raw→silver→gold；运行面只读桥（欧赔共识、CLV 收盘锚 cid177、今日页 EU 面） | 夜间台账 sha 索引 + 快照键幂等 + remat 水位 | 熔断/断点续传；护栏命中全量兜底 |
-| 4 | 体彩官方（传统足彩） | 期次页 | `data/ingest/zucai.py`（2026-10 起官方源） | pool_periods/pool_matches/pool_sync_runs | 期次+对阵唯一键 | 502/告警 |
+| 4 | 体彩官方（传统足彩） | 期次页 | `data/ingest/zucai.py`（2026-09 起官方源） | pool_periods/pool_matches/pool_sync_runs | 期次+对阵唯一键 | 502/告警 |
 | 5 | football-data.co.uk | CSV（五大+N1，5 季+） | `data/ingest/fdhist.py` | hist_matches | 导入幂等 | 单文件失败跳过并计数 |
 | 6 | Understat / Clubelo | xG / Elo 页 | `data/ingest/understat.py` 等 | understat_matches / elo_ratings | match_id upsert / (club,valid_from) 区间 | 跳过计数 |
 | 7 | 卫报 open platform | 新闻 JSON | `data/ingest/guardian.py` | 语料树（football 段） | 断点续跑 | 500/日预算尽停 |

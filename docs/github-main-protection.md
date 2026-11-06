@@ -89,7 +89,7 @@ git reset --hard origin/main   # 清理本地验证提交
 gh pr merge <pr> --merge   # 预期: required status checks not met
 ```
 
-## 4. 运行隔离的姊妹面（同票已交付）
+## 4. 运行隔离的姊妹面（同批交付）
 
 - `/healthz` 携带进程运行指纹：`git_sha/git_dirty/config_hash/schema_version`
   （serve 启动时算一次）。
@@ -97,4 +97,4 @@ gh pr merge <pr> --merge   # 预期: required status checks not met
   工作树 dirty 追加 `WORKTREE DIRTY` 亮黄行——**照跑不拒**（人裁决①）。
 - 晨检第 13 项（`goalx morning-check`）读双面：healthz dirty 旗 + 调度日志
   dirty 行，dirty=degraded（黄）。
-- release 目录（完整发布产物）按裁决③拆后续票，本票只做指纹上报。
+- release 目录（完整发布产物）另拆后续工作，此处只记录指纹上报。
