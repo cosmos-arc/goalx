@@ -2,6 +2,8 @@
 
 面向中国大陆足球彩票（竞彩固定赔率 + 传统足彩奖池型）的个人量化投注系统：双线预测（ML + LLM 情报）、价值与成本预估、注额优化、纸面/真金记录与复盘。本文件是领域术语表，代码与文档统一以此为准。
 
+代称约定：`源T`（代码前缀 srct）为赔率轨迹语料主数据源，`源B`（srcb）为已停采的欧指变化备用源；书商以名称或 `cid`（如 cid177）标识，2026-11-06 起允许在 UI 与文档直名展示。
+
 ## Language
 
 ### 赛程
@@ -54,7 +56,7 @@ _Avoid_: 期号（单独使用）
 _Avoid_: Jackpot
 
 **PublicShare**:
-公众注分布。估计值（自建份额投影器，官方十年注数×历史赔率训练，P1/条件触发，见 research/28）与公布值（官方逐奖级注数，事后公布，票 68）是两个来源，分开存储；源B 人气投票已随 2026-09-25 判死弃用，不补外部人气源。
+公众注分布。估计值（自建份额投影器，官方十年注数×历史赔率训练，P1/条件触发，见 research/28）与公布值（官方逐奖级注数，事后公布）是两个来源，分开存储；源B 人气投票已随 2026-09-25 停采弃用，不补外部人气源。
 _Avoid_: 人气（单独使用）
 
 ### 预测
@@ -138,7 +140,7 @@ _Avoid_: 缺数据（口语）、缺口（单独使用）
 _Avoid_: 模糊匹配（指物化层）、join（口语）
 
 **ScheduledDataset**:
-一个定拍数据集的注册声明（`datasets.py` 的 DatasetSpec）：名字、cron、任务函数（实现住所仍是 tasks）、cli 参数、checkpoint 表清单，附形状位——resume（判死面 False：serve 仍注册、恢复清单排除）与 cli（False = 纯 schedule 面或手写 handler 保留）；cli 子命令、Prefect flow、serve deployment 与恢复/判死清单由它推导。任务实现只有一份，cli/flow/api 都是它的 adapter。
+一个定时采集数据集的注册声明（`datasets.py` 的 DatasetSpec）：名字、cron、任务函数（实现住所仍是 tasks）、cli 参数、checkpoint 表清单，附形状位——resume（停用项 False：serve 仍注册、恢复清单排除）与 cli（False = 纯调度任务或手写 handler 保留）；cli 子命令、Prefect flow、serve deployment 与恢复/停用清单由它推导。任务实现只有一份，cli/flow/api 都是它的 adapter。
 _Avoid_: 任务注册（泛指）、定时任务（口语可用，实体一律 ScheduledDataset）
 
 ### 语料

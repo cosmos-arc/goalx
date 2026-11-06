@@ -43,7 +43,7 @@ flowchart LR
     subgraph 交付层
         Q[FastAPI api/]
         R[Web 工作台]
-        S[Prefect 19 deployment\n+ 晨检自动化]
+        S[Prefect 定时调度 19 项\n+ 每日晨检自动化]
     end
     A & T & C & D --> E --> F --> G
     G --> H --> I --> J
@@ -67,17 +67,17 @@ flowchart LR
 | --- | --- | --- |
 | `data/` | 采集与证据 | `ingest/`（sporttery 竞彩、srct 语料链、fdhist/understat/clubelo 历史与特征、results 开奖）；fixtures/odds/results/pool 仓储；`quote_evidence`（报价证据与资格判定）；`today`（今日页聚合+六桶归因）；`mapping`（跨源身份映射，ADR-0012） |
 | `modelling/` | 概率基座 | `dc_model` Dixon-Coles 分池训练、`team_align` 队名对齐、`score_matrix` 10×10 比分矩阵（ADR-0006，had/hhad/ttg/crs 的共同表示）、`forecast` 在售预测 + 哈希存证 |
-| `evaluation/` | 验证 | `backtest` walk-forward 回测（ADR-0007，had-only）、`baseline` PSC/AvgC 分期质检、`haircut` 折价校准、`clv` 收盘对账、`forward_validation` 前瞻验证（票 34：市场 skill 只来自前瞻集合，不读回测）、`metrics`/`validation` |
+| `evaluation/` | 验证 | `backtest` walk-forward 回测（ADR-0007，had-only）、`baseline` PSC/AvgC 分期质检、`haircut` 折价校准、`clv` 收盘对账、`forward_validation` 前瞻验证（市场 skill 只来自前瞻集合，不读回测）、`metrics`/`validation` |
 | `betting/` | 生命周期 | `store`/`bets` 建议与回录、`settle` 结算编排与更正重算、`ledger_audit` 只读旧账核查 |
 | 根级共享 | — | `models.py`（Pydantic 实体）、`migrations.py`（schema 迁移链，V1 冻结于 v41）、`db.py`、`config.py`、`datasets.py`（ScheduledDataset 注册表：cli/flow/deployment/恢复清单一体推导）、`markets.py`（竞彩选项网格，结算与迁移共用）、`odds_math.py`（隐含概率/Shin 去晦/EV）、`settlement.py`（**纯函数结算引擎**：无效腿赔率按 1 等官方规则，无存储依赖；`betting/` 负责编排落库）、`morning_check.py`（晨检十四项）、`run_fingerprint.py`（运行指纹） |
-| 交付层 | — | `api/`（fixtures/bets/results/validation/pool/system 等路由组，契约优先）、`cli.py`（命令注册表推导，`--help` 为准）、`flows.py`（Prefect flow 装配）、`schedules.py`（server+serve 两进程入口，19 面）、`main.py`/`server.py` |
+| 交付层 | — | `api/`（fixtures/bets/results/validation/pool/system 等路由组，契约优先）、`cli.py`（命令注册表推导，`--help` 为准）、`flows.py`（Prefect flow 装配）、`schedules.py`（server+serve 两进程入口）、`main.py`/`server.py` |
 
 Web（`apps/web/`）：TanStack Router 14 个叶路由——总览 `/`、场次 `/fixtures`（+研究页 `$id`）、玩法 `/markets/{had,goals,pool,pool4}`、投注 `/bets`、历史 `/history`、验证 `/validation`、资金 `/bankroll`、词典 `/glossary`、复核 `/review`、设置 `/settings`（`/today`、`/markets` 为重定向）。契约驱动：`contracts/openapi/v1.json` 单一事实源 → `openapi-typescript` 生成 web 类型，CI 校验无漂移。e2e 的 `paper-loop.spec.ts` 就是当前阶段的"可执行用户故事"。
 
 ## 运行形态
 
 - **开发**：`task server`（API）+ `task dev`（web，/api 代理）；数据落 `data/goalx.db`（gitignored）。
-- **连续运行（V1）**：`task serve-schedules` 专用 Prefect server + serve 两进程（单进程临时 server 不跑 scheduler），19 面 deployment（全量 21 − 2 判死），cron 见 [RUNBOOK](RUNBOOK.md) §2；晨检十四项由本机侧自动化 09:05 定拍（非 deployment）。节奏口径冻结于 [run-protocol-v1](plans/goalx-quant/run-protocol-v1.md) §3。**合入 main 后必须重启 serve 栈**（按 PID 直杀全栈再起新栈，重启后复核恰好一棵进程树）。
+- **连续运行（V1）**：`task serve-schedules` 专用 Prefect server + serve 两进程（单进程临时 server 不跑 scheduler），19 项 deployment（全量 21 − 2 项停用），cron 见 [RUNBOOK](RUNBOOK.md) §2；晨检十四项由本机侧自动化 09:05 定时执行（非 deployment）。节奏口径冻结于 [run-protocol-v1](plans/goalx-quant/run-protocol-v1.md) §3。**合入 main 后必须重启 serve 栈**（按 PID 直杀全栈再起新栈，重启后复核恰好一棵进程树）。
 
 ## 决策索引
 

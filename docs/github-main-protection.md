@@ -1,8 +1,8 @@
-# GitHub main 分支服务端门禁（boundary-hardening 票 06）
+# GitHub main 分支服务端门禁
 
-**状态（2026-11-03）**：`main` protected=false、rulesets=0——本地 `no-commit-to-branch`
-hook + CI 只是客户端约束，服务端无强制。本文交付 ruleset 配置与验证步骤；
-**由用户在 gh/网页执行**（人裁决 2026-11-02②，本票不代执行）。
+**状态（2026-11-06）**：`main` 服务端保护尚未配置——本地 `no-commit-to-branch`
+hook + CI 只是客户端约束，服务端无强制。本文是 ruleset 配置模板与验证步骤，
+由 V1 发布收口按 §2 落地执行。
 
 ## 1. 为什么
 
@@ -60,7 +60,7 @@ gh api -X POST repos/cosmos-arc/goalx/rulesets --input /tmp/goalx-ruleset.json
   拼法）：job 带显式 `name:` 时 context=该显示名（ci.yml 的 `ci-gate` job 带
   `name: CI gate` → context `CI gate`）；job 无 name 时 context=job key
   （pr-base-guard.yml 的 `base-must-be-main`）。两处均已对实际 PR
-  check-runs 核过（report-audit-20261104 票 10）。写错 context 表现为
+  check-runs 核过（2026-11-04）。写错 context 表现为
   required check 永不满足——配置后用一个 PR 验证 check 名被正确匹配。
 - ruleset 字段名按 GitHub rulesets REST schema：`pull_request` 规则的参数是
   `dismiss_stale_reviews_on_push`/`required_review_thread_resolution`（非
@@ -89,7 +89,7 @@ git reset --hard origin/main   # 清理本地验证提交
 gh pr merge <pr> --merge   # 预期: required status checks not met
 ```
 
-## 4. 运行隔离的姊妹面（同票已交付）
+## 4. 运行隔离的姊妹面（同批交付）
 
 - `/healthz` 携带进程运行指纹：`git_sha/git_dirty/config_hash/schema_version`
   （serve 启动时算一次）。
@@ -97,4 +97,4 @@ gh pr merge <pr> --merge   # 预期: required status checks not met
   工作树 dirty 追加 `WORKTREE DIRTY` 亮黄行——**照跑不拒**（人裁决①）。
 - 晨检第 13 项（`goalx morning-check`）读双面：healthz dirty 旗 + 调度日志
   dirty 行，dirty=degraded（黄）。
-- release 目录（完整发布产物）按裁决③拆后续票，本票只做指纹上报。
+- release 目录（完整发布产物）另拆后续工作，此处只记录指纹上报。
