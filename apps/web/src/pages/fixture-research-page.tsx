@@ -38,9 +38,13 @@ import { useNow } from "../lib/use-now";
 /** 单书相对共识的偏差高亮阈值（百分点）：|归一隐含 − 共识| ≥ 该值标琥珀。 */
 const BOOK_DEVIATION_PP = 5;
 
+function bookLabel(book: { book: string; name?: string | null }): string {
+	// 优先书商字典名（name_en，2026-11-06 直名展示解禁）；无名/legacy
+	// odds_api 源回退尾段展示（odds_api:<book> → <book>；srct:<space>:<cid> → <cid>）
+	return book.name || bookName(book.book);
+}
+
 function bookName(source: string): string {
-	// odds_api:<book> → <book>；srct:<space>:<cid> → <cid>（源T 书 id 展示，
-	// 掩码名映射待 bookmaker 维度暴露后接）
 	const parts = source.split(":");
 	return parts[parts.length - 1] || source;
 }
@@ -232,7 +236,9 @@ export function FixtureResearchPage() {
 											</TableRow>
 											{(data.books ?? []).map((book) => (
 												<TableRow key={book.book} data-testid="research-book-row">
-													<TableCell className="whitespace-nowrap">{bookName(book.book)}</TableCell>
+													<TableCell className="whitespace-nowrap" title={book.book}>
+														{bookLabel(book)}
+													</TableCell>
 													{SELECTIONS.map((sel) => {
 														const odds = book.odds[sel];
 														const consensusProb = data.consensus?.probability[sel];

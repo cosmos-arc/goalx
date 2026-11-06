@@ -543,7 +543,8 @@ def test_track2_srct_only_candidate_via_corpus(tmp_path, monkeypatch) -> None:
         " odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE, source_order INTEGER)"
     )
     duck_con.execute(
-        "CREATE TABLE bookmaker (bookmaker_id VARCHAR, match_count BIGINT)"
+        "CREATE TABLE bookmaker ("
+        "bookmaker_id VARCHAR, match_count BIGINT, name_en VARCHAR)"
     )
     anchor = quote_evidence.SRCT_PINNACLE_BOOK
     observed = now - timedelta(minutes=10)
@@ -552,7 +553,7 @@ def test_track2_srct_only_candidate_via_corpus(tmp_path, monkeypatch) -> None:
         " ('3001', ?, '1x2', ?, ?, 2.0, 3.5, 3.2, 1)",
         [anchor, observed - timedelta(hours=1), observed],
     )
-    duck_con.execute("INSERT INTO bookmaker VALUES (?, 100)", [anchor])
+    duck_con.execute("INSERT INTO bookmaker VALUES (?, 100, NULL)", [anchor])
 
     @contextlib.contextmanager
     def fake_reader():

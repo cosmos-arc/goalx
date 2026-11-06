@@ -3174,6 +3174,17 @@
               }
             ],
             "title": "Captured At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           }
         },
         "type": "object",
@@ -3182,7 +3193,7 @@
           "odds"
         ],
         "title": "BookQuoteView",
-        "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
+        "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``srct:<space>:<cid>`` 或 legacy\n``odds_api:<book>``）；``name`` 为书商字典显示名（name_en，仅\nsrct 源且字典有名时给，否则前端回退 cid 剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
       },
       "ClvBasisEntry": {
         "properties": {

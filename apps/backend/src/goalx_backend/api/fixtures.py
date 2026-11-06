@@ -280,13 +280,16 @@ class BookQuoteView(BaseModel):
     """
     研究页一行：某欧赔 book 的最新三向报价。
 
-    ``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；
+    ``book`` 为快照 source 原值（``srct:<space>:<cid>`` 或 legacy
+    ``odds_api:<book>``）；``name`` 为书商字典显示名（name_en，仅
+    srct 源且字典有名时给，否则前端回退 cid 剥前缀展示）；
     ``captured_at`` 取该 book 三向中最新的捕获时点。
     """
 
     book: str
     odds: SelectionTriple
     captured_at: str | None = None
+    name: str | None = None
 
 
 class ConsensusView(BaseModel):
@@ -365,6 +368,7 @@ def get_fixture_research(
         quotes = quote_evidence.eu_book_quotes(
             db, fixture_id, duck_con=duck_con, sid=sid
         )
+        book_names = quote_evidence.book_display_names(duck_con, quotes.keys())
         verdict = adjudicate_had_quote(
             db, fixture_id, moment, duck_con=duck_con, sid=sid
         )
@@ -403,6 +407,7 @@ def get_fixture_research(
             book=book,
             odds=SelectionTriple(**{s: sels.get(s, (None,))[0] for s in SELECTIONS}),
             captured_at=max((at for _, at in sels.values()), default=None),
+            name=book_names.get(book),
         )
         for book, sels in sorted(quotes.items())
     ]

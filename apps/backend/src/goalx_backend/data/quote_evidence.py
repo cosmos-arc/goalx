@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple, Protocol
@@ -439,36 +439,63 @@ def _pseudo_rows(
 
 
 # 维度覆盖缓存（票 05 性能）：08:10 全量重建前覆盖数不变，10min TTL
-# 足够新鲜；进程内单线程（API 事件环/拍班子进程各自一份），无锁
+# 足够新鲜；进程内多线程共享（API 线程池/拍班子进程各自一份），无锁——
+# 过期重填走整只 rebond（新实例一次换入），读者要么旧整只要么新整只
 _DIM_TTL_SECONDS = 600.0
 
 
 @dataclass
 class _DimCache:
-    """进程内维度缓存（可变单槽：count 表 + 取数时刻）。"""
+    """进程内维度缓存（整只换入：count/name 表 + 取数时刻）。"""
 
     counts: dict[str, int] = field(default_factory=dict)
+    names: dict[str, str] = field(default_factory=dict)
     at: float = 0.0
 
 
 _dim_cache = _DimCache()
 
 
-def _dim_match_counts(duck_con: DuckCon) -> dict[str, int]:
-    """Bookmaker 维度 book→覆盖数（TTL 缓存；查询异常空表=降级保全量）。"""
+def _dim_tables(duck_con: DuckCon) -> tuple[dict[str, int], dict[str, str]]:
+    """维度表：book→覆盖数与 book→显示名（TTL 缓存；异常降级空表）。"""
+    global _dim_cache  # noqa: PLW0603 整只 rebond：线程池并发读者无锁见整只快照
     now = time.monotonic()
     if _dim_cache.counts and now - _dim_cache.at < _DIM_TTL_SECONDS:
-        return _dim_cache.counts
+        return _dim_cache.counts, _dim_cache.names
     try:
         rows = duck_con.execute(
-            "SELECT bookmaker_id, match_count FROM bookmaker"
+            "SELECT bookmaker_id, match_count, name_en FROM bookmaker"
         ).fetchall()
     except duckdb.Error as exc:
         logger.warning("srct dim ranking degraded: {}", exc)
+        return {}, {}
+    fresh = _DimCache(
+        counts={str(b): int(c) for b, c, _ in rows},
+        names={str(b): str(n) for b, _, n in rows if n},
+        at=now,
+    )
+    _dim_cache = fresh  # 整只 rebond：并发读者见旧整只或新整只，无撕裂
+    return fresh.counts, fresh.names
+
+
+def _dim_match_counts(duck_con: DuckCon) -> dict[str, int]:
+    """Bookmaker 维度 book→覆盖数（书集截断用）。"""
+    return _dim_tables(duck_con)[0]
+
+
+def book_display_names(
+    duck_con: DuckCon | None, sources: Iterable[str]
+) -> dict[str, str]:
+    """
+    书商显示名（bookmaker 字典 name_en；srct: 前缀源才有行）。
+
+    无名（撤采锚留空）/legacy ``odds_api:*`` 源不返回——展示侧回退 cid。
+    2026-11-06 书商名展示解禁后研究页直名显示的唯一出处。
+    """
+    if duck_con is None:  # corpus 缺席降级（reader 派发 None）→ 回退 cid
         return {}
-    _dim_cache.counts = {str(b): int(c) for b, c in rows}
-    _dim_cache.at = now
-    return _dim_cache.counts
+    _, names = _dim_tables(duck_con)
+    return {s: names[s] for s in sources if s in names}
 
 
 def _cap_srct_books(

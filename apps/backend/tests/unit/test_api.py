@@ -332,6 +332,8 @@ def test_fixture_research_books_consensus_and_eligibility(
     pin = next(book for book in body["books"] if book["book"] == "odds_api:pin")
     assert pin["odds"] == {"h": 6.0, "d": 5.0, "a": 1.30}
     assert pin["captured_at"]  # 捕获时点随行
+    # 书商显示名（票 13）：legacy odds_api 源无字典名 → None，前端回退尾段
+    assert all(book["name"] is None for book in body["books"])
     # 共识 = 与列表页同口径（books=3，概率和≈1）；分母 3 <4 → 低置信（票 39）
     assert body["consensus"]["books"] == 3
     assert body["consensus"]["low_confidence"] is True

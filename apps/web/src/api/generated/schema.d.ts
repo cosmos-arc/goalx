@@ -1330,7 +1330,9 @@ export interface components {
          * BookQuoteView
          * @description 研究页一行：某欧赔 book 的最新三向报价。
          *
-         *     ``book`` 为快照 source 原值（``odds_api:<book>``，前端剥前缀展示）；
+         *     ``book`` 为快照 source 原值（``srct:<space>:<cid>`` 或 legacy
+         *     ``odds_api:<book>``）；``name`` 为书商字典显示名（name_en，仅
+         *     srct 源且字典有名时给，否则前端回退 cid 剥前缀展示）；
          *     ``captured_at`` 取该 book 三向中最新的捕获时点。
          */
         BookQuoteView: {
@@ -1339,6 +1341,8 @@ export interface components {
             odds: components["schemas"]["SelectionTriple"];
             /** Captured At */
             captured_at?: string | null;
+            /** Name */
+            name?: string | null;
         };
         /**
          * ClvBasisEntry
