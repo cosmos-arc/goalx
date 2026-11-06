@@ -322,6 +322,44 @@ test("sync panel shows last run, manual list and triggers sync; pending fixtures
 	);
 });
 
+test("pending entry button resets stale form values instead of carrying them over", async () => {
+	const user = userEvent.setup();
+	server.use(
+		http.get("*/api/v1/fixtures/today", () =>
+			HttpResponse.json([
+				{
+					...todayFixture[0],
+					fixture_id: 9,
+					match_code: "周五001",
+					home_team: "C 队",
+					away_team: "D 队",
+					kickoff_utc: new Date(Date.now() - 60 * 60_000).toISOString(),
+				},
+				{
+					...todayFixture[0],
+					fixture_id: 10,
+					match_code: "周五002",
+					home_team: "E 队",
+					away_team: "F 队",
+					kickoff_utc: new Date(Date.now() - 55 * 60_000).toISOString(),
+				},
+			]),
+		),
+		http.get("*/api/v1/bets", () => HttpResponse.json([])),
+	);
+	renderBets();
+
+	// 给 A 场输入 2:1 未导入,点 B 场「录入」——修复前 2:1 残留,再导入即记成 B 的官方赛果(票 A4)
+	await user.click(await screen.findByRole("button", { name: "录入 周五001" }));
+	await user.type(screen.getByTestId("draw-home"), "2");
+	await user.type(screen.getByTestId("draw-away"), "1");
+	await user.click(screen.getByRole("button", { name: "录入 周五002" }));
+	expect(screen.getByTestId("draw-fixture")).toHaveValue("10");
+	// number input 空值断言走 .value（jest-dom 的 toHaveValue 对 number 空值是 null 语义）
+	expect((screen.getByTestId("draw-home") as HTMLInputElement).value).toBe("");
+	expect((screen.getByTestId("draw-away") as HTMLInputElement).value).toBe("");
+});
+
 test("sync trigger surfaces source errors without losing the panel", async () => {
 	const user = userEvent.setup();
 	server.use(

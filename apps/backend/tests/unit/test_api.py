@@ -2029,6 +2029,22 @@ def test_pool_target_plan_risk_tiers_and_units(demo_client: TestClient) -> None:
     assert "不承诺" in bold_body["caliber"]
 
 
+def test_pool_target_plan_rejects_pick9_steady(demo_client: TestClient) -> None:
+    """票 A10：任9 稳档=14 全选而奖金只看 9（est_odds 差 ~5 个数量级）——
+    人裁决直接拒绝错配，不做正确估算；守卫先于期次查找（任一期次号均 422）。"""
+    resp = demo_client.post(
+        "/api/v1/pool/target-plan",
+        json={
+            "period_no": "26999",
+            "market_code": "pick9",
+            "target_amount": 10000,
+            "risk": "steady",
+        },
+    )
+    assert resp.status_code == 422, (resp.status_code, resp.text)
+    assert "任9" in resp.json()["detail"]
+
+
 def test_pool_cold_variants_greedy_and_valuation(demo_client: TestClient) -> None:
     """搏冷生成器（票 pool-v2/02）：缺省基础票、贪心替换、估值口径自洽。"""
     missing = demo_client.post(

@@ -181,6 +181,43 @@ def test_preview_draw_result_change(db: sqlite3.Connection, demo) -> None:
     assert bt_store.get_bet(db, bet)["payout"] == 650.0
 
 
+def test_preview_correction_covers_all_parlay_legs(
+    db: sqlite3.Connection, demo
+) -> None:
+    """票 A1：多腿更正预览的投影域=注的全部腿 fixture——payload 外的腿用
+    现有事实，不得谎报 open 让 −¥60 冲正绕过操作者审批门。"""
+    single_ok, parlay_ok, _ = ids(demo)
+    bet = create_bet_with_legs(
+        db,
+        BetDraft(
+            mode="paper",
+            stake=10,
+            legs=[_had_leg(single_ok, odds=2.0), _had_leg(parlay_ok, odds=3.0)],
+        ),  # type: ignore[arg-type]
+    )
+    record_purchase(db, [bet])
+    import_draw_results(
+        db,
+        [
+            DrawResultInput(fixture_id=single_ok, home_goals=2, away_goals=0),
+            DrawResultInput(fixture_id=parlay_ok, home_goals=3, away_goals=1),
+        ],
+    )
+    run_settlement(db)
+    from goalx_backend.betting import store as bt_store
+
+    assert bt_store.get_bet(db, bet)["payout"] == pytest.approx(60.0)  # 10×2×3
+
+    preview = preview_draw_result_change(
+        db,
+        [DrawResultInput(fixture_id=single_ok, home_goals=0, away_goals=1)],
+    )
+    affected = preview.affected_bets[0]
+    assert affected.status_current == "won"
+    assert affected.status_projected == "lost"  # 修复前=open（另一腿事实缺失）
+    assert affected.delta_payout == -60.0
+
+
 def test_seed_demo_refuses_non_demo_db(db: sqlite3.Connection, demo) -> None:
     """种子只写隔离库：已有非 demo 竞彩数据时拒绝（不伪造实采）。"""
     from goalx_backend.data.fixtures import CST, beijing_business_date
