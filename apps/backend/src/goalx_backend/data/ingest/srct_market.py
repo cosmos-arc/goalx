@@ -255,23 +255,23 @@ def _quote_row(
     return row
 
 
-def _select_latest_payloads(
-    con: duckdb.DuckDBPyConnection, store: CorpusStore, dataset: str
-) -> str:
+def _stage_latest_books(
+    con: duckdb.DuckDBPyConnection,
+    store: CorpusStore,
+    market: str,
+    dataset: str,
+) -> None:
     """
     选轨暂存:每 sid 取 parser_version 匹配的**最后一行**(后行胜出)的 books。
 
     纯引擎路径(read_json 行号选轨)在 duckdb 1.5.5 不可表达——JSON reader
     无 file_row_number 参数(Binder 实测),文件序语义 Python 侧唯一真源;
     故落地票 01 候选 3 混合形:silver.iter_latest_bronze_envelopes 两遍法
-    选轨(账本+流式载荷,内存有界)→ books 批量入引擎临时表(超限自动
-    spill),emit 序由引擎 ORDER BY 保证。缺 bronze 文件 → 空表(合法初生态)。
+    选轨(账本+流式载荷,内存有界)→ books 批量入 temp.staged(超限自动
+    spill)。缺 bronze 文件 → 零行暂存(合法初生态)。
     """
-    table = f"sel_{dataset}"  # 数据集名=模块常量,非用户输入
-    cols = "(sid VARCHAR, fetched_at VARCHAR, books VARCHAR)"
-    con.execute(f"CREATE OR REPLACE TEMP TABLE {table} {cols}")
-    insert = f"INSERT INTO {table} VALUES (?, ?, ?)"  # noqa: S608
-    batch: list[tuple[str, str, str | None]] = []
+    insert = "INSERT INTO temp.staged VALUES (?, ?, ?, ?)"
+    batch: list[tuple[str, str, str, str | None]] = []
     for envelope in silver.iter_latest_bronze_envelopes(
         store, srct.SRCT_PROVIDER, dataset, srct.BRONZE_VERSIONS[dataset]
     ):
@@ -279,6 +279,7 @@ def _select_latest_payloads(
         books = payload.get("books") if isinstance(payload, dict) else None
         batch.append(
             (
+                market,
                 str(envelope["sid"]),
                 str(envelope.get("fetched_at")),
                 json.dumps(books, ensure_ascii=False) if books is not None else None,
@@ -289,7 +290,6 @@ def _select_latest_payloads(
             batch.clear()
     if batch:
         con.executemany(insert, batch)
-    return table
 
 
 def build_market_quotes(
@@ -298,12 +298,15 @@ def build_market_quotes(
     """
     重物化 silver market_quote（幂等；asian_odds+over_down bronze 当前版本）。
 
-    选轨引擎化（gold-rebuild 内存收口票 04）：旧版 latest_bronze_rows 全表
-    装 Python dict（2026-11-06 实测 ~3.2GB，随语料无界增长）改为 duckdb
-    read_json 行序选轨——超 memory_limit 自动外排 spill（duck_limits 同
-    口径），选轨态落盘不落 RAM。emit 仍走 _quote_row + StreamingPartitions
-    （writer 不换 → 输出字节级一致，零 digest 漂移）；孤场排序垫后（同
-    srct_odds 排序契约：kickoff 升序、孤儿末块、AH 先 OU 后、books 数组序）。
+    选轨有界化（gold-rebuild 内存收口票 04）：旧版 latest_bronze_rows 全表
+    装 Python dict（2026-11-06 实测 ~3.2GB，随语料无界增长）改为两遍法选轨
+    （账本+流式载荷）+ books 入 duckdb 会话暂存表 temp.staged（超
+    memory_limit 自动外排 spill，duck_limits 同口径）。emit 仍走 _quote_row
+    + StreamingPartitions（writer 不换 → 输出字节级一致，零 digest 漂移）；
+    emit 序由引擎 ORDER BY 保证（kickoff 升序、孤儿末块、AH 先 OU 后、
+    books 数组序——同 srct_odds 排序契约）。temp.* 前缀=会话级暂存表，
+    非本仓归属表（ADR-0008 归属闸的跨库/非归属域引用类别，同 goalx.*），
+    表名一律字面量。
     """
     report = SilverMarketReport(built_at=utc_now_iso())
     meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
@@ -312,21 +315,17 @@ def build_market_quotes(
     con = duckdb.connect()
     try:
         apply_mem_limits(con, store.root / "tmp")
-        tables = {
-            market: _select_latest_payloads(con, store, dataset)
-            for market, dataset in (
-                (MARKET_AH, srct.ASIANODDS_DATASET),
-                (MARKET_OU, srct.OVERDOWN_DATASET),
-            )
+        cols = "(market VARCHAR, sid VARCHAR, fetched_at VARCHAR, books VARCHAR)"
+        con.execute(f"CREATE OR REPLACE TEMP TABLE staged {cols}")
+        for market, dataset in (
+            (MARKET_AH, srct.ASIANODDS_DATASET),
+            (MARKET_OU, srct.OVERDOWN_DATASET),
+        ):
+            _stage_latest_books(con, store, market, dataset)
+        selected_sids = {
+            str(r[0])
+            for r in con.execute("SELECT DISTINCT sid FROM temp.staged").fetchall()
         }
-        selected_sids: set[str] = set()
-        for table in tables.values():
-            selected_sids.update(
-                str(r[0])
-                for r in con.execute(
-                    f"SELECT DISTINCT sid FROM {table}"  # noqa: S608
-                ).fetchall()
-            )
         kickoff_of = {sid: _kickoff_ms(meta, sid)[0] for sid in selected_sids}
         sids = sorted(
             kickoff_of,
@@ -337,25 +336,19 @@ def build_market_quotes(
             ),
         )
         report.orphan_sids = sum(1 for k in kickoff_of.values() if k is None)
-        # emit 序表:Python 侧排序契约原样下推(ord=emit 序;行内 AH→OU 由
-        # UNION ALL 侧 mkt 列保证)
+        # emit 序表:Python 侧排序契约原样下推(ord=emit 序)
         con.execute("CREATE OR REPLACE TEMP TABLE emit_order(ord BIGINT, sid VARCHAR)")
         if sids:
             con.executemany(
-                "INSERT INTO emit_order VALUES (?, ?)", list(enumerate(sids))
+                "INSERT INTO temp.emit_order VALUES (?, ?)", list(enumerate(sids))
             )
+        # 行内 AH 先 OU 后:'ah'<'ou' 字典序即契约序
         result = con.execute(
-            f"""
+            """
             SELECT o.ord, o.sid, t.market, t.fetched_at, t.books
-            FROM emit_order o JOIN (
-                SELECT sid, '{MARKET_AH}' AS market, fetched_at, books,
-                       0 AS mkt FROM {tables[MARKET_AH]}
-                UNION ALL
-                SELECT sid, '{MARKET_OU}' AS market, fetched_at, books,
-                       1 AS mkt FROM {tables[MARKET_OU]}
-            ) t USING (sid)
-            ORDER BY o.ord, t.mkt
-            """  # noqa: S608 表名/市场标记=模块常量
+            FROM temp.emit_order o JOIN temp.staged t USING (sid)
+            ORDER BY o.ord, t.market
+            """
         )
         seen_books: set[tuple[str, str]] = set()
         while batch := result.fetchmany(2000):
