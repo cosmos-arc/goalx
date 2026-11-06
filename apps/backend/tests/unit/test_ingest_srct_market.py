@@ -569,3 +569,26 @@ def test_bookmaker_absorbs_market_identities(tmp_path: Path) -> None:
     assert anchor["match_count"] == 3  # 三场各计一次（盘2 去重）
     assert by_id["srct:ou:1"]["name_zh_masked"] == "书商1"
     assert report.rows == 2  # 空 1x2 语料：仅两多庄条目
+
+
+def test_market_selection_ignores_null_sid_row(tmp_path: Path) -> None:
+    """票 11 账本口径钉死（correctness A，2026-11-06 裁决）：sid=null 的
+    bronze 行零效——collector 恒写 str sid，仅手改 bronze 可达；旧
+    latest_bronze_rows 对该输入会以 "None" 键收编，新路按账本跳过。"""
+    from datetime import UTC, datetime
+
+    store = _build_corpus(tmp_path)
+    good = srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET]
+    early = datetime(2025, 9, 1, 12, 0, tzinfo=UTC).isoformat()
+    try:
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ASIANODDS_DATASET,
+            [_asian_envelope(None, early, good, 1.5)],  # type: ignore[arg-type]
+        )
+        report = srct_market.build_market_quotes(store)
+    finally:
+        store.close()
+    assert (report.quotes_ah, report.quotes_ou) == (6, 3)  # 与无干扰行同
+    rows = _read_table(store, srct_market.MARKET_DATASET)
+    assert all(r["sid"] in SIDS for r in rows)  # 无 "None" 键行泄漏

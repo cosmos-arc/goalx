@@ -515,7 +515,13 @@ def _segment_in_child_or_defer[T](
     tag: str,
     payload: dict[str, object],
 ) -> tuple[T | None, dict[str, object] | None]:
-    """段子进程执行；硬死（OOM 等）→（None, deferred 报告）让位明日自愈。"""
+    """
+    段子进程执行；硬死（OOM 等）→（None, deferred 报告）让位明日自愈。
+
+    只捕 BrokenProcessPool：spawn 基建本身失败（executor 信号量 OSError
+    等）不转 deferred 而硬闯 Crashed——环境级故障需人眼，静默让位会把
+    每日定拍变成永久跳过（correctness 2026-11-06 裁决=fail-loud）。
+    """
     try:
         return _run_segment_in_child(func, settings), None
     except BrokenProcessPool as exc:

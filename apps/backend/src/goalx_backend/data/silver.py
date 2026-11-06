@@ -314,9 +314,12 @@ def iter_latest_bronze_envelopes(
     选轨信封流（latest_bronze_rows 的零物化版，gold-rebuild 内存收口票 04）。
 
     两遍法：pass1=latest_bronze_ledger（sid→选中行号）；pass2=iter_selected_rows
-    （命中行号才 json.loads）。选轨口径与 latest_bronze_rows 精确全同（指定
-    parser_version、后行胜出）；内存=账本+单信封，与语料总量无关——GB 级
-    载荷选轨不再整表装 Python dict（旧路 ~3.2GB 实录）。
+    （命中行号才 json.loads）。选轨口径与 latest_bronze_rows 全同（指定
+    parser_version、后行胜出），唯一分叉=sid 为 null 的行按账本口径跳过
+    （票 11 语义；latest_bronze_rows 会以 "None" 键收编——collector 恒写
+    str sid，仅手改 bronze 可达，correctness 2026-11-06 裁决=账本口径）；
+    内存=账本+单信封，与语料总量无关——GB 级载荷选轨不再整表装 Python
+    dict（旧路 ~3.2GB 实录）。
     """
     ledger = latest_bronze_ledger(store, provider, dataset, version)
     for _sid, row in iter_selected_rows(store, provider, dataset, ledger):

@@ -957,3 +957,27 @@ def test_degraded_rebuild_cleans_stale_snapshot(built: Built) -> None:
     finally:
         con.close()
     assert stale == 0  # 无 parquet 即无视图——不服务旧数据
+
+
+def test_gold_rebuild_lock_busy_defers(built: Built) -> None:
+    """correctness B（2026-11-06）：预占锁行 → gold_rebuild 整轮
+    deferred_silver_build_lock_busy，零段执行零写入（让位不并行）。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.corpus_store import CorpusStore
+
+    store, settings, _report = built
+    store.close()
+    lock_store = CorpusStore(settings.corpus_root)
+    lock_store._checkpoint().execute(
+        "INSERT INTO srct_remat_lock (id, holder_pid, started_at, run_token)"
+        " VALUES (1, 424242, ?, 'peer-run')",
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+    lock_store._checkpoint().commit()
+    lock_store.close()
+    payload = tasks_mod.gold_rebuild(settings=settings)
+    assert str(payload["deferred"]).startswith("deferred_silver_build_lock_busy:")
+    assert "424242" in str(payload["deferred"])
+    assert "market" not in payload
