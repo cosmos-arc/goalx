@@ -31,7 +31,7 @@ import pyarrow as pa
 
 from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.duck_limits import apply_mem_limits
+from goalx_backend.data.duck_limits import apply_resource_limits
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 from goalx_backend.db import utc_now_iso
 
@@ -43,9 +43,12 @@ MARKET_SILVER_VERSION = "silver_market_v2"  # v2=+open_at/latest_phase（盘前�
 DETAIL_SILVER_VERSION = "silver_detail_v1"
 ANALYSIS_SILVER_VERSION = "silver_analysis_v1"
 # 多庄页 market 标记与 bookmaker 空间（design-15 双空间防线沿用）
-_STAGE_BATCH_ROWS = 2_000  # 引擎暂存插入批(内存=批×单场 books 载荷)
 MARKET_AH = "ah"
 MARKET_OU = "ou"
+# 引擎暂存插入批（票 04：内存＝批×单场 books 载荷，有界）
+_STAGE_BATCH_ROWS = 2_000
+# emit 侧流式取数批（与插入批同量级，独立旋钮）
+_FETCH_BATCH_ROWS = 2_000
 
 _QUOTE_SCHEMA = pa.schema(
     [
@@ -262,13 +265,13 @@ def _stage_latest_books(
     dataset: str,
 ) -> None:
     """
-    选轨暂存:每 sid 取 parser_version 匹配的**最后一行**(后行胜出)的 books。
+    选轨暂存：每 sid 取 parser_version 匹配的**最后一行**（后行胜出）的 books。
 
-    纯引擎路径(read_json 行号选轨)在 duckdb 1.5.5 不可表达——JSON reader
-    无 file_row_number 参数(Binder 实测),文件序语义 Python 侧唯一真源;
-    故落地票 01 候选 3 混合形:silver.iter_latest_bronze_envelopes 两遍法
-    选轨(账本+流式载荷,内存有界)→ books 批量入 temp.staged(超限自动
-    spill)。缺 bronze 文件 → 零行暂存(合法初生态)。
+    纯引擎路径（read_json 行号选轨）在 duckdb 1.5.5 不可表达——JSON reader
+    无 file_row_number 参数（Binder 实测），文件序语义 Python 侧唯一真源；
+    故落地票 01 候选 3 混合形：silver.iter_latest_bronze_envelopes 两遍法
+    选轨（账本+流式载荷，内存有界）→ books 批量入 temp.staged（超限自动
+    spill）。缺 bronze 文件 → 零行暂存（合法初生态）。
     """
     insert = "INSERT INTO temp.staged VALUES (?, ?, ?, ?)"
     batch: list[tuple[str, str, str, str | None]] = []
@@ -314,7 +317,7 @@ def build_market_quotes(
     out = srct_odds.StreamingPartitions(root, _QUOTE_SCHEMA, chunk_rows)
     con = duckdb.connect()
     try:
-        apply_mem_limits(con, store.root / "tmp")
+        apply_resource_limits(con, store.root / "tmp")
         cols = "(market VARCHAR, sid VARCHAR, fetched_at VARCHAR, books VARCHAR)"
         con.execute(f"CREATE OR REPLACE TEMP TABLE staged {cols}")
         for market, dataset in (
@@ -336,22 +339,22 @@ def build_market_quotes(
             ),
         )
         report.orphan_sids = sum(1 for k in kickoff_of.values() if k is None)
-        # emit 序表:Python 侧排序契约原样下推(ord=emit 序)
+        # emit 序表：Python 侧排序契约原样下推（ord=emit 序）
         con.execute("CREATE OR REPLACE TEMP TABLE emit_order(ord BIGINT, sid VARCHAR)")
         if sids:
             con.executemany(
                 "INSERT INTO temp.emit_order VALUES (?, ?)", list(enumerate(sids))
             )
-        # 行内 AH 先 OU 后:'ah'<'ou' 字典序即契约序
+        # 行内 AH 先 OU 后：CASE 显式编码契约序（不挂字典序，防常量值演化错序）
         result = con.execute(
             """
             SELECT o.ord, o.sid, t.market, t.fetched_at, t.books
             FROM temp.emit_order o JOIN temp.staged t USING (sid)
-            ORDER BY o.ord, t.market
+            ORDER BY o.ord, CASE t.market WHEN 'ah' THEN 0 ELSE 1 END
             """
         )
         seen_books: set[tuple[str, str]] = set()
-        while batch := result.fetchmany(2000):
+        while batch := result.fetchmany(_FETCH_BATCH_ROWS):
             for _ord, sid, market, fetched_at, books_json in batch:
                 kickoff_ms, season, competition = _kickoff_ms(meta, str(sid))
                 books = (
@@ -372,7 +375,7 @@ def build_market_quotes(
                     else:
                         report.quotes_ou += 1
     except BaseException:
-        out.abort()  # 只弃本轮 tmp,上一轮已发布分区零触碰(票 01 契约)
+        out.abort()  # 只弃本轮 tmp，上一轮已发布分区零触碰（票 01 契约）
         raise
     finally:
         con.close()

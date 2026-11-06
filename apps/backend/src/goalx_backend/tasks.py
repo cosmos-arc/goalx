@@ -20,6 +20,7 @@ from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 import duckdb
 import httpx
@@ -508,7 +509,22 @@ def _run_segment_in_child[T](func: Callable[[Settings], T], settings: Settings) 
         return ex.submit(func, settings).result()
 
 
-def gold_rebuild(  # noqa: PLR0911 deferred 状态机:锁忙/三探/两段子进程硬死,线性分支即审计面
+def _segment_in_child_or_defer[T](
+    func: Callable[[Settings], T],
+    settings: Settings,
+    tag: str,
+    payload: dict[str, object],
+) -> tuple[T | None, dict[str, object] | None]:
+    """段子进程执行；硬死（OOM 等）→（None, deferred 报告）让位明日自愈。"""
+    try:
+        return _run_segment_in_child(func, settings), None
+    except BrokenProcessPool as exc:
+        note = f"deferred_segment_child_lost_{tag}: {exc}"
+        logger.warning("gold-rebuild {}", note)
+        return None, {**payload, "deferred": note}
+
+
+def gold_rebuild(  # noqa: PLR0911 deferred 状态机：锁忙/三探/两段子进程硬死，线性分支即审计面
     *, settings: Settings | None = None
 ) -> dict[str, object]:
     """
@@ -545,14 +561,14 @@ def gold_rebuild(  # noqa: PLR0911 deferred 状态机:锁忙/三探/两段子进
                 note = f"deferred_low_headroom: {headroom / 1024**3:.1f}GiB"
                 logger.warning("gold-rebuild {}", note)
                 return {"deferred": note}  # with 出口释放预算，明日定拍自愈
-            try:
-                market_report = _run_segment_in_child(
-                    _gold_rebuild_market_worker, resolved
-                )
-            except BrokenProcessPool as exc:
-                note = f"deferred_segment_child_lost_market: {exc}"
-                logger.warning("gold-rebuild {}", note)
-                return {"deferred": note}
+            market_report, deferred = _segment_in_child_or_defer(
+                _gold_rebuild_market_worker, resolved, "market", {}
+            )
+            if deferred is not None:
+                return deferred
+            market_report = cast(
+                "srct_market.SilverMarketReport", market_report
+            )  # helper 契约：二者恰一非 None，cast 仅收窄
             # 段间余量复探（2026-11-05 OOM 收口）：子进程退出=OS 全额回收，
             # 复探见真值；不足即 deferred（明日自愈）不硬闯 Crashed
             headroom = srct_remat.headroom_bytes()
@@ -563,12 +579,15 @@ def gold_rebuild(  # noqa: PLR0911 deferred 状态机:锁忙/三探/两段子进
                 )
                 logger.warning("gold-rebuild {}", note)
                 return {"deferred": note, "market": asdict(market_report)}
-            try:
-                report = _run_segment_in_child(_gold_rebuild_gold_worker, resolved)
-            except BrokenProcessPool as exc:
-                note = f"deferred_segment_child_lost_gold: {exc}"
-                logger.warning("gold-rebuild {}", note)
-                return {"deferred": note, "market": asdict(market_report)}
+            report, deferred = _segment_in_child_or_defer(
+                _gold_rebuild_gold_worker,
+                resolved,
+                "gold",
+                {"market": asdict(market_report)},
+            )
+            if deferred is not None:
+                return deferred
+            report = cast("gold.GoldBuildReport", report)  # 同上
             # correctness F3：API 只读连接短暂持锁会让视图刷新（写开库）
             # IOException——gold/meta 已落盘，视图路径绑定刷新本近幂等，
             # 短重试后仍占则记账跳过（明日自愈），不让日频面假红

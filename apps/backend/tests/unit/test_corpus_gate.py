@@ -25,7 +25,7 @@ from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, corpus_gate
 from goalx_backend.data.corpus_gate import FixtureRow, HistRow, match_fixtures
 from goalx_backend.data.corpus_store import CorpusStore
-from goalx_backend.data.duck_limits import DUCKDB_THREADS_CAP, apply_mem_limits
+from goalx_backend.data.duck_limits import DUCKDB_THREADS_CAP, apply_resource_limits
 from goalx_backend.data.ingest import srct, srct_odds, srct_silver
 
 # 报告今天：三赛日（2025-10-01..03）+6mo 已成熟（PSC 纪律全放行），
@@ -720,7 +720,7 @@ def test_duck_limits_threads_capped(tmp_path: Path) -> None:
     """票 04 P3：连接资源帽——threads ≤ 帽值（memory_limit/spill 同口径接线）。"""
     con = duckdb.connect()
     try:
-        apply_mem_limits(con, tmp_path / "tmp")
+        apply_resource_limits(con, tmp_path / "tmp")
         threads = int(con.execute("SELECT current_setting('threads')").fetchone()[0])
         temp_dir = str(
             con.execute("SELECT current_setting('temp_directory')").fetchone()[0]
@@ -728,4 +728,4 @@ def test_duck_limits_threads_capped(tmp_path: Path) -> None:
     finally:
         con.close()
     assert threads <= DUCKDB_THREADS_CAP
-    assert "tmp" in temp_dir  # spill 目录=树内 tmp（超限落盘不落 RAM）
+    assert temp_dir == (tmp_path / "tmp").as_posix()  # spill 目录＝树内 tmp

@@ -358,7 +358,7 @@ def _tree_digest(root: Path) -> str:
 def _asian_envelope(
     sid: str, fetched_at: str, parser_version: str, close_water: float
 ) -> dict[str, object]:
-    """手工 asian_odds bronze 信封(单书盘1;close 水位可辨)。"""
+    """手工 asian_odds bronze 信封（单书盘1；close 水位可辨）。"""
     return {
         "provider": srct.SRCT_PROVIDER,
         "dataset": srct.ASIANODDS_DATASET,
@@ -391,40 +391,115 @@ def _asian_envelope(
     }
 
 
-def test_market_selection_last_fetch_version_and_orphan(tmp_path: Path) -> None:
-    """票 04 选轨语义等价钉死(与 latest_bronze_rows 口径全同):
-
-    - 后行胜出按**文件序**非 fetched_at(追加行 fetched_at 更早仍胜出);
-    - 旧 parser_version 行不可见;
-    - 孤儿 sid(无 fixture)落 _unknown 分区、kickoff None、报告计数。"""
+def _interfere_and_build(tmp_path: Path) -> tuple[Path, srct_market.SilverMarketReport]:
+    """攒语料 + 追加干扰行（多抓取/坏版本/孤儿）+ 新路重建，返回 (store, 报告)。"""
     from datetime import UTC, datetime
 
     store = _build_corpus(tmp_path)
     good = srct.BRONZE_VERSIONS[srct.ASIANODDS_DATASET]
     early = datetime(2025, 9, 1, 12, 0, tzinfo=UTC).isoformat()  # 早于采集行
-    try:
-        store.append_bronze(
-            srct.SRCT_PROVIDER,
-            srct.ASIANODDS_DATASET,
-            [
-                # 91001:更早 fetched_at、更晚文件序 → 胜出(单书替两盘)
-                _asian_envelope("91001", early, good, 1.5),
-                # 91002:版本不匹配 → 不可见(原两盘保留)
-                _asian_envelope("91002", early, f"{good}-bogus", 1.5),
-                # 孤儿场:无 fixture → kickoff None
-                _asian_envelope("99999", early, good, 1.5),
-            ],
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct.ASIANODDS_DATASET,
+        [
+            # 91001：更早 fetched_at、更晚文件序 → 胜出（单书替两盘）
+            _asian_envelope("91001", early, good, 1.5),
+            # 91002：版本不匹配 → 不可见（原两盘保留）
+            _asian_envelope("91002", early, f"{good}-bogus", 1.5),
+            # 孤儿场：无 fixture → kickoff None
+            _asian_envelope("99999", early, good, 1.5),
+        ],
+    )
+    report = srct_market.build_market_quotes(store)
+    return store, report
+
+
+def test_market_selection_matches_latest_bronze_rows_oracle(tmp_path: Path) -> None:
+    """票 04 oracle（spec 原文口径）：两遍法选轨 vs 旧 latest_bronze_rows
+    全表路径——同干扰面（多抓取/坏版本/孤儿）下，同 _quote_row/writer
+    重建的 oracle 树与新路产物**逐字节一致**，报告记账全等（除活钟戳）。"""
+    from goalx_backend.data import silver as silver_mod
+    from goalx_backend.data.ingest import srct_silver
+
+    store, report = _interfere_and_build(tmp_path)
+    meta = {str(r["sid"]): r for r in srct_silver.fixture_rows(store)[0]}
+    latest = {
+        ds: silver_mod.latest_bronze_rows(
+            store, srct.SRCT_PROVIDER, ds, srct.BRONZE_VERSIONS[ds]
         )
-        report = srct_market.build_market_quotes(store)
-    finally:
-        store.close()
+        for ds in (srct.ASIANODDS_DATASET, srct.OVERDOWN_DATASET)
+    }
+    kickoff_of = {
+        sid: srct_market._kickoff_ms(meta, sid)[0]
+        for sid in set(latest[srct.ASIANODDS_DATASET])
+        | set(latest[srct.OVERDOWN_DATASET])
+    }
+    sids = sorted(
+        kickoff_of,
+        key=lambda s: (
+            kickoff_of[s] is None,
+            kickoff_of[s] if kickoff_of[s] is not None else 0,
+            s,
+        ),
+    )
+    oracle_report = srct_market.SilverMarketReport(built_at=report.built_at)
+    oracle = srct_odds.StreamingPartitions(
+        tmp_path / "oracle", srct_market._QUOTE_SCHEMA, 200_000
+    )
+    seen: set[tuple[str, str]] = set()
+    for sid in sids:
+        kickoff_ms, season, competition = srct_market._kickoff_ms(meta, sid)
+        if kickoff_ms is None:
+            oracle_report.orphan_sids += 1
+        for market, ds in (
+            (srct_market.MARKET_AH, srct.ASIANODDS_DATASET),
+            (srct_market.MARKET_OU, srct.OVERDOWN_DATASET),
+        ):
+            bronze = latest[ds].get(sid)
+            if bronze is None:
+                continue
+            payload = bronze.get("payload")
+            books = payload.get("books", []) if isinstance(payload, dict) else []
+            for book in books:
+                oracle.append(
+                    season,
+                    competition,
+                    srct_market._quote_row(
+                        market, book, bronze, kickoff_ms, oracle_report
+                    ),
+                )
+                seen.add((market, str(book.get("cid"))))
+                if market == srct_market.MARKET_AH:
+                    oracle_report.quotes_ah += 1
+                else:
+                    oracle_report.quotes_ou += 1
+    oracle_report.books_ah = sum(1 for m, _ in seen if m == srct_market.MARKET_AH)
+    oracle_report.books_ou = sum(1 for m, _ in seen if m == srct_market.MARKET_OU)
+    oracle_report.partitions, oracle_report.stale_partitions_removed = oracle.close()
+    store.close()
+    assert _tree_digest(tmp_path / "oracle") == _tree_digest(
+        store.silver_path("srct", srct_market.MARKET_DATASET)
+    )
+    assert {k: v for k, v in asdict(report).items() if k != "built_at"} == {
+        k: v for k, v in asdict(oracle_report).items() if k != "built_at"
+    }
+
+
+def test_market_selection_last_fetch_version_and_orphan(tmp_path: Path) -> None:
+    """票 04 选轨语义等价钉死（与 latest_bronze_rows 口径全同）：
+
+    - 后行胜出按**文件序**非 fetched_at（追加行 fetched_at 更早仍胜出）；
+    - 旧 parser_version 行不可见；
+    - 孤儿 sid（无 fixture）落 _unknown 分区、kickoff None、报告计数。"""
+    store, report = _interfere_and_build(tmp_path)
+    store.close()
     rows = _read_table(store, srct_market.MARKET_DATASET)
     ah = [r for r in rows if r["market"] == "ah"]
     sid1 = [r for r in ah if r["sid"] == "91001"]
-    assert len(sid1) == 1  # 新单书替旧两盘=后行胜出
+    assert len(sid1) == 1  # 新单书替旧两盘＝后行胜出
     assert sid1[0]["close_home_water"] == 1.5
     sid2 = [r for r in ah if r["sid"] == "91002"]
-    assert len(sid2) == 2  # bogus 版本不可见,原两盘在
+    assert len(sid2) == 2  # bogus 版本不可见，原两盘在
     assert {r["multi"]: r["close_home_water"] for r in sid2} == {
         "盘1": 0.80,
         "盘2": 1.20,
@@ -434,7 +509,9 @@ def test_market_selection_last_fetch_version_and_orphan(tmp_path: Path) -> None:
     assert orphan[0]["kickoff"] is None
     orphan_part = next(
         p
-        for p in (store.root / "silver" / "srct" / "market_quote").glob("**/*.parquet")
+        for p in store.silver_path("srct", srct_market.MARKET_DATASET).glob(
+            "**/*.parquet"
+        )
         if "_unknown" in str(p)
     )
     assert pq.read_table(orphan_part).num_rows >= 1  # 孤儿落 _unknown 分区
