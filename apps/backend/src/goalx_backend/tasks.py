@@ -70,7 +70,7 @@ from goalx_backend.data.quote_evidence import (
     adjudicate_had_quote,
     sharp_probs_asof,
 )
-from goalx_backend.db import connect, migrate, utc_now_iso
+from goalx_backend.db import atomic, connect, migrate, utc_now_iso
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
@@ -820,9 +820,13 @@ def record_control_events(conn: sqlite3.Connection, settings: Settings) -> list[
     day_start = utc_now_iso()[:11] + "00:00:00+00:00"
     for note in disabled:
         if not rs.category_note_count(conn, _CONTROL_CATEGORY, note, day_start):
-            rs.record_cost(
-                conn, _CONTROL_CATEGORY, units=0.0, amount_cny=0.0, note=note
-            )
+            # 记账须 atomic（票 02 correctness）：record_cost 裸 INSERT 无
+            # commit——task_conn close 即回滚，控制事件从未落账（glm_chat
+            # 记账同族坑，caliber-loop 2026-10-16 实锤先例）
+            with atomic(conn):
+                rs.record_cost(
+                    conn, _CONTROL_CATEGORY, units=0.0, amount_cny=0.0, note=note
+                )
             events.append(note)
     return events
 

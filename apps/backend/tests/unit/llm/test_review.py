@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from goalx_backend.config import Settings
 from goalx_backend.data.results import DrawResultInput, upsert_draw_result
+from goalx_backend.db import connect
 from goalx_backend.llm.review import (
     enqueue_post_settle,
     open_reviews,
@@ -152,3 +154,39 @@ def test_control_events_once_per_day(db: sqlite3.Connection) -> None:
     assert set(events) == {"analyst_disabled", "fused_disabled"}
     again = record_control_events(db, settings)
     assert again == []  # 同日不重复
+
+
+def test_control_events_survive_conn_close(tmp_path: Path) -> None:
+    """票 02 correctness：控制事件经 task_conn（close 即回滚未提交写）后
+    必须仍在库——in-memory 夹具读自己的未提交行,盲区故用文件库重开验证。"""
+    from goalx_backend import tasks
+    from goalx_backend.config import Settings as AppSettings
+
+    db_path = tmp_path / "goalx.db"
+    settings = AppSettings(
+        glm_api_key="k", m3_analyst_enabled=False, m3_fusion_enabled=False
+    )
+    monkey_env = {"GOALX_DB_PATH": str(db_path)}
+    import os
+
+    old = {k: os.environ.get(k) for k in monkey_env}
+    os.environ.update(monkey_env)
+    try:
+        with tasks.task_conn() as conn:
+            events = tasks.record_control_events(conn, settings)
+        assert set(events) == {"analyst_disabled", "fused_disabled"}
+    finally:
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    # 重开新连接：行确实落盘（修复前 task_conn close 回滚,此处为 0）
+    fresh = connect(str(db_path))
+    try:
+        n = fresh.execute(
+            "SELECT COUNT(*) AS n FROM cost_ledger WHERE category = 'm3_control'"
+        ).fetchone()["n"]
+        assert n == 2
+    finally:
+        fresh.close()
