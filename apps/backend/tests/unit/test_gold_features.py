@@ -666,11 +666,17 @@ def test_empty_corpus_degrades(tmp_path: Path) -> None:
     assert meta["degraded"] == report.degraded
 
 
-def test_cli_gold_build(built: Built, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_gold_build(
+    built: Built, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """CLI gold-build（=tasks.gold_rebuild 单一实现）：market 保鲜→gold→桥刷新。"""
     import argparse
 
     from goalx_backend.cli import _cmd_gold_build
+    from goalx_backend.data.ingest import srct_remat
+
+    # 余量探测=真系统面,全流程测试钉足量防环境负载假 deferred(合跑实录)
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
 
     store, settings, _report = built
     store.close()
@@ -867,9 +873,11 @@ def test_gold_rebuild_view_refresh_lock_degrades(
     import duckdb as duckdb_mod
 
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
     calls = {"n": 0}
 
     def boom(_store: object) -> Path:
@@ -891,9 +899,11 @@ def test_gold_rebuild_view_refresh_retry_recovers(
     import duckdb as duckdb_mod
 
     from goalx_backend import tasks as tasks_mod
+    from goalx_backend.data.ingest import srct_remat
 
     store, settings, _report = built
     store.close()
+    monkeypatch.setattr(srct_remat, "headroom_bytes", lambda: 16 * 1024**3)
     real = tasks_mod.corpus_duckdb.build_corpus_duckdb
     calls = {"n": 0}
 
