@@ -78,6 +78,13 @@ test("renders caliber line, combo card from the engine, and the feed in engine o
 	expect(caliber).toHaveTextContent("比分矩阵推导");
 	expect(caliber).toHaveTextContent("模型概率 × 竞彩价");
 	expect(caliber).toHaveTextContent("单关为主");
+	// 票 04(b) 研究入口身份三件：研究样本/结算归属/EV 依赖
+	const note = screen.getByTestId("goals-research-note");
+	expect(note).toHaveTextContent("研究样本");
+	expect(note).toHaveTextContent("manual_research");
+	expect(note).toHaveTextContent("不计入正式纸面验证分母");
+	expect(note).toHaveTextContent("自动结算");
+	expect(note).toHaveTextContent("模型概率 × 竞彩价");
 
 	// 玩法页顶部三入口 Tab：当前页 aria-current（进球点亮）
 	const tabs = screen.getByTestId("market-tabs");
