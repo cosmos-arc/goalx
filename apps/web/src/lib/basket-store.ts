@@ -179,13 +179,25 @@ export const basketActions = {
 			commit({ ...state, goalsPending: false });
 		}
 	},
+	/** 共享提交参数（金额/模式/策略版本）为两篮一份：任一飞行中都冻结
+	 * （票 01 F1）——had 飞行中从 goals 侧改 stake=had 失败重提口径漂移；
+	 * 与 setHadLegs 同款静默门。 */
 	setStake(stake: string): void {
+		if (state.hadPending || state.goalsPending) {
+			return;
+		}
 		commit({ ...state, stake });
 	},
 	setStrategyVersion(strategyVersion: string): void {
+		if (state.hadPending || state.goalsPending) {
+			return;
+		}
 		commit({ ...state, strategyVersion });
 	},
 	setMode(mode: "paper" | "live"): void {
+		if (state.hadPending || state.goalsPending) {
+			return;
+		}
 		commit({ ...state, mode });
 	},
 };
