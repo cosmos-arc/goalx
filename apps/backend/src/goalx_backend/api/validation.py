@@ -145,6 +145,11 @@ def get_m3_protocol(db: DbDep) -> M3ProtocolReport:
     切换）/ 未达标 / 方向反向（融合显著更差）——未达标（DM 双侧只测
     有差异，显著更差不再误判达标候选）。
 
+    票 05 口径对齐：ECE 比较改为相同场次集合（两轨 fixture 交集）上
+    双侧同分母计算，交集为空/不足=不可比（不默认通过）；盲评两档进
+    Tier B 判定——缺席/平局自动通过，方向性结果须人工确认后计入
+    （未确认=未达标"待人工确认"）。
+
     同步 def：同 forward-skill（青铜批扫走线程池）。
     """
     with corpus_duckdb.reader() as duck_con:
