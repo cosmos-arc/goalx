@@ -10,7 +10,7 @@ goalx 是本机单机运行的足彩量化研究系统：FastAPI 后端（SQLite
 |---|---|---|---|
 | API server（granian） | 127.0.0.1:8000 | `nohup task server >> .scratch/server.log 2>&1 &` | `.scratch/server.log` |
 | Prefect server | 127.0.0.1:4200（API+UI） | 由 `task serve-schedules` 自动拉起 | `.scratch/prefect-server.log` |
-| 调度（serve 八 deployment） | — | `nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &` | `.scratch/prefect-serve.log` |
+| 调度（serve 19 deployment） | — | `nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &` | `.scratch/prefect-serve.log` |
 | Web dev server（vite） | 5173 | `nohup task dev >> .scratch/web.log 2>&1 &` | `.scratch/web.log` |
 
 **为什么是 server + serve 两进程**：Prefect ≥3.7 的临时 server 不运行 scheduler，单进程 `flow.serve()` 的 schedule 永不触发（票 37 day0 连续两天 0 触发的根因）。`task serve-schedules` 先探活并按需启动专用 server（`PREFECT_API_URL=http://127.0.0.1:4200/api`），再启动 serve；server 存活独立于 serve，serve 重启不影响已排程 run。
@@ -18,31 +18,58 @@ goalx 是本机单机运行的足彩量化研究系统：FastAPI 后端（SQLite
 健康检查：
 
 ```bash
-curl -sf http://127.0.0.1:8000/api/v1/fixtures/today   # API
+curl -sf http://127.0.0.1:8000/readyz                  # 就绪：业务库可读 + schema==迁移链末版（v41）
+curl -sf http://127.0.0.1:8000/api/v1/fixtures/today   # API 业务面
 curl -sf http://127.0.0.1:4200/api/health              # Prefect
 pgrep -f goalx_backend.schedules                       # 调度进程
 ```
 
+**readyz 职责边界**（票 10④）：只证业务库存在可读 + schema 版本与部署迁移链一致（低/高都 503 拒服务）；不做 corpus 扫描、研究库或数据新鲜度检查——那由晨检（`uv run --no-sync python -m goalx_backend.cli morning-check` 十四项；09:05 由本机侧自动化定拍，非 deployment，不入库）与页面降级表达。`/healthz` 只证进程活着并带运行指纹（git_sha/dirty/schema）。
+
 重启顺序：先启 Prefect server（serve-schedules 自带），再启 API server；两者无依赖也可并行。Mac 睡眠会暂停进程，漏跑窗口如实计入分母（协议允许）；长期无人值守时改 `caffeinate -s task serve-schedules` 或迁 launchd/远端，flow 与 deployment 不用动。
 
-## 2. 定时调度（八个 deployment，Asia/Shanghai）
+## 2. 定时调度（19 个服务 deployment，Asia/Shanghai）
+
+全量装配 21 面，默认服务 19 面 = 全量 − 2 判死面（`eu-odds-closing` 欧赔聚合 / `srcb-collect` 源B——2026-09-25/26 裁决，国际赔率与欧指时序全走源T；serve 仍注册、恢复清单排除）。清单由 `datasets.py` 注册表推导（`RESUME_DEPLOYMENTS`），不再手抄。
+
+组合面（`schedules.py` 手写）：
 
 | deployment | cron | 内容 | 成本 |
 |---|---|---|---|
-| daily-capture/protocol-v1 | `0 10,19 * * *` | 竞彩快照 → ML 预测 → 范围内欧赔（顺序固定） | 欧赔 2 credits/次 |
-| eu-odds-closing/protocol-v1 | `*/30 * * * *` | 开赛前 35 分钟窗口的收盘快照；无窗口场次零成本跳过 | 0–2 |
-| draw-results-sync/protocol-v1 | `*/30 0-5,18-23 * * *` | 赛果自动同步（源D）；无待出赛果零成本跳过 | 0 |
+| daily-capture/protocol-v1 | `0 10,19 * * *` | 竞彩快照 → DC 预测 → 新鲜度双口径影子拍（票 08；欧赔聚合段已按 2026-09-25 裁决摘除） | 0 |
+| daily-capture/protocol-v1-window | `30 12,16 * * *` | 可购窗拍（on_sale 观测，计算器端点 1 请求/拍） | 0 |
+| draw-results-sync/protocol-v1 | `*/30 0-5,18-23 * * *` | 赛果自动同步（官方 uniform 主链）；无待出赛果零成本跳过 | 0 |
 | draw-results-sync/protocol-v1-sweep | `0 8 * * *` | 同上，早场补扫收尾 | 0 |
-| daily-wrap/protocol-v1 | `30 23 * * *` | 结算批跑 + CLV 对账 + 只读账务核查 | 0 |
-| pool-snapshot/protocol-v1 | `20 10,16,22 * * *` | 彩池期次/对阵/人气分布（源B） | 0 |
-| intel-collect/protocol-v1 | `40 10,22 * * *` | 情报采集：内部推导（fdhist 近况/H2H）+ 澳客 formation 伤停 | 0（formation 页 ~28/拍） |
-| scout-line/protocol-v1 | `50 10,22 * * *` | scout（GLM-5.3-Flash）读情报出三项 → forecasts(track=llm) | GLM 订阅额度 |
+| weekly-refresh/protocol-v1 | `10 6 * * 1` | fdhist 幂等重导（周末赛果）→ DC 周训练（五大+N1） | 0 |
+| daily-wrap/protocol-v1 | `30 23 * * *` | 结算批跑 → 漏斗日拍 → M3 评测 → 冻结对账 → CLV 对账（源T cid177 收盘锚）→ 报价账本 sweep → 账务核查 → 冻结汇总（含税后面） | 0 |
 
-全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `apps/backend/src/goalx_backend/schedules.py` 的 cron（当前值为 2026-09-18 用户追认定案）。
+注册面（`datasets.py` DatasetSpec 推导）：
+
+| deployment | cron | 内容 | 成本 |
+|---|---|---|---|
+| guardian-sync | `40 9 * * *` | 卫报新闻语料（500 请求/日预算，断点续跑） | 免费 |
+| pool-snapshot | `20 10,16,22 * * *` | 彩池期次/对阵/官方上期彩果（票 68 官方化） | 0 |
+| srct-night | `0 1 * * *` | 源T 夜班回填推进（预算/熔断/断点续传，摘要落语料台账） | 语料请求预算 |
+| official-reconcile | `30 8 * * *` | 赛果日终审计（双参照源，不落事实；pending_manual 告警） | 0 |
+| understat-sync | `20 9 * * *` | Understat xG 特征（五大当前季） | 0 |
+| clubelo-sync | `10 9 * * *` | Clubelo Elo 日拍（单请求全量快照） | 0 |
+| odds-anchor-dense | `*/5 * * * *` | 双锚临场采样（零候选零请求；开售轮询带除外） | 0 |
+| track2-snapshots | `*/10 * * * *` | 轨二拍点采样（开球前 24h/12h，零候选零请求） | 0 |
+| intel-collect | `40 10,22 * * *` | 情报采集（内部推导 + 伤停源） | 0 |
+| scout-line | `50 10,22 * * *` | scout（GLM）读情报出三项 → forecasts(track=llm) | GLM 订阅额度 |
+| srct-shift | `*/30 8-23,0 * * *` | 源T 当期班四类拍（在售清单发现+开售/每日/临场拍，拍键幂等，夜窗让位） | 语料请求预算 |
+| srct-remat | `10 8 * * *` | 源T silver 增量物化（rowid 水位+触及分区重写；护栏命中自动全量兜底） | 0 |
+| gold-rebuild | `40 8 * * *` | market_quote 保鲜 + gold 全量重算（赶在 09:05 晨检 gold 新鲜度面前） | 0 |
+
+全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `schedules.py`（组合面）或 `datasets.py`（注册面）的 cron。
+
+**M3 degraded 语义（票 02 后）**：daily-wrap 内 M3 评测是独立异常边界——报告读 corpus 追加窗口可撞并发读 EOFError（写完重读正常，非永久损坏），降级只标记 `m3.degraded` 进返回体，不拖其后的冻结对账/CLV/账本回填/账务核查；**失败不得记成通过**。freshness_shadow 同款边界（挂采集流后拍，影子失败不拖采集）。
 
 ## 3. 手工 CLI 命令
 
-**统一从仓库根目录跑**（`db_path=data/goalx.db`、`observations_dir=data/observations` 都是相对 cwd 的路径，从子目录跑会静默空跑/建错库）；或直接用 Taskfile 包装的同名 task。
+**统一从仓库根目录跑**（`db_path=data/goalx.db`、`observations_dir=data/observations` 都是相对 cwd 的路径，从子目录跑会静默空跑/建错库）；或直接用 Taskfile 包装的同名 task。完整命令清单由 `datasets.py` 注册表推导，`uv run --no-sync python -m goalx_backend.cli --help` 为准（本节只列常用）。
+
+**启动与迁移**（拉新代码后）：`task db-migrate`（schema 到迁移链末版，readyz 低/高都拒服务）→ 按既有重启姿势换 serve 栈（**按 PID 直杀全栈再起新栈**——`pkill task` 包装进程会留孤儿 Runner 抢 Prefect 领活，曾致多栈并存）→ 重启后复核恰好一棵进程树（`pgrep -f goalx_backend.schedules` 全树列表）。
 
 采集与同步（与 flow 同一实现，共享证据契约）：
 
@@ -83,21 +110,25 @@ uv run --no-sync python -m goalx_backend.cli set-alias <canonical> <alias>
 uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（拒绝写主库）
 ```
 
-## 4. 数据源
+## 4. 数据源（2026-11-06 现状）
 
 | 源 | 用途 | 配置（`GOALX_` 前缀 env / .env） | 状态 |
 |---|---|---|---|
-| sporttery calculator | 竞彩报价/销售状态/单固（免费） | `sporttery_calculator_url` | 常规 |
-| The Odds API | 欧赔共识/收盘（credit 付费） | `odds_api_key`（兼容无前缀 `ODDS_API_KEY`） | 月 480 / 日 40 credits 护栏，超限抛错 |
-| football-data.co.uk | 五大三季历史底座 | `fd_base_url` | 一次性导入 |
-| 源T 日页赛果 | 赛果落事实主源（票 76；零新请求走 silver） | 语料树 `GOALX_CORPUS_ROOT` | 每 30 分钟自动（随 draw-results-sync） |
-| 卫报 open platform | 新闻语料（票 79；football 段 ~20 万篇） | `guardian_api_key`（免费 500 请求/日） | 09:40 日拍（回填期翻页至预算尽，断点续跑） |
-| 官方 uniform | 赛果差集兜底+对账审计（票 76 起；CorpusScope 外联赛/官方 void） | `uniform` 端点族 | 每 30 分钟自动（同链内联） |
-| 澳客 | 彩池期次/对阵/人气分布 | `zucai_base_url` | 每日三拍自动 |
+| sporttery calculator/uniform 族 | 竞彩报价/销售状态/单固 + 赛果落事实主链（官方 void 兜底） | `sporttery_calculator_url` 等 | 常规自动 |
+| **源T 六端点**（语料主链） | 国际书商赔率轨迹/赛果/xG/阵容：夜班回填+当期班+silver 物化+gold；欧赔共识与 CLV 收盘锚（cid177）全走此链 | 语料树 `GOALX_CORPUS_ROOT`（repo 外 `~/goalx-data/`） | srct-night/srct-shift/srct-remat/gold-rebuild 四面自动 |
 | 官方开奖 | 唯一事实源 | — | UI/API 人工录入，更正必带原因 |
+| 体彩官方（传统足彩） | 彩池期次/对阵/上期彩果（票 68 官方化） | — | 每日三拍自动 |
 | 官方彩池销量/滚存 | 无自动源 | — | AI 代采（见 §8） |
+| 卫报 open platform | 新闻语料（football 段 ~20 万篇） | `guardian_api_key`（免费 500 请求/日） | 09:40 日拍 |
+| Understat | xG 特征（五大当前季） | — | 09:20 日拍 |
+| Clubelo | Elo 评级 | — | 09:10 日拍 |
+| football-data.co.uk | 五大+N1 历史底座（PSC/AvgC 收盘价） | `fd_base_url` | 周一 06:10 幂等重导 |
+| 伤停情报源（formation 页族） | 情报采集（伤停） | — | 每日两拍 |
+| GLM（智谱） | scout 三项/追问/融合 | LLM 订阅 | 熔断三级 60/80/95% |
+| The Odds API | ~~欧赔聚合~~ **停采备用**（2026-09-25 裁决：国际赔率全走源T；读侧死命名空间仅历史行） | `odds_api_key` | 判死面 `eu-odds-closing`，不服务 |
+| 源B（欧指变化）/PropLine | ~~时序/互备~~ **停采备用**（2026-09-26 终局） | — | 判死面 `srcb-collect`，历史语料留档 |
 
-欧赔范围由 `GOALX_ODDS_API_SPORT_SCOPE` 冻结为六联赛（英超/意甲/西甲/德甲/法甲/荷甲，协议 v1.1 自 2026-09-18），运行期禁止改回空值（空=动态发现全部足球，每次 ≈16 credits）。
+数据资产与备份见 §9（语料树/研究库/模型工件的配对关系）。
 
 ## 5. 运维 API 端点（127.0.0.1:8000，前缀 `/api/v1`）
 
@@ -121,7 +152,7 @@ uv run --no-sync python -m goalx_backend.cli seed-demo         # 演示种子（
 
 1. **总览页** `/`：分诊台，看今日待办与资金快照。
 2. **场次页** `/fixtures`（今天起 3 天）→ 点进**单场研究页**：多 book 赔率、我方概率、资格判定与拒绝原因。
-3. **玩法页** `/markets/had`（胜平负，EV×置信排序）、`/markets/goals`（进球，比分矩阵推导）、`/markets/pool`（14场/任9，期次切换+三档额度）。
+3. **玩法页** `/markets/had`（胜平负，EV×置信排序）、`/markets/goals`（进球，比分矩阵推导）、`/markets/pool`（14场/任9，期次切换+三档额度）、`/markets/pool4`（四场进球）。
 4. **投注页** `/bets`：建议→锁定→开奖导入→结算→复盘。赛果同步面板可"立即同步"兜底；异常场次进待人工清单，人工录入保留。
 5. **历史/验证/资金**：已结算统计、前瞻验证口径、真金账。
 
