@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	createPoolSlip,
 	fetchBankroll,
@@ -88,6 +88,16 @@ export function MarketPoolPage() {
 	/** 已选场序 → 三向选择（一场一选，任9 口径）。 */
 	const [picks, setPicks] = useState<Record<number, string>>({});
 	const [submitResult, setSubmitResult] = useState<string | null>(null);
+	// 期次被动漂移（同步后默认期变化）时清 picks——旧期选择继承进新期会是
+	// 结构上合法但意图错位的 POST（票 04，goals4 correctness I5 同款先例）
+	const userPickedPeriod = useRef<string | null>(null);
+	useEffect(() => {
+		if (activePeriod !== userPickedPeriod.current) {
+			userPickedPeriod.current = activePeriod ?? null;
+			setPicks({});
+			setSubmitResult(null);
+		}
+	}, [activePeriod]);
 	const submitMutation = useMutation({
 		mutationFn: createPoolSlip,
 		onSuccess: (slip) => {
@@ -217,6 +227,11 @@ export function MarketPoolPage() {
 								÷ 份额）。推荐 = 概率最高向；搏冷 = 价值判定（冷选项份额低于 25% 且 EV 为正、优于推荐向，悬浮看理由）。
 							</>
 						)}
+					</p>
+					{/* 票 04(b) 研究入口身份三件：验证归属/结算/EV 依赖——彩池不承诺结算能力 */}
+					<p className="mt-1 text-xs text-muted-foreground" data-testid="pool-research-note">
+						当前属于研究构票：不计入正式纸面验证；奖金引擎未实现——票面保持待结算，真金模式明确拒绝；EV
+						依赖每场概率与官方池份额（返奖率 65% 假设，缺份额即降级不出建议）。
 					</p>
 				</header>
 

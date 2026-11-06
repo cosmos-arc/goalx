@@ -235,6 +235,11 @@ export function MarketGoalsPage() {
 							<GlossaryTerm id="model-prob">EV = 模型概率 × 竞彩价 − 1</GlossaryTerm>（模型×竞彩价，与胜平负页的共识 EV
 							不同源）；<GlossaryTerm id="single">单关为主</GlossaryTerm>，不组串。
 						</p>
+						{/* 票 04(b) 研究入口身份三件：验证归属/结算/EV 依赖 */}
+						<p className="mt-1 text-xs text-muted-foreground" data-testid="goals-research-note">
+							当前属于研究样本：非胜平负（HAD）纸面注按手工研究假设分类（manual_research），不计入正式纸面验证分母；有官方赛果即自动结算（成绩不进正式面）；EV
+							依赖比分矩阵推导的模型概率 × 竞彩价，概率空缺不冒充。
+						</p>
 						<p className="text-xs text-muted-foreground" data-testid="goals-bankroll-note">
 							{bankrollQuery.isError ? (
 								<span>资金池读取失败——按竞彩最低注建议，重试可去资金页</span>

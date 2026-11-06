@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { poolPeriodDetailFixture } from "../mocks/handlers";
+import { poolPeriodDetailFixture, poolPeriodsFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
 
@@ -33,6 +33,12 @@ test("caliber line shows pool-parimutuel wording and sync info row", async () =>
 	expect(await screen.findByText(/未建模 price impact 与分彩风险/)).toBeVisible();
 	const caliber = screen.getByTestId("pool-caliber");
 	expect(caliber).toHaveTextContent("返奖率 65%");
+	// 票 04(b) 研究入口身份三件：不计正式验证/不承诺结算/EV 依赖份额
+	const note = screen.getByTestId("pool-research-note");
+	expect(note).toHaveTextContent("不计入正式纸面验证");
+	expect(note).toHaveTextContent("待结算");
+	expect(note).toHaveTextContent("真金模式明确拒绝");
+	expect(note).toHaveTextContent("官方池份额");
 	// 同步状态行：上次同步时点/来源 + 触发按钮
 	expect(screen.getByTestId("pool-sync-info")).toHaveTextContent("上次同步");
 	expect(screen.getByTestId("pool-sync-info")).toHaveTextContent("okooo.com");
@@ -109,6 +115,55 @@ test("switching the period resets picks", async () => {
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 1/14");
 	await userEvent.selectOptions(screen.getByTestId("pool-period-select"), "26998");
 	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 0/14");
+});
+
+test("被动换期清除旧选择，不产生新期 POST（票 04 验收）", async () => {
+	const user = userEvent.setup();
+	let synced = false;
+	let slipPosts = 0;
+	server.use(
+		http.post("*/api/v1/pool-sync/run", () => {
+			synced = true;
+			return HttpResponse.json({});
+		}),
+		http.get("*/api/v1/pool/periods", () =>
+			HttpResponse.json(
+				synced
+					? [
+							// 同步后新在售期成为默认期（26999 降为已结束）
+							{ ...poolPeriodsFixture[0], period_no: "27000" },
+							{ ...poolPeriodsFixture[1], period_no: "26999", status: "finished" },
+						]
+					: poolPeriodsFixture,
+			),
+		),
+		http.get("*/api/v1/pool/periods/:periodNo", () =>
+			HttpResponse.json({ ...poolPeriodDetailFixture, period_no: "27000", pool_period_id: 2 }),
+		),
+		http.post("*/api/v1/pool-slips", () => {
+			slipPosts += 1;
+			return HttpResponse.json({}, { status: 201 });
+		}),
+	);
+	await renderAt("/markets/pool");
+	await screen.findByTestId("pool-slot-1");
+
+	// 旧默认期 26999 预选 9 场（预览完成,提交可用）
+	await user.click(screen.getByTestId("pool-prefill-recommended"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-submit")).toBeEnabled();
+	});
+
+	// 点"立即同步"→ 期次列表刷新出现新默认期 27000 → 页面自动切期
+	await user.click(screen.getByTestId("pool-sync-run"));
+	await waitFor(() => {
+		expect(screen.getByTestId("pool-period-select")).toHaveValue("27000");
+	});
+
+	// 旧期选择归零、提交禁用——用户重新选择前不产生新期 POST
+	expect(screen.getByTestId("pool-pick-count")).toHaveTextContent("已选 0/14");
+	expect(screen.getByTestId("pool-submit")).toBeDisabled();
+	expect(slipPosts).toBe(0);
 });
 
 test("sales block shows AI-agent-pending placeholder without agent data", async () => {
