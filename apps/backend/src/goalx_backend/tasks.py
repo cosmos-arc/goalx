@@ -76,6 +76,10 @@ from goalx_backend.data.quote_evidence import (
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
 from goalx_backend.evaluation import clv as clv_mod
+from goalx_backend.evaluation.baseline_freeze import (
+    anchor_label_at,
+    freeze_anchor_baselines,
+)
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
@@ -86,7 +90,7 @@ from goalx_backend.llm.review import enqueue_post_settle
 from goalx_backend.llm.scout import scout_stats_dict, scout_sweep
 from goalx_backend.llm.sina_intel import collect_sina_injury_intel, sina_stats_dict
 from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS, train_competition
-from goalx_backend.modelling.forecast import generate_forecasts
+from goalx_backend.modelling.forecast import generate_forecasts, record_coverage
 from goalx_backend.modelling.team_align import (
     alias_index,
     clubelo_alias_for_team,
@@ -204,12 +208,54 @@ def forecast_daily(business_date: str | None = None) -> dict[str, int]:
             business_date=resolved,
             models_dir=str(settings.models_dir),
         )
+        # auto-paper 票 01：skip 三因逐场落覆盖账（普查 REPLACE，幂等）
+        coverage = record_coverage(conn, business_date=resolved, skipped=stats.skipped)
     return {
         "generated": stats.generated,
         "duplicates": stats.duplicates,
         "xg_blended": stats.xg_blended,
         "xg_unresolved": stats.xg_unresolved,
         "skipped": len(stats.skipped),
+        "covered": coverage["covered"],
+    }
+
+
+def baseline_freeze() -> dict[str, int]:
+    """
+    三锚市场基准冻结（auto-paper 票 01）：读库 as-of 冻结，无采集副作用。
+
+    锚标签取当前北京时之前最近的冻结锚（12:30/16:30/21:00；定拍 cron 在
+    锚后 3 分钟）。语料缺席降级——欧赔共识走 legacy 行源（通常空，
+    eu_absent 计数），JC 面照冻不阻断。
+    """
+    settings = get_settings()
+    label = anchor_label_at()
+    if label is None:
+        raise RuntimeError("当前北京时早于首锚 12:30，无锚可冻（误拍防护）")
+    cutoff = datetime.now(UTC).isoformat(timespec="seconds")
+    with task_conn() as conn:
+        duck_con = None
+        try:
+            duck_con = corpus_duckdb.connect(settings)
+        except Exception:
+            logger.warning("corpus duckdb 缺席：eu_consensus 降级 legacy 行源")
+        try:
+            stats = freeze_anchor_baselines(
+                conn,
+                anchor_label=label,
+                cutoff_at=cutoff,
+                duck_con=duck_con,
+            )
+        finally:
+            if duck_con is not None:
+                duck_con.close()
+    return {
+        "fixtures": stats.fixtures,
+        "jc_frozen": stats.jc_frozen,
+        "eu_frozen": stats.eu_frozen,
+        "jc_absent": stats.jc_absent,
+        "eu_absent": stats.eu_absent,
+        "duplicates": stats.duplicates,
     }
 
 

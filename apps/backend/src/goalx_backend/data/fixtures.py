@@ -565,6 +565,37 @@ ORDER BY captured_at, odds
     return latest
 
 
+def latest_odds_by_selection_asof(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str,
+    source: str,
+    as_of: str,
+) -> dict[str, tuple[float, str]]:
+    """
+    Latest snapshot per selection for one (fixture, market, source) at as_of.
+
+    只取 captured_at 不晚于 as_of 的行——之后的观测不能证明该时点可见的
+    价（auto-paper 票 01 锚冻结口径，与 latest_sale_status_asof 同语义）。
+    """
+    rows = conn.execute(
+        """
+        SELECT selection_code, odds, captured_at FROM odds_snapshots
+        WHERE fixture_id = ? AND market_code = ? AND source = ?
+          AND captured_at <= ?
+        ORDER BY captured_at, odds
+        """,
+        (fixture_id, market_code, source, as_of),
+    ).fetchall()
+    latest: dict[str, tuple[float, str]] = {}
+    for row in rows:
+        latest[str(row["selection_code"])] = (
+            float(row["odds"]),
+            str(row["captured_at"]),
+        )
+    return latest
+
+
 def odds_history(
     conn: sqlite3.Connection,
     fixture_id: int,
