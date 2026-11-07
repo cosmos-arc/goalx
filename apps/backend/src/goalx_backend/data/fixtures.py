@@ -509,6 +509,39 @@ def latest_sale_status_asof(
     ).fetchone()
 
 
+def latest_sale_status_asof_bulk(
+    conn: sqlite3.Connection,
+    fixture_ids: list[int],
+    market_code: str,
+    as_of: str,
+) -> dict[int, sqlite3.Row]:
+    """
+    Fixture → as_of 时点最新销售状态（票 04 D12 批量窗口查）。
+
+    与 latest_sale_status_asof 同语义（市场级优先 / observed_at<=as_of /
+    observed_at、id 决胜）；单市场口径——双玩法页各查一条仍为常数条。
+    """
+    if not fixture_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in fixture_ids)
+    rows = conn.execute(
+        f"""
+            SELECT * FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY fixture_id
+                    ORDER BY (market_code = ?) DESC, observed_at DESC, id DESC
+                ) AS rn
+                FROM sale_statuses
+                WHERE fixture_id IN ({placeholders})
+                  AND observed_at <= ?
+                  AND (market_code = ? OR market_code IS NULL)
+            ) WHERE rn = 1
+        """,  # noqa: S608 占位符拼接
+        [market_code, *fixture_ids, as_of, market_code],
+    ).fetchall()
+    return {int(row["fixture_id"]): row for row in rows}
+
+
 def insert_odds_snapshot(conn: sqlite3.Connection, snap: SnapshotInput) -> int | None:
     """
     Append an odds snapshot; returns new id, None when an identical row exists.
@@ -576,6 +609,45 @@ ORDER BY captured_at, odds
         (fixture_id, market_code, source),
     ).fetchall()
     return _latest_from_rows(rows)
+
+
+def latest_odds_by_selection_bulk(
+    conn: sqlite3.Connection,
+    fixture_ids: list[int],
+    market_codes: list[str],
+    source: str,
+) -> dict[tuple[int, str], dict[str, tuple[float, str]]]:
+    """
+    (fixture, market) → 每选项最新 (odds, captured_at) 批量窗口查（票 04 D12）。
+
+    与 latest_odds_by_selection 同语义（(captured_at, odds) 后行胜出）；
+    goals 页 O(场×玩法) 全史扫描收敛为一条查询。
+    """
+    if not fixture_ids or not market_codes:
+        return {}
+    fixture_ph = ", ".join("?" for _ in fixture_ids)
+    market_ph = ", ".join("?" for _ in market_codes)
+    rows = conn.execute(
+        f"""
+            SELECT fixture_id, market_code, selection_code, odds, captured_at FROM (
+                SELECT fixture_id, market_code, selection_code, odds, captured_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fixture_id, market_code, selection_code
+                        ORDER BY captured_at DESC, odds DESC
+                    ) AS rn
+                FROM odds_snapshots
+                WHERE fixture_id IN ({fixture_ph})
+                  AND market_code IN ({market_ph}) AND source = ?
+            ) WHERE rn = 1
+        """,  # noqa: S608 占位符拼接
+        [*fixture_ids, *market_codes, source],
+    ).fetchall()
+    latest: dict[tuple[int, str], dict[str, tuple[float, str]]] = {}
+    for row in rows:
+        latest.setdefault((int(row["fixture_id"]), str(row["market_code"])), {})[
+            str(row["selection_code"])
+        ] = (float(row["odds"]), str(row["captured_at"]))
+    return latest
 
 
 def latest_odds_by_selection_asof(

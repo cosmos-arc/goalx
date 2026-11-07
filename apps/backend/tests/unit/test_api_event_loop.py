@@ -113,6 +113,7 @@ def test_slow_endpoints_are_threadpool_routed() -> None:
     from goalx_backend.api import bets as bets_api
     from goalx_backend.api import markets as markets_api
     from goalx_backend.api import pool as pool_api
+    from goalx_backend.api import validation as validation_api
 
     for module, name in (
         (fixtures_api, "get_today_fixtures"),
@@ -122,6 +123,10 @@ def test_slow_endpoints_are_threadpool_routed() -> None:
         (bets_api, "create_bet"),
         (bets_api, "create_slip"),
         (pool_api, "run_pool_sync"),
+        # 票 04（B2 同族收尾，审计漏网三枚）：回测/基准三端点
+        (validation_api, "list_backtest_runs"),
+        (validation_api, "get_backtest_run"),
+        (validation_api, "get_baseline_quality"),
     ):
         assert not inspect.iscoroutinefunction(getattr(module, name)), (
             f"{name} 是 async def：同步 I/O 会占事件循环（票 07①）"

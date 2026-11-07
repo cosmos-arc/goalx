@@ -407,9 +407,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 
 
 def list_bets(
-    conn: sqlite3.Connection, *, mode: BetMode | None = None, only_open: bool = False
+    conn: sqlite3.Connection,
+    *,
+    mode: BetMode | None = None,
+    only_open: bool = False,
+    limit: int | None = None,
 ) -> list[sqlite3.Row]:
-    """List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。"""
+    """
+    List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。
+
+    票 04 D11：API 列表端点必须传 limit（无界扫描+每行 legs 聚合随季
+    线性涨）；结算/更正等内部调用方缺省全量（语义不变）。
+    """
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
             b.actual_stake, b.strategy_version, b.price_source,
@@ -438,6 +447,9 @@ FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id WHERE 1=1
     if only_open:
         sql += " AND b.status = 'open'"
     sql += " ORDER BY b.created_at DESC, b.id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
     return conn.execute(sql, params).fetchall()
 
 
@@ -876,15 +888,24 @@ def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def list_slips(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """List slips with bet and combination aggregates."""
-    return conn.execute(
-        f"""
+def list_slips(
+    conn: sqlite3.Connection, *, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """
+    List slips with bet and combination aggregates.
+
+    票 04 D11：API 端点必须传 limit——每行 6 个相关子查询含 3 次
+    combinations 全列聚合，无界=每开页全扫组合表（一季池票 ≈500 万行）。
+    """
+    sql = f"""
         SELECT s.*, {_slip_aggregates()}
         FROM bet_slips s
         ORDER BY s.created_at DESC, s.id DESC
-        """,  # noqa: S608 常量子查询拼接
-    ).fetchall()
+        """  # noqa: S608 常量子查询拼接
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
 
 
 def save_settlement(
@@ -1009,7 +1030,7 @@ def record_bankroll_event(
             bet_id, slip_id, note)
 VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (at, kind, amount_cny, balance + amount_cny, bet_id, slip_id, note),
+        (at, kind, amount_cny, round(balance + amount_cny, 2), bet_id, slip_id, note),
     )
     return _insert_id(cur)
 

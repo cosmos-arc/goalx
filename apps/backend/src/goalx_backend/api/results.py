@@ -325,12 +325,12 @@ async def preview_draw_results(
 async def list_draw_results(
     db: DbDep, fixture_id: int | None = None
 ) -> list[DrawResultView]:
-    """已导入的开奖结果(可按场次过滤)。"""
+    """已导入的开奖结果(可按场次过滤; 票 04 D11 无过滤时最新 100)。"""
     if fixture_id is not None:
         row = rs_store.get_draw_result(db, fixture_id)
         rows = [row] if row is not None else []
     else:
-        rows = rs_store.list_draw_results(db)
+        rows = rs_store.list_draw_results(db, limit=100)
     return [
         DrawResultView(
             fixture_id=int(row["fixture_id"]),

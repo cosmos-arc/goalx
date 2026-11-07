@@ -311,7 +311,7 @@ export interface paths {
         };
         /**
          * 票列表
-         * @description 全部投注票及聚合。
+         * @description 全部投注票及聚合（票 04 D11：最新 100——每行 6 个相关子查询）。
          */
         get: operations["list_slips_api_v1_bet_slips_get"];
         put?: never;
@@ -541,7 +541,7 @@ export interface paths {
         };
         /**
          * 查询开奖结果
-         * @description 已导入的开奖结果(可按场次过滤)。
+         * @description 已导入的开奖结果(可按场次过滤; 票 04 D11 无过滤时最新 100)。
          */
         get: operations["list_draw_results_api_v1_draw_results_get"];
         put?: never;
