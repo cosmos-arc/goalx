@@ -1,6 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import { __resetBasketForTests, basketActions, newRequestId, requestIdForLegs, useBasket } from "./basket-store";
+import {
+	basketActions,
+	basketStore,
+	createBasketStore,
+	newRequestId,
+	requestIdForLegs,
+	useBasket,
+} from "./basket-store";
 
 /** 票 06 全站篮草稿单源：持久化往返/损坏恢复/幂等键组合。 */
 
@@ -16,9 +23,19 @@ const LEG = {
 	request_id: "leg-1",
 };
 
+/** 票 08 飞行门：挂起 promise 占住飞行（释放=settle）。 */
+function gatedFlight(kind: "had" | "goals") {
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const flight = basketStore.withFlight(kind, () => gate);
+	return { release, flight };
+}
+
 beforeEach(() => {
 	localStorage.clear();
-	__resetBasketForTests();
+	basketStore.reset();
 });
 
 test("actions persist to localStorage and notify subscribers", () => {
@@ -121,11 +138,17 @@ test("入篮概率快照随腿持久化；旧形状腿（无快照）照常恢�
 
 // ---- 票 03：hadPending 全局冻结门 ----
 
-test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不落盘", () => {
+test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不落盘（票 08 状态机）", async () => {
 	const { result } = renderHook(() => useBasket());
 	act(() => {
 		basketActions.setHadLegs([LEG]);
-		basketActions.beginHadFlight();
+	});
+	const { release, flight } = gatedFlight("had");
+	await act(async () => {
+		await Promise.resolve(); // 让 withFlight 起飞（beginFlight 已同步执行）
+	});
+	expect(basketStore.isFrozen("had")).toBe(true);
+	act(() => {
 		// 编辑入口（pick/换选/移除/带入）静默不动
 		basketActions.setHadLegs([]);
 	});
@@ -139,36 +162,45 @@ test("setHadLegs 飞行中被门拦下，replaceHadLegs 自写放行，标志不
 	// 冻结标志不持久化（刷新即解冻的存储侧依据）
 	const persisted = JSON.parse(globalThis.localStorage.getItem("goalx:basket") ?? "{}");
 	expect(persisted.hadPending ?? false).toBe(false);
+	await act(async () => {
+		release();
+		await flight;
+	});
+	expect(basketStore.isFrozen("had")).toBe(false);
 	act(() => {
 		// 解冻后编辑写入恢复
-		basketActions.endHadFlight();
 		basketActions.setHadLegs([LEG]);
 	});
 	expect(result.current.hadLegs).toHaveLength(1);
 });
 
-test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个（correctness F1）", () => {
+test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个（correctness F1）", async () => {
 	const { result } = renderHook(() => useBasket());
 	act(() => {
 		basketActions.setHadLegs([LEG]);
-		basketActions.beginHadFlight(); // 提交 A 起飞
-		basketActions.beginHadFlight(); // 提交 B 重叠起飞
+	});
+	const a = gatedFlight("had"); // 提交 A 起飞
+	const b = gatedFlight("had"); // 提交 B 重叠起飞
+	await act(async () => {
+		await Promise.resolve();
 	});
 	expect(result.current.hadPending).toBe(true);
 	act(() => {
 		basketActions.setHadLegs([]); // 仍冻结
 	});
 	expect(result.current.hadLegs).toHaveLength(1);
-	act(() => {
-		basketActions.endHadFlight(); // A settle：仍剩 B 在飞
+	await act(async () => {
+		a.release(); // A settle：仍剩 B 在飞
+		await a.flight;
 	});
 	expect(result.current.hadPending).toBe(true);
 	act(() => {
 		basketActions.setHadLegs([]);
 	});
 	expect(result.current.hadLegs).toHaveLength(1); // 冻结未解
-	act(() => {
-		basketActions.endHadFlight(); // B settle：全落
+	await act(async () => {
+		b.release(); // B settle：全落
+		await b.flight;
 	});
 	expect(result.current.hadPending).toBe(false);
 	act(() => {
@@ -179,10 +211,14 @@ test("重叠提交计数制冻结：首个 settle 不解冻仍飞行的第二个
 
 // ---- 票 04：goalsPending 冻结门（与 had 各自独立）----
 
-test("共享提交参数（金额/模式/策略版本）任一飞行中都冻结，settle 后恢复（票 01 F1）", () => {
+test("共享提交参数（金额/模式/策略版本）任一飞行中都冻结，settle 后恢复（票 01 F1）", async () => {
 	const { result } = renderHook(() => useBasket());
+	const had = gatedFlight("had");
+	await act(async () => {
+		await Promise.resolve();
+	});
+	expect(basketStore.frozenAny()).toBe(true);
 	act(() => {
-		basketActions.beginHadFlight();
 		basketActions.setStake("999");
 		basketActions.setMode("live");
 		basketActions.setStrategyVersion("drift");
@@ -191,23 +227,33 @@ test("共享提交参数（金额/模式/策略版本）任一飞行中都冻结
 	expect(result.current.stake).toBe("100");
 	expect(result.current.mode).toBe("paper");
 	expect(result.current.strategyVersion).toBe("");
+	await act(async () => {
+		had.release();
+		await had.flight;
+	});
+	const goals = gatedFlight("goals");
+	await act(async () => {
+		await Promise.resolve();
+	});
 	act(() => {
-		basketActions.endHadFlight();
-		basketActions.beginGoalsFlight();
 		basketActions.setStake("999");
 		basketActions.setMode("live");
 	});
-	// goals 飞行同拦（对称面）
+	// goals 飞行同拦（对称面；frozenAny 覆盖两 kind）
 	expect(result.current.stake).toBe("100");
 	expect(result.current.mode).toBe("paper");
+	expect(basketStore.frozenAny()).toBe(true);
+	await act(async () => {
+		goals.release();
+		await goals.flight;
+	});
 	act(() => {
-		basketActions.endGoalsFlight();
 		basketActions.setStake("150");
 	});
 	expect(result.current.stake).toBe("150"); // 解冻后可改
 });
 
-test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 had 门互不干扰", () => {
+test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 had 门互不干扰", async () => {
 	const goalsLeg = {
 		fixture_id: 9,
 		market: "ttg",
@@ -219,7 +265,12 @@ test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 h
 	const { result } = renderHook(() => useBasket());
 	act(() => {
 		basketActions.setGoalsLegs([goalsLeg]);
-		basketActions.beginGoalsFlight();
+	});
+	const goalsFlight = gatedFlight("goals");
+	await act(async () => {
+		await Promise.resolve();
+	});
+	act(() => {
 		// goals 编辑入口被门；had 编辑不受 goals 飞行影响（计数独立）
 		basketActions.setGoalsLegs([]);
 		basketActions.setHadLegs([LEG]);
@@ -234,25 +285,61 @@ test("setGoalsLegs 飞行中被门拦下，replaceGoalsLegs 自写放行，与 h
 	expect(result.current.goalsLegs).toHaveLength(0);
 	const persisted = JSON.parse(globalThis.localStorage.getItem("goalx:basket") ?? "{}");
 	expect(persisted.goalsPending ?? false).toBe(false); // 标志不落盘
+	await act(async () => {
+		goalsFlight.release();
+		await goalsFlight.flight;
+	});
 	act(() => {
-		basketActions.endGoalsFlight();
 		basketActions.setGoalsLegs([goalsLeg]); // 解冻后写入恢复
 	});
 	expect(result.current.goalsLegs).toHaveLength(1);
 });
 
-test("goals 重叠提交计数制：首个 settle 不解冻第二个", () => {
+test("goals 重叠提交计数制：首个 settle 不解冻第二个", async () => {
 	const { result } = renderHook(() => useBasket());
-	act(() => {
-		basketActions.beginGoalsFlight();
-		basketActions.beginGoalsFlight();
+	const a = gatedFlight("goals");
+	const b = gatedFlight("goals");
+	await act(async () => {
+		await Promise.resolve();
 	});
-	act(() => {
-		basketActions.endGoalsFlight();
+	await act(async () => {
+		a.release();
+		await a.flight;
 	});
 	expect(result.current.goalsPending).toBe(true); // 仍剩一个在飞
-	act(() => {
-		basketActions.endGoalsFlight();
+	await act(async () => {
+		b.release();
+		await b.flight;
 	});
 	expect(result.current.goalsPending).toBe(false);
+});
+
+// ---- 票 08：状态机谓词 + 工厂隔离 ----
+
+test("withFlight 异常也解冻（finally 语义）", async () => {
+	const { result } = renderHook(() => useBasket());
+	const boom = basketStore
+		.withFlight("had", async () => {
+			throw new Error("boom");
+		})
+		.catch(() => undefined);
+	await act(async () => {
+		await boom;
+	});
+	expect(result.current.hadPending).toBe(false);
+	expect(basketStore.isFrozen("had")).toBe(false);
+});
+
+test("createBasketStore 实例隔离（票 08 工厂）：互不渗透、独立存储键", () => {
+	const a = createBasketStore("goalx:test-a");
+	const b = createBasketStore("goalx:test-b");
+	a.setLegs("had", [LEG]);
+	expect(a.getSnapshot().hadLegs).toHaveLength(1);
+	expect(b.getSnapshot().hadLegs).toHaveLength(0);
+	expect(basketStore.getSnapshot().hadLegs).toHaveLength(0); // 默认实例不受影响
+	a.setStake("77");
+	expect(JSON.parse(localStorage.getItem("goalx:test-a") ?? "{}").stake).toBe("77");
+	expect(localStorage.getItem("goalx:test-b")).toBeNull();
+	a.reset();
+	b.reset();
 });
