@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
 	type BankrollEvent,
 	createDeposit,
@@ -104,9 +104,11 @@ export function balanceCurveOption(points: BalancePoint[], lineColor: string, ax
  * 跑一次（deps=[]），容器必须随组件一起挂载——点数 ≥2 才挂，否则 init 拿不到容器。
  */
 function BalanceChart({ points }: { points: BalancePoint[] }) {
-	const ref = useECharts(
-		balanceCurveOption(points, cssVar("--chart-1", "#2563eb"), cssVar("--muted-foreground", "#6b7280")),
-	);
+	// 票 05 E17：option 引用稳定（同 history-page 的 CumulativeChart——useECharts 依赖 [option]）
+	const fg = cssVar("--chart-1", "#2563eb");
+	const muted = cssVar("--muted-foreground", "#6b7280");
+	const option = useMemo(() => balanceCurveOption(points, fg, muted), [points, fg, muted]);
+	const ref = useECharts(option);
 	return (
 		<div ref={ref} data-testid="balance-curve" role="img" aria-label="近 30 天余额迷你曲线" className="h-32 w-full" />
 	);
@@ -248,7 +250,9 @@ export function BankrollPage() {
 
 	const data = bankroll.data ?? null;
 	const events = data?.events ?? [];
-	const points = data ? balancePoints(events) : [];
+	// 票 05 E17 correctness F2：points 引用稳定——无关重渲染（入金弹窗等）
+	// 不再触发图表 setOption 重置交互态
+	const points = useMemo(() => (data ? balancePoints(events) : []), [data, events]);
 
 	function openDeposit() {
 		setMessage(null);

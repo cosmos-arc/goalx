@@ -19,6 +19,7 @@ import {
 	oddsText,
 	SELECTIONS,
 } from "../components/had-quote-ui";
+import { bankrollForAdvice } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { bankrollKey, fixtureResearchKey } from "../lib/query-keys";
@@ -408,7 +409,7 @@ export function FixtureResearchPage() {
 			<BasketBar basket={basket} emptyHint="未选择。点上方竞彩赔率加入。" />
 			<BasketDrawer
 				basket={basket}
-				bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+				bankroll={bankrollForAdvice(bankrollQuery)}
 				emptyHint="未选择。点上方竞彩赔率加入。"
 			/>
 		</AppShell>

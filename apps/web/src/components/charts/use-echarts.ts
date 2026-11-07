@@ -28,8 +28,10 @@ export function useECharts(option: EChartsOption): RefObject<HTMLDivElement | nu
 
 	useEffect(() => {
 		// notMerge：option 整体替换，避免 series 数量变化时残留旧系列。
+		// 票 05 E17：依赖 [option]——无依赖数组时每渲染重置交互态（30s tick
+		// 掐 tooltip）；调用方以 useMemo 供稳定 option。
 		chartRef.current?.setOption(option, { notMerge: true });
-	});
+	}, [option]);
 
 	return containerRef;
 }

@@ -17,7 +17,7 @@ import { MarketTabs } from "../components/market-tabs";
 import { PoolGenerator, PoolTargetPlanner } from "../components/pool-generators";
 import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
 import { bestSelection, type PoolPickEntry, PoolSlotList, selectionOf } from "../components/pool-slots";
-import { StakeAdviceNote } from "../components/stake-advice";
+import { bankrollForAdvice, StakeAdviceNote } from "../components/stake-advice";
 import { poolTicketAdvice } from "../lib/pool-ticket-ev";
 import {
 	bankrollKey,
@@ -161,7 +161,7 @@ export function MarketPoolPage() {
 				: null,
 		[pickedEntries],
 	);
-	const bankroll = bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0);
+	const bankroll = bankrollForAdvice(bankrollQuery);
 
 	function pick(matchSeq: number, selection: string) {
 		setSubmitResult(null);

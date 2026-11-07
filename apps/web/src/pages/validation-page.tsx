@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import {
 	type BacktestRun,
 	type ClvReport,
@@ -157,14 +157,12 @@ export function yieldCurveOption(
  * 点数 ≥2 才挂，否则 init 拿不到容器。
  */
 function YieldChart({ points }: { points: YieldPoint[] }) {
-	const ref = useECharts(
-		yieldCurveOption(
-			points,
-			cssVar("--chart-1", "#2563eb"),
-			cssVar("--chart-2", "#ea580c"),
-			cssVar("--muted-foreground", "#6b7280"),
-		),
-	);
+	// 票 05 E17：option 引用稳定（同 history-page 的 CumulativeChart——useECharts 依赖 [option]）
+	const fg = cssVar("--chart-1", "#2563eb");
+	const accent = cssVar("--chart-2", "#ea580c");
+	const muted = cssVar("--muted-foreground", "#6b7280");
+	const option = useMemo(() => yieldCurveOption(points, fg, accent, muted), [points, fg, accent, muted]);
+	const ref = useECharts(option);
 	return (
 		<div
 			ref={ref}

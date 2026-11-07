@@ -21,6 +21,7 @@ import {
 	PRICE_BAND_DISCLAIMER,
 	SELECTIONS,
 } from "../components/had-quote-ui";
+import { bankrollForAdvice } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { bankrollKey, todayFixturesKey } from "../lib/query-keys";
@@ -374,7 +375,7 @@ export function FixturesPage() {
 
 			<BasketDrawer
 				basket={basket}
-				bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+				bankroll={bankrollForAdvice(bankrollQuery)}
 				emptyHint="未选择。点页面里任意赔率加入。"
 			/>
 		</AppShell>

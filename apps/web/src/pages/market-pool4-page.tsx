@@ -13,7 +13,7 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { MarketTabs } from "../components/market-tabs";
 import { PoolPreviewStatus, poolPreviewBlockLabel, poolPreviewGate } from "../components/pool-preview-status";
-import { StakeAdviceNote } from "../components/stake-advice";
+import { bankrollForAdvice, StakeAdviceNote } from "../components/stake-advice";
 import { poolTicketAdvice } from "../lib/pool-ticket-ev";
 import {
 	bankrollKey,
@@ -75,17 +75,19 @@ function pairJoint(match: PoolMatch, home: string, away: string): number | null 
 	return p === undefined ? null : p;
 }
 
-function matchHitProb(match: PoolMatch, picks: string[]): number | null {
+/** 一场命中概率（票 05 E9）：任一配对缺联合 = null——先判全再求和，
+ * 后到数值对不得把 null 累加器复活（顺序依赖曾在稀疏矩阵下显假概率）。
+ * 导出供单测（null 在前的稀疏矩阵页面级难构造）。 */
+export function matchHitProb(match: PoolMatch, picks: string[]): number | null {
 	if (picks.length === 0) {
 		return null;
 	}
-	return pairsOf(picks).reduce<number | null>((acc, { away, home }) => {
-		const joint = pairJoint(match, home, away);
-		if (joint === null) {
-			return null;
-		}
-		return (acc ?? 0) + joint;
-	}, 0);
+	const joints = pairsOf(picks).map(({ away, home }) => pairJoint(match, home, away));
+	const values = joints.filter((joint): joint is number => joint !== null);
+	if (values.length !== joints.length) {
+		return null;
+	}
+	return values.reduce((acc, joint) => acc + joint, 0);
 }
 
 export function MarketPool4Page() {
@@ -241,7 +243,7 @@ export function MarketPool4Page() {
 				: null,
 		[singlePairs],
 	);
-	const bankroll = bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0);
+	const bankroll = bankrollForAdvice(bankrollQuery);
 
 	/** 票级联合命中概率（复式场按所选配对联合求和；任一场缺联合 = null）。 */
 	const ticketJointProb = useMemo(() => {

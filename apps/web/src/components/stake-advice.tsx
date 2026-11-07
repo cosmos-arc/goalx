@@ -35,10 +35,27 @@ export function parlayAdviceInput(legs: AdviceLeg[]): { ev: number | null; odds:
 	return { ev: ev === null ? null : ev - 1, odds };
 }
 
+/** bankroll 查询 → 建议输入（票 05 E16）：pending=undefined 禁用（冷缓存
+ * 首访不得以 0 冒充余额触发「未入金」假断言）；error=null 诚实降级；
+ * 成功无余额（真未入金）= 0（建议数学口径的资金面）。 */
+export function bankrollForAdvice(query: {
+	isPending: boolean;
+	isError: boolean;
+	data?: { balance: number | null } | undefined;
+}): number | null | undefined {
+	if (query.isPending) {
+		return undefined;
+	}
+	if (query.isError) {
+		return null;
+	}
+	return query.data?.balance ?? 0;
+}
+
 export type StakeAdviceNoteProps = {
 	mode: "paper" | "live";
-	/** bankroll 真金余额；null = 资金池读取失败（诚实降级）。 */
-	bankroll: number | null;
+	/** bankroll 真金余额；null = 资金池读取失败（诚实降级）；undefined = 读取中（票 05 E16，禁用不冒充 0）。 */
+	bankroll: number | null | undefined;
 	ev: number | null;
 	odds: number | null;
 	/** live 单注上限（1%–5%，默认 5%；票 wb-07 三档复用）。 */
@@ -51,12 +68,9 @@ export type StakeAdviceNoteProps = {
 };
 
 export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, label, note, testid }: StakeAdviceNoteProps) {
-	const enabled = bankroll !== null && ev !== null && odds !== null;
+	const enabled = bankroll !== undefined && bankroll !== null && ev !== null && odds !== null;
 	const cap = capFraction ?? 0.05;
-	const body: StakeAdviceInput | null =
-		enabled && bankroll !== null && ev !== null && odds !== null
-			? { mode, bankroll, ev, odds, cap_fraction: cap }
-			: null;
+	const body: StakeAdviceInput | null = enabled ? { mode, bankroll, ev, odds, cap_fraction: cap } : null;
 	const adviceQuery = useQuery({
 		queryKey: stakeAdviceKey({ mode, bankroll, ev, odds, cap }),
 		queryFn: () => fetchStakeAdvice(body as StakeAdviceInput),
@@ -64,7 +78,9 @@ export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, label, 
 	});
 
 	let detail: string | undefined;
-	if (bankroll === null) {
+	if (bankroll === undefined) {
+		detail = "资金池读取中…";
+	} else if (bankroll === null) {
 		detail = "资金池读取失败——建议仓位暂缺（去资金页重试后再看）";
 	} else if (ev === null || odds === null) {
 		detail = "该选择缺 EV/赔率数据——不给注额建议（无 EV 不伪造建议，见词典 EV 词条）";

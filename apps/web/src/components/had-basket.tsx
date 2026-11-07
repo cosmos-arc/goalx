@@ -143,7 +143,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	 * 换选不占新名额，腿满时可直接切换已选场的方向）；再点同选项=取消；
 	 * 非单固首腿=提示；停售/已开赛=忽略。 */
 	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
-		if (!isPickable(fixture, now) || createSuggestion.isPending) {
+		// 票 05 E15：hadPending=任一页提交飞行中（store 计数制冻结）——不拦
+		// 会编辑被门静默吞掉但 toast 仍报「已替换」（替换提示说谎）
+		if (!isPickable(fixture, now) || createSuggestion.isPending || hadPending) {
 			return; // 提交中篮内容冻结（票 02：逐腿派发期间所见即所提交）
 		}
 		const existing = legs.find((leg) => leg.fixture_id === fixture.fixture_id);
@@ -176,8 +178,8 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	}
 
 	function removeLeg(fixtureId: number) {
-		if (createSuggestion.isPending) {
-			return; // 同 pick：飞行中锁定编辑
+		if (createSuggestion.isPending || hadPending) {
+			return; // 同 pick：飞行中锁定编辑（含跨页飞行，票 05 E15）
 		}
 		setLegs(legs.filter((leg) => leg.fixture_id !== fixtureId));
 		setMessage(null);
@@ -559,7 +561,8 @@ export function BasketDrawer({
 	emptyHint,
 }: {
 	basket: HadBasket;
-	bankroll: number | null;
+	/** 建议输入口径的余额（票 05 E16）：undefined=读取中；null=读取失败。 */
+	bankroll: number | null | undefined;
 	emptyHint: string;
 }) {
 	const {

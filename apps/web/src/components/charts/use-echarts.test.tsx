@@ -70,6 +70,22 @@ describe("useECharts", () => {
 		expect(chartMock.setOption).toHaveBeenLastCalledWith(next, { notMerge: true });
 	});
 
+	it("票 05 E17：引用不变的重渲染不再 setOption（30s tick 不重置交互态）", () => {
+		const { rerender } = renderChart();
+		expect(chartMock.setOption).toHaveBeenCalledTimes(1);
+
+		// 同一 option 引用重渲染（父组件无关状态变化/时钟 tick）
+		rerender(<Chart option={baseOption} />);
+		rerender(<Chart option={baseOption} />);
+
+		expect(chartMock.setOption).toHaveBeenCalledTimes(1);
+		// 引用变化（新数据点）照常整体替换
+		const next: EChartsOption = { series: [{ type: "line", data: [1, 2, 3, 4] }] };
+		rerender(<Chart option={next} />);
+		expect(chartMock.setOption).toHaveBeenCalledTimes(2);
+		expect(chartMock.setOption).toHaveBeenLastCalledWith(next, { notMerge: true });
+	});
+
 	it("容器尺寸变化时经 ResizeObserver 触发 resize", () => {
 		renderChart();
 		const observer = ResizeObserverMock.instances[0];

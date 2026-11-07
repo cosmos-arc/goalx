@@ -4,9 +4,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
+import type { PoolMatch } from "../api/goalx";
 import { goals4PeriodDetailFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
+import { matchHitProb } from "./market-pool4-page";
 
 /**
  * 票 10（report-audit-20261103）四场进球页测试：goals4 期次贯通、
@@ -222,4 +224,16 @@ test("goals4 ticket advice applies the return rate once (票 08 anchor +58.69%)"
 	const last = bodies[bodies.length - 1] as { ev?: number; odds?: number };
 	expect(last.ev).toBeCloseTo(0.65 * 1.25 ** 4 - 1, 4); // +58.69%
 	expect(last.odds).toBeCloseTo(0.65 / 0.16 ** 4, 1);
+});
+
+test("票 05 E9：任一配对缺联合 = null——null 在前不被后到数值对复活", () => {
+	// 稀疏联合矩阵：h0×a0 缺（pairsOf 排序后首个配对 null）、h0×a1=0.3
+	const match = {
+		goals4_joint: { h0: { a1: 0.3 } },
+	} as unknown as PoolMatch;
+	// 旧实现 reduce (acc ?? 0) + joint：null 累加器被 0.3 复活 → 假概率
+	expect(matchHitProb(match, ["h0", "a0", "a1"])).toBeNull();
+	// 全配对齐 = 数值和（对照：复活 bug 修复不误伤正常路径）
+	const full = { goals4_joint: { h0: { a0: 0.1, a1: 0.3 } } } as unknown as PoolMatch;
+	expect(matchHitProb(full, ["h0", "a0", "a1"])).toBeCloseTo(0.4);
 });

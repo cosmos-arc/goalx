@@ -13,7 +13,7 @@ import {
 	todayProbabilitySnapshot,
 } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
-import { parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
+import { bankrollForAdvice, parlayAdviceInput, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import {
 	buildHadCombo,
@@ -314,7 +314,7 @@ export function MarketHadPage() {
 									<div className="mt-3">
 										<StakeAdviceNote
 											mode="paper"
-											bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+											bankroll={bankrollForAdvice(bankrollQuery)}
 											ev={comboAdvice.ev}
 											odds={comboAdvice.odds}
 											note={comboAdviceNote}
@@ -367,7 +367,7 @@ export function MarketHadPage() {
 			<BasketBar basket={basket} emptyHint="点推荐流赔率或“一键带入”加入；单关须单固，2串1 须不同场次" />
 			<BasketDrawer
 				basket={basket}
-				bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+				bankroll={bankrollForAdvice(bankrollQuery)}
 				emptyHint="未选择。点推荐流赔率或组合卡“一键带入”加入。"
 			/>
 		</AppShell>

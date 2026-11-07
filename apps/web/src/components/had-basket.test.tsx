@@ -221,3 +221,49 @@ test("提交飞行中，别页编辑被门拦下；settle 后清腿落库（票 
 		});
 	});
 });
+
+// ---- 票 05 E15：跨页飞行中 pick 的「已替换」toast 说谎 ----
+
+test("跨页飞行中同场换选：编辑被门拦且不报「已替换」（票 05 E15）", async () => {
+	const { wrapper } = withClient();
+	const pageA = renderHook(() => useHadBasket(Date.now(), []), { wrapper });
+	act(() => {
+		pageA.result.current.pick(PICKABLE, "h", 1.92);
+	});
+
+	// 别页提交挂起 → 全局 hadPending
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	server.use(
+		http.post(
+			"*/api/v1/bets",
+			async () => {
+				await gate;
+				return HttpResponse.json({ id: 9, mode: "paper", stake: 100, legs: [], status: "open" }, { status: 201 });
+			},
+			{ once: true },
+		),
+	);
+	await act(async () => {
+		pageA.result.current.createSuggestion.mutate();
+	});
+
+	// 本页（isPending=false）同场换选：旧实现 setLegs 被门吞但 toast 报已替换
+	const pageB = renderHook(() => useHadBasket(Date.now(), []), { wrapper });
+	act(() => {
+		pageB.result.current.pick(PICKABLE, "d", 3.4);
+	});
+	expect(pageB.result.current.legs).toHaveLength(1);
+	expect(pageB.result.current.legs[0]?.fixture_id).toBe(1);
+	expect(pageB.result.current.legs[0]?.selection).toBe("h"); // 未被替换
+	expect(pageB.result.current.message).toBeNull(); // 无「已替换」谎报
+
+	release();
+	await act(async () => {
+		await vi.waitFor(() => {
+			expect(pageB.result.current.legs).toHaveLength(0);
+		});
+	});
+});

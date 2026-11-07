@@ -85,7 +85,8 @@ export const poolSlipPreviewKey = (marketCode: string, periodNo: string | undefi
  */
 export const stakeAdviceKey = (input: {
 	mode: "paper" | "live";
-	bankroll: number | null;
+	/** 票 05 E16：undefined=读取中（disabled 不发请求，仅占缓存键位）。 */
+	bankroll: number | null | undefined;
 	ev: number | null;
 	odds: number | null;
 	cap: number;
