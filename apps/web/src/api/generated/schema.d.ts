@@ -710,6 +710,8 @@ export interface paths {
         /**
          * 回测 run 列表
          * @description 全部回测 run（新→旧），附 overall 指标摘要（读研究库）。
+         *
+         *     同步 def（票 04，B2 同族收尾）：同步体 async 会阻事件环，走线程池。
          */
         get: operations["list_backtest_runs_api_v1_backtest_runs_get"];
         put?: never;
@@ -730,6 +732,8 @@ export interface paths {
         /**
          * 回测 run 详情(分层指标)
          * @description 一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。
+         *
+         *     同步 def（票 04，B2 同族收尾）：同 list_backtest_runs。
          */
         get: operations["get_backtest_run_api_v1_backtest_runs__run_id__get"];
         put?: never;
@@ -836,6 +840,8 @@ export interface paths {
         /**
          * 历史基准分期/来源质检
          * @description PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。
+         *
+         *     同步 def（票 04，B2 同族收尾）：同 list_backtest_runs。
          */
         get: operations["get_baseline_quality_api_v1_backtest_baseline_quality_get"];
         put?: never;

@@ -902,10 +902,11 @@ def list_slips(
         FROM bet_slips s
         ORDER BY s.created_at DESC, s.id DESC
         """  # noqa: S608 常量子查询拼接
+    params: list[Any] = []
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def save_settlement(
@@ -1020,7 +1021,12 @@ def record_bankroll_event(
     note: str | None = None,
     occurred_at: str | None = None,
 ) -> int:
-    """Append a bankroll movement (仅 live 结算/出入金调用，ADR 0002)。"""
+    """
+    Append a bankroll movement (仅 live 结算/出入金调用，ADR 0002)。
+
+    票 04 D13：balance_after 逐笔 2 位舍入——流水和的裸浮点
+    （0.1+0.2 → 0.30000000000000004）曾直达 API。
+    """
     at = occurred_at or utc_now_iso()
     balance = bankroll_balance(conn) or 0.0
     cur = conn.execute(
