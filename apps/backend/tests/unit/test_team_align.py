@@ -237,3 +237,48 @@ def test_clubelo_bridge_anchors_on_srct_en(db) -> None:
     assert report.added == 1
     assert report.unmatched == ["Nowhere FC"]
     assert ta.clubelo_alias_for_team(db, home) == "Liverpool"
+
+
+def test_record_srct_en_aliases_cross_source_conflict(db) -> None:
+    """跨源同名异队同样拦下（correctness F3）：变体队错绑比漏登记更危险。"""
+    real = fx_store.upsert_team(db, "利物浦")
+    variant = fx_store.upsert_team(db, "利物浦变体")
+    db.execute(
+        "INSERT INTO team_aliases (team_id, source, alias) VALUES (?, 'manual', ?)",
+        (real, "Liverpool"),
+    )
+    db.commit()
+    # 变体队带来同名英文名 → 跨源冲突，不落行
+    assert ta.record_srct_en_aliases(db, [(variant, "Liverpool")]) == (
+        0,
+        [("Liverpool", real, variant)],
+    )
+    # 同队同名跨源共存互证（ADR-0013）：manual 已有，srct_en 照落不冲突
+    assert ta.record_srct_en_aliases(db, [(real, "Liverpool")]) == (1, [])
+
+
+def test_english_alias_census_counts_manual_english_only(db) -> None:
+    """普查分子含 manual 英文别名；manual 中文别名不计（correctness F4）。"""
+    from goalx_backend.data import fixtures as fixtures_store
+
+    comp = fixtures_store.upsert_competition(db, "英超", tier=fixtures_store.Tier.TIER1)
+    home = fixtures_store.upsert_team(db, "阿森纳")
+    away = fixtures_store.upsert_team(db, "切尔西")
+    fid = fixtures_store.upsert_fixture(
+        db, comp, "2026-11-07T19:00:00+00:00", home, away
+    )
+    db.execute(
+        "INSERT INTO match_codes (fixture_id, kind, business_date, code)"
+        " VALUES (?, 'jingcai', '2026-11-07', '周六001')",
+        (fid,),
+    )
+    db.execute(
+        "INSERT INTO team_aliases (team_id, source, alias) VALUES"
+        " (?, 'manual', 'Arsenal'), (?, 'manual', '切尔西')",
+        (home, away),
+    )
+    db.commit()
+    census = ta.english_alias_census(db)
+    assert census["jc_teams"] == 2
+    assert census["english_resolvable"] == 1
+    assert census["unresolved"] == ["切尔西"]

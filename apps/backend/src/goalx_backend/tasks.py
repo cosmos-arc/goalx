@@ -15,6 +15,7 @@ import concurrent.futures
 import multiprocessing
 import sqlite3
 import time
+import zlib
 from collections.abc import Callable, Generator
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, contextmanager
@@ -769,10 +770,11 @@ def _srct_en_alias_pairs(
     """
     已链场次 → (team_id, 源T英文名) 对子（identity-alias 票 01）。
 
-    按 sid 读归档 odds_1x2d 原页重解析（零网络）；无原页/无英文名计数
-    进 misses 不抛错（该队留普查未解析清单，晨检守门兜底）。队级幂等门
-    =已持 srct_en 别名的队跳过——首拍回填历史面，此后每拍近零读。
-    ``corpus_root`` 显式参数供测试隔离（缺省=运行 settings）。
+    按 sid 读归档 odds_1x2d 原页重解析（零网络）；缺原页/坏档（截断 gz
+    抛 EOFError·zlib.error，非 OSError 子类）/页在而英文名缺（形态漂移）
+    一律计数进 misses 不抛错——该队留普查未解析清单，晨检守门兜底。
+    队级幂等门=已持 srct_en 别名的队跳过——首拍回填历史面，此后每拍
+    近零读。``corpus_root`` 显式参数供测试隔离（缺省=运行 settings）。
     """
     store = CorpusStore(corpus_root or get_settings().corpus_root)
     skip = srct_en_team_ids(conn)
@@ -784,14 +786,20 @@ def _srct_en_alias_pairs(
                 body = store.read_raw(
                     srct.SRCT_PROVIDER, srct.ODDS_DATASET, row.sid, ext=".js"
                 )
-            except OSError:
+            except (OSError, EOFError, zlib.error):
                 misses += 1
                 continue
             home_en, away_en = srct.parse_odds_page_names(body)
-            if row.home_team_id not in skip and home_en:
-                pairs.append((row.home_team_id, home_en))
-            if row.away_team_id not in skip and away_en:
-                pairs.append((row.away_team_id, away_en))
+            for team_id, name in (
+                (row.home_team_id, home_en),
+                (row.away_team_id, away_en),
+            ):
+                if team_id in skip:
+                    continue
+                if name:
+                    pairs.append((team_id, name))
+                else:
+                    misses += 1
     finally:
         store.close()
     return pairs, misses

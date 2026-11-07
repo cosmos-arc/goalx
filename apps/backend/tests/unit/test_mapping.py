@@ -873,3 +873,39 @@ def test_srct_en_alias_pairs_from_raw(db, tmp_path) -> None:
     assert again == []
     assert misses_again == 1
     store.close()
+
+
+def test_srct_en_alias_pairs_bad_archive_and_shape_drift(db, tmp_path) -> None:
+    """坏档与形态漂移不抛错只计数（correctness F1/F5）。"""
+    import gzip as gzip_mod
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.data.ingest.srct import ODDS_DATASET
+    from goalx_backend.tasks import _srct_en_alias_pairs
+
+    linked = seed_fixture(db, home="森林", away="切尔西")
+    mapping.link_fixture_sid(db, linked, "2789205", method=mapping.METHOD_MANUAL)
+    db.commit()
+    store = CorpusStore(tmp_path)
+    # 截断 gz：EOFError 非 OSError 子类，必须计数不炸拍
+    store.raw_path("srct", ODDS_DATASET, "2789205", ext=".js").parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    store.raw_path("srct", ODDS_DATASET, "2789205", ext=".js").write_bytes(
+        gzip_mod.compress(b"var hometeam=")[:-4]
+    )
+    pairs, misses = _srct_en_alias_pairs(db, corpus_root=tmp_path)
+    assert pairs == []
+    assert misses == 1
+    # 页在而英文名缺（形态漂移）：同样计数
+    store.ingest_raw(
+        "srct",
+        ODDS_DATASET,
+        "2789205",
+        b"var game=Array('');",
+        ext=".js",
+    )
+    pairs, misses = _srct_en_alias_pairs(db, corpus_root=tmp_path)
+    assert pairs == []
+    assert misses == 2
+    store.close()

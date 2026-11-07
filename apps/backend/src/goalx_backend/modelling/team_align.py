@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
+from goalx_backend.db import atomic
 
 # 俱乐部法律形态词元（两侧都剥离，使 "FC Koln"↔"Koln" 等价）
 STRIP_TOKENS = frozenset(
@@ -319,29 +320,31 @@ def record_srct_en_aliases(
     映射同步产出的 (team_id, 源T英文名) 对落 source='srct_en'（幂等）。
 
     identity-alias 票 01：英文别名是模型域解析的命脉，同名异队**不得
-    静默**——UNIQUE(source,alias) 会吞掉后到者，落库前显式查现有归属，
-    冲突记 (alias, 原team, 后team) 清单并跳过，交人工裁决（定则 1）。
+    静默**——整批 BEGIN IMMEDIATE（atomic）串行化并发同步，检查+落库
+    同锁内无 TOCTOU；冲突检测跨源（manual/odds_api 等已登记同名异队
+    同样拦下——变体队错绑比漏登记更危险），记 (alias, 原team, 后team)
+    清单并跳过，交人工裁决（定则 1）。
     """
     added = 0
     conflicts: list[tuple[str, int, int]] = []
-    for team_id, alias in pairs:
-        row = conn.execute(
-            "SELECT team_id FROM team_aliases WHERE source = 'srct_en' AND alias = ?",
-            (alias,),
-        ).fetchone()
-        if row is not None and int(row["team_id"]) != team_id:
-            conflicts.append((alias, int(row["team_id"]), team_id))
-            continue
-        cur = conn.execute(
-            """
-            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
-            VALUES (?, 'srct_en', ?)
-            """,
-            (team_id, alias),
-        )
-        if cur.rowcount > 0:
-            added += 1
-    conn.commit()
+    with atomic(conn):
+        for team_id, alias in pairs:
+            row = conn.execute(
+                "SELECT team_id FROM team_aliases WHERE alias = ? AND team_id != ?",
+                (alias, team_id),
+            ).fetchone()
+            if row is not None:
+                conflicts.append((alias, int(row["team_id"]), team_id))
+                continue
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+                VALUES (?, 'srct_en', ?)
+                """,
+                (team_id, alias),
+            )
+            if cur.rowcount > 0:
+                added += 1
     return added, conflicts
 
 
@@ -372,7 +375,11 @@ def english_alias_census(conn: sqlite3.Connection) -> dict[str, object]:
     aliased = {
         int(row["team_id"])
         for row in conn.execute(
-            "SELECT DISTINCT team_id FROM team_aliases WHERE source IN (?, ?, ?, ?)",
+            """
+            SELECT DISTINCT team_id FROM team_aliases
+            WHERE source IN (?, ?, ?, ?)
+               OR (source = 'manual' AND alias GLOB '*[A-Za-z]*')
+            """,
             ("srct_en", "odds_api", "propline", "clubelo"),
         )
     }
