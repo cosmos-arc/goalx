@@ -161,6 +161,10 @@ _Avoid_: 数据目录（泛指）、数据仓库（口语可用，实体一律 C
 silver 层各 builder 的共同实现面（`data/silver.py`）：分区/整文件 parquet 原子写、幂等重建清理、事件流去重核 keep_value_changes（A→B→A 保留、同值心跳丢弃、不可解时间跳行——jc sp_change_event 与 srct odds_change_event 一份语义）、bronze 选取迭代与数值/赛季工具。磁盘布局唯一落点是 CorpusStore.silver_path()/raw_dir()。
 _Avoid_: silver 工具函数集（口语）、公共 helper（泛指）
 
+**BuildGuards**:
+重构建任务的资源与并发防线族（`data/duck_limits.py` + `srct_remat` 锁/余量探测 + `tasks.gold_rebuild` 段级隔离）：duckdb 连接三件帽（memory_limit+树内 spill+threads≤4，建库/消费/选轨三连接同口径）；silver_build_lock 重任务并发预算=1；headroom≥6GiB 探测不足即 deferred 让位明日自愈；market/gold 重段各起 spawn 子进程执行——段退出 OS 全额回收（arena 残留根治），子进程硬死（OOM）转 deferred、spawn 基建失败 fail-loud。
+_Avoid_: 内存护栏（口语可用，实体一律 BuildGuards）、限流器（歧义）
+
 **本地报价研究候选**:
 相对于某项 Competition 具有本地投注市场关联、值得检验其报价相对跨市场共识是否含增量信息的 `(Competition, bookmaker_id)` 组合；候选身份不代表已证实领先、预测增益或数据覆盖达标。
 _Avoid_: 本地核心书商、领先书商
