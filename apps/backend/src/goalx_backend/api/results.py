@@ -8,7 +8,7 @@ from typing import Annotated, Any, cast
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from goalx_backend import tasks
 from goalx_backend.api.deps import get_db
@@ -43,6 +43,14 @@ class DrawResultImport(BaseModel):
 
     results: list[DrawResultPayload] = Field(min_length=1)
     source: str = "manual"
+
+    @model_validator(mode="after")
+    def _reject_duplicate_fixtures(self) -> DrawResultImport:
+        # 票 09：重复 fixture 令预览/导入分叉，入口即拒
+        ids = [r.fixture_id for r in self.results]
+        if len(set(ids)) != len(ids):
+            raise ValueError("同一批次内 fixture_id 重复——分多条请求提交")
+        return self
 
 
 class DrawResultView(BaseModel):

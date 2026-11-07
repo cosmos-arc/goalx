@@ -305,9 +305,13 @@ def test_concurrent_purchase_has_one_winner(tmp_path) -> None:
     conn.close()
 
 
-def test_correction_can_reopen_then_finalize_without_double_payment(
+def test_correction_reverse_and_refinalize_keeps_halves_without_double_payment(
     db: sqlite3.Connection,
 ) -> None:
+    """票 09 语义更新：null 半场=保持现值（原 null=撤销半场→reopen 的路径废除）。
+
+    资金一次性不变量不变：won→lost 冲回一次，再改判回 won 重付一次，
+    全程无双付。"""
     bet, fixture = make_bet(db)
     db.execute(
         "UPDATE bet_legs SET market_code='hafu', selection_code='hh' WHERE bet_id=?",
@@ -330,19 +334,18 @@ def test_correction_can_reopen_then_finalize_without_double_payment(
         [
             DrawResultInput(
                 fixture_id=fixture,
-                home_goals=2,
-                away_goals=0,
-                correction_reason="half time under review",
+                home_goals=0,
+                away_goals=2,
+                correction_reason="客胜改判",
             )
         ],
     )
     row = bt.get_bet(db, bet)
-    assert row["status"] == "open"
-    assert row["settled_at"] is None
-    assert row["payout"] is None
+    assert row["status"] == "lost"  # 半场保持 (1,0) → hafu ha≠hh，不 reopen
+    assert row["payout"] == 0.0
     assert bt.bankroll_balance(db) == -10
     import_draw_results(
-        db, [full.model_copy(update={"correction_reason": "half time confirmed"})]
+        db, [full.model_copy(update={"correction_reason": "再改判回主胜"})]
     )
     assert bt.get_bet(db, bet)["status"] == "won"
     assert bt.bankroll_balance(db) == 10

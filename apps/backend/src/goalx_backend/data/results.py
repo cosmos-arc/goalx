@@ -11,10 +11,40 @@ from goalx_backend.migrations import HIST_EXTENDED_COLUMNS
 from goalx_backend.models import DrawResultInput
 
 
+def with_kept_halves(
+    result: DrawResultInput, previous: sqlite3.Row | None
+) -> DrawResultInput:
+    """
+    更正载荷 null 半场 → 保持库内现值（票 09 人裁决 2026-11-07）。
+
+    web 更正表单无半场字段，null=未触及而非未知（空≠无）；previous=None
+    （首写）原样返回，null 仍=真未知。预览与导入共用本语义，防两面分叉。
+    """
+    if previous is None or (
+        result.half_home_goals is not None and result.half_away_goals is not None
+    ):
+        return result
+    return result.model_copy(
+        update={
+            "half_home_goals": (
+                result.half_home_goals
+                if result.half_home_goals is not None
+                else previous["half_home_goals"]
+            ),
+            "half_away_goals": (
+                result.half_away_goals
+                if result.half_away_goals is not None
+                else previous["half_away_goals"]
+            ),
+        }
+    )
+
+
 def upsert_draw_result(conn: sqlite3.Connection, result: DrawResultInput) -> int:
     """Import an official draw result (唯一事实源，ADR 0001；修正可覆盖)。"""
     previous = get_draw_result(conn, result.fixture_id)
-    replacement = result.model_dump(exclude={"correction_reason"})
+    kept = with_kept_halves(result, previous)
+    replacement = kept.model_dump(exclude={"correction_reason"})
     if previous is not None:
         old = {key: previous[key] for key in replacement}
         if old == replacement:
@@ -50,20 +80,20 @@ away_goals=excluded.away_goals,
             published_at=excluded.published_at, created_at=excluded.created_at
         """,
         (
-            result.fixture_id,
-            result.home_goals,
-            result.away_goals,
-            result.half_home_goals,
-            result.half_away_goals,
-            int(result.void),
-            result.void_reason,
-            result.source,
-            result.published_at,
+            kept.fixture_id,
+            kept.home_goals,
+            kept.away_goals,
+            kept.half_home_goals,
+            kept.half_away_goals,
+            int(kept.void),
+            kept.void_reason,
+            kept.source,
+            kept.published_at,
             utc_now_iso(),
         ),
     )
     row = conn.execute(
-        "SELECT id FROM draw_results WHERE fixture_id = ?", (result.fixture_id,)
+        "SELECT id FROM draw_results WHERE fixture_id = ?", (kept.fixture_id,)
     ).fetchone()
     if row is None:
         raise RuntimeError("draw_result upsert 后未找到行")

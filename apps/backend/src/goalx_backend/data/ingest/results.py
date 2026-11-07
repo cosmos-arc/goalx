@@ -30,13 +30,15 @@ def import_draw_results(
             ).fetchone()[0]
         )
         changed: set[int] = set()
-        for result in results:
-            previous = rs_store.get_draw_result(conn, result.fixture_id)
-            values = result.model_dump(exclude={"correction_reason"})
+        for raw in results:
+            previous = rs_store.get_draw_result(conn, raw.fixture_id)
+            # 票 09：null 半场=保持现值——changed 探测与 upsert 同语义
+            kept = rs_store.with_kept_halves(raw, previous)
+            values = kept.model_dump(exclude={"correction_reason"})
             if previous is not None and any(
                 previous[key] != value for key, value in values.items()
             ):
-                changed.add(result.fixture_id)
+                changed.add(raw.fixture_id)
         validate_correction_targets(conn, changed)
         for result in results:
             rs_store.upsert_draw_result(conn, result)
