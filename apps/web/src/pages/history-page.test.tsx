@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -544,4 +544,55 @@ test("加载中先出骨架屏", async () => {
 	expect(await screen.findByTestId("history-loading")).toBeInTheDocument();
 	expect(screen.queryByTestId("history-metrics")).not.toBeInTheDocument();
 	expect(screen.queryByTestId("empty-state")).not.toBeInTheDocument();
+});
+
+test("票 05 E17 correctness F2：30s 滴答重渲染不给图表换 option（交互态不重置）", async () => {
+	vi.useFakeTimers({ shouldAdvanceTime: true });
+	try {
+		server.use(
+			http.get("*/api/v1/bets", () =>
+				HttpResponse.json([
+					{
+						id: 1,
+						mode: "paper",
+						market_kind: "fixed",
+						purchased: true,
+						stake: 2,
+						status: "won",
+						payout: 4,
+						profit: 2,
+						settled_at: daysAgoIso(1),
+						strategy_version: null,
+						legs: [{ fixture_id: 1, market_code: "had", selection_code: "h", locked_odds: 2 }],
+					},
+					{
+						id: 2,
+						mode: "paper",
+						market_kind: "fixed",
+						purchased: true,
+						stake: 2,
+						status: "lost",
+						payout: 0,
+						profit: -2,
+						settled_at: daysAgoIso(2),
+						strategy_version: null,
+						legs: [{ fixture_id: 2, market_code: "had", selection_code: "h", locked_odds: 2 }],
+					},
+				]),
+			),
+			http.get("*/api/v1/fixtures/today*", () => HttpResponse.json([])),
+		);
+		await renderAt("/history");
+		await vi.waitFor(() => {
+			expect(chartMock.setOption).toHaveBeenCalledTimes(1); // 数据到位出图一次
+		});
+
+		// 30s 滴答（useNow setState → 整页重渲染；数据未变）
+		await act(async () => {
+			vi.advanceTimersByTimeAsync(30_000);
+		});
+		expect(chartMock.setOption).toHaveBeenCalledTimes(1); // option 引用未变
+	} finally {
+		vi.useRealTimers();
+	}
 });

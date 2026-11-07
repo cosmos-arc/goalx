@@ -250,7 +250,9 @@ export function BankrollPage() {
 
 	const data = bankroll.data ?? null;
 	const events = data?.events ?? [];
-	const points = data ? balancePoints(events) : [];
+	// 票 05 E17 correctness F2：points 引用稳定——无关重渲染（入金弹窗等）
+	// 不再触发图表 setOption 重置交互态
+	const points = useMemo(() => (data ? balancePoints(events) : []), [data, events]);
 
 	function openDeposit() {
 		setMessage(null);
