@@ -260,8 +260,13 @@ def preview_draw_result_change(
     overlaid: dict[int, ResultFacts] = {
         fid: _result_facts(row) for fid, row in with_results.items()
     }
+    effective: dict[int, DrawResultInput] = {}
     for result in results:
-        overlaid[result.fixture_id] = _proposed_facts(result)
+        previous = with_results.get(result.fixture_id)
+        # 票 09：更正载荷 null 半场=保持现值（与 upsert 同语义），预览/显示/导入一致
+        kept = rs_store.with_kept_halves(result, previous)
+        effective[result.fixture_id] = kept
+        overlaid[result.fixture_id] = _proposed_facts(kept)
 
     changes: list[ResultChangePreview] = []
     for result in results:
@@ -271,7 +276,7 @@ def preview_draw_result_change(
                 fixture_id=result.fixture_id,
                 is_correction=previous is not None,
                 previous=dict(previous) if previous is not None else None,
-                replacement=result.model_dump(
+                replacement=effective[result.fixture_id].model_dump(
                     exclude={"correction_reason"}, mode="json"
                 ),
             )
