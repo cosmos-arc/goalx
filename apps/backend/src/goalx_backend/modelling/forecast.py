@@ -309,6 +309,32 @@ def latest_forecast(
     ).fetchone()
 
 
+def latest_forecasts_bulk(
+    conn: sqlite3.Connection, fixture_ids: list[int], track: str = "ml"
+) -> dict[int, sqlite3.Row]:
+    """
+    Fixture → 最新一条 Forecast 批量窗口查（票 04 D12）。
+
+    与 latest_forecast 同 (issued_at, id) 最新口径；goals 页逐场查询
+    收敛为一条。
+    """
+    if not fixture_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in fixture_ids)
+    rows = conn.execute(
+        f"""
+        SELECT fixture_id, id, model_version, issued_at, payload FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY fixture_id ORDER BY issued_at DESC, id DESC
+            ) AS rn
+            FROM forecasts WHERE fixture_id IN ({placeholders}) AND track = ?
+        ) WHERE rn = 1
+        """,  # noqa: S608 占位符拼接
+        [*fixture_ids, track],
+    ).fetchall()
+    return {int(row["fixture_id"]): row for row in rows}
+
+
 def latest_forecast_asof(
     conn: sqlite3.Connection, fixture_id: int, as_of: str, track: str = "ml"
 ) -> sqlite3.Row | None:

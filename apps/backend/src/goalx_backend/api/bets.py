@@ -523,6 +523,9 @@ async def list_bets(
     db: DbDep, mode: BetMode | None = None, only_open: bool = False
 ) -> list[BetView]:
     """全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。"""
+    # 票 04 correctness F1：本端点不做有界——history/overview 页客户端聚合
+    # 假定完整集，静默截断=复盘口径腐坏（auto-v1 数百注后在第 101 注翻车）。
+    # 有界化随分页/服务端聚合票先行（slips/draw_results 消费面纯展示可截）。
     rows = bt_store.list_bets(db, mode=mode, only_open=only_open)
     reviews = review_views(db, rows)
     return [_bet_view(row, reviews.get(int(row["id"]))) for row in rows]
@@ -621,8 +624,8 @@ def _slip_view(row: sqlite3.Row) -> SlipView:
     response_model=list[SlipView],
 )
 async def list_slips(db: DbDep) -> list[SlipView]:
-    """全部投注票及聚合。"""
-    return [_slip_view(row) for row in bt_store.list_slips(db)]
+    """全部投注票及聚合（票 04 D11：最新 100——每行 6 个相关子查询）。"""
+    return [_slip_view(row) for row in bt_store.list_slips(db, limit=100)]
 
 
 @router.post(

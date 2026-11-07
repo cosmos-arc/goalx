@@ -57,8 +57,12 @@ def _asof_batch(
     summary="回测 run 列表",
     response_model=list[BacktestRunView],
 )
-async def list_backtest_runs(db: ResearchDbDep) -> list[BacktestRunView]:
-    """全部回测 run（新→旧），附 overall 指标摘要（读研究库）。"""
+def list_backtest_runs(db: ResearchDbDep) -> list[BacktestRunView]:
+    """
+    全部回测 run（新→旧），附 overall 指标摘要（读研究库）。
+
+    同步 def（票 04，B2 同族收尾）：同步体 async 会阻事件环，走线程池。
+    """
     return list_runs(db)
 
 
@@ -68,8 +72,12 @@ async def list_backtest_runs(db: ResearchDbDep) -> list[BacktestRunView]:
     response_model=BacktestRunDetailView,
     responses={404: {"description": "run 不存在"}},
 )
-async def get_backtest_run(run_id: int, db: ResearchDbDep) -> BacktestRunDetailView:
-    """一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。"""
+def get_backtest_run(run_id: int, db: ResearchDbDep) -> BacktestRunDetailView:
+    """
+    一个 run 的全部 scope 指标（overall/联赛/赛季/玩法下注侧;研究库）。
+
+    同步 def（票 04，B2 同族收尾）：同 list_backtest_runs。
+    """
     detail = backtest_run_details(db, run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="run not found")
@@ -163,6 +171,10 @@ def get_m3_protocol(db: DbDep) -> M3ProtocolReport:
     summary="历史基准分期/来源质检",
     response_model=BaselineQualityReport,
 )
-async def get_baseline_quality(db: DbDep) -> BaselineQualityReport:
-    """PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。"""
+def get_baseline_quality(db: DbDep) -> BaselineQualityReport:
+    """
+    PSC/AvgC 按 2025-07-23 切期的数量/缺失/overround/两源差异（票 34）。
+
+    同步 def（票 04，B2 同族收尾）：同 list_backtest_runs。
+    """
     return baseline.baseline_quality_report(db)

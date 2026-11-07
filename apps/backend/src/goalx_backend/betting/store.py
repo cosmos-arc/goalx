@@ -407,9 +407,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 
 
 def list_bets(
-    conn: sqlite3.Connection, *, mode: BetMode | None = None, only_open: bool = False
+    conn: sqlite3.Connection,
+    *,
+    mode: BetMode | None = None,
+    only_open: bool = False,
 ) -> list[sqlite3.Row]:
-    """List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。"""
+    """
+    List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。
+
+    票 04 correctness F1：保持无界——history/overview 页客户端聚合假定
+    完整集；有界化随分页/服务端聚合票先行。
+    """
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
             b.actual_stake, b.strategy_version, b.price_source,
@@ -876,15 +884,25 @@ def get_slip(conn: sqlite3.Connection, slip_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def list_slips(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """List slips with bet and combination aggregates."""
-    return conn.execute(
-        f"""
+def list_slips(
+    conn: sqlite3.Connection, *, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """
+    List slips with bet and combination aggregates.
+
+    票 04 D11：API 端点必须传 limit——每行 6 个相关子查询含 3 次
+    combinations 全列聚合，无界=每开页全扫组合表（一季池票 ≈500 万行）。
+    """
+    sql = f"""
         SELECT s.*, {_slip_aggregates()}
         FROM bet_slips s
         ORDER BY s.created_at DESC, s.id DESC
-        """,  # noqa: S608 常量子查询拼接
-    ).fetchall()
+        """  # noqa: S608 常量子查询拼接
+    params: list[Any] = []
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def save_settlement(
@@ -999,7 +1017,12 @@ def record_bankroll_event(
     note: str | None = None,
     occurred_at: str | None = None,
 ) -> int:
-    """Append a bankroll movement (仅 live 结算/出入金调用，ADR 0002)。"""
+    """
+    Append a bankroll movement (仅 live 结算/出入金调用，ADR 0002)。
+
+    票 04 D13：balance_after 逐笔 2 位舍入——流水和的裸浮点
+    （0.1+0.2 → 0.30000000000000004）曾直达 API。
+    """
     at = occurred_at or utc_now_iso()
     balance = bankroll_balance(conn) or 0.0
     cur = conn.execute(
@@ -1009,7 +1032,7 @@ def record_bankroll_event(
             bet_id, slip_id, note)
 VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (at, kind, amount_cny, balance + amount_cny, bet_id, slip_id, note),
+        (at, kind, amount_cny, round(balance + amount_cny, 2), bet_id, slip_id, note),
     )
     return _insert_id(cur)
 

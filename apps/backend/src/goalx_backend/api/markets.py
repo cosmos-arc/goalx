@@ -18,7 +18,7 @@ from goalx_backend.data.fixtures import business_date_or_today
 from goalx_backend.data.today import business_dates_from
 from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
-    latest_forecast,
+    latest_forecasts_bulk,
 )
 from goalx_backend.modelling.goals import (
     goals_selection_grid,
@@ -72,16 +72,12 @@ class GoalsFixtureView(BaseModel):
 
 
 def _market_block(
-    conn: sqlite3.Connection,
-    fixture_id: int,
     market_code: str,
+    latest: dict[str, tuple[float, str]],
+    sale: sqlite3.Row | None,
     matrix_payload: dict[str, Any] | None,
-    moment: str,
 ) -> GoalsMarketBlock:
-    """组装一个进球玩法块：竞彩价时序最新值 + 矩阵概率 + 销售/单固资格。"""
-    latest = fx_store.latest_odds_by_selection(
-        conn, fixture_id, market_code, "sporttery"
-    )
+    """组装一个进球玩法块：批量预取的竞彩价 + 矩阵概率 + 销售/单固资格。"""
     odds = {sel: value[0] for sel, value in latest.items()}
     if matrix_payload is not None:
         selections = [
@@ -100,7 +96,6 @@ def _market_block(
         selections=selections,
         updated_at=max((at for _, at in latest.values()), default=None),
     )
-    sale = fx_store.latest_sale_status_asof(conn, fixture_id, market_code, moment)
     if sale is not None:
         block.sale_state = str(sale["sale_state"])
         block.single_eligible = (
@@ -132,13 +127,25 @@ def get_goals_market(
     与 had 玩法页的共识 EV 不同源，页面须标注。
     """
     moment = datetime.now(UTC).isoformat(timespec="seconds")
-    rows: list[GoalsFixtureView] = []
-    for fixture in fx_store.fixtures_for_business_dates(
+    fixtures = fx_store.fixtures_for_business_dates(
         db,
         business_dates_from(business_date_or_today(date), days),
-    ):
+    )
+    # 票 04 D12：一次取齐（odds/forecast 各一条窗口查 + 每玩法一条销售
+    # 窗口查）——逐场 O(场×5) 全史扫描收敛为常数条
+    fixture_ids = [int(fixture["id"]) for fixture in fixtures]
+    odds_bulk = fx_store.latest_odds_by_selection_bulk(
+        db, fixture_ids, ["ttg", "crs"], "sporttery"
+    )
+    forecasts = latest_forecasts_bulk(db, fixture_ids)
+    sales = {
+        code: fx_store.latest_sale_status_asof_bulk(db, fixture_ids, code, moment)
+        for code in ("ttg", "crs")
+    }
+    rows: list[GoalsFixtureView] = []
+    for fixture in fixtures:
         fixture_id = int(fixture["id"])
-        forecast = latest_forecast(db, fixture_id)
+        forecast = forecasts.get(fixture_id)
         payload = json.loads(forecast["payload"]) if forecast is not None else None
         view = GoalsFixtureView(
             fixture_id=fixture_id,
@@ -152,7 +159,17 @@ def get_goals_market(
             model_version=str(forecast["model_version"]) if forecast else None,
             issued_at=str(forecast["issued_at"]) if forecast else None,
         )
-        view.ttg = _market_block(db, fixture_id, "ttg", payload, moment)
-        view.crs = _market_block(db, fixture_id, "crs", payload, moment)
+        view.ttg = _market_block(
+            "ttg",
+            odds_bulk.get((fixture_id, "ttg"), {}),
+            sales["ttg"].get(fixture_id),
+            payload,
+        )
+        view.crs = _market_block(
+            "crs",
+            odds_bulk.get((fixture_id, "crs"), {}),
+            sales["crs"].get(fixture_id),
+            payload,
+        )
         rows.append(view)
     return rows

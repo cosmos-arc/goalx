@@ -112,9 +112,21 @@ def draw_result_revisions_history(conn: sqlite3.Connection) -> list[sqlite3.Row]
     return conn.execute("SELECT * FROM draw_result_revisions ORDER BY id").fetchall()
 
 
-def list_draw_results(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """全部已导入的开奖结果（按场次稳定排序）。"""
-    return conn.execute("SELECT * FROM draw_results ORDER BY fixture_id").fetchall()
+def list_draw_results(
+    conn: sqlite3.Connection, *, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """
+    全部已导入的开奖结果（按场次稳定排序）。
+
+    票 04 D11：API 列表端点传 limit 上限（created_at 新→旧，同批以场次
+    决胜）；llm/review 等内部调用方缺省全量。
+    """
+    if limit is None:
+        return conn.execute("SELECT * FROM draw_results ORDER BY fixture_id").fetchall()
+    return conn.execute(
+        "SELECT * FROM draw_results ORDER BY created_at DESC, fixture_id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
 
 
 def draw_results_for_fixtures(
