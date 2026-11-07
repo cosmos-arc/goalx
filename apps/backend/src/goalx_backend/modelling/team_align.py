@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
+from goalx_backend.db import atomic
 
 # 俱乐部法律形态词元（两侧都剥离，使 "FC Koln"↔"Koln" 等价）
 STRIP_TOKENS = frozenset(
@@ -312,6 +313,85 @@ def srct_alias_sets(conn: sqlite3.Connection) -> dict[int, set[str]]:
     return out
 
 
+def record_srct_en_aliases(
+    conn: sqlite3.Connection, pairs: Sequence[tuple[int, str]]
+) -> tuple[int, list[tuple[str, int, int]]]:
+    """
+    映射同步产出的 (team_id, 源T英文名) 对落 source='srct_en'（幂等）。
+
+    identity-alias 票 01：英文别名是模型域解析的命脉，同名异队**不得
+    静默**——整批 BEGIN IMMEDIATE（atomic）串行化并发同步，检查+落库
+    同锁内无 TOCTOU；冲突检测跨源（manual/odds_api 等已登记同名异队
+    同样拦下——变体队错绑比漏登记更危险），记 (alias, 原team, 后team)
+    清单并跳过，交人工裁决（定则 1）。
+    """
+    added = 0
+    conflicts: list[tuple[str, int, int]] = []
+    with atomic(conn):
+        for team_id, alias in pairs:
+            row = conn.execute(
+                "SELECT team_id FROM team_aliases WHERE alias = ? AND team_id != ?",
+                (alias, team_id),
+            ).fetchone()
+            if row is not None:
+                conflicts.append((alias, int(row["team_id"]), team_id))
+                continue
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+                VALUES (?, 'srct_en', ?)
+                """,
+                (team_id, alias),
+            )
+            if cur.rowcount > 0:
+                added += 1
+    return added, conflicts
+
+
+def srct_en_team_ids(conn: sqlite3.Connection) -> set[int]:
+    """已持 srct_en 别名的队（编排层的队级幂等门，票 01）。"""
+    return {
+        int(row["team_id"])
+        for row in conn.execute(
+            "SELECT DISTINCT team_id FROM team_aliases WHERE source = 'srct_en'"
+        )
+    }
+
+
+def english_alias_census(conn: sqlite3.Connection) -> dict[str, object]:
+    """
+    竞彩 universe 队 × 英文别名可解析普查（identity-alias 票 01）。
+
+    分母=竞彩业务日引用到的全部 team（fixtures_with_teams 的 data 入口，
+    ADR-0008 不裸 SQL 他包表）；分子=持英文供给源任一别名的 team；未解析
+    清单全列（人工补线/晨检守门输入）。只读。
+    """
+    teams: dict[int, str] = {}
+    for row in fx_store.fixtures_with_teams(conn):
+        if row["business_date"] is None:
+            continue  # 无竞彩码场不在普查分母
+        teams[int(row["home_team_id"])] = str(row["home_name"])
+        teams[int(row["away_team_id"])] = str(row["away_name"])
+    aliased = {
+        int(row["team_id"])
+        for row in conn.execute(
+            """
+            SELECT DISTINCT team_id FROM team_aliases
+            WHERE source IN (?, ?, ?, ?)
+               OR (source = 'manual' AND alias GLOB '*[A-Za-z]*')
+            """,
+            ("srct_en", "odds_api", "propline", "clubelo"),
+        )
+    }
+    covered = aliased & teams.keys()
+    unresolved = sorted(name for tid, name in teams.items() if tid not in covered)
+    return {
+        "jc_teams": len(teams),
+        "english_resolvable": len(covered),
+        "unresolved": unresolved,
+    }
+
+
 @dataclass
 class ClubeloAliasReport:
     """clubelo 英文俱乐部名 ↔ 现有英文别名桥的对齐报告（票 77）。"""
@@ -337,16 +417,17 @@ def sync_clubelo_aliases(
     """
     Clubelo 英文俱乐部名 → 中文 canonical team 的别名桥（票 77 消费侧）。
 
-    clubelo 与竞彩不同语，不能字符串直配；但 odds_api/propline join 年代
-    已沉淀英文别名——以英文别名建三级索引解析 clubelo 俱乐部名，唯一命中
-    即落 team_aliases(source='clubelo')。未命中（低级别队/别名未覆盖）
-    进报告人工队列，不硬配（定则 1）。
+    clubelo 与竞彩不同语，不能字符串直配；锚=已登记的英文别名
+    （srct_en/odds_api/propline/manual——identity-alias 票 01 起含活水
+    srct_en，桥不再随 join 源停采自饿；manual 中文条目不参与碰撞）建
+    三级索引，唯一命中即落 team_aliases(source='clubelo')。未命中
+    （低级别队/别名未覆盖）进报告人工队列，不硬配（定则 1）。
     """
     names: dict[str, int] = {}
     rows = conn.execute(
         """
         SELECT team_id, alias FROM team_aliases
-        WHERE source IN ('odds_api', 'propline') ORDER BY id
+        WHERE source IN ('srct_en', 'odds_api', 'propline', 'manual') ORDER BY id
         """
     ).fetchall()
     for row in rows:

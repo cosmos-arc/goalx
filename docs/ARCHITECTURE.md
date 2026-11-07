@@ -95,6 +95,7 @@ Web（`apps/web/`）：TanStack Router 14 个叶路由——总览 `/`、场次 
 | [0010](adr/0010-srct-trajectory-corpus.md) | 源T 轨迹语料回填——范围解耦、双源 xG 互补、数据集不入库 |
 | [0011](adr/0011-corpusstore-data-v2.md) | 数据层 V2——CorpusStore 混合底座（repo 外资产树，只读桥互通） |
 | [0012](adr/0012-cross-source-entity-mapping.md) | 跨源实体映射——确定性键物化（两步法+人工覆写） |
+| [0013](adr/0013-team-name-identity-supply.md) | 队名身份机制——别名供给不灭与英文域确定性互通 |
 
 ## 质量门禁
 

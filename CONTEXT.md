@@ -139,6 +139,10 @@ _Avoid_: 缺数据（口语）、缺口（单独使用）
 运行面 Fixture 与源侧场次（源T sid 等）的物化映射行：命中方法（两步确定性键的哪一步 / 人工覆写）、状态（linked / ambiguous）与候选档案。多候选不硬配，进人工队列；kickoff 以源T 为 canonical，已链场次自动对齐（超 12h 漂移只标记）。
 _Avoid_: 模糊匹配（指物化层）、join（口语）
 
+**TeamAlias / 别名供给**:
+一个 team 的跨源名字登记行（per-source provenance：srct 中文变体、srct_en 英文活水、manual 人工、clubelo 英文桥、odds_api/propline 停采历史）。供给不灭定则：凡活源携带队名必须登记或进未匹配清单（ADR-0013）；英文域互通走三级 NameIndex 确定性匹配，同名异队冲突进人工队列不硬配。
+_Avoid_: 别名回填（无 provenance 的泛称）、映射（那是场次层，见 SourceMatchLink）
+
 **ScheduledDataset**:
 一个定时采集数据集的注册声明（`datasets.py` 的 DatasetSpec）：名字、cron、任务函数（实现住所仍是 tasks）、cli 参数、checkpoint 表清单，附形状位——resume（停用项 False：serve 仍注册、恢复清单排除）与 cli（False = 纯调度任务或手写 handler 保留）；cli 子命令、Prefect flow、serve deployment 与恢复/停用清单由它推导。任务实现只有一份，cli/flow/api 都是它的 adapter。
 _Avoid_: 任务注册（泛指）、定时任务（口语可用，实体一律 ScheduledDataset）

@@ -15,11 +15,13 @@ import concurrent.futures
 import multiprocessing
 import sqlite3
 import time
+import zlib
 from collections.abc import Callable, Generator
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import cast
 
 import duckdb
@@ -90,7 +92,10 @@ from goalx_backend.modelling.forecast import generate_forecasts
 from goalx_backend.modelling.team_align import (
     alias_index,
     clubelo_alias_for_team,
+    english_alias_census,
     record_srct_aliases,
+    record_srct_en_aliases,
+    srct_en_team_ids,
     sync_clubelo_aliases,
 )
 from goalx_backend.modelling.team_align import (
@@ -731,6 +736,10 @@ def mapping_sync() -> dict[str, object]:
     live 兜底（odds-read-switch 票 01）：当期班 srct_shift_matches 行
     （checkpoint 缺席降级空表）参与在售场解析——universe 优先、开球
     ±10min 硬门。
+
+    英文别名活水（identity-alias 票 01）：已链场次重解析归档 odds 原页
+    取源T英文名 → srct_en 别名（队级幂等门兜常态成本）；clubelo 桥以
+    srct_en 解饿；尾附竞彩 universe 英文可解析普查。
     """
     with task_conn() as conn, corpus_anchor() as duck_con:
         stats = mapping.sync_fixture_links(
@@ -740,12 +749,60 @@ def mapping_sync() -> dict[str, object]:
             live_rows=_live_mapping_rows(),
         )
         aliases = record_srct_aliases(conn, stats.srct_alias_pairs)
+        en_pairs, en_raw_misses = _srct_en_alias_pairs(conn)
+        en_added, en_conflicts = record_srct_en_aliases(conn, en_pairs)
         clubelo_report = sync_clubelo_aliases(conn, clubelo.distinct_clubs(conn))
+        census = english_alias_census(conn)
     return {
         **stats.as_dict(),
         "srct_aliases_added": aliases,
+        "srct_en_aliases_added": en_added,
+        "srct_en_raw_misses": en_raw_misses,
+        "srct_en_conflicts": en_conflicts,
         "clubelo": clubelo_report.as_dict(),
+        "english_alias_census": census,
     }
+
+
+def _srct_en_alias_pairs(
+    conn: sqlite3.Connection, *, corpus_root: Path | None = None
+) -> tuple[list[tuple[int, str]], int]:
+    """
+    已链场次 → (team_id, 源T英文名) 对子（identity-alias 票 01）。
+
+    按 sid 读归档 odds_1x2d 原页重解析（零网络）；缺原页/坏档（截断 gz
+    抛 EOFError·zlib.error，非 OSError 子类）/页在而英文名缺（形态漂移）
+    一律计数进 misses 不抛错——该队留普查未解析清单，晨检守门兜底。
+    队级幂等门=已持 srct_en 别名的队跳过——首拍回填历史面，此后每拍
+    近零读。``corpus_root`` 显式参数供测试隔离（缺省=运行 settings）。
+    """
+    store = CorpusStore(corpus_root or get_settings().corpus_root)
+    skip = srct_en_team_ids(conn)
+    pairs: list[tuple[int, str]] = []
+    misses = 0
+    try:
+        for row in mapping.linked_sid_teams(conn, skip):
+            try:
+                body = store.read_raw(
+                    srct.SRCT_PROVIDER, srct.ODDS_DATASET, row.sid, ext=".js"
+                )
+            except (OSError, EOFError, zlib.error):
+                misses += 1
+                continue
+            home_en, away_en = srct.parse_odds_page_names(body)
+            for team_id, name in (
+                (row.home_team_id, home_en),
+                (row.away_team_id, away_en),
+            ):
+                if team_id in skip:
+                    continue
+                if name:
+                    pairs.append((team_id, name))
+                else:
+                    misses += 1
+    finally:
+        store.close()
+    return pairs, misses
 
 
 def _live_mapping_rows() -> list[mapping.UniverseRow] | None:
