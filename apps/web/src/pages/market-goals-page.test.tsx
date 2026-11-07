@@ -417,7 +417,7 @@ test("提交飞行中重挂载后编辑被门拦下；settle 后清篮（票 04 
 
 test("票 08：goals 价变 409 向 had 对齐——清篮+刷新逐场价+提示重选（不再旧价重试死循环）", async () => {
 	const user = userEvent.setup();
-	mockCreatedBets();
+	mockCreatedBets({ bodies: [] });
 	await renderAt("/markets/goals");
 
 	await screen.findByTestId("goals-card-2");
