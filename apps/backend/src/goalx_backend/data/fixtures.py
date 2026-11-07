@@ -836,9 +836,9 @@ def sale_stop_probe_candidates(
     """
     停售探测候选（票 47 双锚；feed-cutover 票 01 广义已链）。
 
-    未来开球、最新销售态非 stopped、已链=odds_api 链 ∪ 调用方注入的
-    已链 id 集（源T 链经 mapping.joined_fixture_ids 单一出处注入）——
-    未链场不进候选（防误判停售）。粗筛交给 SQL（kickoff ∈ (now,
+    未来开球、最新销售态非 stopped、已链判定完全交给调用方注入的 id 集
+    （mapping.joined_fixture_ids 单一出处——odds_api 链 ∪ 源T 链，勿内联
+    复写谓词）；未链场不进候选（防误判停售）。粗筛交给 SQL（kickoff ∈ (now,
     horizon]），已链判定在 Python 侧（窗口面小，免动态 IN 拼接）；
     「临场 3h 内 或 北京 ≥19 点的次日内场次」细分在调用方（探测两
     形态：晚间场临场停售 / 凌晨场前夜墙钟停售）。返回行带
@@ -860,10 +860,6 @@ def sale_stop_probe_candidates(
         """,
         (now_utc, horizon_utc),
     ).fetchall():
-        odds_joined = (
-            row["odds_api_event_id"] is not None
-            and row["odds_api_sport_key"] is not None
-        )
-        if odds_joined or int(row["id"]) in linked:
+        if int(row["id"]) in linked:
             out.append(row)
     return out
