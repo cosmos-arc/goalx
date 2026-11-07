@@ -70,10 +70,7 @@ export type StakeAdviceNoteProps = {
 export function StakeAdviceNote({ mode, bankroll, ev, odds, capFraction, label, note, testid }: StakeAdviceNoteProps) {
 	const enabled = bankroll !== undefined && bankroll !== null && ev !== null && odds !== null;
 	const cap = capFraction ?? 0.05;
-	const body: StakeAdviceInput | null =
-		enabled && bankroll !== null && bankroll !== undefined && ev !== null && odds !== null
-			? { mode, bankroll, ev, odds, cap_fraction: cap }
-			: null;
+	const body: StakeAdviceInput | null = enabled ? { mode, bankroll, ev, odds, cap_fraction: cap } : null;
 	const adviceQuery = useQuery({
 		queryKey: stakeAdviceKey({ mode, bankroll, ev, odds, cap }),
 		queryFn: () => fetchStakeAdvice(body as StakeAdviceInput),

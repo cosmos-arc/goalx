@@ -157,7 +157,7 @@ export function yieldCurveOption(
  * 点数 ≥2 才挂，否则 init 拿不到容器。
  */
 function YieldChart({ points }: { points: YieldPoint[] }) {
-	// 票 05 E17：option 引用稳定（同 CumulativeChart——useECharts 依赖 [option]）
+	// 票 05 E17：option 引用稳定（同 history-page 的 CumulativeChart——useECharts 依赖 [option]）
 	const fg = cssVar("--chart-1", "#2563eb");
 	const accent = cssVar("--chart-2", "#ea580c");
 	const muted = cssVar("--muted-foreground", "#6b7280");

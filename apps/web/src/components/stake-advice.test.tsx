@@ -127,14 +127,18 @@ test("bankrollForAdvice 三态：pending=undefined / error=null / 成功缺余�
 
 test("bankroll=undefined（读取中）禁用建议不发请求，文案非「未入金」（票 05 E16）", () => {
 	const adviceCalls: number[] = [];
-	server.events.on("request:start", ({ request }) => {
+	const onRequestStart = ({ request }: { request: { url: string } }) => {
 		if (request.url.includes("/api/v1/stake-advice")) {
 			adviceCalls.push(1);
 		}
-	});
-	renderNote({ mode: "paper", bankroll: undefined, ev: 0.05, odds: 2, testid: "pending-bank" });
-	expect(screen.getByTestId("pending-bank-reason")).toHaveTextContent("资金池读取中");
-	expect(screen.getByText("—")).toBeInTheDocument();
-	expect(adviceCalls).toHaveLength(0); // 冷缓存首访不触发 bankroll=0 假断言请求
-	server.events.removeAllListeners("request:start");
+	};
+	server.events.on("request:start", onRequestStart);
+	try {
+		renderNote({ mode: "paper", bankroll: undefined, ev: 0.05, odds: 2, testid: "pending-bank" });
+		expect(screen.getByTestId("pending-bank-reason")).toHaveTextContent("资金池读取中");
+		expect(screen.getByText("—")).toBeInTheDocument();
+		expect(adviceCalls).toHaveLength(0); // 冷缓存首访不触发 bankroll=0 假断言请求
+	} finally {
+		server.events.removeListener("request:start", onRequestStart); // 断言失败不外泄监听
+	}
 });
