@@ -92,6 +92,14 @@ def forecast_daily_flow(business_date: str | None = None) -> dict[str, int]:
     return tasks.forecast_daily(business_date)
 
 
+@flow(name="baseline-freeze", log_prints=True)
+def baseline_freeze_flow() -> dict[str, int]:
+    """三锚市场基准冻结（auto-paper 票 01）：12:33/16:33/21:33 读库 as-of 冻结。"""
+    stats = tasks.baseline_freeze()
+    logger.info("baseline freeze: {}", stats)
+    return stats
+
+
 @flow(name="settlement-sweep", log_prints=True)
 def settlement_flow() -> dict[str, int]:
     """结算批跑（配合开奖导入；paper/live 统一引擎）。"""

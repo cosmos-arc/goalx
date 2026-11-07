@@ -2012,6 +2012,54 @@ def _apply_v41(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE bets ADD COLUMN intent_fingerprint TEXT")
 
 
+def _apply_v42(conn: sqlite3.Connection) -> None:
+    """
+    v42（auto-paper-20261106 票 01）：市场基准同窗冻结 + 预测覆盖账。
+
+    market_baseline_snapshots：决策锚拍点 write-once 基准快照（jc_official
+    SP 原始赔率 / eu_consensus Shin 概率，prices JSON 按 source 解释）。
+    UNIQUE (business_date, fixture_id, anchor_label, source, market) 吸收
+    同锚重跑；cutoff_at=真实 as-of 截止（任务层封顶锚+30min 窗），防泄漏
+    由读侧有效观测时刻（observed_at，odds_api 旧行兜底 captured_at）
+    <=cutoff 保证；observed_at 列=JC 逐选项有效观测时刻 JSON 证据（eu
+    共识为派生态，NULL 不伪造）。表查询归 evaluation（ADR-0008）。
+    forecast_coverage：每日 ML 覆盖普查（covered/skip 三因 reason），
+    主键 (business_date, fixture_id)；日重跑 REPLACE 重建（派生态非证据，
+    与快照的 write-once 语义不同）。表查询归 modelling。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_baseline_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            business_date TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            anchor_label TEXT NOT NULL,
+            cutoff_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            market TEXT NOT NULL,
+            prices TEXT NOT NULL,
+            observed_at TEXT,
+            sale_state TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE (business_date, fixture_id, anchor_label, source, market)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_coverage (
+            business_date TEXT NOT NULL,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            covered INTEGER NOT NULL,
+            reason TEXT,
+            detail TEXT,
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY (business_date, fixture_id)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2054,6 +2102,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (39, _apply_v39),
     (40, _apply_v40),
     (41, _apply_v41),
+    (42, _apply_v42),
 )
 
 

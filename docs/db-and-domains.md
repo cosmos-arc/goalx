@@ -54,6 +54,7 @@
 | --- | --- | --- | --- |
 | `forecasts` | 三轨预测 | track=ml/llm/fused；ml 轨含 xG blend（票 47，model_version dc-xgblend- 前缀溯源）；**ml 轨是真钱资格唯一口径（票 04 冻结），任何轨不可覆写** | append+幂等 (fixture,content_hash) |
 | `team_aliases` | 队名别名对齐 | 竞彩名↔训练域↔odds_api 名；source=odds_api/manual | append+幂等 |
+| `forecast_coverage` | ML 覆盖普查（auto-paper 票 01） | covered=该场有 track=ml Forecast；skip 三因 reason 取 generate_forecasts 清单；日重跑 REPLACE（派生态非证据） | 普查 REPLACE |
 
 ### llm 域（M3）
 
@@ -80,6 +81,7 @@
 | `backtest_runs` / `-predictions` / `-bets` / `-metrics` | 回测四件套 | run（label/params/summary）、prediction（had/fair+model_fingerprint）、bet（kelly/EV）、metric（scope 分层） | append |
 | `clv_records` | CLV 对账 | taken_odds vs close_prob；close_basis 分层（pinnacle 主锚/betfair 辅/consensus 兜底） | append+幂等 |
 | `haircut_calibrations` | EV 折价校准 | scope×market×source_era 分位 haircut（source_era=证据源代：odds_api/srct/jc_sp）；method_version 随行 | append |
+| `market_baseline_snapshots` | 决策锚基准冻结（auto-paper 票 01） | 三锚（12:30/16:30/21:00）write-once：jc_official=JC SP 原始赔率、eu_consensus=Shin 概率（prices JSON 按 source 解释）；as-of=captured_at≤cutoff_at 防锚后到价倒填 | append+幂等 UNIQUE 五元组 |
 
 ### infra / 脚手架
 
@@ -178,6 +180,9 @@ erDiagram
     fixtures {
         INTEGER id PK
     }
+    forecast_coverage {
+        TEXT business_date PK
+    }
     forecasts {
         INTEGER id PK
     }
@@ -206,6 +211,9 @@ erDiagram
         INTEGER id PK
     }
     intel_observations {
+        INTEGER id PK
+    }
+    market_baseline_snapshots {
         INTEGER id PK
     }
     markets {
@@ -310,10 +318,12 @@ erDiagram
     fixtures }|--|| teams : away_team_id
     fixtures }|--|| teams : home_team_id
     fixtures }|--|| competitions : competition_id
+    forecast_coverage }|--|| fixtures : fixture_id
     forecasts }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| quote_observations : observation_id
     intel_observations }|--|| fixtures : fixture_id
+    market_baseline_snapshots }|--|| fixtures : fixture_id
     match_codes }|--|| fixtures : fixture_id
     odds_snapshots }|--|| selections : market_code
     odds_snapshots }|--|| selections : selection_code
@@ -985,6 +995,20 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 
 唯一键 `UNIQUE(`source`, `alias`)`
 <!-- schema-doc:END:table:team_aliases -->
+<!-- schema-doc:BEGIN:table:forecast_coverage -->
+#### `forecast_coverage`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `business_date` | TEXT | PK，NOT NULL |
+| `fixture_id` | INTEGER | PK，NOT NULL，FK→fixtures.id |
+| `covered` | INTEGER | NOT NULL |
+| `reason` | TEXT | — |
+| `detail` | TEXT | — |
+| `recorded_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`business_date`, `fixture_id`)`
+<!-- schema-doc:END:table:forecast_coverage -->
 ### llm 域
 
 <!-- schema-doc:BEGIN:table:intel_observations -->
@@ -1438,6 +1462,25 @@ measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重�
 
 唯一键 `UNIQUE(`scope`, `market_code`, `source_era`)`
 <!-- schema-doc:END:table:haircut_calibrations -->
+<!-- schema-doc:BEGIN:table:market_baseline_snapshots -->
+#### `market_baseline_snapshots`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `business_date` | TEXT | NOT NULL |
+| `fixture_id` | INTEGER | NOT NULL，FK→fixtures.id |
+| `anchor_label` | TEXT | NOT NULL |
+| `cutoff_at` | TEXT | NOT NULL |
+| `source` | TEXT | NOT NULL |
+| `market` | TEXT | NOT NULL |
+| `prices` | TEXT | NOT NULL |
+| `observed_at` | TEXT | — |
+| `sale_state` | TEXT | — |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`business_date`, `fixture_id`, `anchor_label`, `source`, `market`)`
+<!-- schema-doc:END:table:market_baseline_snapshots -->
 ### infra / 脚手架
 
 <!-- schema-doc:BEGIN:table:markets -->

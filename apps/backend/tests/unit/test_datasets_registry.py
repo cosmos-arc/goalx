@@ -103,8 +103,8 @@ def test_registry_pinned_to_full_batch() -> None:
 
 
 def test_schedules_serve_list_pinned_golden() -> None:
-    """票 03 不变量：21 deployment 名→cron 与手写时代逐一相等（键序为新序，
-    组合面 6 个在前、注册面 15 个在后——serve 独立注册各面，键序非契约）。"""
+    """票 03 不变量：22 deployment 名→cron 与手写时代逐一相等（键序为新序，
+    组合面 7 个在前、注册面 15 个在后——serve 独立注册各面，键序非契约）。"""
     deps = schedules.build_deployments()
     assert tuple(deps) == (
         "daily-capture",
@@ -113,6 +113,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "draw-results-sweep",
         "weekly-refresh",
         "daily-wrap",
+        "baseline-freeze",
         *_RECORD_NAMES,
     )
     crons = {}
@@ -141,6 +142,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "gold-rebuild": "40 8 * * *",
         "weekly-refresh": "10 6 * * 1",
         "daily-wrap": "30 23 * * *",
+        "baseline-freeze": "33 12,16,21 * * *",
         "pool-snapshot": "20 10,16,22 * * *",
         "intel-collect": "40 10,22 * * *",
         "scout-line": "50 10,22 * * *",
@@ -169,6 +171,7 @@ def test_resume_derivation() -> None:
         "draw-results-sweep",
         "weekly-refresh",
         "daily-wrap",
+        "baseline-freeze",
         *_RECORD_NAMES,
     } - set(datasets.dead_names())
     assert set(datasets.resume_names()).isdisjoint(datasets.dead_names())

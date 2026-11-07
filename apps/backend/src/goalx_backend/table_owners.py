@@ -82,7 +82,7 @@ OWNERS: dict[str, set[str]] = {
         # backtest-decade B：gold 特征面（data/gold.py 物化，语料树 parquet）
         "match_features",
     },
-    "modelling": {"forecasts", "team_aliases"},
+    "modelling": {"forecasts", "team_aliases", "forecast_coverage"},
     "evaluation": {
         "backtest_runs",
         "backtest_predictions",
@@ -90,6 +90,8 @@ OWNERS: dict[str, set[str]] = {
         "backtest_metrics",
         "clv_records",
         "haircut_calibrations",
+        # auto-paper 票 01：决策锚基准冻结（evaluation/baseline_freeze.py）
+        "market_baseline_snapshots",
     },
     "betting": {
         "bets",

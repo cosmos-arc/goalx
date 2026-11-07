@@ -63,6 +63,7 @@ from goalx_backend import datasets
 from goalx_backend.config import get_settings
 from goalx_backend.db import connect as db_connect
 from goalx_backend.flows import (
+    baseline_freeze_flow,
     daily_capture_flow,
     daily_wrap_flow,
     draw_results_sync_flow,
@@ -73,7 +74,10 @@ from goalx_backend.run_fingerprint import process_face
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：组合面手写（票 09 后 6 面）+ 注册表推导面（15 面）=21 面。
+    全量 deployment 装配：手写组合面 + 注册表推导面 = 22 面。
+
+    组合面手写（票 09 后 6 面 + auto-paper 票 01 冻结面）+ 注册表推导面
+    （15 面）。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """
@@ -130,6 +134,16 @@ def build_deployments() -> dict[str, RunnerDeployment]:
             schedule=Schedule(cron="10 6 * * 1", timezone="Asia/Shanghai"),
         ),
     )
+    # auto-paper 票 01：三锚（12:30/16:30/21:00）后 3 分钟读库冻结基准。
+    # 12:30/16:30 锚吃 daily-capture-window 拍刚落的观测；21:33 读 19:00
+    # 拍后最新可见价（as-of 语义，不新增采集请求）。
+    freeze = cast(
+        RunnerDeployment,
+        baseline_freeze_flow.to_deployment(
+            name="protocol-v1",
+            schedule=Schedule(cron="33 12,16,21 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     deployments: dict[str, RunnerDeployment] = {
         "daily-capture": daily,
         "daily-capture-window": daily_window,
@@ -137,6 +151,7 @@ def build_deployments() -> dict[str, RunnerDeployment]:
         "draw-results-sweep": draw_sync_sweep,
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
+        "baseline-freeze": freeze,
     }
     # 注册表面（票 03 全量：单 cron 定拍数据集，含两判死面）
     deployments.update(datasets.build_deployments())
@@ -224,6 +239,7 @@ RESUME_DEPLOYMENTS = (
     "draw-results-sweep",
     "weekly-refresh",
     "daily-wrap",
+    "baseline-freeze",
     *datasets.resume_names(),
 )
 DEAD_DEPLOYMENTS = datasets.dead_names()

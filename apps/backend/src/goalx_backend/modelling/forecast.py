@@ -537,3 +537,66 @@ def forecast_matrix_from_payload(payload: dict[str, Any]) -> ScoreMatrix:
         lam_home=float(payload["lambda_home"]),
         lam_away=float(payload["lambda_away"]),
     )
+
+
+def record_coverage(
+    conn: sqlite3.Connection,
+    *,
+    business_date: str,
+    skipped: list[dict[str, str]],
+) -> dict[str, int]:
+    """
+    每日 ML 覆盖普查落账（auto-paper 票 01；forecast_coverage 表归本模块）。
+
+    覆盖判定=该场存在 track=ml Forecast 行（含重复生成被内容哈希吸收的）；
+    未覆盖场的 skip 三因直接取 generate_forecasts 的清单，不在清单也不
+    覆盖的场（理论不可能，防御）reason 记 unknown 不猜。日重跑 REPLACE
+    重建普查——派生态非证据，与基准快照的 write-once 语义刻意不同。
+    """
+    fixtures = fx_store.fixtures_for_business_date(conn, business_date)
+    ids = [int(f["id"]) for f in fixtures]
+    covered: set[int] = set()
+    if ids:
+        placeholders = ",".join("?" * len(ids))
+        covered = {
+            int(row["fixture_id"])
+            for row in conn.execute(
+                f"""
+                SELECT DISTINCT fixture_id FROM forecasts
+                WHERE track = 'ml' AND fixture_id IN ({placeholders})
+                """,  # noqa: S608 — 占位符拼接，值全参数化
+                ids,
+            )
+        }
+    skip_map = {int(entry["fixture_id"]): entry for entry in skipped}
+    now_iso = utc_now_iso()
+    for fixture_id in ids:
+        entry = skip_map.get(fixture_id)
+        is_covered = fixture_id in covered
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO forecast_coverage
+            (business_date, fixture_id, covered, reason, detail, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                business_date,
+                fixture_id,
+                int(is_covered),
+                None if is_covered else str(entry["reason"]) if entry else "unknown",
+                (
+                    None
+                    if is_covered or entry is None
+                    else str(entry.get("detail"))
+                    if entry.get("detail")
+                    else None
+                ),
+                now_iso,
+            ),
+        )
+    conn.commit()
+    return {
+        "total": len(ids),
+        "covered": len(covered),
+        "skipped": len(ids) - len(covered),
+    }
