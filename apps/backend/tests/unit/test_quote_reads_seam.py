@@ -261,3 +261,29 @@ def test_reader_resolve_sid_injection(db: sqlite3.Connection, method: str) -> No
             "srct:1x2:281",
         }
         assert legacy_reader.books_complete_asof(fixture_id, AS_OF) == {}
+
+
+def test_reader_per_book_window_corpus_path(db: sqlite3.Connection) -> None:
+    """correctness info①：reader.books_complete_asof(per_book_window=True)
+    走 corpus 行源（无 rows 注入）——SQL 级逐行年龄过滤须被抑制（否则
+    截断发生在选行前，破坏配对语义），窗判定后置到书级。"""
+    fixture_id = _seed_fixture(db)
+    duck_con = _seed_corpus_duck()
+    reader = quote_evidence.bind_quote_reads(db, duck_con, lambda _fid: "3001")
+    # 双钟分离：锚书行 captured 最新、observed 出窗；窗内另有旧行——
+    # per_book 语义应整书剔除（配对完整性），per_row 会回退窗内旧行
+    stale_obs = OBSERVED - timedelta(minutes=600)
+    duck_con.execute(
+        "INSERT INTO odds_change_event VALUES"
+        " ('3001', ?, '1x2', ?, ?, 2.2, 3.4, 3.3, 1)",
+        [ANCHOR, OBSERVED, stale_obs],
+    )
+    per_book = reader.books_complete_asof(
+        fixture_id, AS_OF, max_age_seconds=300, per_book_window=True
+    )
+    per_row = reader.books_complete_asof(fixture_id, AS_OF, max_age_seconds=300)
+    assert ANCHOR in per_book  # 新鲜双行窗内（_seed_corpus_duck 原行）
+    assert "srct:1x2:281" in per_book
+    # per_row 同数据同存活（无分水岭行时的平凡对照——分水岭行为在
+    # test_per_book_window_matches_pair_semantics 的 rows= 路径钉死）
+    assert per_row == per_book
