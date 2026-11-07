@@ -116,8 +116,9 @@ def test_goals_market_query_count_is_constant(tmp_path: Path) -> None:
     conn.close()
     assert len(rows) == 3  # demo 三场
     selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
-    # 常数预算：场次清单 1 + odds 窗查 1 + forecast 窗查 1 + 销售×2 = 5
-    assert len(selects) <= 6, f"goals 页查询数 {len(selects)}：批量预取回归 O(场×N)"
+    # 常数预算钉死 5：场次清单 1 + odds 窗查 1 + forecast 窗查 1 + 销售×2
+    # （旧 O(场×5) 实现下 3 场=16——预算漂移即回归）
+    assert len(selects) == 5, f"goals 页查询数 {len(selects)}：批量预取回归 O(场×N)"
 
 
 def test_bulk_latest_equivalence_with_single_fixture_queries(

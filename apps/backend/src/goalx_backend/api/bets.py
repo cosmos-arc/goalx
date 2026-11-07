@@ -522,7 +522,7 @@ def create_bet(payload: BetCreate, db: DbDep) -> BetView:
 async def list_bets(
     db: DbDep, mode: BetMode | None = None, only_open: bool = False
 ) -> list[BetView]:
-    """全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。"""
+    """投注记录（最新 100）：结算状态、盈亏、建议 vs 实际条款、复盘资格。"""
     # 票 04 D11：列表端点有界（最新 100，bankroll 先例同量级）；截断不改形
     rows = bt_store.list_bets(db, mode=mode, only_open=only_open, limit=100)
     reviews = review_views(db, rows)
