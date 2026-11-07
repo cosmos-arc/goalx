@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from datetime import date as date_
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from goalx_backend.api.deps import get_db
 from goalx_backend.api.fixtures import MAX_WINDOW_DAYS
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.fixtures import beijing_business_date
+from goalx_backend.data.fixtures import business_date_or_today
 from goalx_backend.data.today import business_dates_from
 from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
@@ -113,10 +114,10 @@ def _market_block(
     summary="进球玩法页读模型(ttg/crs 报价+矩阵推导概率/EV)",
     response_model=list[GoalsFixtureView],
 )
-async def get_goals_market(
+def get_goals_market(
     db: DbDep,
     date: Annotated[
-        str | None, Query(description="起始业务日(北京日期, 默认今天)")
+        date_ | None, Query(description="起始业务日(北京日期, 默认今天)")
     ] = None,
     days: Annotated[
         int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
@@ -133,7 +134,8 @@ async def get_goals_market(
     moment = datetime.now(UTC).isoformat(timespec="seconds")
     rows: list[GoalsFixtureView] = []
     for fixture in fx_store.fixtures_for_business_dates(
-        db, business_dates_from(date or beijing_business_date(), days)
+        db,
+        business_dates_from(business_date_or_today(date), days),
     ):
         fixture_id = int(fixture["id"])
         forecast = latest_forecast(db, fixture_id)

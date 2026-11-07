@@ -30,6 +30,7 @@ from goalx_backend.data import pool as pool_store
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.pool import PoolMatchView
 from goalx_backend.db import utc_now_iso
+from goalx_backend.models import IsoTimestamp
 
 router = APIRouter(tags=["pool"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -40,7 +41,7 @@ class PoolStateView(BaseModel):
 
     sales_amount: float | None = None
     rollover_in: float | None = None
-    published_at: str | None = None
+    published_at: str | None = None  # 响应模型：存量脏行不设卡（审计 B18 只改导入面）
     source: str | None = None
 
 
@@ -115,7 +116,7 @@ class PoolStateImportPayload(BaseModel):
     sales_amount: float | None = Field(default=None, ge=0)
     rollover_in: float | None = Field(default=None, ge=0)
     prize_tiers: dict[str, Any] | None = None
-    published_at: str | None = None
+    published_at: IsoTimestamp | None = None
 
 
 class PoolStateImportView(BaseModel):

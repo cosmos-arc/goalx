@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Collection, Sequence
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import Any
 
@@ -19,6 +19,11 @@ from goalx_backend.models import (
 )
 
 CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
+
+
+def business_date_or_today(start: date | None) -> str:
+    """起始业务日参数（None=今天）→ isoformat 串（票 02 B3 三端点同款）。"""
+    return start.isoformat() if start is not None else beijing_business_date()
 
 
 def beijing_business_date(now: datetime | None = None) -> str:

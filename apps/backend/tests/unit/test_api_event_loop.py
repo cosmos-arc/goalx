@@ -107,14 +107,20 @@ async def test_pool_sync_does_not_block_event_loop(
 
 
 def test_slow_endpoints_are_threadpool_routed() -> None:
-    """机械面钉死：三端点必须是普通 def（async def 即回归票 07①）。"""
+    """机械面钉死：慢端点必须是普通 def（async def 即回归票 07①/票 02 B2）。"""
     import inspect
 
+    from goalx_backend.api import bets as bets_api
+    from goalx_backend.api import markets as markets_api
     from goalx_backend.api import pool as pool_api
 
     for module, name in (
         (fixtures_api, "get_today_fixtures"),
         (fixtures_api, "get_fixture_research"),
+        (fixtures_api, "get_had_quote_verdict"),
+        (markets_api, "get_goals_market"),
+        (bets_api, "create_bet"),
+        (bets_api, "create_slip"),
         (pool_api, "run_pool_sync"),
     ):
         assert not inspect.iscoroutinefunction(getattr(module, name)), (

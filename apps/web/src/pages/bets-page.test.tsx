@@ -404,6 +404,22 @@ test("surfaces lock and import errors", async () => {
 	expect(await screen.findByTestId("bets-message")).toHaveTextContent("导入失败");
 });
 
+test("empty scores disable preview and import buttons (票 02 B14 捎车)", async () => {
+	const user = userEvent.setup();
+	renderBets();
+
+	await screen.findByText("周六003 A 队 vs B 队");
+	await user.selectOptions(screen.getByTestId("draw-fixture"), "3");
+	// 只选场次、比分留空——修复前 Number("") coercion 0:0 会被预览/导入
+	expect(screen.getByTestId("draw-preview")).toBeDisabled();
+	expect(screen.getByTestId("draw-import")).toBeDisabled();
+	// 补齐比分即解禁
+	await user.type(screen.getByTestId("draw-home"), "2");
+	await user.type(screen.getByTestId("draw-away"), "0");
+	expect(screen.getByTestId("draw-preview")).toBeEnabled();
+	expect(screen.getByTestId("draw-import")).toBeEnabled();
+});
+
 test("surfaces preview errors", async () => {
 	const user = userEvent.setup();
 	server.use(
