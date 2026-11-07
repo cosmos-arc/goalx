@@ -831,7 +831,8 @@ def sale_stop_probe_candidates(
     conn: sqlite3.Connection,
     now_utc: str,
     horizon_utc: str,
-    linked_fixture_ids: Collection[int] = (),
+    *,
+    linked_fixture_ids: Collection[int],
 ) -> list[sqlite3.Row]:
     """
     停售探测候选（票 47 双锚；feed-cutover 票 01 广义已链）。

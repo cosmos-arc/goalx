@@ -909,3 +909,18 @@ def test_srct_en_alias_pairs_bad_archive_and_shape_drift(db, tmp_path) -> None:
     assert pairs == []
     assert misses == 2
     store.close()
+
+
+def test_joined_fixture_ids_event_id_only_counts_linked(db) -> None:
+    """广义已链口径钉死（correctness F3）：odds_api 链只看 event_id——
+    与旧探针谓词(event_id+sport_key 双非空)的差异是显式选择。"""
+    comp = fx_store.upsert_competition(db, "英超", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "只号无键")
+    away = fx_store.upsert_team(db, "对家")
+    fixture = fx_store.upsert_fixture(db, comp, KICKOFF_UTC, home, away)
+    db.execute(
+        "UPDATE fixtures SET odds_api_event_id = 'evt-x' WHERE id = ?",
+        (fixture,),
+    )
+    db.commit()
+    assert mapping.joined_fixture_ids(db, [fixture]) == {fixture}

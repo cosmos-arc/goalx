@@ -215,8 +215,10 @@ _ODDS_ANCHOR = DatasetSpec(
     cron="*/5 * * * *",
     task=tasks.odds_anchor_dense,
     cli_help="停售加密探测+开售轮询(票 47/04)",
-    flow_help="停售加密探测+开售锚轮询（票 47/04；feed-cutover 票 01 拔"
-    " odds_api 锚拉取腿、候选面切广义已链）。",
+    flow_help=(
+        "停售加密探测+开售锚轮询（票 47/04；feed-cutover 票 01 拔"
+        " odds_api 锚拉取腿、候选面切广义已链）。"
+    ),
     cli=False,  # 纯 schedule 面，无 cli 命令
 )
 

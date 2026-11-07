@@ -649,8 +649,7 @@ def probe_sale_stops(
     stopped 行——端点只列在售场次，消失即停售；不补行则迁移时刻不可
     重建）。票 09 语义修正后 sellStatus=1=在售（非停售），显式值不再
     构成停售证据，消失是唯一停售信号；已落 stopped（本函数前轮写入）
-    的候选行确认为已检出。返回检出停售的候选行（含
-    odds_api_event_id/sport_key，供历史链场定向拉取）。
+    的候选行确认为已检出。返回检出停售的候选行。
 
     票 04 开售锚轮询：零候选但处于北京 [11:00,12:30) 开售带且当日尚无
     on_sale 锚时也拍一次——开售翻转即锚（5 分钟精度），当日盲带收窄至拍距；
@@ -718,7 +717,10 @@ def probe_sale_stops(
             and latest is not None
             and str(latest["sale_state"]) == "on_sale"
         ):
-            # 从在售列表消失 = 停售；补显式行保迁移时刻（append-only）
+            # 从在售列表消失 = 停售；补显式行保迁移时刻（append-only）。
+            # shortcut: 并发积压拍(唤醒风暴)可双落 stopped 行(不同 observation
+            # 证据), as-of 消费端读态不受影响;需严格一次时再上 BEGIN IMMEDIATE 重检
+
             _append_sale_status_once(
                 conn,
                 SaleStatusInput(
