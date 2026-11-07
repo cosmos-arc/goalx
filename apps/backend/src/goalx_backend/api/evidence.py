@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 from ag_ui.core import RunAgentInput
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from goalx_backend.api.deps import get_db
 from goalx_backend.config import Settings, get_settings
@@ -420,7 +420,7 @@ async def ask_analyst(fixture_id: int, request: Request, db: DbDep) -> Response:
         raise HTTPException(status_code=404, detail="fixture not found")
     try:
         payload = RunAgentInput.model_validate(await request.json())
-    except ValidationError as exc:
+    except ValueError as exc:  # pydantic ValidationError/JSONDecodeError 均属之
         raise HTTPException(
             status_code=422, detail=f"invalid AG-UI RunAgentInput: {exc}"
         ) from exc

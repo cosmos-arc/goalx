@@ -815,7 +815,11 @@ export function BetsPage() {
 							type="button"
 							data-testid="draw-preview"
 							className="rounded-md border border-border px-3 py-1.5 transition-colors hover:bg-muted disabled:opacity-40"
-							disabled={doPreview.isPending || drawForm.fixtureId === ""}
+							disabled={
+								doPreview.isPending ||
+								drawForm.fixtureId === "" ||
+								(!drawForm.isVoid && (drawForm.homeGoals === "" || drawForm.awayGoals === ""))
+							}
 							onClick={() => doPreview.mutate()}
 						>
 							影响预览
@@ -824,7 +828,9 @@ export function BetsPage() {
 							type="submit"
 							data-testid="draw-import"
 							className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-40"
-							disabled={importResult.isPending}
+							disabled={
+								importResult.isPending || (!drawForm.isVoid && (drawForm.homeGoals === "" || drawForm.awayGoals === ""))
+							}
 						>
 							导入
 						</button>

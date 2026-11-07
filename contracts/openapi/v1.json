@@ -124,7 +124,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "format": "date"
                 },
                 {
                   "type": "null"
@@ -194,7 +195,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "format": "date"
                 },
                 {
                   "type": "null"
@@ -549,7 +551,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "format": "date"
                 },
                 {
                   "type": "null"
@@ -2718,7 +2721,8 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 200
+                "maxLength": 200,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -5363,10 +5367,12 @@
         "properties": {
           "event_id": {
             "type": "string",
+            "minLength": 1,
             "title": "Event Id"
           },
           "sport_key": {
             "type": "string",
+            "minLength": 1,
             "title": "Sport Key"
           }
         },

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from datetime import date as date_
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,7 +15,6 @@ from goalx_backend import odds_math as om
 from goalx_backend.api.deps import get_db
 from goalx_backend.data import corpus_duckdb, mapping, quote_evidence, today
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data.fixtures import beijing_business_date
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
     DEFAULT_PAIR_GAP_SECONDS,
@@ -33,6 +33,7 @@ from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
     latest_forecast,
 )
+from goalx_backend.models import IsoTimestamp
 
 router = APIRouter(prefix="/api/v1/fixtures", tags=["fixtures"])
 
@@ -50,7 +51,7 @@ MAX_WINDOW_DAYS = 7  # 场次列表日期窗口上限（票 wb-01：前端 3 日
 def get_today_fixtures(
     db: DbDep,
     date: Annotated[
-        str | None, Query(description="起始业务日(北京日期, 默认今天)")
+        date_ | None, Query(description="起始业务日(北京日期, 默认今天)")
     ] = None,
     days: Annotated[
         int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
@@ -66,7 +67,10 @@ def get_today_fixtures(
     """
     with corpus_duckdb.reader() as duck_con:
         rows = build_today_view(
-            db, date or beijing_business_date(), days=days, duck_con=duck_con
+            db,
+            fx_store.business_date_or_today(date),
+            days=days,
+            duck_con=duck_con,
         )
         # 错价桶只读标注（misprice 票 02 裁决①=c 双件，同一 now 判面归属）：
         # 已开球行=复盘面（gold 收盘判据），未开球行=临场态投影（as-of now
@@ -85,7 +89,7 @@ def get_today_fixtures(
 def get_no_candidate_attribution(
     db: DbDep,
     date: Annotated[
-        str | None, Query(description="起始业务日(北京日期, 默认今天)")
+        date_ | None, Query(description="起始业务日(北京日期, 默认今天)")
     ] = None,
     days: Annotated[
         int, Query(ge=1, le=MAX_WINDOW_DAYS, description="窗口天数(默认1=单日)")
@@ -110,7 +114,7 @@ def get_no_candidate_attribution(
     窗口日求和）。corpus_reader=degraded 表示 EU 读面缺席（锁占/库缺），
     此时 eu_cut 桶可能混入读面缺席而非真断供——对账先看该字段。
     """
-    start = date or beijing_business_date()
+    start = fx_store.business_date_or_today(date)
     # 单一时间戳贯穿（correctness F3）：戳与行内裁决 cutoff 同刻
     moment = datetime.now(tz=UTC).isoformat(timespec="seconds")
     with corpus_duckdb.reader() as duck_con:
@@ -169,8 +173,8 @@ async def get_fixture_odds(
 class ManualJoinPayload(BaseModel):
     """人工映射输入（时间窗 join 残余补齐，票 20）。"""
 
-    event_id: str
-    sport_key: str
+    event_id: str = Field(min_length=1)
+    sport_key: str = Field(min_length=1)
 
 
 @router.post(
@@ -225,11 +229,11 @@ class HadQuoteVerdictView(BaseModel):
     response_model=HadQuoteVerdictView,
     responses={404: {"description": "fixture 不存在"}},
 )
-async def get_had_quote_verdict(
+def get_had_quote_verdict(
     fixture_id: int,
     db: DbDep,
     as_of: Annotated[
-        str | None, Query(description="决策时点(UTC ISO);默认现在")
+        IsoTimestamp | None, Query(description="决策时点(UTC ISO);默认现在")
     ] = None,
     freshness_seconds: Annotated[
         float, Query(ge=0, description="源新鲜度上限(秒),工程初值300")
@@ -345,7 +349,7 @@ def get_fixture_research(
     fixture_id: int,
     db: DbDep,
     as_of: Annotated[
-        str | None, Query(description="判定时点(UTC ISO);默认现在")
+        IsoTimestamp | None, Query(description="判定时点(UTC ISO);默认现在")
     ] = None,
 ) -> FixtureResearchView:
     """

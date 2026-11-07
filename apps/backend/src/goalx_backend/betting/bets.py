@@ -353,7 +353,9 @@ def replay_bet_id(
     →降级旧回带）→ 回带 id；异意图 → IntentConflictError（不静默回旧）；
     无既有注 → None。
     """
-    existing_id = bt_store.bet_id_for_request(conn, client_request_id or "")
+    if not client_request_id:  # None/"" 不入幂等查询——历史 "" 键行不被新注误撞
+        return None
+    existing_id = bt_store.bet_id_for_request(conn, client_request_id)
     if existing_id is None:
         return None
     row = bt_store.get_bet(conn, existing_id)

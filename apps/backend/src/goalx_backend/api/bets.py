@@ -79,7 +79,7 @@ class BetCreate(BaseModel):
     allow_manual_price: bool | None = None
     # 客户端幂等键(票 06):同键重复提交不落双行(回带既有注);
     # 腿级单关=腿稳定键,串关=腿键有序拼接;不传=旧行为
-    client_request_id: str | None = Field(default=None, max_length=200)
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SlipCreate(BaseModel):
@@ -451,7 +451,7 @@ def _persist_new_bet(
         },
     },
 )
-async def create_bet(payload: BetCreate, db: DbDep) -> BetView:
+def create_bet(payload: BetCreate, db: DbDep) -> BetView:
     """
     创建一注(paper/live；未购建议 purchased=false)；had 腿按共享证据判定资格。
 
@@ -550,7 +550,7 @@ async def list_bets(
         },
     },
 )
-async def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
+def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
     """
     把勾选的建议注合成一张票并标记已购。
 
