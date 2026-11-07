@@ -278,12 +278,14 @@ def test_reader_per_book_window_corpus_path(db: sqlite3.Connection) -> None:
         " ('3001', ?, '1x2', ?, ?, 2.2, 3.4, 3.3, 1)",
         [ANCHOR, OBSERVED, stale_obs],
     )
+    # 窗=3600s（种子行龄 480s 在窗内；分水岭行 600min=10h 出窗）
     per_book = reader.books_complete_asof(
-        fixture_id, AS_OF, max_age_seconds=300, per_book_window=True
+        fixture_id, AS_OF, max_age_seconds=3600, per_book_window=True
     )
-    per_row = reader.books_complete_asof(fixture_id, AS_OF, max_age_seconds=300)
-    assert ANCHOR in per_book  # 新鲜双行窗内（_seed_corpus_duck 原行）
-    assert "srct:1x2:281" in per_book
-    # per_row 同数据同存活（无分水岭行时的平凡对照——分水岭行为在
-    # test_per_book_window_matches_pair_semantics 的 rows= 路径钉死）
-    assert per_row == per_book
+    per_row = reader.books_complete_asof(fixture_id, AS_OF, max_age_seconds=3600)
+    # 分水岭双钟行成了锚书三选的入选最新（published 新）→ 其 observed 出窗
+    # 连坐整书剔除（配对完整性）；新鲜书 281 不受连坐
+    assert ANCHOR not in per_book
+    assert set(per_book) == {"srct:1x2:281"}
+    # 逐行语义：SQL 级年龄过滤截掉分水岭行 → 回退窗内原行，锚书存活
+    assert set(per_row) == {ANCHOR, "srct:1x2:281"}
