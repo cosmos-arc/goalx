@@ -13,9 +13,19 @@ from goalx_backend.betting import funnel as funnel_mod
 from goalx_backend.betting.bets import validate_had_selections
 from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import quote_evidence
+from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.evaluation import haircut as hc
 from goalx_backend.models import LegInput, SnapshotInput
+
+
+def corpus_reads(
+    db: sqlite3.Connection, duck_con: quote_evidence.DuckCon
+) -> quote_evidence.QuoteReads:
+    """票 07 测试侧 reader 构造（与 api/tasks 域同形）。"""
+    return quote_evidence.bind_quote_reads(
+        db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
+    )
+
 
 BEIJING = timezone(timedelta(hours=8))
 ANCHOR = quote_evidence.SRCT_PINNACLE_BOOK
@@ -107,11 +117,13 @@ def test_funnel_classify_matches_via_corpus(db: sqlite3.Connection) -> None:
     """漏斗分级：corpus 有链场 EU 锚/共识出数，L2 达 matched。"""
     fixture_id = seed_on_sale_fixture(db)
     duck_con = seed_corpus_duck()
-    row = funnel_mod._classify_fixture(db, fixture_id, AS_OF, duck_con=duck_con)
+    row = funnel_mod._classify_fixture(
+        db, fixture_id, AS_OF, reads=corpus_reads(db, duck_con)
+    )
     assert row.loss_reason is None or not str(row.loss_reason).startswith("l2_anchor")
     assert row.level_reached >= funnel_mod.L_MATCHED
     # 无 corpus（legacy 死源）→ 锚缺失归因（对照组，接线前后行为分水岭）
-    legacy = funnel_mod._classify_fixture(db, fixture_id, AS_OF, duck_con=None)
+    legacy = funnel_mod._classify_fixture(db, fixture_id, AS_OF)
     assert legacy.loss_reason == "l2_anchor_absent"
 
 
@@ -127,10 +139,10 @@ def test_ev_snapshot_consensus_via_corpus(db: sqlite3.Connection) -> None:
             locked_odds=2.2,
         )
     ]
-    snap = build_ev_snapshot(db, legs, as_of=AS_OF, duck_con=duck_con)
+    snap = build_ev_snapshot(db, legs, as_of=AS_OF, reads=corpus_reads(db, duck_con))
     assert snap.prob_consensus is not None
     # corpus 段（无 legacy 欧行）共识概率出数 = 接线分水岭
-    legacy_snap = build_ev_snapshot(db, legs, as_of=AS_OF, duck_con=None)
+    legacy_snap = build_ev_snapshot(db, legs, as_of=AS_OF)
     assert legacy_snap.prob_consensus is None
 
 
@@ -147,7 +159,7 @@ def test_validate_had_selections_corpus_path(db: sqlite3.Connection) -> None:
         )
     ]
     # corpus 行源下校验通过（不抛）= EU 段可判定；JC 门（300s）独立于此
-    validate_had_selections(db, legs, as_of=AS_OF, duck_con=duck_con)
+    validate_had_selections(db, legs, as_of=AS_OF, reads=corpus_reads(db, duck_con))
 
 
 def _haircut_rows(db: sqlite3.Connection, fixture_id: int) -> Any:

@@ -73,8 +73,7 @@ from goalx_backend.data.ingest import (
 )
 from goalx_backend.data.ingest.shell import browser_ssl_context, polite_client
 from goalx_backend.data.quote_evidence import (
-    adjudicate_had_quote,
-    sharp_probs_asof,
+    bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
 from goalx_backend.evaluation import clv as clv_mod
@@ -1009,9 +1008,12 @@ def _capture_track2_fixture(
         datetime.fromisoformat(str(row["kickoff_utc"])) - offset
     ).isoformat(timespec="seconds")
     decision_iso = decision.isoformat(timespec="seconds")
-    sid = mapping.srct_sid_for_fixture(conn, fid)
-    verdict = adjudicate_had_quote(conn, fid, decision_iso, duck_con=duck_con, sid=sid)
-    sharp = sharp_probs_asof(conn, fid, decision_iso, duck_con=duck_con, sid=sid)
+    # 票 07：班域构造 reader（sid 解析注入），单参调用
+    reader = bind_quote_reads(
+        conn, duck_con, lambda f: mapping.srct_sid_for_fixture(conn, f)
+    )
+    verdict = reader.adjudicate_had_quote(fid, decision_iso)
+    sharp = reader.sharp_probs_asof(fid, decision_iso)
     if sharp is None:
         return "no_anchor"
     sale = fx_store.latest_sale_status_asof(conn, fid, "had", target_instant)
@@ -1141,7 +1143,12 @@ def funnel_day() -> dict[str, object]:
     """机会漏斗日拍（票 04+06）：五级分母+轨一估值+冻结决策。"""
     # EU 行源（票 05）：漏斗判定的共识/锚读 corpus（日拍一次短连接）
     with task_conn() as conn, corpus_duckdb.reader() as duck_con:
-        report = record_funnel_day(conn, duck_con=duck_con).as_dict()
+        report = record_funnel_day(
+            conn,
+            reads=bind_quote_reads(
+                conn, duck_con, lambda fid: mapping.srct_sid_for_fixture(conn, fid)
+            ),
+        ).as_dict()
         bdate = str(report["business_date"])
         report["frozen"] = frozen_mod.record_frozen_decisions(
             conn, business_date=bdate

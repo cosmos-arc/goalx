@@ -25,8 +25,9 @@ from goalx_backend.betting.bets import (
     validate_had_selections,
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
-from goalx_backend.data import corpus_duckdb
+from goalx_backend.data import corpus_duckdb, mapping
 from goalx_backend.data.pool import pool_period_exists
+from goalx_backend.data.quote_evidence import bind_quote_reads
 from goalx_backend.db import atomic
 from goalx_backend.evaluation.bet_review import BetReviewView, review_views
 from goalx_backend.markets import LEG_MARKETS, LEG_SELECTIONS
@@ -407,7 +408,11 @@ def _persist_new_bet(
 ) -> int:
     """资格校验 + 价绑定 + 落库（create_bet 的建新注内块；返回 bet id）。"""
     with corpus_duckdb.reader() as duck_con:
-        validate_had_selections(db, legs, duck_con=duck_con)
+        # 票 07：请求域构造 reader（sid 解析注入）域内下传
+        reads = bind_quote_reads(
+            db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
+        )
+        validate_had_selections(db, legs, reads=reads)
         if payload.mode is BetMode.LIVE:
             # live 回录独立路径：按实际条款结算，不要求等于系统报价
             bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL
@@ -428,7 +433,7 @@ def _persist_new_bet(
                 client_request_id=payload.client_request_id,
                 intent_fingerprint=fingerprint,
             ),
-            duck_con=duck_con,
+            reads=reads,
             price_source=price_source,
         )
 
@@ -577,7 +582,9 @@ def create_slip(payload: SlipCreate, db: DbDep) -> SlipView:
                 payload.placed_at,
                 actuals=actuals,
                 allow_price_update=bool(payload.allow_price_update),
-                duck_con=duck_con,
+                reads=bind_quote_reads(
+                    db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
+                ),
             )
     except PriceMismatchError as exc:
         raise HTTPException(
