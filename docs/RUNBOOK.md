@@ -59,7 +59,7 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 | scout-line | `50 10,22 * * *` | scout（GLM）读情报出三项 → forecasts(track=llm) | GLM 订阅额度 |
 | srct-shift | `*/30 8-23,0 * * *` | 源T 当期采集四类快照（在售清单发现+开售/每日/临场，快照键幂等，夜间让位） | 语料请求预算 |
 | srct-remat | `10 8 * * *` | 源T silver 增量物化（rowid 水位+触及分区重写；护栏命中自动全量兜底） | 0 |
-| gold-rebuild | `40 8 * * *` | market_quote 保鲜 + gold 全量重算（赶在 09:05 晨检 gold 新鲜度检查之前） | 0 |
+| gold-rebuild | `40 8 * * *` | market_quote 保鲜 + gold 全量重算（赶在 09:05 晨检 gold 新鲜度检查之前）。market/gold 两重段各起 spawn 子进程 + duckdb 资源帽（BuildGuards，见 CONTEXT.md）；余量不足/子进程硬死/撞锁 → deferred 让位明日自愈（2026-11-06 内存收口，全链 38min→~6min） | 0 |
 
 全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `schedules.py`（组合任务）或 `datasets.py`（注册表任务）的 cron。
 
