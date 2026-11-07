@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import Any
@@ -828,16 +828,26 @@ def fixture_team_info(conn: sqlite3.Connection, fixture_id: int) -> sqlite3.Row 
 
 
 def sale_stop_probe_candidates(
-    conn: sqlite3.Connection, now_utc: str, horizon_utc: str
+    conn: sqlite3.Connection,
+    now_utc: str,
+    horizon_utc: str,
+    *,
+    linked_fixture_ids: Collection[int],
 ) -> list[sqlite3.Row]:
     """
-    停售探测候选（票 47 双锚）：已 join、未来开球、最新销售态非 stopped。
+    停售探测候选（票 47 双锚；feed-cutover 票 01 广义已链）。
 
-    粗筛交给 SQL（kickoff ∈ (now, horizon]）；「临场 3h 内 或 北京 ≥19 点
-    的次日内场次」细分在调用方（探测两形态：晚间场临场停售 / 凌晨场前夜
-    墙钟停售）。返回行带 latest_state 供调用方过滤。
+    未来开球、最新销售态非 stopped、已链判定完全交给调用方注入的 id 集
+    （mapping.joined_fixture_ids 单一出处——odds_api 链 ∪ 源T 链，勿内联
+    复写谓词）；未链场不进候选（防误判停售）。粗筛交给 SQL（kickoff ∈ (now,
+    horizon]），已链判定在 Python 侧（窗口面小，免动态 IN 拼接）；
+    「临场 3h 内 或 北京 ≥19 点的次日内场次」细分在调用方（探测两
+    形态：晚间场临场停售 / 凌晨场前夜墙钟停售）。返回行带
+    latest_state 供调用方过滤。
     """
-    return conn.execute(
+    linked = {int(fid) for fid in linked_fixture_ids}
+    out: list[sqlite3.Row] = []
+    for row in conn.execute(
         """
         SELECT f.id, f.kickoff_utc, f.odds_api_event_id, f.odds_api_sport_key,
                COALESCE(
@@ -846,9 +856,11 @@ def sale_stop_probe_candidates(
                     ORDER BY ss.observed_at DESC, ss.id DESC LIMIT 1),
                    'unknown') AS latest_state
         FROM fixtures f
-        WHERE f.odds_api_event_id IS NOT NULL AND f.odds_api_sport_key IS NOT NULL
-          AND f.kickoff_utc > ? AND f.kickoff_utc <= ?
+        WHERE f.kickoff_utc > ? AND f.kickoff_utc <= ?
         ORDER BY f.kickoff_utc
         """,
         (now_utc, horizon_utc),
-    ).fetchall()
+    ).fetchall():
+        if int(row["id"]) in linked:
+            out.append(row)
+    return out
