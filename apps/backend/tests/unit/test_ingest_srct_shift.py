@@ -679,3 +679,72 @@ def test_post_beat_hooks_swallow_torn_gzip_eoferror(
     assert "degraded" in payload["mapping_sync"]
     assert "degraded" in payload["remat"]
     assert payload["raw_new"] == 0  # 拍班本体（monkeypatch 空转）照常返回
+
+
+def test_open_bronze_repair_after_match_row_upsert(tmp_path: Path) -> None:
+    """C8 correctness F3：建档行已在而 @open bronze 缺（upsert→append 夹缝
+    崩溃窗）→ 补判仍触发——被推迟/越线场再无后续拍可救。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    # 崩溃窗形状：@open raw 在、无 bronze、建档行已提交（fresh 路径 upsert
+    # 后 append 前被杀）
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.upsert_shift_match(
+        {
+            "sid": SID_FAR,
+            "league": "英超",
+            "home": "主队",
+            "away": "客队",
+            "kickoff_utc": _KICKOFF_FAR.isoformat(),
+            "in_scope": 1,
+            "beats": 1,
+            "last_beat_at": "2026-09-26T01:00:00+00:00",
+        }
+    )
+    store.close()
+
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)  # 无日拍槽：归因唯一
+    stats, store = _run(tmp_path, _client(), now_utc)
+    assert stats.bronze_repaired == 1
+    assert stats.open_beats == 2  # FAR 已建档不吃开售拍
+    assert stats.requests == 1 + 2  # 入口 + NEAR/OUT
+    assert len(_open_bronze_rows(store, SID_FAR)) == 1
+    store.close()
+
+
+def test_open_bronze_repair_defers_on_torn_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5 correctness F1：补判的 bronze 无锁读撞撕裂 member → 推迟到下轮
+    不炸拍班（补判自身不许复活 C5 死法）。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.close()
+
+    def _torn(*_args: object, **_kwargs: object) -> set[str]:
+        raise EOFError("Compressed file ended before the end-of-stream marker")
+
+    monkeypatch.setattr(CorpusStore, "bronze_sids", _torn)
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)
+    stats, store = _run(tmp_path, _client(), now_utc)  # 不上抛即验收
+    assert stats.bronze_repaired == 0  # 补判推迟
+    assert stats.stopped is None  # 拍班本体完整跑完
+    monkeypatch.undo()  # 下轮（撕裂窗过去）：cached 路径补判自愈
+    stats2, store2 = _run(tmp_path, _client(), now_utc)
+    assert stats2.bronze_repaired == 1
+    assert len(_open_bronze_rows(store2, SID_FAR)) == 1
+    store.close()
+    store2.close()

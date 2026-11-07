@@ -1006,3 +1006,66 @@ def test_sidecar_failure_leaves_watermark_for_redo(
         assert _tree_face_digests(store) == face
     finally:
         store.close()
+
+
+def test_day_meta_torn_read_degrades_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5 correctness F2a：增量日页 bronze 读（旧元数据复算）撞撕裂 member →
+    降级不炸、水位不推，下轮重做成功。"""
+    store, settings = _seed_two_partitions(tmp_path)
+    try:
+        routes = _routes_for("2025-10-03", "90003", "英超")
+        _collect(store, settings, routes, "2025-10-03")
+        state0 = store.remat_state()
+        assert state0 is not None
+        watermark_before = int(state0["last_rowid"])
+
+        def _torn(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise EOFError("Compressed file ended before the end-of-stream marker")
+
+        monkeypatch.setattr(srct_remat.silver, "latest_bronze_rows", _torn)
+        report = srct_remat.run_remat(store)
+        assert report.mode == "degraded"
+        # 日页 bronze 的多个读者（meta 合并/fixture/增量旧元数据）都在降级
+        # 界内——最早命中者记账，水位一律不推
+        assert "odds_meta: EOFError" in report.degraded
+        assert all(face.endswith("EOFError") for face in report.degraded)
+        state1 = store.remat_state()
+        assert state1 is not None
+        assert int(state1["last_rowid"]) == watermark_before
+
+        monkeypatch.undo()
+        report2 = srct_remat.run_remat(store)
+        assert report2.mode == "incremental"
+        assert not report2.degraded
+    finally:
+        store.close()
+
+
+def test_meta_merge_torn_read_degrades_whole_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5 correctness F2b：merged_odds_meta 日页 bronze 读撕裂（每轮必经，
+    08:10 班无外层捕获）→ 整轮降级不炸、零状态写入。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        routes = _routes_for("2025-10-01", "90001", "英超")
+        _collect(store, settings, routes, "2025-10-01")
+
+        def _torn(*_args: object, **_kwargs: object) -> tuple[object, object]:
+            raise EOFError("Compressed file ended before the end-of-stream marker")
+
+        monkeypatch.setattr(srct_remat.srct_silver, "merged_odds_meta", _torn)
+        report = srct_remat.run_remat(store)
+        assert report.mode == "degraded"
+        assert report.degraded == ["odds_meta: EOFError"]
+        assert store.remat_state() is None  # 零状态写入（首跑也无）
+
+        monkeypatch.undo()
+        report2 = srct_remat.run_remat(store)
+        assert report2.mode == "full"  # 无状态行=首跑全量兜底（下轮自愈）
+        assert not report2.degraded
+    finally:
+        store.close()
