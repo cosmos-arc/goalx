@@ -98,6 +98,8 @@ class ShiftStats:
     requests: int = 0
     raw_new: int = 0
     parsed_ok: int = 0
+    # 票 03 C8：@open 夹缝崩溃窗补 bronze 计数（两窗统一；镜像夜班口径）
+    bronze_repaired: int = 0
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # budget/window_closed；None=清单跑完
     # JC 官方拍相位（票 71；jc: 前缀区分于源T 层）
@@ -451,6 +453,42 @@ def _append_beat_bronze(
     stats.parsed_ok += 1
 
 
+def _repair_open_bronze(store: CorpusStore, sid: str, stats: ShiftStats) -> None:
+    """
+    @open 拍键在而 bronze 无该 sid 行 → 本地重解析补追加。
+
+    票 03 C8：ingest_raw→append_bronze 两段非原子的两个夹缝崩溃窗（建档
+    行有无各一）在此统一补——镜像夜班 _handle_cached 的 membership 口径，
+    latest-per-sid 语义下多余行自动收敛。越线/被推迟场再无后续拍可救，
+    补判须在开球线检查之前。撕裂 member（EOFError/OSError）推迟到下轮，
+    不炸拍班（C5 同族裁决：读者无锁、降级不中断）。
+    """
+    if not store.has(srct.SRCT_PROVIDER, srct.ODDS_DATASET, open_key(sid)):
+        return
+    try:
+        if sid in store.bronze_sids(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        ):
+            return
+        payload = _parse_fn(srct.ODDS_DATASET)(
+            store.read_raw(
+                srct.SRCT_PROVIDER,
+                srct.ODDS_DATASET,
+                open_key(sid),
+                ext=_beat_ext(srct.ODDS_DATASET),
+            )
+        )
+    except (OSError, EOFError) as exc:
+        logger.warning("srct shift @open bronze 补判推迟（{}）：{}", sid, exc)
+        return
+    except srct.SrctContentError:
+        return  # 解析器升版不兼容：留待下轮重拍（键在但行废）
+    _append_beat_bronze(store, sid, srct.ODDS_DATASET, open_key(sid), payload, stats)
+    stats.bronze_repaired += 1
+
+
 def _upsert_match(
     store: CorpusStore,
     sid: str,
@@ -737,6 +775,9 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             )
     if not row.get("in_scope"):
         return row  # 非 CorpusScope：开售拍后不再拍（语料面范围裁定）
+    # 票 03 C8：@open 夹缝崩溃窗补判（建档行有无统一在此）——先于开球线，
+    # 越线/被推迟场再无后续拍可救
+    _repair_open_bronze(store, sid, stats)
     kickoff = datetime.fromisoformat(str(row["kickoff_utc"]))
     if kickoff <= now:
         return row  # 已开球：收口归夜班，当期班生命周期完

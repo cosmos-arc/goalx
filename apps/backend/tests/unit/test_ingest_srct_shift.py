@@ -569,3 +569,182 @@ def test_gap_fill_out_of_scope_league_still_fills(tmp_path: Path) -> None:
     )
     assert stats.gap_filled == 1
     assert "4004444" in store.shift_matches()
+
+
+# —— 票 03 批 C：数据面稳定（C8 cached-@open 补 bronze / C5 拍后钩子）——
+
+
+def _open_bronze_rows(store: CorpusStore, sid: str) -> list[dict[str, object]]:
+    """该 sid 回指 @open 拍键工件的 bronze 行（补追加验收口径）。"""
+    key = f"{sid}@open"
+    sha = store.raw_sha(srct.SRCT_PROVIDER, srct.ODDS_DATASET, key)
+    return [
+        row
+        for row in store.read_bronze(srct.SRCT_PROVIDER, srct.ODDS_DATASET)
+        if str(row["sid"]) == sid and row.get("raw_sha") == sha
+    ]
+
+
+def test_cached_open_beat_repairs_missing_bronze(tmp_path: Path) -> None:
+    """C8：@open raw 已落而 bronze 缺（ingest_raw→append 夹缝崩溃窗）→
+    cached 路径零重抓重解析补追加；fresh 场照常拍。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    # 崩溃窗形状：FAR 的 @open raw 在、无 bronze、无建档行
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.close()
+
+    # 12:30 京：无 am/pm 槽、无临场窗——FAR 的唯一 bronze 行只能是补追加
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)
+    stats, store = _run(tmp_path, _client(), now_utc)
+    assert stats.bronze_repaired == 1
+    assert stats.daily_beats == 0
+    assert stats.raw_new == 2  # 仅 NEAR/OUT 开售拍；FAR 的 @open 不重抓
+    assert stats.requests == 1 + 2  # 入口 + 两新开售拍
+    assert stats.open_beats == 3
+    rows = _open_bronze_rows(store, SID_FAR)
+    assert len(rows) == 1  # 补追加恰好一行、raw_sha 回指 @open 工件
+    # 建档照常回补（cached 路径既有语义）
+    assert store.shift_matches()[SID_FAR]["league"] == "英超"
+    store.close()
+
+
+def test_cached_open_beat_with_bronze_present_not_touched(tmp_path: Path) -> None:
+    """C8：@open raw+bronze 俱在（仅建档行缺）→ 补判定不动 bronze、零修复。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": srct.ODDS_DATASET,
+                "sid": SID_FAR,
+                "fetched_at": "2026-09-26T01:00:00+00:00",
+                "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                "raw_sha": store.raw_sha(
+                    srct.SRCT_PROVIDER, srct.ODDS_DATASET, f"{SID_FAR}@open"
+                ),
+                "payload": srct.parse_odds_page(_ODDS_ROUTES[SID_FAR]),
+            }
+        ],
+    )
+    store.close()
+
+    # 12:30 京：无日拍——bronze 若被动过必是补判定，恰一行原样在
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)
+    stats, store = _run(tmp_path, _client(), now_utc)
+    assert stats.bronze_repaired == 0
+    assert len(_open_bronze_rows(store, SID_FAR)) == 1  # 不重复追加
+    assert store.shift_matches()[SID_FAR]["beats"] == 1  # 仅开售拍建档
+    store.close()
+
+
+def test_post_beat_hooks_swallow_torn_gzip_eoferror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5：拍后收尾钩子捕获集含 EOFError——撕裂 gzip member 只降级该面，
+    拍班本体成功返回（否则 remat 全量 3h 白跑外整班 run 失败）。"""
+    from goalx_backend import tasks
+
+    monkeypatch.setattr(
+        tasks.srct_shift, "run_shift", lambda *a, **k: srct_shift.ShiftStats()
+    )
+
+    def _torn() -> dict[str, object]:
+        raise EOFError("Compressed file ended before the end-of-stream marker")
+
+    monkeypatch.setattr(tasks, "mapping_sync", _torn)
+    monkeypatch.setattr(tasks, "srct_remat_run", _torn)
+    settings = Settings(
+        corpus_root=tmp_path / "corpus",
+        db_path=tmp_path / "goalx.db",
+        research_db_path=tmp_path / "research.db",
+    )
+    payload = tasks.srct_shift_run(no_window=True, settings=settings, client=_client())
+    assert "degraded" in payload["mapping_sync"]
+    assert "degraded" in payload["remat"]
+    assert payload["raw_new"] == 0  # 拍班本体（monkeypatch 空转）照常返回
+
+
+def test_open_bronze_repair_after_match_row_upsert(tmp_path: Path) -> None:
+    """C8 correctness F3：建档行已在而 @open bronze 缺（upsert→append 夹缝
+    崩溃窗）→ 补判仍触发——被推迟/越线场再无后续拍可救。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    # 崩溃窗形状：@open raw 在、无 bronze、建档行已提交（fresh 路径 upsert
+    # 后 append 前被杀）
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.upsert_shift_match(
+        {
+            "sid": SID_FAR,
+            "league": "英超",
+            "home": "主队",
+            "away": "客队",
+            "kickoff_utc": _KICKOFF_FAR.isoformat(),
+            "in_scope": 1,
+            "beats": 1,
+            "last_beat_at": "2026-09-26T01:00:00+00:00",
+        }
+    )
+    store.close()
+
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)  # 无日拍槽：归因唯一
+    stats, store = _run(tmp_path, _client(), now_utc)
+    assert stats.bronze_repaired == 1
+    assert stats.open_beats == 2  # FAR 已建档不吃开售拍
+    assert stats.requests == 1 + 2  # 入口 + NEAR/OUT
+    assert len(_open_bronze_rows(store, SID_FAR)) == 1
+    store.close()
+
+
+def test_open_bronze_repair_defers_on_torn_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5 correctness F1：补判的 bronze 无锁读撞撕裂 member → 推迟到下轮
+    不炸拍班（补判自身不许复活 C5 死法）。"""
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        f"{SID_FAR}@open",
+        _ODDS_ROUTES[SID_FAR],
+        ext=".js",
+    )
+    store.close()
+
+    def _torn(*_args: object, **_kwargs: object) -> set[str]:
+        raise EOFError("Compressed file ended before the end-of-stream marker")
+
+    monkeypatch.setattr(CorpusStore, "bronze_sids", _torn)
+    now_utc = datetime(2026, 9, 26, 4, 30, tzinfo=UTC)
+    stats, store = _run(tmp_path, _client(), now_utc)  # 不上抛即验收
+    assert stats.bronze_repaired == 0  # 补判推迟
+    assert stats.stopped is None  # 拍班本体完整跑完
+    monkeypatch.undo()  # 下轮（撕裂窗过去）：cached 路径补判自愈
+    stats2, store2 = _run(tmp_path, _client(), now_utc)
+    assert stats2.bronze_repaired == 1
+    assert len(_open_bronze_rows(store2, SID_FAR)) == 1
+    store.close()
+    store2.close()

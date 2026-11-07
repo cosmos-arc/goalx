@@ -94,11 +94,13 @@ def _add_sale(
     db.commit()
 
 
-def _seed_draw(db: sqlite3.Connection, fixture: int, home: int, away: int) -> None:
+def _seed_draw(
+    db: sqlite3.Connection, fixture: int, home: int, away: int, *, void: int = 0
+) -> None:
     db.execute(
         "INSERT INTO draw_results (fixture_id, home_goals, away_goals, void, source,"
-        " created_at) VALUES (?, ?, ?, 0, 'test', '2026-10-18T00:00:00+00:00')",
-        (fixture, home, away),
+        " created_at) VALUES (?, ?, ?, ?, 'test', '2026-10-18T00:00:00+00:00')",
+        (fixture, home, away, void),
     )
     db.commit()
 
@@ -662,3 +664,40 @@ def test_drift_skip_kind_whitelist_and_layering() -> None:
     assert fz._drift_skip_kind("eu_consensus[a]", "srct:1x2:177") == "mismatch"
     assert fz._drift_skip_kind(None, "srct:1x2:177") == "unknown"
     assert fz._drift_skip_kind("pinnacle", None) == "unknown"
+
+
+def test_void_result_settles_refund_terminal(db: sqlite3.Connection) -> None:
+    """票 03 C6：void 是终态（退款语义）——settled_outcome='void'、利润 0、
+    计 settled 不再卡 still_pending 单调涨（人裁决 2026-11-06）。"""
+    from goalx_backend.betting.funnel import record_funnel_day
+
+    fixture = _seed_fixture(db, 0)
+    _add_quotes(
+        db, fixture, {"h": 3.0, "d": 3.3, "a": 3.5}, {"h": 2.0, "d": 3.4, "a": 4.0}
+    )
+    _add_sale(db, fixture)
+    record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
+    fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
+
+    def no_close(home, away, kickoff, selection):
+        return None
+
+    # 无效判定（void=1）：退款语义，非未知
+    _seed_draw(db, fixture, 0, 0, void=1)
+    stats = fz.reconcile_frozen_decisions(db, no_close, now="2026-10-18T00:00:00+00:00")
+    assert stats["settled"] == 1
+    assert stats["still_pending"] == 0
+    assert stats["paper_profit_flat"] == 0.0
+    row = db.execute(
+        "SELECT settled_outcome, settled_profit FROM frozen_decisions"
+        " WHERE decision='would_bet'"
+    ).fetchone()
+    assert row["settled_outcome"] == "void"
+    assert row["settled_profit"] == 0.0
+
+    # 重跑不再回 pending（终态；无晚到收盘时不重复计数）
+    stats2 = fz.reconcile_frozen_decisions(
+        db, no_close, now="2026-10-19T00:00:00+00:00"
+    )
+    assert stats2["still_pending"] == 0
+    assert stats2["settled"] == 0

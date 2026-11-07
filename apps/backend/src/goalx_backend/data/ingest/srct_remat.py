@@ -203,6 +203,59 @@ def _writeback_live_partitions(
         store.upsert_live_sid_partitions(live_emit)
 
 
+def _merged_meta_or_none(
+    store: CorpusStore, report: RematReport
+) -> (
+    tuple[
+        dict[str, dict[str, object]],
+        dict[str, dict[str, object]],
+        dict[str, dict[str, object]],
+    ]
+    | None
+):
+    """
+    合并元数据三件套（meta/live_only/当期班全量行）。
+
+    日页 bronze 撕裂读 → 降级记账返 None（票 03 C5 同族：无锁读撞夜班
+    overrun 半写 member，降级不炸 08:10 班——水位未推，下轮重做）。
+    """
+    try:
+        meta, live_only = srct_silver.merged_odds_meta(store)
+        shift_rows_all = {str(r["sid"]): r for r in srct_silver.shift_live_rows(store)}
+    except (OSError, EOFError) as exc:
+        logger.warning("srct-remat meta 读降级：{}", exc)
+        report.degraded.append(f"odds_meta: {type(exc).__name__}")
+        report.mode = "degraded"
+        return None
+    return meta, live_only, shift_rows_all
+
+
+def _run_odds_face(
+    store: CorpusStore,
+    report: RematReport,
+    new_raw: dict[str, list[RawArtifact]],
+    meta: dict[str, dict[str, object]],
+    live_sids: set[str],
+    shift_rows_all: dict[str, dict[str, object]],
+) -> None:
+    """Odds 面（增量主路径 / 全量兜底 / 零新工件跳过）分派。"""
+    day_new = bool(new_raw.get(srct.DAY_DATASET))
+    odds_new = any(new_raw.get(dataset) for dataset in srct.ODDS_FAMILY)
+    if report.guard_reason:
+        report.mode = "full"
+        try:
+            report.bookmaker = asdict(srct_odds.build_bookmakers(store))
+            report.odds = asdict(srct_odds.build_odds_change_events(store))
+        except Exception as exc:
+            logger.warning("srct-remat odds 全量降级：{}", exc)
+            report.degraded.append(f"odds_full: {type(exc).__name__}")
+    elif odds_new or day_new:
+        report.mode = "incremental"
+        _run_incremental_odds(
+            store, report, new_raw, meta, live_sids=live_sids, shift_rows=shift_rows_all
+        )
+
+
 def _run_incremental_odds(
     store: CorpusStore,
     report: RematReport,
@@ -223,56 +276,63 @@ def _run_incremental_odds(
     }
     day_sids = {sid for sid, row in meta.items() if str(row["day"]) in new_day_dates}
     partitions = {_partition_of(sid, meta) for sid in new_odds_sids | day_sids}
-    if day_sids:
-        # 新日页解锁孤儿：_unknown 必须重写（迁出行驻留），与迁入分区成对；
-        # 重挂场次的"迁移出分区"（旧页联赛/开球界）同并入——排除新日页
-        # 复算旧元数据可得其原分区（correctness-review F1：真实↔真实
-        # 迁移无 _unknown 式特判，漏触及=旧分区残留该 sid 行，树与全量分叉）
-        day_rows = silver.latest_bronze_rows(
-            store,
-            srct.SRCT_PROVIDER,
-            srct.DAY_DATASET,
-            srct.BRONZE_VERSIONS[srct.DAY_DATASET],
-        )
-        old_meta = {
-            str(row["sid"]): row
-            for row in srct_silver.fixture_rows_from(
-                {k: v for k, v in day_rows.items() if k not in new_day_dates}
-            )[0]
-        }
-        partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
-        # live 锚→日页接管（票 03）：旧分区在当期班侧而非旧日页——old_meta
-        # 无此 sid 行（此前无日页），漏触及=live 旧分区残留该 sid 行，树与
-        # 全量分叉。从当期班全量行推导（接管后 live_only 已不含该 sid）
-        partitions.update(
-            _partition_of(sid, shift_rows) for sid in day_sids if sid in shift_rows
-        )
-    if day_sids or (new_odds_sids & live_sids):
-        # _unknown 成对重写（票 11 F1 语义 + 票 03 扩充）：新日页解锁或
-        # 当期班兜底锚定的迁出同样要求 _unknown 清驻留——漏触及=旧分区
-        # 残留该 sid 行，树与全量分叉
-        partitions.add(_UNKNOWN_PARTITION)
     # live 锚漂移（票 03 F2）：当期班行跨拍改档（league/kickoff 修正）时
     # 旧分区无从从现行数据推导——sidecar 记末次发射分区，差分并入触及
+    # （sqlite 读，无 bronze 面——与下方日页 bronze 读分流）
     last_live = store.live_sid_partitions()
     for sid in new_odds_sids:
         previous = last_live.get(sid)
         if previous is not None and previous != _partition_of(sid, meta):
             partitions.add(previous)
-    report.affected_partitions = sorted(
-        f"season={season}/competition={competition}"
-        for season, competition in partitions
-    )
     ledgers: dict[str, dict[str, int]] = {}
-    for dataset in srct.ODDS_FAMILY:
-        version = srct.BRONZE_VERSIONS[dataset]
-        bronze_set = store.bronze_sids(srct.SRCT_PROVIDER, dataset, version)
-        targets = {sid for sid in bronze_set if _partition_of(sid, meta) in partitions}
-        report.target_sids += len(targets)
-        ledgers[dataset] = silver.latest_bronze_ledger_filtered(
-            store, srct.SRCT_PROVIDER, dataset, version, targets
-        )
     try:
+        # 票 03 C5：日页 bronze 读与扫描/读账、重建同 try——无锁读者撞
+        # 拍班/夜班并发追加的撕裂 gzip member（EOFError）降级+下轮重试，
+        # 不炸整轮；读者不加 LOCK_SH（会卡追加数分钟，审计裁决）
+        if day_sids:
+            # 新日页解锁孤儿：_unknown 必须重写（迁出行驻留），与迁入分区
+            # 成对；重挂场次的"迁移出分区"（旧页联赛/开球界）同并入——排除
+            # 新日页复算旧元数据可得其原分区（correctness-review F1：真实↔
+            # 真实迁移无 _unknown 式特判，漏触及=旧分区残留该 sid 行）
+            day_rows = silver.latest_bronze_rows(
+                store,
+                srct.SRCT_PROVIDER,
+                srct.DAY_DATASET,
+                srct.BRONZE_VERSIONS[srct.DAY_DATASET],
+            )
+            old_meta = {
+                str(row["sid"]): row
+                for row in srct_silver.fixture_rows_from(
+                    {k: v for k, v in day_rows.items() if k not in new_day_dates}
+                )[0]
+            }
+            partitions.update(_partition_of(sid, old_meta) for sid in day_sids)
+            # live 锚→日页接管（票 03）：旧分区在当期班侧而非旧日页——
+            # old_meta 无此 sid 行（此前无日页），漏触及=live 旧分区残留该
+            # sid 行，树与全量分叉。从当期班全量行推导（接管后 live_only
+            # 已不含该 sid）
+            partitions.update(
+                _partition_of(sid, shift_rows) for sid in day_sids if sid in shift_rows
+            )
+        if day_sids or (new_odds_sids & live_sids):
+            # _unknown 成对重写（票 11 F1 语义 + 票 03 扩充）：新日页解锁或
+            # 当期班兜底锚定的迁出同样要求 _unknown 清驻留——漏触及=旧分区
+            # 残留该 sid 行，树与全量分叉
+            partitions.add(_UNKNOWN_PARTITION)
+        report.affected_partitions = sorted(
+            f"season={season}/competition={competition}"
+            for season, competition in partitions
+        )
+        for dataset in srct.ODDS_FAMILY:
+            version = srct.BRONZE_VERSIONS[dataset]
+            bronze_set = store.bronze_sids(srct.SRCT_PROVIDER, dataset, version)
+            targets = {
+                sid for sid in bronze_set if _partition_of(sid, meta) in partitions
+            }
+            report.target_sids += len(targets)
+            ledgers[dataset] = silver.latest_bronze_ledger_filtered(
+                store, srct.SRCT_PROVIDER, dataset, version, targets
+            )
         odds_report = srct_odds.build_odds_change_events(
             store, ledgers=ledgers, clean_stale=False, write_meta=False, meta=meta
         )
@@ -460,7 +520,6 @@ def _run_remat_locked(
         return report
     day_new = bool(new_raw.get(srct.DAY_DATASET))
     stats_new = bool(new_raw.get(srct.STATS_DATASET))
-    odds_new = any(new_raw.get(dataset) for dataset in srct.ODDS_FAMILY)
 
     # ---- fixture（全量维持，门控：day_page 有新工件） ----
     if day_new or full:
@@ -470,12 +529,13 @@ def _run_remat_locked(
             logger.warning("srct-remat fixture 降级：{}", exc)
             report.degraded.append(f"fixture: {type(exc).__name__}")
     # 合并元数据（票 03 单一出处）：日页 ∪ 当期班兜底；live_only 供增量侧
-    # 推导迁出分区（live 锚→日页接管时旧分区只在 live 侧）
-    meta, live_only = srct_silver.merged_odds_meta(store)
+    # 推导迁出分区（live 锚→日页接管时旧分区只在 live 侧）；当期班全量行
+    # 供接管判定（接管后 live_only 已不含该 sid，但旧 live 分区仍需推导）
+    merged = _merged_meta_or_none(store, report)
+    if merged is None:
+        return report
+    meta, live_only, shift_rows_all = merged
     live_sids = set(live_only)
-    # 当期班全量行（接管判定用）：live 锚→日页接管后 live_only 已不含该
-    # sid（日页恒胜），但旧 live 分区仍需从当期班行推导
-    shift_rows_all = {str(r["sid"]): r for r in srct_silver.shift_live_rows(store)}
 
     # ---- xg（全量路径，门控：match_stats 有新工件） ----
     if stats_new or full:
@@ -486,24 +546,7 @@ def _run_remat_locked(
             report.degraded.append(f"xg: {type(exc).__name__}")
 
     # ---- odds（增量主路径 / 全量兜底 / 零新工件跳过） ----
-    if report.guard_reason:
-        report.mode = "full"
-        try:
-            report.bookmaker = asdict(srct_odds.build_bookmakers(store))
-            report.odds = asdict(srct_odds.build_odds_change_events(store))
-        except Exception as exc:
-            logger.warning("srct-remat odds 全量降级：{}", exc)
-            report.degraded.append(f"odds_full: {type(exc).__name__}")
-    elif odds_new or day_new:
-        report.mode = "incremental"
-        _run_incremental_odds(
-            store,
-            report,
-            new_raw,
-            meta,
-            live_sids=live_sids,
-            shift_rows=shift_rows_all,
-        )
+    _run_odds_face(store, report, new_raw, meta, live_sids, shift_rows_all)
 
     if report.degraded:
         logger.warning(
@@ -519,8 +562,10 @@ def _run_remat_locked(
         }
         for dataset in srct.ODDS_FAMILY
     }
+    # 票 03 C7：sidecar 先写、水位后推——夹缝失败则水位未进，下轮幂等重做；
+    # 反序（水位先行）会让旧分区滞留错误分区且计数护栏看不见
+    _writeback_live_partitions(store, meta, live_only)
     store.upsert_remat_state(
         report.watermark, report.last_rowid, json.dumps(counts, ensure_ascii=False)
     )
-    _writeback_live_partitions(store, meta, live_only)
     return report
