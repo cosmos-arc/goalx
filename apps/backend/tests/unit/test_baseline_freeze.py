@@ -167,6 +167,47 @@ def test_freeze_jc_asof_and_write_once(db: sqlite3.Connection) -> None:
     assert len(_snapshots(db, fixture)) == 1  # 无 eu 行 → 仍只有 1 行
 
 
+def test_freeze_blocks_backfilled_and_unknown_observation(
+    db: sqlite3.Connection,
+) -> None:
+    """correctness 修回归：sporttery captured_at=源调盘时间，倒填行不得凭
+    早调盘时刻混进锚；旧行 observed_at 缺失=观测时刻未知，不可证明可见。"""
+    fixture = _seed_fixture(db, "F", code="006")
+    for sel, odds in zip(SELECTIONS, (1.90, 3.30, 4.10), strict=True):
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code=sel,
+                source="sporttery",
+                odds=odds,
+                captured_at=BEFORE,  # 调盘时刻在锚前
+                observed_at=AFTER,  # 本机 12:40 才收到
+            ),
+        )
+    # 旧行：observed_at NULL（票 35 证据列之前的存量形状）
+    for sel, odds in zip(SELECTIONS, (2.00, 3.00, 4.00), strict=True):
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code=f"{sel}",
+                source="sporttery",
+                odds=odds,
+                captured_at=BEFORE,
+            ),
+        )
+    db.commit()
+    stats = freeze_anchor_baselines(
+        db, anchor_label="12:30", cutoff_at=CUTOFF, business_date=BUSINESS_DATE
+    )
+    assert stats.jc_frozen == 0  # 两族行都不可证明锚时可见
+    assert stats.jc_absent == 1
+    assert _snapshots(db, fixture) == {}
+
+
 def test_freeze_incomplete_triple_absent(db: sqlite3.Connection) -> None:
     fixture = _seed_fixture(db, "B", code="002")
     # 只种 h/a 两腿（odds_snapshots append-only，不可删改）

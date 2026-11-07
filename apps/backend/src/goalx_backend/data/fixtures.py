@@ -542,13 +542,14 @@ def insert_odds_snapshot(conn: sqlite3.Connection, snap: SnapshotInput) -> int |
 
 def _latest_from_rows(
     rows: list[sqlite3.Row],
+    time_key: str = "captured_at",
 ) -> dict[str, tuple[float, str]]:
-    """时间序行 → 每选项最新 (odds, captured_at)（后行覆盖前行）。"""
+    """时间序行 → 每选项最新 (odds, time_key)（后行覆盖前行）。"""
     latest: dict[str, tuple[float, str]] = {}
     for row in rows:
         latest[str(row["selection_code"])] = (
             float(row["odds"]),
-            str(row["captured_at"]),
+            str(row[time_key]),
         )
     return latest
 
@@ -582,19 +583,27 @@ def latest_odds_by_selection_asof(
     """
     Latest snapshot per selection for one (fixture, market, source) at as_of.
 
-    只取 captured_at 不晚于 as_of 的行——之后的观测不能证明该时点可见的
-    价（auto-paper 票 01 锚冻结口径，与 latest_sale_status_asof 同语义）。
+    准入按有效观测时刻（quote_evidence.effective_observed_at 同语义）：
+    observed_at ≤ as_of；旧行 odds_api 兜底 captured_at；sporttery 旧行
+    observed_at 缺失=观测时刻未知，不可证明该时点可见 → 不进锚（未知不
+    伪造，auto-paper 票 01 correctness 修——sporttery 的 captured_at 是
+    源调盘时间，晚收的价不得凭倒填的调盘时刻混进锚）。返回 tuple 的
+    时间位=有效观测时刻。
     """
+    # 有效观测时刻两用（过滤+排序+返回），未知(NULL)行在 <= 比较下自然出局
+    seen = (
+        "COALESCE(observed_at, CASE WHEN source LIKE 'odds_api:%' THEN captured_at END)"
+    )
     rows = conn.execute(
-        """
-        SELECT selection_code, odds, captured_at FROM odds_snapshots
+        f"""
+        SELECT selection_code, odds, {seen} AS seen_at FROM odds_snapshots
         WHERE fixture_id = ? AND market_code = ? AND source = ?
-          AND captured_at <= ?
-        ORDER BY captured_at, odds
-        """,
+          AND {seen} <= ?
+        ORDER BY seen_at, odds
+        """,  # noqa: S608 — seen 为常量表达式，值全参数化
         (fixture_id, market_code, source, as_of),
     ).fetchall()
-    return _latest_from_rows(rows)
+    return _latest_from_rows(rows, time_key="seen_at")
 
 
 def odds_history(

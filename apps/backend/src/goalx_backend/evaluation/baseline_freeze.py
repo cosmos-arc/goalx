@@ -4,10 +4,11 @@
 决策锚拍点（12:30/16:30/21:00 北京时，与策略层 auto-v1 共用锚集）对
 当日全部竞彩场次 write-once 冻结两条 had 基准：
 
-- jc_official：竞彩官方 SP 三向（原始赔率），取 captured_at ≤ cutoff 的
-  最新行——拍点后到的报价不进该锚（防泄漏，与
-  latest_sale_status_asof 同语义）；只落完整三向，缺口不伪造。prereg
-  「归一化」是评分侧比较口径，由原始赔率确定性派生，快照存原始值。
+- jc_official：竞彩官方 SP 三向（原始赔率），取有效观测时刻
+  （effective_observed_at 语义）≤ cutoff 的最新行——晚收的价不得凭倒填
+  的源调盘时刻（sporttery captured_at）混进锚，观测时刻未知的旧行不进
+  （未知不伪造）；只落完整三向，缺口不伪造。prereg「归一化」是评分侧
+  比较口径，由原始赔率确定性派生，快照存原始值。
 - eu_consensus：欧赔完整三向共识 Shin 概率（评分基准口径，与
   forward_validation.market_baseline_asof 同源同窗）。
 

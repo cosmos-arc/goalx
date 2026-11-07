@@ -2020,9 +2020,9 @@ def _apply_v42(conn: sqlite3.Connection) -> None:
     SP 原始赔率 / eu_consensus Shin 概率，prices JSON 按 source 解释）。
     UNIQUE (business_date, fixture_id, anchor_label, source, market) 吸收
     同锚重跑；cutoff_at=真实 as-of 截止（任务层封顶锚+30min 窗），防泄漏
-    由读侧 captured_at<=cutoff 保证；observed_at=JC 逐选项 captured_at
-    JSON 证据（eu 共识为派生态，NULL 不伪造）。表查询归 evaluation
-    （ADR-0008）。
+    由读侧有效观测时刻（observed_at，odds_api 旧行兜底 captured_at）
+    <=cutoff 保证；observed_at 列=JC 逐选项有效观测时刻 JSON 证据（eu
+    共识为派生态，NULL 不伪造）。表查询归 evaluation（ADR-0008）。
     forecast_coverage：每日 ML 覆盖普查（covered/skip 三因 reason），
     主键 (business_date, fixture_id)；日重跑 REPLACE 重建（派生态非证据，
     与快照的 write-once 语义不同）。表查询归 modelling。
