@@ -819,3 +819,57 @@ def test_sync_scan_window_skips_stale_keeps_links(db) -> None:
     stats2 = mapping.sync_fixture_links(db, seed_universe([]))
     assert stats2.fixtures == 2  # fresh + manual（活窗外 manual 不跳过）
     assert stats2.stale_skipped == 0
+
+
+def test_linked_sid_teams_skip_filter(db) -> None:
+    """英文对子输入查询（identity-alias 票 01）：全量 linked、队级跳过门。"""
+    comp = fx_store.upsert_competition(db, "英超", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "主队英文已足")
+    away = fx_store.upsert_team(db, "客队待解析")
+    fixture = fx_store.upsert_fixture(db, comp, KICKOFF_UTC, home, away)
+    mapping.link_fixture_sid(db, fixture, "2789205", method=mapping.METHOD_MANUAL)
+    team_align.record_srct_en_aliases(db, [(home, "Already Known")])
+    rows = mapping.linked_sid_teams(db, skip_team_ids={home})
+    # away 未在跳过集 → 行保留（home 已足只作陪衬位）
+    assert [(r.sid, r.fixture_id, r.home_team_id, r.away_team_id) for r in rows] == [
+        ("2789205", fixture, home, away)
+    ]
+    # 双队都已持 srct_en → 常态每拍零读
+    team_align.record_srct_en_aliases(db, [(away, "Away Name")])
+    assert mapping.linked_sid_teams(db, skip_team_ids={home, away}) == []
+
+
+def test_srct_en_alias_pairs_from_raw(db, tmp_path) -> None:
+    """编排粘合（identity-alias 票 01）：raw 重解析产对子，幂等+miss 计数。"""
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.data.ingest.srct import ODDS_DATASET
+    from goalx_backend.tasks import _srct_en_alias_pairs
+
+    store = CorpusStore(tmp_path)
+    body = (
+        '\ufeffvar matchname="English Premier League";\n'
+        'var hometeam="Nottingham Forest";\n'
+        'var guestteam="Chelsea";\n'
+        'var game=Array("");'
+    ).encode("utf-8")
+    linked = seed_fixture(db, home="森林", away="切尔西")
+    mapping.link_fixture_sid(db, linked, "2789205", method=mapping.METHOD_MANUAL)
+    # 无 raw 页的已链场次 → miss 计数不抛错
+    orphan = seed_fixture(db, home="孤儿", away="无页")
+    mapping.link_fixture_sid(db, orphan, "9999999", method=mapping.METHOD_MANUAL)
+    db.commit()
+    pairs, misses = _srct_en_alias_pairs(db, corpus_root=tmp_path)
+    assert misses == 2  # 两场都还没有 raw 页
+    assert pairs == []
+    store.ingest_raw("srct", ODDS_DATASET, "2789205", body, ext=".js")
+    pairs, misses = _srct_en_alias_pairs(db, corpus_root=tmp_path)
+    assert misses == 1
+    assert len(pairs) == 2  # (森林, Nottingham Forest) + (切尔西, Chelsea)
+    home_id = fx_store.find_team_by_name(db, "森林")["id"]
+    assert (home_id, "Nottingham Forest") in pairs
+    # 队级幂等门：已落库后常态零对子（孤儿场仍 miss 1）
+    team_align.record_srct_en_aliases(db, pairs)
+    again, misses_again = _srct_en_alias_pairs(db, corpus_root=tmp_path)
+    assert again == []
+    assert misses_again == 1
+    store.close()

@@ -740,6 +740,50 @@ def srct_sid_for_fixture(conn: sqlite3.Connection, fixture_id: int) -> str | Non
     return str(row["source_match_id"]) if row else None
 
 
+@dataclass(frozen=True)
+class LinkedSidTeams:
+    """一条已链场次的身份对子输入（identity-alias 票 01）。"""
+
+    sid: str
+    fixture_id: int
+    home_team_id: int
+    away_team_id: int
+
+
+def linked_sid_teams(
+    conn: sqlite3.Connection, skip_team_ids: Collection[int]
+) -> list[LinkedSidTeams]:
+    """
+    全部已链场次 → (sid, 主/客 team_id) 清单（identity-alias 票 01）。
+
+    只读 own-table 查询，供编排层按 sid 读源T raw odds 页取英文名产
+    (team_id, 英文名) 对子（对子落库归 team_align，ADR-0012 红线）。
+    ``skip_team_ids``=已持 srct_en 别名的队——队级幂等门，跳过后常态
+    每拍近零读。不限活窗：历史链全量参与（首次回填面），队级跳过兜住
+    成本。
+    """
+    skip = frozenset(skip_team_ids)
+    rows = conn.execute(
+        """
+        SELECT l.source_match_id sid, l.fixture_id, f.home_team_id, f.away_team_id
+        FROM source_match_links l
+        JOIN fixtures f ON f.id = l.fixture_id
+        WHERE l.source = ? AND l.status = ?
+        """,
+        (SRCT_SOURCE, STATUS_LINKED),
+    ).fetchall()
+    return [
+        LinkedSidTeams(
+            sid=str(r["sid"]),
+            fixture_id=int(r["fixture_id"]),
+            home_team_id=int(r["home_team_id"]),
+            away_team_id=int(r["away_team_id"]),
+        )
+        for r in rows
+        if int(r["home_team_id"]) not in skip or int(r["away_team_id"]) not in skip
+    ]
+
+
 # IN 绑定分块（十年面 ~49k id 超 SQLite 绑定变量上限——老 999/新 32766，
 # 统一按保守 900 分块）
 _ID_CHUNK = 900

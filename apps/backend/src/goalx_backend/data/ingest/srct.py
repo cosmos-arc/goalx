@@ -381,6 +381,18 @@ def decode_odds_js(body: bytes) -> str:
     return body.decode("utf-8-sig", errors="replace")
 
 
+def parse_odds_page_names(body: bytes) -> tuple[str | None, str | None]:
+    """
+    1x2d 轨迹页 → (hometeam, guestteam) 英文名（identity-alias 票 01）。
+
+    源页同时携带中英双名（``hometeam_cn``/``hometeam`` var 对）；中文 meta
+    归 parse_odds_page，此处只取英文名供身份登记——不动 game 数组语义与
+    采集热路径，历史归档与增量重解析同一条零网络路径。
+    """
+    text = decode_odds_js(body)
+    return _js_var(text, "hometeam"), _js_var(text, "guestteam")
+
+
 def _fetch_bytes(
     client: httpx.Client, url: str, *, referer: str | None = None
 ) -> bytes:

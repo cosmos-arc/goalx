@@ -1599,3 +1599,14 @@ def test_collect_day_day_page_shape_broken_face_accounted(tmp_path: Path) -> Non
     assert stats.day_page_shape_skips == 3
     assert stats.parse_failed["2025-10-18:day_page"].startswith("shape_broken")
     assert stats.scope_sids == []  # 行为不变：零场继续走完，不抛异常
+
+
+def test_parse_odds_page_names_extracts_english_vars() -> None:
+    """身份登记专用解析（identity-alias 票 01）：真实裁剪页英文名对子。"""
+    home, away = srct.parse_odds_page_names(SAMPLE_ODDS_JS.encode("utf-8"))
+    assert (home, away) == ("Nottingham Forest", "Chelsea")
+
+
+def test_parse_odds_page_names_missing_vars_return_none() -> None:
+    """缺 var 的页不猜名（None 对子，调用方计 miss 不落行）。"""
+    assert srct.parse_odds_page_names(b'var game=Array("");') == (None, None)

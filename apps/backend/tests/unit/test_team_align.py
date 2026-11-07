@@ -180,3 +180,60 @@ def test_backfill_aliases_from_events(db) -> None:
     assert ta.backfill_aliases_from_events(db, []) == 0
     # 未 join 的 event 不落别名
     assert ta.backfill_aliases_from_events(db, [("evtX", "X", "Y")]) == 0
+
+
+def test_record_srct_en_aliases_idempotent_and_conflict(db) -> None:
+    """英文活水落库（identity-alias 票 01）：幂等 + 同名异队不静默。"""
+    arsenal = fx_store.upsert_team(db, "阿森纳")
+    liverpool = fx_store.upsert_team(db, "利物浦")
+    added, conflicts = ta.record_srct_en_aliases(
+        db, [(arsenal, "Arsenal"), (liverpool, "Liverpool")]
+    )
+    assert (added, conflicts) == (2, [])
+    # 幂等：重复对子零新增
+    assert ta.record_srct_en_aliases(db, [(arsenal, "Arsenal")]) == (0, [])
+    # 同名异队：后到者被 UNIQUE 拦下且显式进冲突清单（原归属不动）
+    assert ta.record_srct_en_aliases(db, [(liverpool, "Arsenal")]) == (
+        0,
+        [("Arsenal", arsenal, liverpool)],
+    )
+    assert ta.srct_en_team_ids(db) == {arsenal, liverpool}
+
+
+def test_english_alias_census_jc_universe(db) -> None:
+    """普查分母=竞彩 universe 队；未解析清单全列（守门输入）。"""
+    from goalx_backend.data import fixtures as fixtures_store
+
+    comp = fixtures_store.upsert_competition(db, "英超", tier=fixtures_store.Tier.TIER1)
+    home = fixtures_store.upsert_team(db, "阿森纳")
+    away = fixtures_store.upsert_team(db, "切尔西")
+    other = fixtures_store.upsert_team(db, "上海海港")
+    for home_id, away_id, code in (
+        (home, away, "周六001"),
+        (other, home, "周六002"),
+    ):
+        fid = fixtures_store.upsert_fixture(
+            db, comp, "2026-11-07T19:00:00+00:00", home_id, away_id
+        )
+        db.execute(
+            "INSERT INTO match_codes (fixture_id, kind, business_date, code)"
+            " VALUES (?, 'jingcai', '2026-11-07', ?)",
+            (fid, code),
+        )
+    db.commit()
+    ta.record_srct_en_aliases(db, [(home, "Arsenal")])
+    census = ta.english_alias_census(db)
+    assert census["jc_teams"] == 3
+    assert census["english_resolvable"] == 1
+    assert census["unresolved"] == ["上海海港", "切尔西"]
+
+
+def test_clubelo_bridge_anchors_on_srct_en(db) -> None:
+    """桥解饿（identity-alias 票 01）：srct_en 锚即可接通 clubelo 名。"""
+    home = fx_store.upsert_team(db, "利物浦")
+    ta.record_srct_en_aliases(db, [(home, "Liverpool")])
+    report = ta.sync_clubelo_aliases(db, ["Liverpool", "Nowhere FC"])
+    assert report.matched == 1
+    assert report.added == 1
+    assert report.unmatched == ["Nowhere FC"]
+    assert ta.clubelo_alias_for_team(db, home) == "Liverpool"

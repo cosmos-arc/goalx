@@ -1796,7 +1796,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     elo_query.add_argument("--date", required=True, help="查询日 YYYY-MM-DD")
     sub.add_parser(
         "mapping-sync",
-        help="跨源映射同步:fixture↔源T sid 链+kickoff 校准+别名补源(票 77)",
+        help="跨源映射同步:sid 链+kickoff 校准+别名补源(含 srct_en 英文活水与普查)",
     )
     sub.add_parser(
         "mapping-audit",
