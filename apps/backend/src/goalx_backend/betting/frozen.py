@@ -342,6 +342,20 @@ def _close_update(row: sqlite3.Row, close: tuple[float, str, str]) -> dict[str, 
     return update
 
 
+def _result_settlement(sel: str, odds: float, result: sqlite3.Row) -> tuple[str, float]:
+    """
+    赛果 → (终态, 平注利润)。
+
+    void=退款 0（票 03 C6，终态不再卡 pending，人裁决 2026-11-06）；否则
+    终局对选向，won=odds−1、lost=−1。
+    """
+    if int(result["void"] or 0):
+        return "void", 0.0
+    home_goals, away_goals = int(result["home_goals"]), int(result["away_goals"])
+    ftr = "h" if home_goals > away_goals else ("a" if home_goals < away_goals else "d")
+    return ("won", odds - 1.0) if ftr == sel else ("lost", -1.0)
+
+
 def reconcile_frozen_decisions(
     conn: sqlite3.Connection,
     close_provider: CloseProvider,
@@ -419,20 +433,13 @@ def reconcile_frozen_decisions(
             skip = _drift_skip_kind(row["anchor_ref"], close[1])
             if skip and row["p_sharp"] is not None:
                 stats[f"drift_identity_{skip}"] += 1
-        if result is None or int(result["void"] or 0):
+        if result is None:
             stats["still_pending"] += 1
             if update:
                 _apply_reconcile(conn, int(row["id"]), update, moment)
             continue
-        home_goals, away_goals = int(result["home_goals"]), int(result["away_goals"])
-        ftr = (
-            "h"
-            if home_goals > away_goals
-            else ("a" if home_goals < away_goals else "d")
-        )
-        won = ftr == sel
-        profit = (float(row["odds"]) - 1.0) if won else -1.0
-        update["settled_outcome"] = "won" if won else "lost"
+        outcome, profit = _result_settlement(sel, float(row["odds"]), result)
+        update["settled_outcome"] = outcome
         update["settled_profit"] = round(profit, 4)
         stats["settled"] += 1
         stats["paper_profit_flat"] = round(

@@ -98,6 +98,8 @@ class ShiftStats:
     requests: int = 0
     raw_new: int = 0
     parsed_ok: int = 0
+    # 票 03 C8：cached-@open 补 bronze 计数（镜像夜班 bronze_repaired 口径）
+    bronze_repaired: int = 0
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # budget/window_closed；None=清单跑完
     # JC 官方拍相位（票 71；jc: 前缀区分于源T 层）
@@ -699,6 +701,14 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             except srct.SrctContentError:
                 return row  # 解析器升版不兼容：留待下轮重拍（键在但行废）
             new_raw = False
+            # 票 03 C8：@open raw 在而 bronze 无该 sid 行（ingest_raw→append
+            # 夹缝崩溃窗口）→ 补追加判定（镜像夜班 _handle_cached 的 membership
+            # 口径；latest-per-sid 语义下多余行自动收敛）
+            bronze_missing = sid not in store.bronze_sids(
+                srct.SRCT_PROVIDER,
+                srct.ODDS_DATASET,
+                srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+            )
         else:
             payload = _open_beat(
                 store,
@@ -712,6 +722,7 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             if jitter is not None:
                 sleeper(jitter_rng.uniform(*jitter))
             new_raw = payload is not None
+            bronze_missing = False  # 新抓路径无条件追加，无补判定
         if payload is None:
             return row
         kickoff = parse_match_time(
@@ -735,6 +746,13 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             _append_beat_bronze(
                 store, sid, srct.ODDS_DATASET, open_key(sid), payload, stats
             )
+        elif bronze_missing:
+            # 票 03 C8：cached-@open 夹缝崩溃补追加——拍键已标完成否则无路径
+            # 再读该 raw 进 bronze（被推迟/取消场赛前首快照永久缺失）
+            _append_beat_bronze(
+                store, sid, srct.ODDS_DATASET, open_key(sid), payload, stats
+            )
+            stats.bronze_repaired += 1
     if not row.get("in_scope"):
         return row  # 非 CorpusScope：开售拍后不再拍（语料面范围裁定）
     kickoff = datetime.fromisoformat(str(row["kickoff_utc"]))

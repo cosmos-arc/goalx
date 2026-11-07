@@ -264,15 +264,20 @@ def _run_incremental_odds(
         for season, competition in partitions
     )
     ledgers: dict[str, dict[str, int]] = {}
-    for dataset in srct.ODDS_FAMILY:
-        version = srct.BRONZE_VERSIONS[dataset]
-        bronze_set = store.bronze_sids(srct.SRCT_PROVIDER, dataset, version)
-        targets = {sid for sid in bronze_set if _partition_of(sid, meta) in partitions}
-        report.target_sids += len(targets)
-        ledgers[dataset] = silver.latest_bronze_ledger_filtered(
-            store, srct.SRCT_PROVIDER, dataset, version, targets
-        )
     try:
+        # 票 03 C5：扫描/读账与重建同 try——无锁读者撞拍班并发追加的撕裂
+        # gzip member（EOFError）降级+下轮重试，不炸整轮；读者不加 LOCK_SH
+        # （会卡拍班追加数分钟，审计裁决）
+        for dataset in srct.ODDS_FAMILY:
+            version = srct.BRONZE_VERSIONS[dataset]
+            bronze_set = store.bronze_sids(srct.SRCT_PROVIDER, dataset, version)
+            targets = {
+                sid for sid in bronze_set if _partition_of(sid, meta) in partitions
+            }
+            report.target_sids += len(targets)
+            ledgers[dataset] = silver.latest_bronze_ledger_filtered(
+                store, srct.SRCT_PROVIDER, dataset, version, targets
+            )
         odds_report = srct_odds.build_odds_change_events(
             store, ledgers=ledgers, clean_stale=False, write_meta=False, meta=meta
         )
@@ -519,8 +524,10 @@ def _run_remat_locked(
         }
         for dataset in srct.ODDS_FAMILY
     }
+    # 票 03 C7：sidecar 先写、水位后推——夹缝失败则水位未进，下轮幂等重做；
+    # 反序（水位先行）会让旧分区滞留错误分区且计数护栏看不见
+    _writeback_live_partitions(store, meta, live_only)
     store.upsert_remat_state(
         report.watermark, report.last_rowid, json.dumps(counts, ensure_ascii=False)
     )
-    _writeback_live_partitions(store, meta, live_only)
     return report

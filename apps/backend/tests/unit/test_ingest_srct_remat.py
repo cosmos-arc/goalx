@@ -878,3 +878,131 @@ def test_live_anchor_drift_migrates_old_partition(tmp_path: Path) -> None:
         assert _tree_face_digests(store) == face
     finally:
         store.close()
+
+
+# --- 票 03 批 C：数据面稳定（C5 撕裂流降级 / C7 sidecar-水位顺序） ---
+
+
+def test_incremental_scan_torn_gzip_degrades_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C5：无锁读 bronze 撞撕裂 gzip member（EOFError）→ 降级不炸、水位
+    不推，下轮（文件修复/追加完成后）幂等重做成功。"""
+    store, settings = _seed_two_partitions(tmp_path)
+    try:
+        # 新日页+新场 → 增量到期（扫描面在 try 外时此处即整轮上抛）
+        routes = _routes_for("2025-10-03", "90003", "英超")
+        _collect(store, settings, routes, "2025-10-03")
+        state0 = store.remat_state()
+        assert state0 is not None
+        watermark_before = int(state0["last_rowid"])
+
+        def _torn(*_args: object, **_kwargs: object) -> dict[str, int]:
+            raise EOFError("Compressed file ended before the end-of-stream marker")
+
+        monkeypatch.setattr(srct_remat.silver, "latest_bronze_ledger_filtered", _torn)
+        report = srct_remat.run_remat(store)
+        assert report.mode == "degraded"
+        assert report.degraded == ["odds_incremental: EOFError"]
+        # 水位不推进：新 raw 差额留给下轮
+        state1 = store.remat_state()
+        assert state1 is not None
+        assert int(state1["last_rowid"]) == watermark_before
+
+        monkeypatch.undo()  # 撕裂窗过去（追加完成、member 完整可读）
+        report2 = srct_remat.run_remat(store)
+        assert report2.mode == "incremental"
+        assert not report2.degraded
+        state2 = store.remat_state()
+        assert state2 is not None
+        assert int(state2["last_rowid"]) > watermark_before
+        assert {r["sid"] for r in _rows_of(store, "2025-26", "英超")} == {
+            "90001",
+            "90003",
+        }
+    finally:
+        store.close()
+
+
+def test_sidecar_failure_leaves_watermark_for_redo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C7：sidecar 写失败 → 异常上抛但水位未推；下轮幂等重做推进且字节级
+    与全量一致（顺序=sidecar 先、水位后；反序则该轮工件永久滞留）。"""
+    import sqlite3
+
+    settings = _settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        # live 锚定场（无日页）→ 首跑全量后 sidecar 有行
+        _seed_orphan_odds(store, "90014")
+        store.upsert_shift_match(
+            {
+                "sid": "90014",
+                "league": "德乙",
+                "home": "测试主",
+                "away": "测试客",
+                "kickoff_utc": "2025-10-02T18:30:00+00:00",
+                "in_scope": 1,
+                "beats": 1,
+                "last_beat_at": "2025-10-02T02:00:00+00:00",
+            }
+        )
+        srct_remat.run_remat(store)
+        state0 = store.remat_state()
+        assert state0 is not None
+        watermark_before = int(state0["last_rowid"])
+
+        # 新拍 → 增量；sidecar 写入注入失败（sqlite 故障形状）
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            "90014@2025-10-02@open",
+            _ODDS_JS_BEAT,
+            ext=".js",
+        )
+        store.append_bronze(
+            srct.SRCT_PROVIDER,
+            srct.ODDS_DATASET,
+            [
+                {
+                    "provider": srct.SRCT_PROVIDER,
+                    "dataset": srct.ODDS_DATASET,
+                    "sid": "90014",
+                    "fetched_at": "2025-10-02T03:00:00+00:00",
+                    "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+                    "raw_sha": "f" * 64,
+                    "payload": srct.parse_odds_page(_ODDS_JS_BEAT),
+                }
+            ],
+        )
+
+        def _disk_error(_rows: object) -> None:
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(store, "upsert_live_sid_partitions", _disk_error)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+            srct_remat.run_remat(store)
+        # 夹缝核心：水位未推 → 新 raw 下轮仍可见
+        state1 = store.remat_state()
+        assert state1 is not None
+        assert int(state1["last_rowid"]) == watermark_before
+
+        monkeypatch.undo()  # 下轮：同差量幂等重做
+        report = srct_remat.run_remat(store)
+        assert report.mode == "incremental"
+        assert not report.degraded
+        state2 = store.remat_state()
+        assert state2 is not None
+        assert int(state2["last_rowid"]) > watermark_before
+        prices = {
+            (r["odds_home"], r["odds_draw"])
+            for r in _rows_of(store, "2025-26", "德乙")
+            if r["bookmaker_id"] == "srct:1x2:9001"
+        }
+        assert (1.44, 4.9) in prices  # 新拍轨迹入账（重做未丢件）
+        face = _tree_face_digests(store)
+        srct_odds.build_odds_change_events(store)
+        assert _tree_face_digests(store) == face
+    finally:
+        store.close()

@@ -446,14 +446,16 @@ def srct_shift_run(
     # 拍后收尾（odds-read-switch 票 01/03）：先映射同步（读侧短连接），
     # 再增量物化（写侧持锁）——顺序不可反，remat 持写锁时映射 reader
     # 会降级空转。各自降级不拖垮拍班本体（同 wrap 流降级哲学）
+    # 票 03 C5：EOFError=无锁读者撞拍班并发追加撕裂的 gzip member——
+    # remat 全量 3h 不许被它整个炸掉，降级+下轮重试
     try:
         payload["mapping_sync"] = mapping_sync()
-    except (sqlite3.Error, duckdb.Error, OSError) as exc:
+    except (sqlite3.Error, duckdb.Error, OSError, EOFError) as exc:
         logger.warning("post-beat mapping sync degraded: {}", exc)
         payload["mapping_sync"] = {"degraded": str(exc)}
     try:
         payload["remat"] = srct_remat_run()
-    except (sqlite3.Error, duckdb.Error, OSError) as exc:
+    except (sqlite3.Error, duckdb.Error, OSError, EOFError) as exc:
         logger.warning("post-beat remat degraded: {}", exc)
         payload["remat"] = {"degraded": str(exc)}
     return payload
