@@ -78,6 +78,7 @@ from goalx_backend.db import atomic, connect, migrate, utc_now_iso
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
+    effective_cutoff,
     freeze_anchor_baselines,
 )
 from goalx_backend.llm.collect import collect_pool_intel
@@ -225,14 +226,16 @@ def baseline_freeze() -> dict[str, int]:
     三锚市场基准冻结（auto-paper 票 01）：读库 as-of 冻结，无采集副作用。
 
     锚标签取当前北京时之前最近的冻结锚（12:30/16:30/21:00；定拍 cron 在
-    锚后 3 分钟）。语料缺席降级——欧赔共识走 legacy 行源（通常空，
-    eu_absent 计数），JC 面照冻不阻断。
+    锚后 3 分钟）。cutoff 封顶锚+30min 窗——晚到补跑不把补跑时刻当截止，
+    锚后 >30min 的价不倒灌该锚。语料缺席降级——欧赔共识走 legacy 行源
+    （通常空，eu_absent 计数），JC 面照冻不阻断。
     """
     settings = get_settings()
     label = anchor_label_at()
     if label is None:
         raise RuntimeError("当前北京时早于首锚 12:30，无锚可冻（误拍防护）")
-    cutoff = datetime.now(UTC).isoformat(timespec="seconds")
+    business_date = fx_store.beijing_business_date()
+    cutoff = effective_cutoff(label, business_date)
     with task_conn() as conn:
         duck_con = None
         try:
@@ -244,6 +247,7 @@ def baseline_freeze() -> dict[str, int]:
                 conn,
                 anchor_label=label,
                 cutoff_at=cutoff,
+                business_date=business_date,
                 duck_con=duck_con,
             )
         finally:

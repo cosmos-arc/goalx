@@ -2019,8 +2019,10 @@ def _apply_v42(conn: sqlite3.Connection) -> None:
     market_baseline_snapshots：决策锚拍点 write-once 基准快照（jc_official
     SP 原始赔率 / eu_consensus Shin 概率，prices JSON 按 source 解释）。
     UNIQUE (business_date, fixture_id, anchor_label, source, market) 吸收
-    同锚重跑；cutoff_at=真实 as-of 截止，防泄漏由读侧 captured_at<=cutoff
-    保证。表查询归 evaluation（ADR-0008）。
+    同锚重跑；cutoff_at=真实 as-of 截止（任务层封顶锚+30min 窗），防泄漏
+    由读侧 captured_at<=cutoff 保证；observed_at=JC 逐选项 captured_at
+    JSON 证据（eu 共识为派生态，NULL 不伪造）。表查询归 evaluation
+    （ADR-0008）。
     forecast_coverage：每日 ML 覆盖普查（covered/skip 三因 reason），
     主键 (business_date, fixture_id)；日重跑 REPLACE 重建（派生态非证据，
     与快照的 write-once 语义不同）。表查询归 modelling。
@@ -2036,6 +2038,7 @@ def _apply_v42(conn: sqlite3.Connection) -> None:
             source TEXT NOT NULL,
             market TEXT NOT NULL,
             prices TEXT NOT NULL,
+            observed_at TEXT,
             sale_state TEXT,
             created_at TEXT NOT NULL,
             UNIQUE (business_date, fixture_id, anchor_label, source, market)

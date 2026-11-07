@@ -1475,6 +1475,7 @@ measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重�
 | `source` | TEXT | NOT NULL |
 | `market` | TEXT | NOT NULL |
 | `prices` | TEXT | NOT NULL |
+| `observed_at` | TEXT | — |
 | `sale_state` | TEXT | — |
 | `created_at` | TEXT | NOT NULL |
 

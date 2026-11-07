@@ -17,6 +17,7 @@ import pytest
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
+    effective_cutoff,
     freeze_anchor_baselines,
 )
 from goalx_backend.markets import SELECTIONS
@@ -90,6 +91,20 @@ def test_anchor_label_at_maps_beijing_clock() -> None:
     assert at("09:00") is None  # 早于首锚：误拍防护
 
 
+def test_effective_cutoff_caps_late_rerun_to_anchor_grace() -> None:
+    """晚到补跑不把补跑时刻当截止——锚语义不随补跑漂移（review 修）。"""
+    on_time = datetime.fromisoformat("2026-11-07T12:33:00").replace(tzinfo=BEIJING)
+    assert (
+        effective_cutoff("12:30", BUSINESS_DATE, on_time)
+        == "2026-11-07T04:33:00+00:00"  # 窗内=当下
+    )
+    late = datetime.fromisoformat("2026-11-07T14:00:00").replace(tzinfo=BEIJING)
+    assert (
+        effective_cutoff("12:30", BUSINESS_DATE, late)
+        == "2026-11-07T05:00:00+00:00"  # 封顶锚+30min，12:40 后的价不倒灌
+    )
+
+
 def test_freeze_jc_asof_and_write_once(db: sqlite3.Connection) -> None:
     fixture = _seed_fixture(db, "A", code="001")
     _seed_jc_triple(db, fixture, (2.10, 3.20, 3.40), BEFORE)
@@ -131,11 +146,17 @@ def test_freeze_jc_asof_and_write_once(db: sqlite3.Connection) -> None:
     jc = rows[("jc_official", "12:30")]
     assert jc == {"a": 3.40, "d": 3.20, "h": 2.10}  # 锚后 1.85 被挡
     sale_state = db.execute(
-        "SELECT sale_state FROM market_baseline_snapshots WHERE fixture_id = ?"
-        " AND source = 'jc_official'",
+        "SELECT sale_state, observed_at FROM market_baseline_snapshots"
+        " WHERE fixture_id = ? AND source = 'jc_official'",
         (fixture,),
-    ).fetchone()["sale_state"]
-    assert sale_state == "on_sale"
+    ).fetchone()
+    assert sale_state["sale_state"] == "on_sale"
+    # 证据列：逐选项 captured_at 随行落库（票面「附 observed_at」）
+    assert json.loads(sale_state["observed_at"]) == {
+        "h": BEFORE,
+        "d": BEFORE,
+        "a": BEFORE,
+    }
 
     # write-once：同锚重跑零新增，UNIQUE 吸收计 duplicates
     rerun = freeze_anchor_baselines(

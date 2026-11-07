@@ -6,13 +6,19 @@
 
 - jc_official：竞彩官方 SP 三向（原始赔率），取 captured_at ≤ cutoff 的
   最新行——拍点后到的报价不进该锚（防泄漏，与
-  latest_sale_status_asof 同语义）；只落完整三向，缺口不伪造。
+  latest_sale_status_asof 同语义）；只落完整三向，缺口不伪造。prereg
+  「归一化」是评分侧比较口径，由原始赔率确定性派生，快照存原始值。
 - eu_consensus：欧赔完整三向共识 Shin 概率（评分基准口径，与
   forward_validation.market_baseline_asof 同源同窗）。
 
+「各玩法可得者」落地：主库竞彩捕获面只有 had（sporttery 源），hhad/
+ttg/crs/hafu 无捕获行可读——基准按可得者=had 冻结，缺口由评分侧
+unknown 差值语义兜住（票 02 不变量），不伪造空基准。
+
 market_baseline_snapshots 表归本模块（ADR-0008）；UNIQUE 键吸收同锚重跑
 （write-once：重跑只补缺席行，不改既有值）。快照是证据非缓存——
-cutoff_at 记录真实读数时点，评分侧以它为同窗口径；锚后到价不倒填。
+cutoff_at 记录真实读数时点，评分侧以它为同窗口径；锚后到价不倒填
+（cutoff 由任务层封顶在锚+ANCHOR_GRACE 窗口内，晚到补跑不扩窗）。
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -31,6 +37,9 @@ from goalx_backend.markets import SELECTIONS
 
 # prereg B 节冻结锚（改动=新协议版本，历史快照永不改写）
 ANCHOR_LABELS: tuple[str, ...] = ("12:30", "16:30", "21:00")
+# 锚快照读数窗上限：定拍在锚后 3 分钟，窗留 30 分钟吸收抖动/晚到重跑；
+# 补跑再晚也只读到锚+30min 的可见价，锚语义不随补跑时刻漂移
+ANCHOR_GRACE = timedelta(minutes=30)
 BEIJING = ZoneInfo("Asia/Shanghai")
 
 
@@ -60,7 +69,25 @@ def anchor_label_at(now: datetime | None = None) -> str | None:
     return label
 
 
-def _insert_snapshot(
+def effective_cutoff(
+    anchor_label: str, business_date: str, now: datetime | None = None
+) -> str:
+    """
+    锚快照读数截止：min(当下, 锚时刻+30min 窗)。
+
+    晚到补跑不把补跑时刻当截止——锚后 >30min 才到的价不进该锚
+    （write-once 只防改写不防晚到首冻，窗口封顶补这个洞）。
+    """
+    hour, minute = (int(part) for part in anchor_label.split(":"))
+    anchor_at = datetime.fromisoformat(f"{business_date}T00:00:00").replace(
+        tzinfo=BEIJING
+    ) + timedelta(hours=hour, minutes=minute)
+    current = now or datetime.now(BEIJING)
+    cutoff = min(current, anchor_at + ANCHOR_GRACE)
+    return cutoff.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def _insert_snapshot(  # noqa: PLR0913 证据列随 source 解释累加（observed/sale_state）
     conn: sqlite3.Connection,
     stats: BaselineFreezeStats,
     *,
@@ -68,6 +95,7 @@ def _insert_snapshot(
     cutoff_at: str,
     source: str,
     prices: dict[str, Any],
+    observed_at: dict[str, str] | None,
     sale_state: str | None,
 ) -> bool:
     """write-once 落一行基准；UNIQUE 吸收返回 False。"""
@@ -75,8 +103,8 @@ def _insert_snapshot(
         """
         INSERT OR IGNORE INTO market_baseline_snapshots
         (business_date, fixture_id, anchor_label, cutoff_at, source, market,
-         prices, sale_state, created_at)
-        VALUES (?, ?, ?, ?, ?, 'had', ?, ?, ?)
+         prices, observed_at, sale_state, created_at)
+        VALUES (?, ?, ?, ?, ?, 'had', ?, ?, ?, ?)
         """,
         (
             stats.business_date,
@@ -85,6 +113,11 @@ def _insert_snapshot(
             cutoff_at,
             source,
             json.dumps(prices, ensure_ascii=False, sort_keys=True),
+            (
+                json.dumps(observed_at, ensure_ascii=False, sort_keys=True)
+                if observed_at is not None
+                else None
+            ),
             sale_state,
             utc_now_iso(),
         ),
@@ -143,6 +176,7 @@ def freeze_anchor_baselines(
                 cutoff_at=cutoff_at,
                 source="jc_official",
                 prices={sel: jc[sel][0] for sel in SELECTIONS},
+                observed_at={sel: jc[sel][1] for sel in SELECTIONS},
                 sale_state=sale_state,
             )
             if frozen:
@@ -168,6 +202,7 @@ def freeze_anchor_baselines(
                 cutoff_at=cutoff_at,
                 source="eu_consensus",
                 prices=probs,
+                observed_at=None,  # 共识是派生态：窗口=cutoff_at，无逐源时刻可记
                 sale_state=sale_state,
             )
             if frozen:

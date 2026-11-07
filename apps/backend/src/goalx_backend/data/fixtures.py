@@ -540,6 +540,19 @@ def insert_odds_snapshot(conn: sqlite3.Connection, snap: SnapshotInput) -> int |
     return None
 
 
+def _latest_from_rows(
+    rows: list[sqlite3.Row],
+) -> dict[str, tuple[float, str]]:
+    """时间序行 → 每选项最新 (odds, captured_at)（后行覆盖前行）。"""
+    latest: dict[str, tuple[float, str]] = {}
+    for row in rows:
+        latest[str(row["selection_code"])] = (
+            float(row["odds"]),
+            str(row["captured_at"]),
+        )
+    return latest
+
+
 def latest_odds_by_selection(
     conn: sqlite3.Connection,
     fixture_id: int,
@@ -556,13 +569,7 @@ ORDER BY captured_at, odds
         """,
         (fixture_id, market_code, source),
     ).fetchall()
-    latest: dict[str, tuple[float, str]] = {}
-    for row in rows:
-        latest[str(row["selection_code"])] = (
-            float(row["odds"]),
-            str(row["captured_at"]),
-        )
-    return latest
+    return _latest_from_rows(rows)
 
 
 def latest_odds_by_selection_asof(
@@ -587,13 +594,7 @@ def latest_odds_by_selection_asof(
         """,
         (fixture_id, market_code, source, as_of),
     ).fetchall()
-    latest: dict[str, tuple[float, str]] = {}
-    for row in rows:
-        latest[str(row["selection_code"])] = (
-            float(row["odds"]),
-            str(row["captured_at"]),
-        )
-    return latest
+    return _latest_from_rows(rows)
 
 
 def odds_history(
