@@ -373,10 +373,11 @@ def get_fixture_research(
             db, fixture_id, duck_con=duck_con, sid=sid
         )
         book_names = quote_evidence.book_display_names(duck_con, quotes.keys())
-        # 票 07：请求域 reader（eu_book_quotes 走 rows 家族外的逐书读取，原样）
-        verdict = bind_quote_reads(
-            db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
-        ).adjudicate_had_quote(fixture_id, moment)
+        # 票 07：请求域 reader（闭包复用 :370 已解析的 sid，零重复查询；
+        # eu_book_quotes 走 rows 家族外的逐书读取，原样）
+        verdict = bind_quote_reads(db, duck_con, lambda _fid: sid).adjudicate_had_quote(
+            fixture_id, moment
+        )
     view = FixtureResearchView(
         fixture_id=fixture_id,
         match_code=str(detail["match_code"]),

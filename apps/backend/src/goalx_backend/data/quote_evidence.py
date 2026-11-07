@@ -522,7 +522,7 @@ def _cap_srct_books(
     return {book: by_book[book] for book in sorted(keep)}
 
 
-def _eu_rows_asof(  # noqa: PLR0913 行源接缝集随 as-of/源切换口径累加（同 books_complete_asof）
+def _eu_rows_asof(  # noqa: PLR0913 行源接缝集随 as-of/源切换口径累加；票 07 起 reader 为主入口，本缝留 rows= 批量/重放用户
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -554,7 +554,7 @@ def _eu_rows_asof(  # noqa: PLR0913 行源接缝集随 as-of/源切换口径累�
     return had_snapshot_rows(conn, fixture_id, purpose=purpose)
 
 
-def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口径累加（同 run_shift 先例）
+def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换/配对窗口累加；票 07 起 reader 为主入口（rows= 批量用户留此）
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -746,7 +746,7 @@ def market_rows_with_competition(
     ).fetchall()
 
 
-def adjudicate_had_quote(  # noqa: PLR0913 判定接缝集随 as-of/源切换/批量预取累加
+def adjudicate_had_quote(  # noqa: PLR0913 判定接缝集随 as-of/源切换/批量预取累加；票 07 起 reader 为主入口（rows= 批量用户留此）
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -1106,7 +1106,7 @@ def _probs_from_books(books: dict[str, dict[str, float]]) -> dict[str, float] | 
     return dict(zip(SELECTIONS, om.shin_implied(consensus), strict=True))
 
 
-def sharp_probs_asof(  # noqa: PLR0913 锚接缝集随 as-of/源切换/批量预取累加
+def sharp_probs_asof(  # noqa: PLR0913 锚接缝集随 as-of/源切换/批量预取累加；票 07 起 reader 为主入口（rows= 批量用户留此）
     conn: sqlite3.Connection,
     fixture_id: int,
     as_of: str,
@@ -1180,6 +1180,19 @@ class QuoteReads:
         self.duck_con = duck_con
         self.resolve_sid = resolve_sid
 
+    @classmethod
+    def legacy(cls, conn: sqlite3.Connection) -> QuoteReads:
+        """
+        无 corpus 链解析的缺省 reader（恒 legacy 行源）。
+
+        迁移期旧调用方（测试缺省/cli 漏斗）语义不变。
+        """
+        return cls(conn, None, None)
+
+    def _sid(self, fixture_id: int) -> str | None:
+        """分派缝单点：sid 解析（resolver 缺省=恒 None→legacy）。"""
+        return self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+
     def adjudicate_had_quote(
         self,
         fixture_id: int,
@@ -1189,7 +1202,7 @@ class QuoteReads:
         max_pair_gap_seconds: float = DEFAULT_PAIR_GAP_SECONDS,
     ) -> HadQuoteVerdict:
         """Had 报价判定（票 35 全语义；sid 内解析、corpus/legacy 内分派）。"""
-        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        sid = self._sid(fixture_id)
         return adjudicate_had_quote(
             self.conn,
             fixture_id,
@@ -1209,7 +1222,7 @@ class QuoteReads:
         anchor_only: bool = False,
     ) -> tuple[dict[str, float], str] | None:
         """Sharp 参考概率与取法身份（pinnacle 主锚优先，票 07 收口）。"""
-        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        sid = self._sid(fixture_id)
         return sharp_probs_asof(
             self.conn,
             fixture_id,
@@ -1232,7 +1245,7 @@ class QuoteReads:
         per_book_window: bool = False,
     ) -> dict[str, dict[str, float]]:
         """as_of 可用各 book 完整三向（含 per_book 配对窗语义，票 07 收编）。"""
-        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        sid = self._sid(fixture_id)
         return books_complete_asof(
             self.conn,
             fixture_id,
@@ -1254,7 +1267,7 @@ class QuoteReads:
         market_code: str = "had",
     ) -> dict[str, float] | None:
         """as_of 前最新欧共识 Shin 概率（票 07 收口）。"""
-        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        sid = self._sid(fixture_id)
         return eu_consensus_asof(
             self.conn,
             fixture_id,

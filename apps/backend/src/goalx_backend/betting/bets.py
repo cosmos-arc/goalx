@@ -35,12 +35,8 @@ _ODDS_EPSILON = 1e-9
 
 
 def _legacy_reads(conn: sqlite3.Connection) -> quote_evidence.QuoteReads:
-    """
-    缺省 reader：无 corpus 链解析（恒 legacy 行源）。
-
-    票 07 迁移期保持旧调用方（cli/测试缺省）语义不变。
-    """
-    return quote_evidence.bind_quote_reads(conn, None, None)
+    """缺省 reader（恒 legacy）——票 07 迁移期保持测试缺省调用方语义不变。"""
+    return quote_evidence.QuoteReads.legacy(conn)
 
 
 def is_official_paper(row: sqlite3.Row) -> bool:

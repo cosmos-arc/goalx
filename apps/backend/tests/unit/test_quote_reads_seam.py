@@ -13,6 +13,7 @@ import pytest
 
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
+from goalx_backend.evaluation import haircut as hc
 from goalx_backend.models import SnapshotInput
 
 BEIJING = timezone(timedelta(hours=8))
@@ -97,7 +98,6 @@ def test_reader_equivalence_with_five_param_protocol(
     reader = quote_evidence.bind_quote_reads(
         db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
     )
-
     verdict = reader.adjudicate_had_quote(fixture_id, AS_OF)
     direct = quote_evidence.adjudicate_had_quote(
         db, fixture_id, AS_OF, duck_con=duck_con, sid=sid
@@ -214,8 +214,6 @@ def _row(
 def test_haircut_fork_collapse_output_pinned(db: sqlite3.Connection) -> None:
     """收编后 haircut 样本 eu_books 与直接 per_book 窗查一致（历史校准
     口径不变量：样本三向/书集逐字节）。"""
-    from goalx_backend.evaluation import haircut as hc
-
     fixture_id = _seed_fixture(db)
     duck_con = _seed_corpus_duck()
     samples = hc.build_haircut_samples(db, duck_con=duck_con)
@@ -223,10 +221,7 @@ def test_haircut_fork_collapse_output_pinned(db: sqlite3.Connection) -> None:
     assert fixture_id in by_fid
     books = by_fid[fixture_id].eu_books
     assert set(books) == {ANCHOR, "srct:1x2:281"}
-    # 与 reader per_book 窗查同书集同值（配对时点=JC 最新 captured_at）
-    reader = quote_evidence.bind_quote_reads(
-        duck_con=duck_con, conn=db, resolve_sid=None
-    )
+    # 与 per_book 窗查直接调用同书集同值（配对时点=JC 最新 captured_at）
     direct = quote_evidence.books_complete_asof(
         db,
         fixture_id,
@@ -237,7 +232,6 @@ def test_haircut_fork_collapse_output_pinned(db: sqlite3.Connection) -> None:
         per_book_window=True,
     )
     assert books == direct
-    assert reader is not None  # bind 形状冒烟（None resolver=legacy 恒等式另测）
 
 
 @pytest.mark.parametrize("method", ["adjudicate", "sharp", "consensus", "books"])
