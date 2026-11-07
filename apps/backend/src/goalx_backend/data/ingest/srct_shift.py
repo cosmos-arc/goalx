@@ -743,16 +743,15 @@ def _advance_sid(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接
             return row
         if new_raw:
             stats.raw_new += 1
+        if new_raw or bronze_missing:
+            # 票 03 C8：bronze_missing=cached-@open 夹缝崩溃补追加——拍键已标
+            # 完成否则无路径再读该 raw 进 bronze（被推迟/取消场赛前首快照
+            # 永久缺失）
             _append_beat_bronze(
                 store, sid, srct.ODDS_DATASET, open_key(sid), payload, stats
             )
-        elif bronze_missing:
-            # 票 03 C8：cached-@open 夹缝崩溃补追加——拍键已标完成否则无路径
-            # 再读该 raw 进 bronze（被推迟/取消场赛前首快照永久缺失）
-            _append_beat_bronze(
-                store, sid, srct.ODDS_DATASET, open_key(sid), payload, stats
-            )
-            stats.bronze_repaired += 1
+            if bronze_missing:
+                stats.bronze_repaired += 1
     if not row.get("in_scope"):
         return row  # 非 CorpusScope：开售拍后不再拍（语料面范围裁定）
     kickoff = datetime.fromisoformat(str(row["kickoff_utc"]))

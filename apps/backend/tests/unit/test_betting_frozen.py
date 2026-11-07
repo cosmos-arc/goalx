@@ -679,11 +679,12 @@ def test_void_result_settles_refund_terminal(db: sqlite3.Connection) -> None:
     record_funnel_day(db, as_of=AS_OF, business_date=BUSINESS_DATE)
     fz.record_frozen_decisions(db, business_date=BUSINESS_DATE)
 
+    def no_close(home, away, kickoff, selection):
+        return None
+
     # 无效判定（void=1）：退款语义，非未知
     _seed_draw(db, fixture, 0, 0, void=1)
-    stats = fz.reconcile_frozen_decisions(
-        db, lambda *args: None, now="2026-10-18T00:00:00+00:00"
-    )
+    stats = fz.reconcile_frozen_decisions(db, no_close, now="2026-10-18T00:00:00+00:00")
     assert stats["settled"] == 1
     assert stats["still_pending"] == 0
     assert stats["paper_profit_flat"] == 0.0
@@ -696,7 +697,7 @@ def test_void_result_settles_refund_terminal(db: sqlite3.Connection) -> None:
 
     # 重跑不再回 pending（终态；无晚到收盘时不重复计数）
     stats2 = fz.reconcile_frozen_decisions(
-        db, lambda *args: None, now="2026-10-19T00:00:00+00:00"
+        db, no_close, now="2026-10-19T00:00:00+00:00"
     )
     assert stats2["still_pending"] == 0
     assert stats2["settled"] == 0

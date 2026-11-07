@@ -571,7 +571,7 @@ def test_gap_fill_out_of_scope_league_still_fills(tmp_path: Path) -> None:
     assert "4004444" in store.shift_matches()
 
 
-# --- 票 03 批 C：cached-@open 缺 bronze 补追加（C8）---
+# —— 票 03 批 C：数据面稳定（C8 cached-@open 补 bronze / C5 拍后钩子）——
 
 
 def _open_bronze_rows(store: CorpusStore, sid: str) -> list[dict[str, object]]:
