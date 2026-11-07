@@ -216,9 +216,13 @@ export function MarketGoalsPage() {
 							const quotes = currentQuotes(error);
 							if (quotes !== null && quotes.length > 0) {
 								basketActions.replaceGoalsLegs([]);
+								setBasketOpen(false); // review P2-2：对齐 had——关抽屉露出页面级提示
 								if (created.length > 0) {
 									invalidateBets(queryClient);
 								}
+								// review P1-1：本页价格源=goals-market（推荐流/组合卡/选注
+								// 按钮）——不失效它则页面停留旧价，重选仍旧价再 409
+								void queryClient.invalidateQueries({ queryKey: ["goals-market"] });
 								invalidateLegQuoteQueries(
 									queryClient,
 									legs.map((leg) => leg.fixture_id),

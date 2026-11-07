@@ -408,8 +408,8 @@ export type HadBasket = ReturnType<typeof useHadBasket>;
 
 /** 提交钮（票 01 防重入，had 篮与进球篮共用）：门=store 全局 pending——切页
  * 重挂载后本页 isPending=false 看不到别页飞行；同步入口检查兜 disabled
- * 渲染前的连点窗口（检查须在 mutate 前：onMutate 已置 pending，放 onMutate
- * 里会拦掉本次合法请求）。 */
+ * 渲染前的连点窗口（检查须在 mutate 前：票 08 起冻结由 mutationFn 内
+ * withFlight 置位，放进环里会拦掉本次合法请求）。 */
 export function BasketSubmitButton({
 	testid,
 	pending,

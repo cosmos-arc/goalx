@@ -418,11 +418,20 @@ test("提交飞行中重挂载后编辑被门拦下；settle 后清篮（票 04 
 test("票 08：goals 价变 409 向 had 对齐——清篮+刷新逐场价+提示重选（不再旧价重试死循环）", async () => {
 	const user = userEvent.setup();
 	mockCreatedBets({ bodies: [] });
+	// review P1-1：价格源必须真失效——数 goals-market refetch
+	let marketFetches = 0;
+	const onGoalMarket = ({ request }: { request: { url: string } }) => {
+		if (request.url.includes("/api/v1/markets/goals")) {
+			marketFetches += 1;
+		}
+	};
+	server.events.on("request:start", onGoalMarket);
 	await renderAt("/markets/goals");
 
 	await screen.findByTestId("goals-card-2");
 	await user.click(screen.getByTestId("goals-pick-2-ttg-2"));
 	await user.click(screen.getByTestId("goals-basket-open"));
+	const fetchesBefore = marketFetches;
 	server.use(
 		http.post(
 			"*/api/v1/bets",
@@ -454,4 +463,7 @@ test("票 08：goals 价变 409 向 had 对齐——清篮+刷新逐场价+提�
 	expect(message).toHaveTextContent("请按新价重新选注");
 	// 篮被清空（旧价腿不留守——重试不再携旧 request_id/旧价）
 	expect(screen.getByTestId("goals-basket-count")).toHaveTextContent("0/3");
+	// P1-1 回归钉死：goals-market 真被失效重取（页面价随新价回来）
+	await waitFor(() => expect(marketFetches).toBeGreaterThan(fetchesBefore));
+	server.events.removeListener("request:start", onGoalMarket);
 });
