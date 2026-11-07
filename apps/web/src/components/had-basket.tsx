@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
-import { basketActions, requestIdForLegs, useBasket, withFreshRequestIds } from "../lib/basket-store";
+import { basketActions, basketStore, requestIdForLegs, useBasket, withFreshRequestIds } from "../lib/basket-store";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
 import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
 import {
@@ -186,102 +186,101 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	}
 
 	const createSuggestion = useMutation({
-		// 全局冻结（票 03）：pending 下沉 store，跨页编辑同被门住；
-		// 计数制起落（correctness F1）——重叠提交全部 settle 才解冻
-		onMutate: () => basketActions.beginHadFlight(),
-		onSettled: () => basketActions.endHadFlight(),
-		mutationFn: async () => {
-			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
-			const legPayload = (leg: Leg) => ({
-				fixture_id: leg.fixture_id,
-				market_code: "had",
-				selection_code: leg.selection,
-				locked_odds: leg.odds,
-			});
-			const post = (betLegs: Leg[]) =>
-				createBet({
-					mode,
-					stake: Number(stake),
-					strategy_version: strategy,
-					// 票 06 幂等：腿键稳定（单关=腿键；整注=腿键有序拼接），
-					// 同键重试服务端回带既有注不落双行
-					client_request_id: requestIdForLegs(betLegs),
-					legs: betLegs.map(legPayload),
+		// 票 08：飞行状态机 withFlight 包提交——计数起落/门控/异常解冻
+		// 全在 store implementation（原 onMutate/onSettled 对已删）
+		mutationFn: () =>
+			basketStore.withFlight("had", async () => {
+				const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
+				const legPayload = (leg: Leg) => ({
+					fixture_id: leg.fixture_id,
+					market_code: "had",
+					selection_code: leg.selection,
+					locked_odds: leg.odds,
 				});
-			// 票型分叉（票 02）：parlay/单腿 = 一注整提（现行路径）；
-			// singles 且 ≥2 腿 = 逐腿独立建注（同一注额），提交即票型，无静默切换
-			if (!(slipForm === "singles" && legs.length >= 2)) {
-				const bet = await post(legs);
-				setMessage(
-					`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
-						`${betTermsLabel(bet)}）— 去投注页锁定`,
-				);
+				const post = (betLegs: Leg[]) =>
+					createBet({
+						mode,
+						stake: Number(stake),
+						strategy_version: strategy,
+						// 票 06 幂等：腿键稳定（单关=腿键；整注=腿键有序拼接），
+						// 同键重试服务端回带既有注不落双行
+						client_request_id: requestIdForLegs(betLegs),
+						legs: betLegs.map(legPayload),
+					});
+				// 票型分叉（票 02）：parlay/单腿 = 一注整提（现行路径）；
+				// singles 且 ≥2 腿 = 逐腿独立建注（同一注额），提交即票型，无静默切换
+				if (!(slipForm === "singles" && legs.length >= 2)) {
+					const bet = await post(legs);
+					setMessage(
+						`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
+							`${betTermsLabel(bet)}）— 去投注页锁定`,
+					);
+					basketActions.replaceHadLegs([]);
+					setBasketOpen(false);
+					invalidateBets(queryClient);
+					return;
+				}
+				const created: number[] = [];
+				const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
+				for (const [index, leg] of legs.entries()) {
+					try {
+						const bet = await post([leg]);
+						created.push(bet.id);
+						labels.push(betTermsLabel(bet));
+					} catch (error) {
+						// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、
+						// 该腿换新键留篮（改单重提不换键=双注反模式；冲突确认后才
+						// 换键），未提交腿不动；新意图待用户再点提交另建
+						const conflict = intentConflict(error);
+						if (conflict !== null) {
+							invalidateBets(queryClient);
+							basketActions.replaceHadLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
+							setMessage(
+								conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
+									(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
+							);
+							return;
+						}
+						const quotes = currentQuotes(error);
+						if (quotes !== null && quotes.length > 0) {
+							// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
+							// 路径同流；已建成的注保留账面（消息与列表可见）。
+							// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
+							// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
+							basketActions.replaceHadLegs([]);
+							setBasketOpen(false);
+							if (created.length > 0) {
+								invalidateBets(queryClient);
+							}
+							invalidateLegQuoteQueries(
+								queryClient,
+								legs.map((leg) => leg.fixture_id),
+							);
+							setMessage(
+								`第 ${index + 1} 笔报价已变（${quotes
+									.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
+									.join(
+										"、",
+									)}）——已刷新列表${created.length > 0 ? `，已建 #${created.join("、#")}` : ""}；请按新价重新选注`,
+							);
+							return;
+						}
+						// 非价变失败：已成注保留账面、失败腿留在篮内可重试
+						basketActions.replaceHadLegs(legs.slice(created.length));
+						if (created.length > 0) {
+							invalidateBets(queryClient); // 部分成注也要刷新列表（对账可见）
+						}
+						setMessage(
+							`第 ${index + 1} 笔失败：${errorText(error)}${created.length > 0 ? `（已建 #${created.join("、#")}，失败腿留篮可重试）` : ""}`,
+						);
+						return;
+					}
+				}
+				setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`);
 				basketActions.replaceHadLegs([]);
 				setBasketOpen(false);
 				invalidateBets(queryClient);
-				return;
-			}
-			const created: number[] = [];
-			const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
-			for (const [index, leg] of legs.entries()) {
-				try {
-					const bet = await post([leg]);
-					created.push(bet.id);
-					labels.push(betTermsLabel(bet));
-				} catch (error) {
-					// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、
-					// 该腿换新键留篮（改单重提不换键=双注反模式；冲突确认后才
-					// 换键），未提交腿不动；新意图待用户再点提交另建
-					const conflict = intentConflict(error);
-					if (conflict !== null) {
-						invalidateBets(queryClient);
-						basketActions.replaceHadLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
-						setMessage(
-							conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
-								(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
-						);
-						return;
-					}
-					const quotes = currentQuotes(error);
-					if (quotes !== null && quotes.length > 0) {
-						// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
-						// 路径同流；已建成的注保留账面（消息与列表可见）。
-						// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
-						// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
-						basketActions.replaceHadLegs([]);
-						setBasketOpen(false);
-						if (created.length > 0) {
-							invalidateBets(queryClient);
-						}
-						invalidateLegQuoteQueries(
-							queryClient,
-							legs.map((leg) => leg.fixture_id),
-						);
-						setMessage(
-							`第 ${index + 1} 笔报价已变（${quotes
-								.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
-								.join(
-									"、",
-								)}）——已刷新列表${created.length > 0 ? `，已建 #${created.join("、#")}` : ""}；请按新价重新选注`,
-						);
-						return;
-					}
-					// 非价变失败：已成注保留账面、失败腿留在篮内可重试
-					basketActions.replaceHadLegs(legs.slice(created.length));
-					if (created.length > 0) {
-						invalidateBets(queryClient); // 部分成注也要刷新列表（对账可见）
-					}
-					setMessage(
-						`第 ${index + 1} 笔失败：${errorText(error)}${created.length > 0 ? `（已建 #${created.join("、#")}，失败腿留篮可重试）` : ""}`,
-					);
-					return;
-				}
-			}
-			setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`);
-			basketActions.replaceHadLegs([]);
-			setBasketOpen(false);
-			invalidateBets(queryClient);
-		},
+			}),
 		onError: (error) => {
 			// 意图冲突（票 09，整注路径）：同键原提交其实已成功——恢复原结果、
 			// 腿换新键留篮，新意图待用户再点提交另建（不静默清篮冒充成功）
@@ -409,8 +408,8 @@ export type HadBasket = ReturnType<typeof useHadBasket>;
 
 /** 提交钮（票 01 防重入，had 篮与进球篮共用）：门=store 全局 pending——切页
  * 重挂载后本页 isPending=false 看不到别页飞行；同步入口检查兜 disabled
- * 渲染前的连点窗口（检查须在 mutate 前：onMutate 已置 pending，放 onMutate
- * 里会拦掉本次合法请求）。 */
+ * 渲染前的连点窗口（检查须在 mutate 前：票 08 起冻结由 mutationFn 内
+ * withFlight 置位，放进环里会拦掉本次合法请求）。 */
 export function BasketSubmitButton({
 	testid,
 	pending,

@@ -4,7 +4,7 @@ import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { TodayFixture } from "../api/goalx";
-import { __resetBasketForTests } from "../lib/basket-store";
+import { basketStore } from "../lib/basket-store";
 import { server } from "../mocks/server";
 import { useHadBasket } from "./had-basket";
 import type { PickableFixture } from "./had-quote-ui";
@@ -49,7 +49,7 @@ function withClient() {
 
 beforeEach(() => {
 	localStorage.clear();
-	__resetBasketForTests();
+	basketStore.reset();
 });
 
 test("pick 落入篮时概率快照；EV 只读快照不查当前页（票 06 验收 1）", () => {
