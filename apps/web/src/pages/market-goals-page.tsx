@@ -10,7 +10,7 @@ import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-
 import { BasketFormFields, BasketSubmitButton } from "../components/had-basket";
 import { evClass, kickoffInfo, localTime } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
-import { StakeAdviceNote } from "../components/stake-advice";
+import { bankrollForAdvice, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
 import {
 	Drawer,
@@ -72,7 +72,7 @@ export function MarketGoalsPage() {
 	}, null);
 	const basketAdvice = {
 		mode,
-		bankroll: bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0),
+		bankroll: bankrollForAdvice(bankrollQuery),
 		ev: bestLeg?.ev ?? null,
 		odds: bestLeg?.odds ?? null,
 	} as const;
@@ -397,7 +397,7 @@ export function MarketGoalsPage() {
 									<div className="mt-3">
 										<StakeAdviceNote
 											mode="paper"
-											bankroll={bankrollQuery.data?.balance ?? (bankrollQuery.isError ? null : 0)}
+											bankroll={bankrollForAdvice(bankrollQuery)}
 											ev={combo.picks[0]?.ev ?? null}
 											odds={combo.picks[0]?.odds ?? null}
 											note="组合卡按纸面 flat 档口径（每注同额）；真金 ¼Kelly 在选注篮切真金后给出"

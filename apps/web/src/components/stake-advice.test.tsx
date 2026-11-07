@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
 import { server } from "../mocks/server";
-import { parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
+import { bankrollForAdvice, parlayAdviceInput, StakeAdviceNote } from "./stake-advice";
 
 /**
  * 票 wb-06 建议仓位组件测试：展示后端建议（注额+档位理由）与三类诚实降级
@@ -114,4 +114,27 @@ test("parlayAdviceInput computes joint odds and joint EV (independence assumed)"
 		ev: null,
 		odds: 6,
 	});
+});
+
+// ---- 票 05 E16：pending 期不冒充 0（区别于 error→null）----
+
+test("bankrollForAdvice 三态：pending=undefined / error=null / 成功缺余额=0", () => {
+	expect(bankrollForAdvice({ isPending: true, isError: false, data: undefined })).toBeUndefined();
+	expect(bankrollForAdvice({ isPending: false, isError: true, data: undefined })).toBeNull();
+	expect(bankrollForAdvice({ isPending: false, isError: false, data: { balance: 123.4 } })).toBe(123.4);
+	expect(bankrollForAdvice({ isPending: false, isError: false, data: { balance: null } })).toBe(0);
+});
+
+test("bankroll=undefined（读取中）禁用建议不发请求，文案非「未入金」（票 05 E16）", () => {
+	const adviceCalls: number[] = [];
+	server.events.on("request:start", ({ request }) => {
+		if (request.url.includes("/api/v1/stake-advice")) {
+			adviceCalls.push(1);
+		}
+	});
+	renderNote({ mode: "paper", bankroll: undefined, ev: 0.05, odds: 2, testid: "pending-bank" });
+	expect(screen.getByTestId("pending-bank-reason")).toHaveTextContent("资金池读取中");
+	expect(screen.getByText("—")).toBeInTheDocument();
+	expect(adviceCalls).toHaveLength(0); // 冷缓存首访不触发 bankroll=0 假断言请求
+	server.events.removeAllListeners("request:start");
 });

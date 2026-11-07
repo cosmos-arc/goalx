@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { type Bet, type BetEvSnapshot, fetchBets, fetchTodayFixtures } from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import type { EChartsOption } from "../components/charts/echarts";
@@ -151,9 +151,12 @@ export function cumulativePnlOption(
  * 容器必须随组件一起挂载（数据到位、点数 ≥2 才挂），否则 init 拿不到容器。
  */
 function CumulativeChart({ points }: { points: Array<{ label: string; value: number }> }) {
-	const ref = useECharts(
-		cumulativePnlOption(points, cssVar("--chart-1", "#2563eb"), cssVar("--muted-foreground", "#6b7280")),
-	);
+	// 票 05 E17：option 引用稳定——useECharts 依赖 [option]，内联构造会
+	// 每渲染 setOption(notMerge) 重置交互态（30s tick 掐 tooltip）
+	const fg = cssVar("--chart-1", "#2563eb");
+	const muted = cssVar("--muted-foreground", "#6b7280");
+	const option = useMemo(() => cumulativePnlOption(points, fg, muted), [points, fg, muted]);
+	const ref = useECharts(option);
 	return (
 		<div ref={ref} data-testid="history-chart" role="img" aria-label="盈亏累计曲线（0 基准）" className="h-64 w-full" />
 	);
