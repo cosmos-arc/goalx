@@ -66,6 +66,7 @@ from goalx_backend.data.ingest.srct_night import phase1_dates
 
 # 联赛映射定义落零依赖叶子 leagues（下层消费面可达），此处再导出=公共面
 from goalx_backend.data.leagues import FD_TO_LEAGUE, LEAGUE_TO_FD
+from goalx_backend.data.quote_evidence import SRCT_PINNACLE_BOOK
 from goalx_backend.data.results import UNDERSTAT_LEAGUES
 
 REPORTS_DIR = "reports"
@@ -75,7 +76,8 @@ REPORT_BASENAME = "phase1-gate"
 
 # 门②比较锚：SHARP 尖货 cid177（跨源数据质量检查，不决定模型选书）。
 # gold 特征面轨迹锚同此一份（B 相单一真相源）
-ANCHOR_BOOK = "srct:1x2:177"
+# 票 06 单点：定义唯一落点在 quote_evidence 读侧常量区，此处只别名
+ANCHOR_BOOK = SRCT_PINNACLE_BOOK
 
 
 def _sql_in(values: Iterable[str]) -> str:
