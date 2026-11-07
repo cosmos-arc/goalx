@@ -271,7 +271,7 @@ export interface paths {
         };
         /**
          * 复盘列表(注级; 含前瞻资格与 closing 完整性)
-         * @description 投注记录（最新 100）：结算状态、盈亏、建议 vs 实际条款、复盘资格。
+         * @description 全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。
          */
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
