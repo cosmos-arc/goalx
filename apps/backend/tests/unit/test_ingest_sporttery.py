@@ -987,11 +987,9 @@ def test_store_matches_empty_face_accounting(db) -> None:
     assert stats3.empty_markets == []
 
 
-def test_odds_anchor_dense_probe_degrade_keeps_kickoff_leg(
-    monkeypatch, db, tmp_path
-) -> None:
-    """correctness F1 回归：开售轮询带内 probe 抛错必须降级——kickoff 桶
-    跨桶不重火，probe 炸整拍=该桶锚永久缺失。"""
+def test_odds_anchor_dense_probe_degrade_returns_zero(monkeypatch, db) -> None:
+    """correctness F1 回归（feed-cutover 票 01 收窄后形态）：probe 抛错
+    降级为零计数不炸拍——让位一拍，跨拍状态不丢。"""
     import contextlib
 
     import goalx_backend.tasks as tasks_mod
@@ -1013,7 +1011,96 @@ def test_odds_anchor_dense_probe_degrade_keeps_kickoff_leg(
         ),
     )
     out = tasks_mod.odds_anchor_dense()
-    assert out["kickoff_anchor"]["events"] == 0  # kickoff 腿照走不牵连
+    assert out["sale_stop_probe"] == {"candidates": 0, "stopped": 0}
+
+
+def test_probe_srct_linked_fixture_enters_candidates_and_stop_detects(
+    db, tmp_path
+) -> None:
+    """feed-cutover 票 01：源T 链场（无 odds_api join）进候选——停售加密
+    与显式 stopped 迁移检测复活；未链场不进候选（防误判停售）。"""
+    from goalx_backend.data import mapping
+
+    fixture = _seed_joined_sample(db, tmp_path)
+    # 抹掉 odds_api join → 仅剩 srct 链（link_fixture_sid 落 linked 行）
+    db.execute(
+        "UPDATE fixtures SET odds_api_event_id = NULL, odds_api_sport_key = NULL"
+        " WHERE id = ?",
+        (fixture,),
+    )
+    mapping.link_fixture_sid(db, fixture, "990011", method=mapping.METHOD_MANUAL)
+    db.commit()
+    # 候选窗内（SAMPLE 场次 2026-09-12 19:00Z 开球；now=18:00Z ≤3h）
+    calls: list[str] = []
+    probe = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(SAMPLE, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 17, 30, tzinfo=UTC),
+    )
+    assert probe.candidates == 1  # srct 链场进候选
+    assert probe.stopped == []  # 仍在售列表 → 未停售
+    # 从在售列表消失（空载荷）→ 落显式 stopped 行
+    calls2: list[str] = []
+    probe2 = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(EMPTY_PAYDAY, calls2),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 17, 35, tzinfo=UTC),
+    )
+    assert probe2.stopped
+    assert int(probe2.stopped[0]["id"]) == fixture
+    row = db.execute(
+        "SELECT sale_state FROM sale_statuses WHERE fixture_id = ?"
+        " ORDER BY observed_at DESC LIMIT 1",
+        (fixture,),
+    ).fetchone()
+    assert row["sale_state"] == "stopped"
+    # 再下一拍：已 stopped 的候选确认为已检出（不重复落行）
+    probe3 = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(EMPTY_PAYDAY, []),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 17, 40, tzinfo=UTC),
+    )
+    n = db.execute(
+        "SELECT COUNT(*) FROM sale_statuses WHERE fixture_id = ?"
+        " AND sale_state = 'stopped'",
+        (fixture,),
+    ).fetchone()[0]
+    assert n == 1  # stopped 行只落一次
+    assert probe3.candidates == 0  # 检出后离池：后续拍零候选零请求
+
+
+def test_probe_unlinked_fixture_not_candidate(db, tmp_path) -> None:
+    """未链场（无 odds_api join、无 srct 链）不进候选——零请求。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            handler=lambda _: httpx.Response(200, json=SAMPLE)
+        )
+    )
+    sporttery.capture_jingcai(
+        db,
+        Settings(),
+        client,
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 10, 0, tzinfo=UTC),
+    )
+    row = fx_store.find_fixture_by_source_match(db, "jingcai", "2041430")
+    assert row is not None  # 场在库、在窗口，但未链
+    calls: list[str] = []
+    probe = sporttery.probe_sale_stops(
+        db,
+        Settings(),
+        _probe_client(SAMPLE, calls),
+        raw_root=tmp_path,
+        now=datetime(2026, 9, 12, 18, 0, tzinfo=UTC),
+    )
+    assert probe.candidates == 0
+    assert calls == []
 
 
 def test_observed_at_stamp_taken_after_fetch_returns(db) -> None:

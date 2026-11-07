@@ -220,20 +220,17 @@ def forecast_daily(business_date: str | None = None) -> dict[str, int]:
 
 def odds_anchor_dense() -> dict[str, object]:
     """
-    双锚临场采样（票 47 修正设计，2026-09-21 用户裁决锚=竞彩停售）。
+    停售加密探测 + 开售锚轮询（票 47/04；feed-cutover 票 01 收窄）。
 
-    评估锚：开球前 5 分钟桶内的已 join 场次定向拉取（meta anchor=kickoff，
-    CLV 收盘基准收紧）；决策锚：停售探测检出 on_sale→stopped 迁移后立即
-    拉取（meta anchor=sale_stop，决策时点公允线，票 48 陈盘信号的数据
-    供给）。两锚零候选零请求（开售轮询带内 probe 补拍除外，票 04）；
-    失败不重试、无兜底拍（closing 循环为判死面）——kickoff 桶跨桶不
-    重火，故探测腿异常降级留痕、绝不牵连同拍 kickoff 桶（票 04 F1）。
+    原双锚的 odds_api 拉取双腿已拔（2026-11-07）：三源停采后零候选
+    零产出空转，锚真值已由源T as-of 永久承担（CLV=srct_closing_prob、
+    陈盘=sharp as-of，2026-09-25 裁决）。本任务唯一活腿=探针——候选面
+    已切广义已链（odds_api ∪ 源T 链），停售加密采样与显式 stopped
+    迁移检测自此复活。零候选零请求（开售轮询带内除外，票 04）；探测
+    异常降级留痕不炸拍（票 04 F1：让位一拍，不丢跨拍状态）。
     """
     settings = get_settings()
     with task_conn() as conn, polite_client() as client:
-        now = datetime.now(UTC)
-        # 探测先行（零 credit）；开售轮询带内可能发请求 → 异常须降级：
-        # kickoff 桶只属一拍（跨桶不重火），probe 炸整拍=该桶锚永久缺失
         try:
             probe = sporttery.probe_sale_stops(
                 conn, settings, client, raw_root=settings.observations_dir
@@ -241,43 +238,10 @@ def odds_anchor_dense() -> dict[str, object]:
         except (httpx.HTTPError, ValueError, sqlite3.Error) as exc:
             logger.warning("sale probe degraded（{}）：本拍停售检测/开售轮询让位", exc)
             probe = sporttery.SaleStopProbe()
-        bucket_start, bucket_end = oddsapi.kickoff_bucket_bounds(now)
-        kickoff_targets = [
-            (str(row["odds_api_event_id"]), str(row["odds_api_sport_key"]))
-            for row in fx_store.joined_fixtures_in_window(
-                conn, bucket_start, bucket_end
-            )
-        ]
-        stop_targets = [
-            (str(row["odds_api_event_id"]), str(row["odds_api_sport_key"]))
-            for row in probe.stopped
-        ]
-        kickoff = _isolated_anchor_pull(
-            conn,
-            settings,
-            client,
-            anchor=oddsapi.ANCHOR_KICKOFF,
-            targets=kickoff_targets,
-        )
-        sale_stop = _isolated_anchor_pull(
-            conn,
-            settings,
-            client,
-            anchor=oddsapi.ANCHOR_SALE_STOP,
-            targets=stop_targets,
-        )
     return {
-        "kickoff_anchor": {
-            "events": kickoff.events,
-            "credits": kickoff.credits_used,
-        },
         "sale_stop_probe": {
             "candidates": probe.candidates,
             "stopped": len(probe.stopped),
-        },
-        "sale_stop_anchor": {
-            "events": sale_stop.events,
-            "credits": sale_stop.credits_used,
         },
     }
 

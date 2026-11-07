@@ -45,7 +45,7 @@ import httpx
 
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
-from goalx_backend.data import observations, price_ledger
+from goalx_backend.data import mapping, observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
 from goalx_backend.db import atomic, table_sql, trigger_sqls, utc_now_iso
 from goalx_backend.markets import GOALS_MARKETS
@@ -639,7 +639,10 @@ def probe_sale_stops(
     """
     停售加密探测（票 47 双锚之决策锚）+ 开售锚轮询（票 04）。
 
-    候选 = 已 join、未 stopped、「开球 ≤3h 或 北京 ≥19 点的 16h 内场次」。
+    候选 = 广义已链（odds_api 链 ∪ 源T 链，feed-cutover 票 01 切源T
+    触发面——原 odds_api 单一谓词 9-25 停采后结构性零候选，停售加密
+    与迁移检测自 10-16 起死透）、未 stopped、「开球 ≤3h 或 北京 ≥19 点
+    的 16h 内场次」。未链场不进候选（防误判停售）。
 
     无候选零请求（探测载体不空耗）；有候选走全链路采集（证据/快照/销售
     状态幂等吸收），随后判定停售迁移：**从在售列表消失**（本函数补显式
@@ -647,7 +650,7 @@ def probe_sale_stops(
     重建）。票 09 语义修正后 sellStatus=1=在售（非停售），显式值不再
     构成停售证据，消失是唯一停售信号；已落 stopped（本函数前轮写入）
     的候选行确认为已检出。返回检出停售的候选行（含
-    odds_api_event_id/sport_key，供决策锚定向拉取）。
+    odds_api_event_id/sport_key，供历史链场定向拉取）。
 
     票 04 开售锚轮询：零候选但处于北京 [11:00,12:30) 开售带且当日尚无
     on_sale 锚时也拍一次——开售翻转即锚（5 分钟精度），当日盲带收窄至拍距；
@@ -658,7 +661,13 @@ def probe_sale_stops(
     horizon = (moment + timedelta(minutes=_PROBE_HORIZON_MINUTES)).isoformat(
         timespec="seconds"
     )
-    rows = fx_store.sale_stop_probe_candidates(conn, now_iso, horizon)
+    window_ids = [
+        int(row["id"]) for row in fx_store.fixtures_in_window(conn, now_iso, horizon)
+    ]
+    linked_ids = mapping.joined_fixture_ids(conn, window_ids)
+    rows = fx_store.sale_stop_probe_candidates(
+        conn, now_iso, horizon, linked_fixture_ids=linked_ids
+    )
     soon = timedelta(minutes=_PROBE_SOON_MINUTES)
     candidates = [
         row

@@ -22,7 +22,7 @@
 | 源 | 用途 | 解析版本 | 时间语义 |
 |---|---|---|---|
 | sporttery calculator | 竞彩报价/销售状态/单固 | `sporttery_calculator_v2` | captured_at=调盘时间,observed_at=本机收到 |
-| The Odds API h2h/eu | 欧赔共识/收盘 | `oddsapi_h2h_v2` | last_update=源更新,observed_at=本机收到 |
+| The Odds API h2h/eu | ~~欧赔共识/收盘~~ **2026-09-25 停采备用**(手动 CLI 保留);欧赔真值=源T语料 as-of 读 | `oddsapi_h2h_v2` | last_update=源更新,observed_at=本机收到 |
 | 官方开奖 | 唯一事实源 | manual 导入(API/UI),更正必带原因 | published_at 可空不伪造 |
 | Forecast(ML 线) | 评分概率 | 工件指纹(model_version=dc-*) | issued_at<开赛才算赛前 |
 
@@ -31,8 +31,8 @@
 | 时刻 | 动作 | 成本 |
 |---|---|---|
 | 10:00 / 19:00 | `ingest-jingcai` + `forecast` | 0 |
-| 10:05 / 19:05 | `ingest-odds`(范围冻结) | 2 credits/次 |
-| 每 30 分钟 | `closing-snapshot`(35 分钟窗;无窗口内已 join 场次时自动零成本跳过) | 0~2 |
+| ~~10:05 / 19:05~~ | ~~`ingest-odds`(范围冻结)~~ 停采(备用手动入口) | — |
+| ~~每 30 分钟~~ | ~~`closing-snapshot`~~ 判死面(resume=False);锚真值=源T as-of | — |
 | 赛果公布后 | UI/API 录入 DrawResult(来源核验)→ 自动结算+冲正 | 0 |
 | 每日收尾 | `clv-reconcile` + `audit-ledger`(只读) | 0 |
 
