@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple, Protocol
@@ -563,6 +563,7 @@ def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口�
     purpose: str | None = None,
     exclusive: bool = False,
     max_age_seconds: float | None = None,
+    per_book_window: bool = False,
     duck_con: DuckCon | None = None,
     sid: str | None = None,
     rows: list[SnapshotRow] | None = None,
@@ -576,6 +577,10 @@ def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口�
     as_of（exclusive=True 时严格早于）；给 max_age_seconds 时还须不早于
     as_of − 该窗。每 book 按 captured_at 取各选项最新行，三向不完整的
     book 剔除。
+
+    票 07 per_book_window=True：max_age_seconds 改按「该 book 入选各选项
+    最新行的最大观测时间」判定（配对语义，haircut 历史口径）——不逐行
+    截断，先选最新再验窗；收编 evaluation/haircut 私有副本。
     """
     source_rows: list[SnapshotRow] = (
         rows
@@ -588,7 +593,7 @@ def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口�
             sid=sid,
             purpose=purpose,
             exclusive=exclusive,
-            max_age_seconds=max_age_seconds,
+            max_age_seconds=None if per_book_window else max_age_seconds,
         )
     )
     by_book: dict[str, list[SnapshotRow]] = {}
@@ -599,7 +604,8 @@ def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口�
         if (observed >= as_of) if exclusive else (observed > as_of):
             continue
         if (
-            max_age_seconds is not None
+            not per_book_window
+            and max_age_seconds is not None
             and seconds_between(as_of, observed) > max_age_seconds
         ):
             continue
@@ -609,6 +615,14 @@ def books_complete_asof(  # noqa: PLR0913 票35 接缝集随 as-of/源切换口�
         latest = latest_per_selection(book_rows)
         if set(latest) != set(SELECTIONS):
             continue
+        if per_book_window and max_age_seconds is not None:
+            newest_observed = max(
+                observed
+                for observed in (effective_observed_at(r) for r in latest.values())
+                if observed is not None
+            )
+            if seconds_between(as_of, newest_observed) > max_age_seconds:
+                continue
         books[book] = {sel: float(r["odds"]) for sel, r in latest.items()}
     return books
 
@@ -1142,6 +1156,129 @@ def sharp_probs_asof(  # noqa: PLR0913 锚接缝集随 as-of/源切换/批量预
     if consensus is not None:
         return consensus, f"eu_consensus[{','.join(sorted(books))}]"
     return None
+
+
+class QuoteReads:
+    """
+    PIT 报价读取 seam（票 07 F1）。
+
+    conn/duck_con/sid 解析一次绑定，四法 reader 域内下传——调用方从
+    五参协议（duck_con/sid/行源分派）减为单参调用。corpus/legacy 分派、
+    空杯不回退全在本层；``rows=`` 注入缝留在底层函数（reader 不对外
+    暴露——批量预取/青铜重放路径直用底层）。
+    """
+
+    __slots__ = ("conn", "duck_con", "resolve_sid")
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        duck_con: DuckCon | None,
+        resolve_sid: Callable[[int], str | None] | None,
+    ) -> None:
+        self.conn = conn
+        self.duck_con = duck_con
+        self.resolve_sid = resolve_sid
+
+    def adjudicate_had_quote(
+        self,
+        fixture_id: int,
+        as_of: str,
+        *,
+        freshness_seconds: float = DEFAULT_FRESHNESS_SECONDS,
+        max_pair_gap_seconds: float = DEFAULT_PAIR_GAP_SECONDS,
+    ) -> HadQuoteVerdict:
+        """Had 报价判定（票 35 全语义；sid 内解析、corpus/legacy 内分派）。"""
+        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        return adjudicate_had_quote(
+            self.conn,
+            fixture_id,
+            as_of,
+            freshness_seconds=freshness_seconds,
+            max_pair_gap_seconds=max_pair_gap_seconds,
+            duck_con=self.duck_con,
+            sid=sid,
+        )
+
+    def sharp_probs_asof(
+        self,
+        fixture_id: int,
+        as_of: str,
+        *,
+        max_age_seconds: float | None = None,
+        anchor_only: bool = False,
+    ) -> tuple[dict[str, float], str] | None:
+        """Sharp 参考概率与取法身份（pinnacle 主锚优先，票 07 收口）。"""
+        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        return sharp_probs_asof(
+            self.conn,
+            fixture_id,
+            as_of,
+            max_age_seconds=max_age_seconds,
+            anchor_only=anchor_only,
+            duck_con=self.duck_con,
+            sid=sid,
+        )
+
+    def books_complete_asof(
+        self,
+        fixture_id: int,
+        as_of: str,
+        *,
+        market_code: str = "had",
+        purpose: str | None = None,
+        exclusive: bool = False,
+        max_age_seconds: float | None = None,
+        per_book_window: bool = False,
+    ) -> dict[str, dict[str, float]]:
+        """as_of 可用各 book 完整三向（含 per_book 配对窗语义，票 07 收编）。"""
+        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        return books_complete_asof(
+            self.conn,
+            fixture_id,
+            as_of,
+            market_code=market_code,
+            purpose=purpose,
+            exclusive=exclusive,
+            max_age_seconds=max_age_seconds,
+            per_book_window=per_book_window,
+            duck_con=self.duck_con,
+            sid=sid,
+        )
+
+    def eu_consensus_asof(
+        self,
+        fixture_id: int,
+        as_of: str,
+        *,
+        market_code: str = "had",
+    ) -> dict[str, float] | None:
+        """as_of 前最新欧共识 Shin 概率（票 07 收口）。"""
+        sid = self.resolve_sid(fixture_id) if self.resolve_sid is not None else None
+        return eu_consensus_asof(
+            self.conn,
+            fixture_id,
+            as_of,
+            market_code=market_code,
+            duck_con=self.duck_con,
+            sid=sid,
+        )
+
+
+def bind_quote_reads(
+    conn: sqlite3.Connection,
+    duck_con: DuckCon | None,
+    resolve_sid: Callable[[int], str | None] | None = None,
+) -> QuoteReads:
+    """
+    构造 PIT 报价 reader（票 07 F1 工厂）。
+
+    adapter 层各域构造一次（api=请求域 / tasks=班域 / cli=命令域），域内
+    下传 reader；``resolve_sid`` 注入（形如
+    ``lambda fid: mapping.srct_sid_for_fixture(conn, fid)``——本模块不
+    依赖 mapping，分层契约钉死），缺省 None=不解析（恒 legacy 行源）。
+    """
+    return QuoteReads(conn, duck_con, resolve_sid)
 
 
 def stale_line_signal(

@@ -11,8 +11,7 @@ from pydantic import BaseModel, Field
 
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.snapshot import build_ev_snapshot
-from goalx_backend.data import mapping, quote_evidence
-from goalx_backend.data.quote_evidence import adjudicate_had_quote
+from goalx_backend.data import quote_evidence
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
     PRICE_SOURCE_MANUAL_RESEARCH,
@@ -33,6 +32,15 @@ from goalx_backend.models import (
 #   （"仅新记录生效"），只排除显式 manual_research。
 # 客户端价与服务器价相等容差（同一十进制字面量解析，只防浮点尾差）
 _ODDS_EPSILON = 1e-9
+
+
+def _legacy_reads(conn: sqlite3.Connection) -> quote_evidence.QuoteReads:
+    """
+    缺省 reader：无 corpus 链解析（恒 legacy 行源）。
+
+    票 07 迁移期保持旧调用方（cli/测试缺省）语义不变。
+    """
+    return quote_evidence.bind_quote_reads(conn, None, None)
 
 
 def is_official_paper(row: sqlite3.Row) -> bool:
@@ -283,7 +291,7 @@ def create_bet_with_legs(
     conn: sqlite3.Connection,
     draft: BetDraft,
     *,
-    duck_con: quote_evidence.DuckCon | None = None,
+    reads: quote_evidence.QuoteReads | None = None,
     price_source: str | None = None,
 ) -> int:
     """
@@ -315,7 +323,10 @@ def create_bet_with_legs(
     with atomic(conn):
         discovery_at = utc_now_iso()
         snapshot = build_ev_snapshot(
-            conn, draft.legs, as_of=discovery_at, duck_con=duck_con
+            conn,
+            draft.legs,
+            as_of=discovery_at,
+            reads=reads if reads is not None else _legacy_reads(conn),
         )
         try:
             bet = bt_store.create_bet(
@@ -419,7 +430,7 @@ def validate_had_selections(
     legs: list[LegInput],
     *,
     as_of: str | None = None,
-    duck_con: quote_evidence.DuckCon | None = None,
+    reads: quote_evidence.QuoteReads | None = None,
 ) -> None:
     """
     Had 选择资格（票 36 选择入口/锁定再校验，消费票 35 判定）：
@@ -428,18 +439,15 @@ def validate_had_selections(
     - 单关（仅一腿且为 had）须 single_eligible 为 True，未知按拒绝；
     - 串关在同一 as_of 判定全部腿，即共同可购买时点；非 had 市场暂不在
       证据契约内，不判定（保持既有行为）。
+
+    票 07：reads=域内下传 reader；缺省 legacy（无 corpus 链解析）。
     """
     moment = as_of or utc_now_iso()
+    reader = reads if reads is not None else _legacy_reads(conn)
     had_legs = [leg for leg in legs if leg.market_code == "had"]
     problems: list[str] = []
     for leg in had_legs:
-        verdict = adjudicate_had_quote(
-            conn,
-            leg.fixture_id,
-            moment,
-            duck_con=duck_con,
-            sid=mapping.srct_sid_for_fixture(conn, leg.fixture_id),
-        )
+        verdict = reader.adjudicate_had_quote(leg.fixture_id, moment)
         if verdict.status == "rejected":
             problems.append(
                 f"fixture {leg.fixture_id} 不可投: {', '.join(verdict.reasons)}"
@@ -619,7 +627,7 @@ def record_purchase(
     actuals: dict[int, ActualTerms] | None = None,
     *,
     allow_price_update: bool = False,
-    duck_con: quote_evidence.DuckCon | None = None,
+    reads: quote_evidence.QuoteReads | None = None,
 ) -> int:
     """
     票级回录：勾选实际购买子集，生成一张票；live 注按实际条款扣减 bankroll。
@@ -653,7 +661,11 @@ def record_purchase(
                     "paper 注不接受实际条款(actuals); 手工情景走 manual_research 分类"
                 )
             for bet in bets:
-                validate_had_selections(conn, _bet_legs(bet), duck_con=duck_con)
+                validate_had_selections(
+                    conn,
+                    _bet_legs(bet),
+                    reads=reads if reads is not None else _legacy_reads(conn),
+                )
             _rebind_paper_legs(conn, bets, allow_price_update)
             _record_confirm_stages(conn, bets, confirm_at=utc_now_iso())
         slip = bt_store.create_slip(conn, mode, placed_at=at)

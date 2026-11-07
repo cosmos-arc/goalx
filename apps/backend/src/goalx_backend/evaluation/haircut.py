@@ -29,7 +29,6 @@ from loguru import logger
 
 from goalx_backend import odds_math as om
 from goalx_backend.data import mapping, quote_evidence
-from goalx_backend.data.quote_evidence import effective_observed_at, seconds_between
 from goalx_backend.db import utc_now_iso
 from goalx_backend.markets import SELECTIONS
 
@@ -169,7 +168,14 @@ def build_haircut_samples(
                     duck_con, sid, pair_time
                 )
                 corpus_sids.add(fixture_id)
-        books = _books_asof(eu_candidate, pair_time, max_pair_gap_seconds)
+        books = quote_evidence.books_complete_asof(
+            conn,
+            fixture_id,
+            pair_time,
+            max_age_seconds=max_pair_gap_seconds,
+            rows=eu_candidate,
+            per_book_window=True,  # 票 07：配对窗语义（per-book selected-latest）
+        )
         if not books:
             continue  # as-of 时刻无同窗欧共识
         era = SOURCE_ERA_SRCT if fixture_id in corpus_sids else SOURCE_ERA_ODDS_API
@@ -201,40 +207,6 @@ def build_haircut_samples(
 def _corpus_era(business_date: str | None) -> bool:
     """该场是否属 corpus 分代（业务日 ≥ 切换键；无码场视为历史段）。"""
     return business_date is not None and business_date >= HAIRCUT_CORPUS_FROM
-
-
-def _books_asof(
-    rows: list[quote_evidence.SnapshotRow],
-    pair_time: str,
-    max_pair_gap_seconds: float,
-) -> dict[str, dict[str, float]]:
-    """
-    as-of 时刻可配对的各 book 完整三向（观测晚于 as-of 的剔除）。
-
-    与 quote_evidence.books_complete_asof 的差别：配对窗按「该 book 入选
-    各选项最新行的最大观测时间」判定（配对语义），不逐行截断——校准数字
-    的历史口径保持不变。
-    """
-    by_book: dict[str, list[quote_evidence.SnapshotRow]] = {}
-    for row in rows:
-        observed = effective_observed_at(row)
-        if observed is None or observed > pair_time:
-            continue
-        by_book.setdefault(str(row["source"]), []).append(row)
-    books: dict[str, dict[str, float]] = {}
-    for book, book_rows in by_book.items():
-        latest = quote_evidence.latest_per_selection(book_rows)
-        if set(latest) != set(SELECTIONS):
-            continue  # 同公司完整三向才可比较（票 35）
-        newest_observed = max(
-            observed
-            for observed in (effective_observed_at(r) for r in latest.values())
-            if observed is not None
-        )
-        if seconds_between(pair_time, newest_observed) > max_pair_gap_seconds:
-            continue  # 配对时差超窗
-        books[book] = {sel: float(r["odds"]) for sel, r in latest.items()}
-    return books
 
 
 def method_sensitivity(samples: list[HaircutSample]) -> dict[str, dict[str, float]]:

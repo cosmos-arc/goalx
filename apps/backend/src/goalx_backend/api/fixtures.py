@@ -18,7 +18,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.quote_evidence import (
     DEFAULT_FRESHNESS_SECONDS,
     DEFAULT_PAIR_GAP_SECONDS,
-    adjudicate_had_quote,
+    bind_quote_reads,
 )
 from goalx_backend.data.today import (
     HadQuoteStatus,
@@ -246,14 +246,14 @@ def get_had_quote_verdict(
     if fx_store.get_fixture(db, fixture_id) is None:
         raise HTTPException(status_code=404, detail="fixture not found")
     with corpus_duckdb.reader() as duck_con:
-        verdict = adjudicate_had_quote(
-            db,
+        # 票 07：请求域构造 reader（sid 解析注入）
+        verdict = bind_quote_reads(
+            db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
+        ).adjudicate_had_quote(
             fixture_id,
             as_of or datetime.now(UTC).isoformat(timespec="seconds"),
             freshness_seconds=freshness_seconds,
             max_pair_gap_seconds=max_pair_gap_seconds,
-            duck_con=duck_con,
-            sid=mapping.srct_sid_for_fixture(db, fixture_id),
         )
     return HadQuoteVerdictView(
         fixture_id=verdict.fixture_id,
@@ -373,9 +373,10 @@ def get_fixture_research(
             db, fixture_id, duck_con=duck_con, sid=sid
         )
         book_names = quote_evidence.book_display_names(duck_con, quotes.keys())
-        verdict = adjudicate_had_quote(
-            db, fixture_id, moment, duck_con=duck_con, sid=sid
-        )
+        # 票 07：请求域 reader（eu_book_quotes 走 rows 家族外的逐书读取，原样）
+        verdict = bind_quote_reads(
+            db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
+        ).adjudicate_had_quote(fixture_id, moment)
     view = FixtureResearchView(
         fixture_id=fixture_id,
         match_code=str(detail["match_code"]),
