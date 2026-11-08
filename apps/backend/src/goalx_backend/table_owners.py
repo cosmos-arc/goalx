@@ -92,6 +92,8 @@ OWNERS: dict[str, set[str]] = {
         "haircut_calibrations",
         # auto-paper 票 01：决策锚基准冻结（evaluation/baseline_freeze.py）
         "market_baseline_snapshots",
+        # auto-paper 票 02：前瞻准确率评分行（evaluation/accuracy.py）
+        "forecast_scores",
     },
     "betting": {
         "bets",

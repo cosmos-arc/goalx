@@ -237,6 +237,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accuracy/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 前瞻准确率报告(月×玩法×联赛)
+         * @description 只读派生面：评分行聚合 + 覆盖账同源首行；判读规则文字随报告。
+         */
+        get: operations["get_accuracy_report_api_v1_accuracy_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stake-advice": {
         parameters: {
             query?: never;
@@ -1034,6 +1054,16 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccuracyReportView
+         * @description 前瞻准确率报告（prereg acc-v1 冻结口径）。
+         */
+        AccuracyReportView: {
+            /** Reading Rule */
+            reading_rule: string;
+            /** Months */
+            months: components["schemas"]["MonthBlockView"][];
+        };
+        /**
          * ActualLegOdds
          * @description 真实回录时一腿的实际赔率（按 fixture 定位；一注内 fixture 不重复）。
          */
@@ -1466,6 +1496,20 @@ export interface components {
             name?: string | null;
         };
         /**
+         * CalibBinView
+         * @description 一个校准箱：模型最热向置信度 vs 实际命中率。
+         */
+        CalibBinView: {
+            /** Bin Index */
+            bin_index: number;
+            /** N */
+            n: number;
+            /** Mean Conf */
+            mean_conf: number;
+            /** Hit Rate */
+            hit_rate: number;
+        };
+        /**
          * ClvBasisEntry
          * @description by_close_basis 一级：腿数/唯一注数 + 同构分组（mixed 无分组仅注数）。
          */
@@ -1704,6 +1748,26 @@ export interface components {
             credits_used: number;
             /** Items */
             items: components["schemas"]["CostItemView"][];
+        };
+        /**
+         * CoverageRowView
+         * @description 覆盖率首行（与 forecast_coverage 同源）。
+         */
+        CoverageRowView: {
+            /** Month */
+            month: string;
+            /** Total */
+            total: number;
+            /** Covered */
+            covered: number;
+            /** Not Fd League */
+            not_fd_league: number;
+            /** No Model */
+            no_model: number;
+            /** No Mapping */
+            no_mapping: number;
+            /** Unknown */
+            unknown: number;
         };
         /**
          * CurvePointView
@@ -2374,6 +2438,48 @@ export interface components {
             sport_key: string;
         };
         /**
+         * MarketRowView
+         * @description 月×玩法×联赛 一行（competition=None 为该月该玩法总体行）。
+         */
+        MarketRowView: {
+            /** Month */
+            month: string;
+            /** Market */
+            market: string;
+            /** Competition */
+            competition: string | null;
+            /** Metric Kind */
+            metric_kind: string;
+            /** N */
+            n: number;
+            /** Skipped */
+            skipped: number;
+            /** Model Metric */
+            model_metric: number | null;
+            /** Model Logloss */
+            model_logloss: number | null;
+            /** Jc Baseline */
+            jc_baseline: number | null;
+            /** Eu Baseline */
+            eu_baseline: number | null;
+            /** Diff Jc */
+            diff_jc: number | null;
+            /** Diff Jc Se */
+            diff_jc_se: number | null;
+            /** Diff Eu */
+            diff_eu: number | null;
+            /** Diff Eu Se */
+            diff_eu_se: number | null;
+            /** N Baseline */
+            n_baseline: number;
+            /** Cum N Baseline */
+            cum_n_baseline: number;
+            /** Verdict Ready */
+            verdict_ready: boolean;
+            /** Calibration */
+            calibration: components["schemas"]["CalibBinView"][];
+        };
+        /**
          * ModeCounts
          * @description 一个 mode 的注/腿/场次计数（唯一 Bet 为验证分母，票 34）。
          */
@@ -2402,6 +2508,15 @@ export interface components {
             issued_at: string;
             probability: components["schemas"]["SelectionTriple"];
             ev?: components["schemas"]["SelectionTriple"] | null;
+        };
+        /**
+         * MonthBlockView
+         * @description 一个月块：覆盖首行 + 玩法行（总体行在前）。
+         */
+        MonthBlockView: {
+            coverage: components["schemas"]["CoverageRowView"];
+            /** Rows */
+            rows: components["schemas"]["MarketRowView"][];
         };
         /**
          * NoCandidateAttribution
@@ -3532,6 +3647,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_accuracy_report_api_v1_accuracy_report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccuracyReportView"];
                 };
             };
         };

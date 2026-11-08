@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
+from goalx_backend.api import accuracy as accuracy_api
 from goalx_backend.api import bets as bets_api
 from goalx_backend.api import evidence as evidence_api
 from goalx_backend.api import fixtures as fixtures_api
@@ -167,6 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(fixtures_api.router)
     app.include_router(markets_api.router)
+    app.include_router(accuracy_api.router)
     app.include_router(bets_api.router)
     app.include_router(pool_api.router)
     app.include_router(results_api.router)

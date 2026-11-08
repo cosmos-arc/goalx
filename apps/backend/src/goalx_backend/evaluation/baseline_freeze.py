@@ -28,9 +28,10 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from goalx_backend import odds_math as om
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.db import utc_now_iso
@@ -124,6 +125,44 @@ def _insert_snapshot(  # noqa: PLR0913 证据列随 source 解释累加（observ
         ),
     )
     return cur.rowcount > 0
+
+
+def baseline_probs_asof(
+    conn: sqlite3.Connection, fixture_id: int, source: str, as_of: str
+) -> tuple[str, tuple[float, float, float]] | None:
+    """
+    as_of 前最近锚的冻结基准（评分侧同窗口径，auto-paper 票 02）。
+
+    prices 按 source 解释：jc_official=原始 SP（归一化由评分侧确定性派生，
+    与冻结语义一致）；eu_consensus=Shin 概率。取该场 cutoff_at ≤ as_of 的
+    最新锚行；无行/缺腿 → None（评分侧记 unknown 差值，不删行）。
+    """
+    row = conn.execute(
+        """
+        SELECT anchor_label, prices FROM market_baseline_snapshots
+        WHERE fixture_id = ? AND source = ? AND market = 'had' AND cutoff_at <= ?
+        ORDER BY cutoff_at DESC, id DESC LIMIT 1
+        """,
+        (fixture_id, source, as_of),
+    ).fetchone()
+    if row is None:
+        return None
+    prices = json.loads(str(row["prices"]))
+    try:
+        raw = tuple(float(prices[sel]) for sel in SELECTIONS)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if any(value <= 0 for value in raw):
+        return None
+    if source == "jc_official":
+        probs: tuple[float, float, float] = cast(
+            "tuple[float, float, float]", om.normalized_implied(raw)
+        )
+    elif source == "eu_consensus":
+        probs = cast("tuple[float, float, float]", raw)
+    else:
+        return None
+    return str(row["anchor_label"]), probs
 
 
 def freeze_anchor_baselines(

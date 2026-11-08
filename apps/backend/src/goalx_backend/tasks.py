@@ -77,6 +77,7 @@ from goalx_backend.data.quote_evidence import (
     bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
+from goalx_backend.evaluation import accuracy
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
@@ -713,11 +714,15 @@ def draw_results_sync() -> dict[str, object]:
             )
         srct_stats = srct_results.materialize_results(conn, duck_con)
         stats, rec = uniform.sync_uniform_results(conn, settings, client)
+        # 赛果落定后自动评分（auto-paper 票 02，prereg acc-v1）：幂等，
+        # 同结果重跑被 UNIQUE 吸收；结果更正走 fingerprint 覆盖重评
+        accuracy_stats = accuracy.score_settled_fixtures(conn)
     return {
         "links": links.as_dict() if links else None,
         "srct": srct_stats.as_dict(),
         "uniform": asdict(stats),
         "uniform_reconcile": reconcile.stats_dict(rec),
+        "accuracy": asdict(accuracy_stats),
     }
 
 

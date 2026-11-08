@@ -197,6 +197,12 @@ export function fetchPaperAccount(): Promise<PaperAccount> {
 	return unwrap(client.GET("/api/v1/paper-account"));
 }
 
+export type AccuracyReport = Schemas["AccuracyReportView"];
+
+export function fetchAccuracyReport(): Promise<AccuracyReport> {
+	return unwrap(client.GET("/api/v1/accuracy/report"));
+}
+
 export function createDeposit(payload: DepositInput): Promise<DepositCreated> {
 	return unwrap(client.POST("/api/v1/bankroll/deposits", { body: payload }));
 }

@@ -14,7 +14,7 @@ async function renderAt(path: string) {
 	);
 }
 
-test("renders the two-level flat IA: eight primary items, three secondary, no group titles", async () => {
+test("renders the two-level flat IA: nine primary items, three secondary, no group titles", async () => {
 	// 票 14：/review 已换真实复核页（自带区块 h2），导航断言改走仍是占位的 /settings
 	await renderAt("/settings");
 
@@ -28,6 +28,7 @@ test("renders the two-level flat IA: eight primary items, three secondary, no gr
 		"验证",
 		"资金",
 		"纸面账户",
+		"准确率",
 	]);
 	const secondary = within(screen.getByRole("navigation", { name: "次级导航" }));
 	expect(secondary.getAllByRole("link").map((link) => link.textContent)).toEqual(["词典", "复核", "设置"]);

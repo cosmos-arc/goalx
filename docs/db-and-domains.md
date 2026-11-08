@@ -83,6 +83,7 @@
 | `clv_records` | CLV 对账 | taken_odds vs close_prob；close_basis 分层（pinnacle 主锚/betfair 辅/consensus 兜底） | append+幂等 |
 | `haircut_calibrations` | EV 折价校准 | scope×market×source_era 分位 haircut（source_era=证据源代：odds_api/srct/jc_sp）；method_version 随行 | append |
 | `market_baseline_snapshots` | 决策锚基准冻结（auto-paper 票 01） | 三锚（12:30/16:30/21:00）write-once：jc_official=JC SP 原始赔率、eu_consensus=Shin 概率（prices JSON 按 source 解释）；as-of=captured_at≤cutoff_at 防锚后到价倒填 | append+幂等 UNIQUE 五元组 |
+| `forecast_scores` | 前瞻准确率评分行（auto-paper 票 02） | acc-v1：had/hhad=RPS、ttg/crs/hafu=Brier+log-loss；双基准差值=票 01 快照同窗（缺=unknown NULL）；hhad 仅整数线/hafu 缺半场 → skip_reason 行；派生概率不落库（ADR-0006） | upsert UNIQUE(fixture,market,version)；结果更正 fingerprint 覆盖重评 |
 
 ### infra / 脚手架
 
@@ -186,6 +187,9 @@ erDiagram
     }
     forecast_coverage {
         TEXT business_date PK
+    }
+    forecast_scores {
+        INTEGER id PK
     }
     forecasts {
         INTEGER id PK
@@ -323,6 +327,7 @@ erDiagram
     fixtures }|--|| teams : home_team_id
     fixtures }|--|| competitions : competition_id
     forecast_coverage }|--|| fixtures : fixture_id
+    forecast_scores }|--|| fixtures : fixture_id
     forecasts }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| quote_observations : observation_id
@@ -1013,6 +1018,34 @@ append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
 
 唯一键 `UNIQUE(`business_date`, `fixture_id`)`
 <!-- schema-doc:END:table:forecast_coverage -->
+<!-- schema-doc:BEGIN:table:forecast_scores -->
+#### `forecast_scores`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `fixture_id` | INTEGER | NOT NULL，FK→fixtures.id |
+| `market` | TEXT | NOT NULL |
+| `month_key` | TEXT | NOT NULL |
+| `kickoff_utc` | TEXT | NOT NULL |
+| `competition` | TEXT | NOT NULL |
+| `score_version` | TEXT | NOT NULL |
+| `forecast_id` | INTEGER | NOT NULL |
+| `model_metric` | REAL | — |
+| `model_logloss` | REAL | — |
+| `jc_baseline_metric` | REAL | — |
+| `eu_baseline_metric` | REAL | — |
+| `diff_jc` | REAL | — |
+| `diff_eu` | REAL | — |
+| `pred_prob_outcome` | REAL | — |
+| `outcome` | TEXT | NOT NULL |
+| `hhad_goal_line` | REAL | — |
+| `skip_reason` | TEXT | — |
+| `result_fingerprint` | TEXT | NOT NULL |
+| `scored_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`fixture_id`, `market`, `score_version`)`
+<!-- schema-doc:END:table:forecast_scores -->
 ### llm 域
 
 <!-- schema-doc:BEGIN:table:intel_observations -->

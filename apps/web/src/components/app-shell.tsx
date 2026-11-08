@@ -19,6 +19,7 @@ const PRIMARY_NAV = [
 	{ to: "/validation", label: "验证" },
 	{ to: "/bankroll", label: "资金" },
 	{ to: "/paper-account", label: "纸面账户" },
+	{ to: "/accuracy", label: "准确率" },
 ] as const;
 
 const SECONDARY_NAV = [

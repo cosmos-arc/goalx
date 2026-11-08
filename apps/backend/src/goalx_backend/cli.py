@@ -16,6 +16,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli train-models [--bootstrap N]
     uv run python -m goalx_backend.cli forecast [--date YYYY-MM-DD]
     uv run python -m goalx_backend.cli align-report
+    uv run python -m goalx_backend.cli accuracy-score
     uv run python -m goalx_backend.cli pool-sync
     uv run python -m goalx_backend.cli understat-sync [--seasons 2021 2022 ...]
     uv run python -m goalx_backend.cli xg-compare --seasons 2022 2023 2024 2025 2026
@@ -1466,6 +1467,15 @@ def _cmd_align_report() -> None:
             logger.warning("unmatched: {}", report.unmatched)
 
 
+def _cmd_accuracy_score() -> None:
+    """前瞻准确率评分（auto-paper 票 02）：已结算 ML 覆盖场逐玩法评（幂等）。"""
+    from goalx_backend.evaluation import accuracy  # noqa: PLC0415
+
+    with task_conn() as conn:
+        stats = accuracy.score_settled_fixtures(conn)
+    logger.info("accuracy scores: {}", stats)
+
+
 def _cmd_seed_demo() -> None:
     """写入演示/E2E 种子（拒绝非隔离库；票 36）。"""
     from goalx_backend.data.ingest.demo import seed_demo  # noqa: PLC0415
@@ -1539,6 +1549,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     forecast = sub.add_parser("forecast", help="生成一个业务日的 ML Forecast(票 27)")
     forecast.add_argument("--date", help="业务日 YYYY-MM-DD(默认今天,北京时间)")
     sub.add_parser("align-report", help="hist 队名对齐覆盖率报告(票 25)")
+    sub.add_parser(
+        "accuracy-score",
+        help="前瞻准确率评分(已结算ML覆盖场,幂等,auto-paper票02)",
+    )
     alias = sub.add_parser("set-alias", help="人工覆盖球队别名(票 25)")
     alias.add_argument("team", help="canonical 球队名(中文)")
     alias.add_argument("alias", help="外部别名(如 fd 英文名)")
@@ -2034,6 +2048,7 @@ def main(argv: list[str] | None = None) -> int:
         "train-models": lambda: _cmd_train_models(args),
         "forecast": lambda: _cmd_forecast(args),
         "align-report": _cmd_align_report,
+        "accuracy-score": _cmd_accuracy_score,
         "set-alias": lambda: _cmd_set_alias(args),
         "backtest": lambda: _cmd_backtest(args),
         "research-backfill": _cmd_research_backfill,

@@ -47,7 +47,7 @@ export function dayLabel(isoDate: string, now: number): string {
 	return isoDate.slice(5).replace("-", "月");
 }
 
-/** 路由词典型（IA 命名）：总览/场次/玩法(胜平负·进球·14场任9)/投注/历史/验证/资金/词典/复核/设置。 */
+/** 路由词典型（IA 命名）：总览/场次/玩法(胜平负·进球·14场任9)/投注/历史/验证/资金/纸面账户/准确率/词典/复核/设置。 */
 export type AppRoute =
 	| "/"
 	| "/fixtures"
@@ -60,6 +60,7 @@ export type AppRoute =
 	| "/validation"
 	| "/bankroll"
 	| "/paper-account"
+	| "/accuracy"
 	| "/glossary"
 	| "/review"
 	| "/settings";
