@@ -23,6 +23,10 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.db import atomic
 
+# identity 票 02：align-report 辅线守门阈值——覆盖率低于此值报 degraded
+# （起步 0.95，达标后收紧）
+ALIGNMENT_DEGRADED_COVERAGE = 0.95
+
 # 俱乐部法律形态词元（两侧都剥离，使 "FC Koln"↔"Koln" 等价）
 STRIP_TOKENS = frozenset(
     {
@@ -172,6 +176,11 @@ class AlignmentReport:
         total = sum(comp["total"] for comp in self.per_competition.values())
         matched = sum(comp["matched"] for comp in self.per_competition.values())
         return matched / total if total else 0.0
+
+    @property
+    def status(self) -> str:
+        """覆盖率守门（identity 票 02）：< 阈值 → degraded。"""
+        return "degraded" if self.coverage < ALIGNMENT_DEGRADED_COVERAGE else "ok"
 
 
 def build_alignment_report(conn: sqlite3.Connection) -> AlignmentReport:

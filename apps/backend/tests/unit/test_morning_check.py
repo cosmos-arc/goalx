@@ -163,6 +163,103 @@ def test_check_today_eu_buckets(db: sqlite3.Connection) -> None:
     assert check_today_eu(db, business_date=business_date).status == OK
 
 
+def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
+    """项 16（identity 票 02）：no_mapping>0=红附队名；清零=绿；无账=黄。"""
+    assert (
+        mc.check_alias_coverage(
+            db, business_date=fx_store.beijing_business_date(NOW)
+        ).status
+        == DEGRADED
+    )  # 覆盖账无行
+    business_date = fx_store.beijing_business_date(NOW)
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "谢周三")
+    away = fx_store.upsert_team(db, "普利茅斯")
+    fixture = fx_store.upsert_fixture(db, comp, "2026-11-01T18:00:00+00:00", home, away)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture,
+            kind="jingcai",
+            business_date=business_date,
+            code="周日002",
+        ),
+    )
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, detail, recorded_at)"
+        " VALUES (?, ?, 0, 'no_mapping', 'home=None away=None', ?)",
+        (business_date, fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(
+        db, business_date=fx_store.beijing_business_date(NOW)
+    )
+    assert item.status == FAIL
+    assert "谢周三" in item.detail
+    assert "普利茅斯" in item.detail
+    assert "home=None" in item.detail  # 模型侧断名随单报出
+    db.execute(
+        "UPDATE forecast_coverage SET reason = 'not_fd_league', detail = NULL"
+        " WHERE fixture_id = ?",
+        (fixture,),
+    )
+    db.commit()
+    assert (
+        mc.check_alias_coverage(
+            db, business_date=fx_store.beijing_business_date(NOW)
+        ).status
+        == OK
+    )
+
+
+def test_check_alias_coverage_bad_business_date(db: sqlite3.Connection) -> None:
+    """correctness F1：写侧无校验的业务日坏串只降级本项，不炸整检。"""
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    fixture = fx_store.upsert_fixture(
+        db,
+        comp,
+        "2026-11-07T18:00:00+00:00",
+        fx_store.upsert_team(db, "斯托克城"),
+        fx_store.upsert_team(db, "加的夫城"),
+    )
+    # cli forecast --date 2026-11-7 未校验即入库；'2026-11-7' 文本序还赢当月日期
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, recorded_at)"
+        " VALUES ('2026-11-7', ?, 1, NULL, ?)",
+        (fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(db, business_date="2026-11-07")
+    assert item.status == DEGRADED
+    assert "2026-11-7" in item.detail
+
+
+def test_check_alias_coverage_stale_account(db: sqlite3.Connection) -> None:
+    """陈账的 no_mapping 0 不冒充新鲜：落后 >1 业务日=黄。"""
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    fixture = fx_store.upsert_fixture(
+        db,
+        comp,
+        "2026-10-20T18:00:00+00:00",
+        fx_store.upsert_team(db, "利兹联"),
+        fx_store.upsert_team(db, "米尔顿"),
+    )
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, recorded_at)"
+        " VALUES ('2026-10-20', ?, 1, NULL, ?)",
+        (fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(
+        db, business_date=fx_store.beijing_business_date(NOW)
+    )
+    assert item.status == DEGRADED
+    assert "落后" in item.detail
+
+
 def test_check_bets_observation(db: sqlite3.Connection) -> None:
     """项 9：空库零数不冒充；票 10 起 detail 带 summary 两模式聚合对账面。"""
     assert check_bets(db).status == OK

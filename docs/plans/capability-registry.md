@@ -37,9 +37,11 @@
 | **goals4 四场进球开面（票 10）** | ✓ | — | ◐ | — | PR#224（[95ca9ab](https://github.com/cosmos-arc/goalx/commit/95ca9ab)）同场联合=比分矩阵格聚合（一致性测试钉死）+/markets/pool4+构票贯通；运行验收待真实期次首笔纸面票 |
 | **幂等提交意图指纹（票 09 批三）** | ✓ | — | ✓ | — | PR#234（[ba9831d](https://github.com/cosmos-arc/goalx/commit/ba9831d)）v41 intent_fingerprint：同键同意图 201 回带/异意图 409（域层预检+UNIQUE 竞态两路）；运行验收=新栈 v41 落列（2026-11-04 migrate+readyz 读数）；前端冲突恢复+e2e 响应丢失→改单→另建钉死 |
 | **语料发布边界（台账先行，票 11 批三）** | ✓ | ✓ | ✓ | — | PR#236（[879a077](https://github.com/cosmos-arc/goalx/commit/879a077)）ingest_raw BEGIN IMMEDIATE 先于正式替换（busy 官方字节零触碰/崩溃窗重写收敛两用例）；运行验收=新栈夜班+remat 增量在票 11 代码上首班收班（2026-11-04 夜 completed 请求=50、水位 15:31Z） |
-| serve 栈 + 晨检（19 面注册 + 09:05 十四项） | ✓ | — | ✓ | — | schedules.py；2026-11-04 23:46 换新栈（批三 HEAD 879a077，单树；四组孤儿 schedules 同日清毕）注册 19 面（+gold-rebuild）；晨检 14 项首读 ok=11/degraded=2/fail=1（[run-acceptance.md](report-audit-20261104/run-acceptance.md)）；readyz 真检查（库可读+schema 等值）随票 10 落地 |
+| serve 栈 + 晨检（19 面注册 + 09:05 十六项） | ✓ | — | ✓ | — | schedules.py；2026-11-04 23:46 换新栈（批三 HEAD 879a077，单树；四组孤儿 schedules 同日清毕）注册 19 面（+gold-rebuild）；晨检 14 项首读 ok=11/degraded=2/fail=1（[run-acceptance.md](report-audit-20261104/run-acceptance.md)）；readyz 真检查（库可读+schema 等值）随票 10 落地 |
 | **能力一：决策锚基准冻结（market-baseline-freeze）** | ✓ | — | ◐ | — | auto-paper 票 01（PR#261，[4fccd77](https://github.com/cosmos-arc/goalx/commit/4fccd77)）v42 两表+三锚 deployment（12:33/16:33/21:33）；首锚 2026-11-07 21:33 手动补拍 49 行（28 JC+21 EU）实证；运行验收=换栈后定拍锚积累（11-11） |
 | **能力二：auto-v1 策略落注 + 账户面** | ✓ | — | ◐ | — | 票 03+04（PR#275/#276）选票引擎（prereg 修订①-④）+auto-paper 双 deployment+锚台账 v43+`/api/v1/paper-account` 只读面+晨检第 15 项；运行验收=换栈后首锚真实落注（11-11） |
+| **队名身份机制：srct_en 英文活水 + clubelo 桥解饿** | ✓ | ✓ | ◐ | — | identity 票 01（PR#262，[8a0c115](https://github.com/cosmos-arc/goalx/commit/8a0c115)）raw 重解析零网络供给 source=srct_en（168 条零冲突）+锚源集合追加 srct_en/manual+ADR-0013/CONTEXT 词条；运行验收=换栈后 mapping_sync 常态计数（11-11） |
+| **队名覆盖守门（晨检第 16 项 + align-report 阈值）** | ✓ | — | ◐ | — | identity 票 02：最近业务日 forecast_coverage no_mapping>0 即红附队名（容忍度=0）+覆盖账无行/陈账黄+AlignmentReport.status <0.95 degraded；运行验收=换栈后首个晨检窗红绿读数（11-11） |
 
 ## V1 功能冻结矩阵（2026-11-06 定版，tag v1.0.0）
 
@@ -106,6 +108,7 @@
 
 ## 变更日志
 
+- 2026-11-08：identity 板票 02/03 补两行（srct_en 英文活水+桥 [PR#262]；覆盖守门晨检第 16 项+align-report 0.95 阈值）；srct_en CONTEXT 词条；auto-paper 票 05 已由本板承接关闭（热修档案保留）；晨检 15→16 项。
 - 2026-11-08：auto-paper 票 04 补两行（能力一=决策锚基准冻结[PR#261]；能力二=auto-v1 策略落注+账户面[PR#275/本票]）——运行列 ◐ 待 11-11 换栈后首锚/首班验收；经济列空（红线：盈利唯一主指标在纸面账户层验证）；晨检 14→15 项（+纸面账户观察）。
 - 2026-11-06：V1 发布收口（票 06）——新增"V1 功能冻结矩阵"与"V1 冻结基线
   （实验记录必填字段）两节（tag v1.0.0 定版）；同日书商名展示解禁（用户

@@ -970,7 +970,7 @@ def _cmd_srct_gate(
 
 
 def _cmd_morning_check() -> None:
-    """09:05 晨检代码化（ingest-orchestration 票 01/05）：11 项只读红绿面。"""
+    """09:05 晨检代码化（ingest-orchestration 票 01/05）：16 项只读红绿面。"""
     items = run_morning_check(get_settings())
     for item in items:
         sys.stdout.write(f"[{item.status}] {item.name}: {item.detail}\n")
@@ -1456,7 +1456,12 @@ def _cmd_align_report() -> None:
             logger.info(
                 "{}: {}/{} matched", competition, item["matched"], item["total"]
             )
-        logger.info("overall coverage: {:.1%}", report.coverage)
+        logger.info("overall coverage: {:.1%} ({})", report.coverage, report.status)
+        if report.status == "degraded":
+            logger.warning(
+                "alignment degraded：覆盖率 < {:.0%}（identity 票 02 守门阈值）",
+                team_align.ALIGNMENT_DEGRADED_COVERAGE,
+            )
         if report.unmatched:
             logger.warning("unmatched: {}", report.unmatched)
 
@@ -1937,7 +1942,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "morning-check",
-        help="09:05晨检代码化(ingest-orchestration票01/05;11项只读红绿面,任何fail退出1)",
+        help="09:05晨检代码化(ingest-orchestration票01/05;16项只读红绿面,任何fail退出1)",
     )
     repair_parser = sub.add_parser(
         "repair-sale-status",
