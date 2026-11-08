@@ -2609,6 +2609,11 @@ export interface components {
             prob_source: string;
             /** Share */
             share?: number | null;
+            /**
+             * Share Source
+             * @default none
+             */
+            share_source: string;
             /** Implied Odds */
             implied_odds?: number | null;
             /** Ev */

@@ -6235,6 +6235,11 @@
             ],
             "title": "Share"
           },
+          "share_source": {
+            "type": "string",
+            "title": "Share Source",
+            "default": "none"
+          },
           "implied_odds": {
             "anyOf": [
               {

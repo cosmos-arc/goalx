@@ -1146,6 +1146,7 @@ const poolSelection = ({ code, label, prob, probSource, share }: PoolSelectionAr
 		prob,
 		prob_source: probSource,
 		share,
+		share_source: "measured",
 		implied_odds: odds,
 		ev: Number((prob * odds - 1).toFixed(4)),
 	};
@@ -1237,7 +1238,7 @@ export const poolPeriodDetailFixture = {
 	state: null,
 	shares_captured_at: "2026-09-18T06:30:00Z",
 	caliber:
-		"概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；份额 = 第三方人气分布（公众分布代理，非官方池份额）；估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1，未建模 price impact 与分彩风险。",
+		"概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；份额 = 实测人气（源B 停采前存量）或 JC 官方赔率去水隐含投影（P0，share_source=projected 标注，非实测；官方仅开奖后 published 数据）；估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；EV = 概率 × 估计赔率 − 1（缺份额不可算），份额为投影时 EV 门槛不放宽、读数自带投影不确定性，未建模 price impact 与分彩风险。",
 } satisfies PoolPeriodDetail;
 
 // --- 票 10：goals4 四场进球 mock 面（联合=格聚合可验） ---
@@ -1300,6 +1301,7 @@ export const goals4PeriodDetailFixture = {
 			prob,
 			prob_source: "model",
 			share: null,
+			share_source: "none",
 			implied_odds: null,
 			ev: null,
 		})),

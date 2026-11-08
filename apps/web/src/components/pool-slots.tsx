@@ -116,8 +116,15 @@ export function PoolSlotList({
 											<span className="ml-1 opacity-60">待数据</span>
 										)}
 										{share !== null ? (
-											<span className="ml-1 opacity-70" title="公众份额（人气分布代理）">
-												份{(share * 100).toFixed(0)}%
+											<span
+												className="ml-1 opacity-70"
+												title={
+													data?.share_source === "projected"
+														? "公众份额=JC 赔率隐含投影（P0，非实测人气）"
+														: "公众份额（实测人气分布）"
+												}
+											>
+												份{(share * 100).toFixed(0)}%{data?.share_source === "projected" ? "投" : ""}
 											</span>
 										) : null}
 										{odds !== null ? (

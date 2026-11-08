@@ -8,8 +8,10 @@ pool_sync_runs 全部 SQL（ADR 0008：他包不走裸 SQL）。
 - **抽水折算**：传统足彩返奖率 65%（64% 当期 + 1% 调节基金，规则口径）。
   parimutuel 估计派彩赔率 = 返奖率 / 公众份额 share_i（origin=estimated 行
   来自源B 人气投票**存量语料**——源B 2026-09-25 停采、采集器 ingest/zucai
-  已留档不调；自建份额投影器 P1 待建，research/28 裁决不补外部人气源；
-  公众分布代理，非官方池份额）；
+  已留档不调；research/28 裁决不补外部人气源）。断供后份额走**投影器 P0**
+  （auto-paper 票 07）：实测缺位时以 JC 官方 had 赔率去水隐含概率作公众
+  份额零参数先验（share_source=projected 显式标注，不冒充实测；有实测
+  优先用实测）。P1 训练版（十年官方注数）待滚存轮/池线激活触发；
   EV_i = p_i × (0.65 / share_i) − 1。
 - **price impact**（自己的注额推动赔率）：goalx 个人资金量级下可忽略
   （Isaacs 1953 / Kelly 1956 的竞速彩池结论），接口保留"按注额重算派彩"
@@ -613,7 +615,8 @@ class PoolSelectionView(BaseModel):
     label: str
     prob: float | None = None  # 概率（ttt14: 模型/欧指去水；goals4: 仅模型档位边际）
     prob_source: str  # model | euro_devig | none
-    share: float | None = None  # 公众份额（人气源已下线，恒 None）
+    share: float | None = None  # 公众份额（实测=源B 存量；缺位时投影 P0 填充）
+    share_source: str = "none"  # measured | projected | none（票 07：投影不冒充实测）
     implied_odds: float | None = None  # 估计派彩赔率 = 返奖率/share
     ev: float | None = None  # p × 估计赔率 − 1（缺份额 None）
 
@@ -656,6 +659,35 @@ def match_rows_with_fixture_ids(
     ]
 
 
+def projected_wdl_shares(
+    conn: sqlite3.Connection, fixture_id: int | None, as_of: str
+) -> dict[str, float]:
+    """
+    份额投影器 P0：JC 官方 had 隐含概率 → 公众份额先验（票 07）。
+
+    零参数先验（normalized_implied，naive 去水）；三腿缺一/非正即无投影
+    （不造半套）。goals4 无 JC 对应玩法，不走投影（诚实保持缺位）。
+    PIT 纪律与读面其余部分同口径：as-of 有效观测价（observed_at 未知旧行
+    不进锚，票 01 同语义），历史读不漏未来调盘。
+    """
+    if fixture_id is None:
+        return {}
+    odds_map = fx_store.latest_odds_by_selection_asof(
+        conn, fixture_id, "had", "sporttery", as_of
+    )
+    try:
+        triple = tuple(odds_map[sel][0] for sel in SELECTIONS)
+    except KeyError:
+        return {}
+    if any(odds <= 0 for odds in triple):
+        return {}
+    probs = om.normalized_implied(triple)
+    return {
+        _HAD_TO_WDL[sel]: float(prob)
+        for sel, prob in zip(SELECTIONS, probs, strict=True)
+    }
+
+
 def _wdl_selection_views(
     conn: sqlite3.Connection,
     row: sqlite3.Row,
@@ -672,6 +704,8 @@ def _wdl_selection_views(
     devig = devig_euro_odds(
         (row["euro_odds_h"], row["euro_odds_d"], row["euro_odds_a"])
     )
+    # 实测份额缺位 → 投影 P0（JC had 隐含先验；有实测整场用实测不混装）
+    projected = {} if shares_seq else projected_wdl_shares(conn, fixture_id, now)
     selection_views: list[PoolSelectionView] = []
     for position, (code, label, had) in enumerate(_POOL_TRIPLE):
         if model_prob is not None:
@@ -681,6 +715,15 @@ def _wdl_selection_views(
         else:
             prob, source = None, "none"
         share = shares_seq.get(code)
+        if share is None:
+            share = projected.get(code)
+        share_source = (
+            "measured"
+            if code in shares_seq
+            else "projected"
+            if share is not None
+            else "none"
+        )
         implied = parimutuel_odds(share) if share else None
         ev = (
             parimutuel_ev(prob, share)
@@ -694,6 +737,7 @@ def _wdl_selection_views(
                 prob=round(prob, 4) if prob is not None else None,
                 prob_source=source,
                 share=round(share, 4) if share is not None else None,
+                share_source=share_source,
                 implied_odds=round(implied, 2) if implied else None,
                 ev=round(ev, 4) if ev is not None else None,
             )
@@ -733,6 +777,7 @@ def _goals4_selection_views(
                     prob=round(prob, 4) if prob is not None else None,
                     prob_source=source,
                     share=round(share, 4) if share is not None else None,
+                    share_source="measured" if code in shares_seq else "none",
                     implied_odds=round(implied, 2) if implied else None,
                     ev=round(ev, 4) if ev is not None else None,
                 )
