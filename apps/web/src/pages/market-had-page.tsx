@@ -95,9 +95,9 @@ export function MarketHadPage() {
 		if (combo === null || combo.picks.length === 0 || comboPlans === null || comboSelected === null) {
 			return;
 		}
-		// 全局冻结门（票 03 correctness F2）：别页/前次飞行中本页 isPending
-		// 看不到——腿被 store 门拦下但金额/提示仍会写，整入口直接挡
-		if (basket.createSuggestion.isPending || basket.hadPending) {
+		// 全局冻结门（票 03 correctness F2；票 08 收敛只认 store 布尔）：
+		// 别页/前次飞行中本页 isPending 看不到——整入口直接挡
+		if (basket.hadPending) {
 			return;
 		}
 		basket.setLegs(
@@ -306,7 +306,7 @@ export function MarketHadPage() {
 										type="button"
 										data-testid="market-combo-apply"
 										className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
-										disabled={basket.createSuggestion.isPending}
+										disabled={basket.hadPending}
 										onClick={applyCombo}
 									>
 										一键带入选注篮

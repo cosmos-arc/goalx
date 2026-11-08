@@ -1,20 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { createBet, type TodayFixture } from "../api/goalx";
-import { basketActions, basketStore, requestIdForLegs, useBasket, withFreshRequestIds } from "../lib/basket-store";
+import { basketActions, basketStore, requestIdForLegs, useBasket } from "../lib/basket-store";
+import { submitBasketUnits } from "../lib/basket-submit";
 import { type SlipForm, type SlipFormPlan, slipFormPlan, slipFormSummary } from "../lib/combo-engine";
-import { invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
-import {
-	betTermsLabel,
-	conflictRestoreMessage,
-	currentQuotes,
-	errorText,
-	intentConflict,
-	localTime,
-	SELECTION_LABELS,
-	TABULAR_NUMS,
-} from "../lib/ui";
+import { invalidateLegQuoteQueries } from "../lib/query-keys";
+import { errorText, localTime, SELECTION_LABELS, TABULAR_NUMS } from "../lib/ui";
 import { useNow } from "../lib/use-now";
 import {
 	isPickable,
@@ -39,20 +31,22 @@ import {
 } from "./ui/drawer";
 
 /**
- * had 选注篮共享件（lean-audit 票 04；review-20260928 票 06 收编研究页）：
- * 场次页/胜平负页/单场研究页三页共用。
+ * 篮共享件（lean-audit 票 04；review-20260928 票 06 收编研究页；票 08 续作
+ * 参数化双族）：had 三页（场次/胜平负/研究）用 useHadBasket+BasketBar+
+ * BasketDrawer；进球页用参数化 BasketBarView/BasketDrawerView（腿摘要渲染
+ * 器/testid 前缀/文案注入——goals 手搓 ~140 行复刻删除）。
  * - useHadBasket：篮草稿走全站单源 store（票 06：路由切换/刷新可恢复，
  *   与进球页共用一份草稿）+ 规则前置（同场替换/MAX_LEGS/单固首腿）+
- *   建议仓位输入 + createBet mutation（invalidate ["bets"]）；腿 EV 只读
- *   入篮时概率快照（报告审计票 06：第三参=pick 时快照来源，缺省今日列表
- *   eu_prob，研究页注入共识口径——跨场腿 EV 不随当前页漂移，缺快照=
- *   依据缺失）；
+ *   建议仓位输入 + createBet mutation（提交政策走 lib/basket-submit 共享环）；
+ *   腿 EV 只读入篮时概率快照（报告审计票 06：第三参=pick 时快照来源，缺省
+ *   今日列表 eu_prob，研究页注入共识口径——跨场腿 EV 不随当前页漂移，
+ *   缺快照=依据缺失）；
  * - 票型（report-audit 票 02）：篮内 ≥2 腿时显式票型——两笔单关（逐腿独立
  *   建注）/一注 2串1（整注）；预览与提交同走 ticketPlan 单源，无静默切换；
  * - 提交幂等（票 06）：单关腿=腿 request_id、整注=腿键有序拼接，服务端
  *   同键不落双行——批量一成一败后重试只补发失败腿且不重复已建注；
- * - BasketBar：底部常驻条（已选摘要 + 组合赔率 + 跨玩法草稿提示）；
- * - BasketDrawer：右侧抽屉（腿列表含开球时间/票型/建议仓位/模式/金额/
+ * - BasketBar：had 底部常驻条（已选摘要 + 组合赔率 + 跨玩法草稿提示）；
+ * - BasketDrawer：had 右侧抽屉（腿列表含开球时间/票型/建议仓位/模式/金额/
  *   策略版本/提交）。两页文本差异（空态提示）经 emptyHint prop 注入。
  */
 
@@ -143,9 +137,9 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	 * 换选不占新名额，腿满时可直接切换已选场的方向）；再点同选项=取消；
 	 * 非单固首腿=提示；停售/已开赛=忽略。 */
 	function pick(fixture: PickableFixture, selection: Selection, odds: number) {
-		// 票 05 E15：hadPending=任一页提交飞行中（store 计数制冻结）——不拦
-		// 会编辑被门静默吞掉但 toast 仍报「已替换」（替换提示说谎）
-		if (!isPickable(fixture, now) || createSuggestion.isPending || hadPending) {
+		// 票 05 E15 + 票 08 收敛：预检只认 store 布尔 hadPending（本页 isPending
+		// 是其子集）——不拦会编辑被门静默吞掉但 toast 仍报「已替换」（说谎）
+		if (!isPickable(fixture, now) || hadPending) {
 			return; // 提交中篮内容冻结（票 02：逐腿派发期间所见即所提交）
 		}
 		const existing = legs.find((leg) => leg.fixture_id === fixture.fixture_id);
@@ -178,140 +172,60 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 	}
 
 	function removeLeg(fixtureId: number) {
-		if (createSuggestion.isPending || hadPending) {
-			return; // 同 pick：飞行中锁定编辑（含跨页飞行，票 05 E15）
+		if (hadPending) {
+			return; // 同 pick：飞行中锁定编辑（含跨页飞行，票 05 E15；票 08 收敛只认 store 布尔）
 		}
 		setLegs(legs.filter((leg) => leg.fixture_id !== fixtureId));
 		setMessage(null);
 	}
 
 	const createSuggestion = useMutation({
-		// 票 08：飞行状态机 withFlight 包提交——计数起落/门控/异常解冻
-		// 全在 store implementation（原 onMutate/onSettled 对已删）
-		mutationFn: () =>
-			basketStore.withFlight("had", async () => {
-				const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
-				const legPayload = (leg: Leg) => ({
-					fixture_id: leg.fixture_id,
-					market_code: "had",
-					selection_code: leg.selection,
-					locked_odds: leg.odds,
+		// 票 08：飞行状态机 withFlight 包提交——计数起落/门控/异常解冻全在
+		// store implementation；冲突/价变/失败政策走共享环 submitBasketUnits
+		mutationFn: () => {
+			const strategy = strategyVersion.trim() === "" ? null : strategyVersion.trim();
+			const post = (betLegs: Leg[]) =>
+				createBet({
+					mode,
+					stake: Number(stake),
+					strategy_version: strategy,
+					// 票 06 幂等：腿键稳定（单关=腿键；整注=腿键有序拼接），
+					// 同键重试服务端回带既有注不落双行
+					client_request_id: requestIdForLegs(betLegs),
+					legs: betLegs.map((leg) => ({
+						fixture_id: leg.fixture_id,
+						market_code: "had",
+						selection_code: leg.selection,
+						locked_odds: leg.odds,
+					})),
 				});
-				const post = (betLegs: Leg[]) =>
-					createBet({
-						mode,
-						stake: Number(stake),
-						strategy_version: strategy,
-						// 票 06 幂等：腿键稳定（单关=腿键；整注=腿键有序拼接），
-						// 同键重试服务端回带既有注不落双行
-						client_request_id: requestIdForLegs(betLegs),
-						legs: betLegs.map(legPayload),
-					});
-				// 票型分叉（票 02）：parlay/单腿 = 一注整提（现行路径）；
-				// singles 且 ≥2 腿 = 逐腿独立建注（同一注额），提交即票型，无静默切换
-				if (!(slipForm === "singles" && legs.length >= 2)) {
-					const bet = await post(legs);
-					setMessage(
-						`已建建议 #${bet.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，` +
-							`${betTermsLabel(bet)}）— 去投注页锁定`,
-					);
-					basketActions.replaceHadLegs([]);
-					setBasketOpen(false);
-					invalidateBets(queryClient);
-					return;
-				}
-				const created: number[] = [];
-				const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
-				for (const [index, leg] of legs.entries()) {
-					try {
-						const bet = await post([leg]);
-						created.push(bet.id);
-						labels.push(betTermsLabel(bet));
-					} catch (error) {
-						// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、
-						// 该腿换新键留篮（改单重提不换键=双注反模式；冲突确认后才
-						// 换键），未提交腿不动；新意图待用户再点提交另建
-						const conflict = intentConflict(error);
-						if (conflict !== null) {
-							invalidateBets(queryClient);
-							basketActions.replaceHadLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
-							setMessage(
-								conflictRestoreMessage(`第 ${index + 1} 笔`, conflict) +
-									(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
-							);
-							return;
-						}
-						const quotes = currentQuotes(error);
-						if (quotes !== null && quotes.length > 0) {
-							// 价变（票 04 裁决①）：清篮 + 刷新列表按新价重选——与整注
-							// 路径同流；已建成的注保留账面（消息与列表可见）。
-							// ponytail: MAX_LEGS=2 下清篮无未尝试后缀可丢；扩上限时
-							// 价变腿之后的未提交腿须留篮而非清空（correctness F2）
-							basketActions.replaceHadLegs([]);
-							setBasketOpen(false);
-							if (created.length > 0) {
-								invalidateBets(queryClient);
-							}
-							invalidateLegQuoteQueries(
-								queryClient,
-								legs.map((leg) => leg.fixture_id),
-							);
-							setMessage(
-								`第 ${index + 1} 笔报价已变（${quotes
-									.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
-									.join(
-										"、",
-									)}）——已刷新列表${created.length > 0 ? `，已建 #${created.join("、#")}` : ""}；请按新价重新选注`,
-							);
-							return;
-						}
-						// 非价变失败：已成注保留账面、失败腿留在篮内可重试
-						basketActions.replaceHadLegs(legs.slice(created.length));
-						if (created.length > 0) {
-							invalidateBets(queryClient); // 部分成注也要刷新列表（对账可见）
-						}
-						setMessage(
-							`第 ${index + 1} 笔失败：${errorText(error)}${created.length > 0 ? `（已建 #${created.join("、#")}，失败腿留篮可重试）` : ""}`,
-						);
-						return;
-					}
-				}
-				setMessage(`已建建议 #${created.join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`);
-				basketActions.replaceHadLegs([]);
-				setBasketOpen(false);
-				invalidateBets(queryClient);
-			}),
-		onError: (error) => {
-			// 意图冲突（票 09，整注路径）：同键原提交其实已成功——恢复原结果、
-			// 腿换新键留篮，新意图待用户再点提交另建（不静默清篮冒充成功）
-			const conflict = intentConflict(error);
-			if (conflict !== null) {
-				invalidateBets(queryClient);
-				basketActions.replaceHadLegs(withFreshRequestIds(legs));
-				setMessage(conflictRestoreMessage("", conflict));
-				return;
-			}
-			// 价变（票 04 裁决①）：清篮+刷新场次列表（新价随查询回到页面），
-			// 用户按新价重新选注——旧价不经确认直进成绩的红线在服务器侧
-			const quotes = currentQuotes(error);
-			if (quotes !== null && quotes.length > 0) {
-				basketActions.replaceHadLegs([]);
-				setBasketOpen(false);
-				// 前缀失效今日场次（键形 ["today-fixtures", days]）+ 逐场研究页
-				// 报价查询（票 06）——correctness F1：打错键=不刷新，页面停在
-				// 旧价上确认流死循环
-				invalidateLegQuoteQueries(
-					queryClient,
-					legs.map((leg) => leg.fixture_id),
-				);
-				setMessage(
-					`报价已变（${quotes
-						.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
-						.join("、")}）——已刷新列表，请按新价重新选注`,
-				);
-				return;
-			}
-			setMessage(`建注失败：${errorText(error)}`);
+			// 票型分叉（票 02）=单元划分：singles 且 ≥2 腿=逐腿独立建注（同一
+			// 注额），parlay/单腿=一注整提。提交即票型，无静默切换
+			const singles = slipForm === "singles" && legs.length >= 2;
+			return basketStore.withFlight("had", () =>
+				submitBasketUnits({
+					client: queryClient,
+					units: singles ? legs.map((leg) => [leg]) : [legs],
+					post,
+					successNote: (created, labels) =>
+						singles
+							? `已建建议 #${created.map((bet) => bet.id).join("、#")}（${created.length} 笔单关：${labels.join("、")}）— 去投注页锁定`
+							: `已建建议 #${created[0]?.id}（${legs.length === 1 ? "单关" : `${legs.length}串1`}，${labels[0] ?? ""}）— 去投注页锁定`,
+					failureNote: (error, created, index) =>
+						singles
+							? `第 ${index + 1} 笔失败：${errorText(error)}${created.length > 0 ? `（已建 #${created.map((bet) => bet.id).join("、#")}，失败腿留篮可重试）` : ""}`
+							: `建注失败：${errorText(error)}`,
+					// 整注旧文案无「第 1 笔」前缀（review 修：had 行为不回退）
+					unitLabel: singles ? (index) => `第 ${index + 1} 笔` : () => "",
+					// 前缀失效今日场次（键形 ["today-fixtures", days]）+ 逐场研究页
+					// 报价查询（票 06）——correctness F1：打错键=不刷新，页面停在
+					// 旧价上确认流死循环
+					invalidatePriceSource: invalidateLegQuoteQueries,
+					replaceLegs: basketActions.replaceHadLegs,
+					report: setMessage,
+					closeBasket: () => setBasketOpen(false),
+				}),
+			);
 		},
 	});
 
@@ -346,7 +260,7 @@ export function useHadBasket(now: number, fixtures: TodayFixture[], probabilityA
 /** 抽屉底部三输入（模式/金额/策略版本）：had 篮与进球单关篮共用（票 08 批二），
  * testid 前缀与金额档（标签/最低注）经 prop 注入，e2e 锚不变。
  * disabled=提交飞行冻结（票 01）：三输入皆提交载荷——飞行中改值=重试口径漂移。 */
-export function BasketFormFields({
+function BasketFormFields({
 	testid,
 	state,
 	stakeLabel,
@@ -410,7 +324,7 @@ export type HadBasket = ReturnType<typeof useHadBasket>;
  * 重挂载后本页 isPending=false 看不到别页飞行；同步入口检查兜 disabled
  * 渲染前的连点窗口（检查须在 mutate 前：票 08 起冻结由 mutationFn 内
  * withFlight 置位，放进环里会拦掉本次合法请求）。 */
-export function BasketSubmitButton({
+function BasketSubmitButton({
 	testid,
 	pending,
 	disabled = false,
@@ -510,41 +424,65 @@ export function SlipFormChooser({
 	);
 }
 
-/** 底部常驻选注条：浏览全程可见已选腿摘要 + 组合赔率 + 跨玩法草稿提示。 */
-export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint: string }) {
-	const { legs, combinedOdds, setBasketOpen, slipForm } = basket;
-	const { goalsLegs } = useBasket();
+/**
+ * 参数化底栏（票 08 续作，审计 19 修法）：had/goals 两族共用壳，腿摘要/
+ * 计数上限/跨玩法提示经 props 注入——goals 页 ~140 行手搓底栏/抽屉复刻删除，
+ * 文案与计数语义漂移面收进一处。testid 前缀经 prop（"basket"|"goals-basket"），
+ * e2e 锚不变。
+ */
+export function BasketBarView<L>({
+	testidPrefix,
+	legs,
+	maxLegs,
+	summary,
+	emptyHint,
+	countNote,
+	crossNote,
+	onOpen,
+}: {
+	testidPrefix: string;
+	legs: L[];
+	maxLegs: number;
+	/** 非空时展示（空态回 emptyHint）；组合赔率等后缀由调用方拼好。 */
+	summary: string | null;
+	emptyHint: string;
+	/** 计数旁口径小字（goals：独立单关）。 */
+	countNote?: string;
+	/** 跨玩法草稿提示（另一族篮非空时调用方算好文案）。 */
+	crossNote?: string | null;
+	onOpen: () => void;
+}) {
 	return (
 		<div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
 			<div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
 				<span className="text-sm">
 					选注篮{" "}
-					<span className={`${TABULAR_NUMS} font-medium`} data-testid="basket-count">
-						{legs.length}/{MAX_LEGS}
+					<span className={`${TABULAR_NUMS} font-medium`} data-testid={`${testidPrefix}-count`}>
+						{legs.length}/{maxLegs}
 					</span>
+					{countNote ? <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">{countNote}</span> : null}
 				</span>
-				{legs.length > 0 ? (
+				{legs.length > 0 && summary !== null ? (
 					<span
 						className={`${TABULAR_NUMS} hidden text-xs text-muted-foreground sm:inline`}
-						data-testid="basket-summary"
+						data-testid={`${testidPrefix}-summary`}
 					>
-						{legs.map((leg) => `${leg.match_code} ${SELECTION_LABELS[leg.selection]}`).join(" × ")}
-						{legs.length === MAX_LEGS && slipForm === "parlay" ? ` · 组合赔率 ${combinedOdds.toFixed(2)}` : ""}
+						{summary}
 					</span>
 				) : (
 					<span className="hidden text-xs text-muted-foreground sm:inline">{emptyHint}</span>
 				)}
-				{goalsLegs.length > 0 ? (
-					<span className="hidden text-xs text-info sm:inline" data-testid="basket-cross-goals">
-						另有进球草稿 {goalsLegs.length} 注（进球页提交）
+				{crossNote ? (
+					<span className="hidden text-xs text-info sm:inline" data-testid={`${testidPrefix}-cross`}>
+						{crossNote}
 					</span>
 				) : null}
 				<button
 					type="button"
-					data-testid="basket-open"
+					data-testid={`${testidPrefix}-open`}
 					className="ml-auto rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
 					disabled={legs.length === 0}
-					onClick={() => setBasketOpen(true)}
+					onClick={onOpen}
 				>
 					展开选注篮
 				</button>
@@ -553,7 +491,137 @@ export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint:
 	);
 }
 
-/** 右侧选注篮抽屉：腿列表 + 票型（≥2 腿）+ 建议仓位 + 模式/金额/策略版本 + 提交。 */
+/** 参数化抽屉壳（票 08 续作）：布局/空态/表单三输入/提交钮/底部链接共享，
+ * 腿摘要渲染器与中段（票型/建议仓位）经 props 注入。 */
+export function BasketDrawerView<L>({
+	testidPrefix,
+	open,
+	onOpenChange,
+	title,
+	description,
+	emptyHint,
+	legs,
+	legKey,
+	renderLeg,
+	removeLabel,
+	onRemove,
+	children,
+	form,
+	submit,
+}: {
+	testidPrefix: string;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	title: string;
+	description: ReactNode;
+	emptyHint: string;
+	legs: L[];
+	legKey: (leg: L) => string;
+	/** 腿摘要块（左 span 内容）；倒计时滴答钟由调用方注入渲染器闭包。 */
+	renderLeg: (leg: L) => ReactNode;
+	removeLabel: (leg: L) => string;
+	onRemove: (leg: L) => void;
+	/** 中段（had：票型选择+建议仓位；goals：建议仓位）。 */
+	children?: ReactNode;
+	form: {
+		state: Pick<HadBasket, "mode" | "setMode" | "stake" | "setStake" | "strategyVersion" | "setStrategyVersion">;
+		stakeLabel: string;
+		stakeMin: number;
+		disabled: boolean;
+	};
+	submit: {
+		pending: boolean;
+		disabled: boolean;
+		label: string;
+		onSubmit: () => void;
+	};
+}) {
+	return (
+		<Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
+			<DrawerContent className="mx-0 w-full sm:max-w-md">
+				<DrawerHeader>
+					<DrawerTitle>{title}</DrawerTitle>
+					<DrawerDescription>{description}</DrawerDescription>
+				</DrawerHeader>
+				<div className="flex-1 overflow-y-auto p-4">
+					{legs.length === 0 ? (
+						<p className="text-sm text-muted-foreground">{emptyHint}</p>
+					) : (
+						<ul className="space-y-2">
+							{legs.map((leg) => (
+								<li
+									key={legKey(leg)}
+									className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
+									data-testid={`${testidPrefix}-leg`}
+								>
+									{renderLeg(leg)}
+									<button
+										type="button"
+										className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+										aria-label={removeLabel(leg)}
+										onClick={() => onRemove(leg)}
+									>
+										移除
+									</button>
+								</li>
+							))}
+						</ul>
+					)}
+					{children}
+				</div>
+				<DrawerFooter>
+					<BasketFormFields
+						testid={testidPrefix}
+						state={form.state}
+						stakeLabel={form.stakeLabel}
+						stakeMin={form.stakeMin}
+						disabled={form.disabled}
+					/>
+					<BasketSubmitButton
+						testid={`${testidPrefix}-submit`}
+						pending={submit.pending}
+						disabled={submit.disabled}
+						label={submit.label}
+						onSubmit={submit.onSubmit}
+					/>
+					<div className="flex items-center justify-between text-xs">
+						<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+							继续浏览
+						</DrawerClose>
+						<Link to="/bets" className="text-primary underline-offset-2 hover:underline">
+							去投注页锁定 →
+						</Link>
+					</div>
+				</DrawerFooter>
+			</DrawerContent>
+		</Drawer>
+	);
+}
+
+/** had 底栏（票 08 参数化后的 had 视图）：三页调用点签名不变。 */
+export function BasketBar({ basket, emptyHint }: { basket: HadBasket; emptyHint: string }) {
+	const { legs, combinedOdds, setBasketOpen, slipForm } = basket;
+	const { goalsLegs } = useBasket();
+	return (
+		<BasketBarView
+			testidPrefix="basket"
+			legs={legs}
+			maxLegs={MAX_LEGS}
+			summary={
+				legs.length > 0
+					? `${legs.map((leg) => `${leg.match_code} ${SELECTION_LABELS[leg.selection]}`).join(" × ")}${
+							legs.length === MAX_LEGS && slipForm === "parlay" ? ` · 组合赔率 ${combinedOdds.toFixed(2)}` : ""
+						}`
+					: null
+			}
+			emptyHint={emptyHint}
+			crossNote={goalsLegs.length > 0 ? `另有进球草稿 ${goalsLegs.length} 注（进球页提交）` : null}
+			onOpen={() => setBasketOpen(true)}
+		/>
+	);
+}
+
+/** had 右侧选注篮抽屉：腿列表 + 票型（≥2 腿）+ 建议仓位 + 模式/金额/策略版本 + 提交。 */
 export function BasketDrawer({
 	basket,
 	bankroll,
@@ -586,121 +654,87 @@ export function BasketDrawer({
 	const stakeLabel =
 		legs.length >= 2 && slipForm === "singles" ? "单关金额(¥/注)" : legs.length >= 2 ? "整注金额(¥)" : "金额(¥)";
 	return (
-		<Drawer open={basketOpen} onOpenChange={setBasketOpen} swipeDirection="right">
-			<DrawerContent className="mx-0 w-full sm:max-w-md">
-				<DrawerHeader>
-					<DrawerTitle>选注篮</DrawerTitle>
-					<DrawerDescription>
-						{legs.length === 1 && legs[0]?.single_eligible !== true
-							? "当前腿非单固，只能作为串关腿（提交时服务器校验）"
-							: "单关须单固；2串1 须不同场次且共同可投（提交时服务器校验）"}
-					</DrawerDescription>
-				</DrawerHeader>
-				<div className="flex-1 overflow-y-auto p-4">
-					{legs.length === 0 ? (
-						<p className="text-sm text-muted-foreground">{emptyHint}</p>
-					) : (
-						<ul className="space-y-2">
-							{legs.map((leg) => {
-								const countdown = kickoffInfo(leg.kickoff_utc, now); // 抽屉共享滴答钟（B-2b 补面）
-								return (
-									<li
-										key={leg.fixture_id}
-										className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
-										data-testid="basket-leg"
-									>
-										<span>
-											<span className="text-xs text-muted-foreground">{leg.match_code}</span>
-											<br />
-											{leg.home_team} vs {leg.away_team}
-											<br />
-											<span className="font-medium">{SELECTION_LABELS[leg.selection]}</span>
-											<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
-											{leg.probability != null ? (
-												<span
-													className={`${TABULAR_NUMS} ml-2 text-xs text-muted-foreground`}
-													data-testid="basket-leg-prob"
-													title={`EV 依据=入篮时快照（来源 ${leg.probability.source} · 时点 ${leg.probability.at ?? "未知"}）`}
-												>
-													p={leg.probability.value.toFixed(2)}
-												</span>
-											) : (
-												<span className="ml-2 text-xs text-warning" data-testid="basket-leg-no-prob">
-													EV 依据缺失
-												</span>
-											)}
-											<span
-												className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
-												data-testid="basket-leg-deadline"
-											>
-												开球 {localTime(leg.kickoff_utc)} · {countdown.text}
-											</span>
-										</span>
-										<button
-											type="button"
-											className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-											aria-label={`移除 ${leg.match_code}`}
-											onClick={() => removeLeg(leg.fixture_id)}
-										>
-											移除
-										</button>
-									</li>
-								);
-							})}
-						</ul>
-					)}
-					{/* 票型显式化（票 02）：≥2 腿必须选票型，预览/命中条件并列，无静默切换 */}
-					{legs.length >= 2 ? (
-						<div className="mt-3">
-							<SlipFormChooser
-								form={slipForm}
-								onChoose={chooseSlipForm}
-								singlesPlan={planSingles}
-								parlayPlan={planParlay}
-								testidPrefix="basket"
-								missingEvNote={planMissingEv}
-								disabled={hadPending}
-							/>
-						</div>
-					) : null}
-					{basketAdvice ? (
-						<div className="mt-3">
-							<StakeAdviceNote
-								mode={mode}
-								bankroll={bankroll}
-								ev={basketAdvice.ev}
-								odds={basketAdvice.odds}
-								note={basketAdvice.note}
-								testid="basket-stake-advice"
-							/>
-						</div>
-					) : null}
+		<BasketDrawerView
+			testidPrefix="basket"
+			open={basketOpen}
+			onOpenChange={setBasketOpen}
+			title="选注篮"
+			description={
+				legs.length === 1 && legs[0]?.single_eligible !== true
+					? "当前腿非单固，只能作为串关腿（提交时服务器校验）"
+					: "单关须单固；2串1 须不同场次且共同可投（提交时服务器校验）"
+			}
+			emptyHint={emptyHint}
+			legs={legs}
+			legKey={(leg) => String(leg.fixture_id)}
+			renderLeg={(leg) => {
+				const countdown = kickoffInfo(leg.kickoff_utc, now); // 抽屉共享滴答钟（B-2b 补面）
+				return (
+					<span>
+						<span className="text-xs text-muted-foreground">{leg.match_code}</span>
+						<br />
+						{leg.home_team} vs {leg.away_team}
+						<br />
+						<span className="font-medium">{SELECTION_LABELS[leg.selection]}</span>
+						<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
+						{leg.probability != null ? (
+							<span
+								className={`${TABULAR_NUMS} ml-2 text-xs text-muted-foreground`}
+								data-testid="basket-leg-prob"
+								title={`EV 依据=入篮时快照（来源 ${leg.probability.source} · 时点 ${leg.probability.at ?? "未知"}）`}
+							>
+								p={leg.probability.value.toFixed(2)}
+							</span>
+						) : (
+							<span className="ml-2 text-xs text-warning" data-testid="basket-leg-no-prob">
+								EV 依据缺失
+							</span>
+						)}
+						<span
+							className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
+							data-testid="basket-leg-deadline"
+						>
+							开球 {localTime(leg.kickoff_utc)} · {countdown.text}
+						</span>
+					</span>
+				);
+			}}
+			removeLabel={(leg) => `移除 ${leg.match_code}`}
+			onRemove={(leg) => removeLeg(leg.fixture_id)}
+			form={{ state: basket, stakeLabel, stakeMin: 1, disabled: hadPending || goalsPending }}
+			submit={{
+				pending: hadPending,
+				disabled: legs.length === 0,
+				label: legs.length >= 2 && slipForm === "singles" ? `建 ${legs.length} 笔单关` : "建立建议",
+				onSubmit: () => createSuggestion.mutate(),
+			}}
+		>
+			{/* 票型显式化（票 02）：≥2 腿必须选票型，预览/命中条件并列，无静默切换 */}
+			{legs.length >= 2 ? (
+				<div className="mt-3">
+					<SlipFormChooser
+						form={slipForm}
+						onChoose={chooseSlipForm}
+						singlesPlan={planSingles}
+						parlayPlan={planParlay}
+						testidPrefix="basket"
+						missingEvNote={planMissingEv}
+						disabled={hadPending}
+					/>
 				</div>
-				<DrawerFooter>
-					<BasketFormFields
-						testid="basket"
-						state={basket}
-						stakeLabel={stakeLabel}
-						stakeMin={1}
-						disabled={hadPending || goalsPending}
+			) : null}
+			{basketAdvice ? (
+				<div className="mt-3">
+					<StakeAdviceNote
+						mode={mode}
+						bankroll={bankroll}
+						ev={basketAdvice.ev}
+						odds={basketAdvice.odds}
+						note={basketAdvice.note}
+						testid="basket-stake-advice"
 					/>
-					<BasketSubmitButton
-						testid="basket-submit"
-						pending={hadPending}
-						disabled={legs.length === 0}
-						label={legs.length >= 2 && slipForm === "singles" ? `建 ${legs.length} 笔单关` : "建立建议"}
-						onSubmit={() => createSuggestion.mutate()}
-					/>
-					<div className="flex items-center justify-between text-xs">
-						<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-							继续浏览
-						</DrawerClose>
-						<Link to="/bets" className="text-primary underline-offset-2 hover:underline">
-							去投注页锁定 →
-						</Link>
-					</div>
-				</DrawerFooter>
-			</DrawerContent>
-		</Drawer>
+				</div>
+			) : null}
+		</BasketDrawerView>
 	);
 }
