@@ -1,0 +1,197 @@
+entry_id,ts,ticket,facet,family,slice,window,n_fx,n_sel,metric,value,se,z,p,stage,note
+09-A-F1-德甲-search,2026-11-08T15:58:41,09,A,F1,德甲,search,489,37,ev/gap,0.7411/0.0467,0.4818,1.538,0.06203,all_negative,gap_se=0.0001
+09-A-F1-意甲-search,2026-11-08T15:58:41,09,A,F1,意甲,search,595,49,ev/gap,-0.0506/0.0463,0.2481,-0.204,0.58076,all_negative,gap_se=0.0001
+09-A-F1-法甲-search,2026-11-08T15:58:41,09,A,F1,法甲,search,516,62,ev/gap,0.2678/0.0464,0.3286,0.815,0.20757,all_negative,gap_se=0.0001
+09-A-F1-英冠-search,2026-11-08T15:58:41,09,A,F1,英冠,search,1026,56,ev/gap,-0.1814/0.0465,0.2400,-0.756,0.77504,all_negative,gap_se=0.0001
+09-A-F1-英超-search,2026-11-08T15:58:41,09,A,F1,英超,search,626,54,ev/gap,-0.2904/0.0466,0.2407,-1.206,0.88615,all_negative,gap_se=0.0001
+09-A-F1-荷甲-search,2026-11-08T15:58:41,09,A,F1,荷甲,search,328,34,ev/gap,-0.0403/0.0467,0.3090,-0.130,0.55190,all_negative,gap_se=0.0002
+09-A-F1-葡超-search,2026-11-08T15:58:41,09,A,F1,葡超,search,406,102,ev/gap,-0.3134/0.0469,0.1716,-1.827,0.96611,all_negative,gap_se=0.0001
+09-A-F1-西甲-search,2026-11-08T15:58:41,09,A,F1,西甲,search,602,94,ev/gap,-0.3873/0.0466,0.1844,-2.100,0.98215,all_negative,gap_se=0.0001
+09-A-F2-<20%×主-search,2026-11-08T15:58:41,09,A,F2,<20%×主,search,511,74,ev/gap,-0.0608/0.0179,0.2847,-0.214,0.58456,all_negative,gap_se=0.0017
+09-A-F2-<20%×平-search,2026-11-08T15:58:41,09,A,F2,<20%×平,search,561,5,ev/gap,-1.0000/0.0253,0.0000,nan,,all_negative,gap_se=0.0007
+09-A-F2-<20%×客-search,2026-11-08T15:58:41,09,A,F2,<20%×客,search,1015,117,ev/gap,-0.2765/0.0170,0.2080,-1.329,0.90813,all_negative,gap_se=0.0010
+09-A-F2-20-40%×主-search,2026-11-08T15:58:41,09,A,F2,20-40%×主,search,1774,99,ev/gap,-0.1471/0.0385,0.1593,-0.923,0.82205,all_negative,gap_se=0.0008
+09-A-F2-20-40%×平-search,2026-11-08T15:58:41,09,A,F2,20-40%×平,search,4027,45,ev/gap,0.1493/0.0318,0.2911,0.513,0.30400,all_negative,gap_se=0.0002
+09-A-F2-20-40%×客-search,2026-11-08T15:58:41,09,A,F2,20-40%×客,search,2264,114,ev/gap,-0.0289/0.0428,0.1678,-0.172,0.56827,all_negative,gap_se=0.0007
+09-A-F2-40-60%×主-search,2026-11-08T15:58:41,09,A,F2,40-60%×主,search,1615,18,ev/gap,-0.4472/0.0762,0.2704,-1.654,0.95093,all_negative,gap_se=0.0009
+09-A-F2-40-60%×平-search,2026-11-08T15:58:41,09,A,F2,40-60%×平,search,0,0,ev/gap,nan/nan,nan,nan,,insufficient,gap_se=nan
+09-A-F2-40-60%×客-search,2026-11-08T15:58:41,09,A,F2,40-60%×客,search,952,8,ev/gap,-0.4237/0.0851,0.3832,-1.106,0.86562,all_negative,gap_se=0.0013
+09-A-F2-60%+×主-search,2026-11-08T15:58:41,09,A,F2,60%+×主,search,688,3,ev/gap,1.5267/0.0987,1.3374,1.142,0.12682,all_negative,gap_se=0.0016
+09-A-F2-60%+×平-search,2026-11-08T15:58:41,09,A,F2,60%+×平,search,0,0,ev/gap,nan/nan,nan,nan,,insufficient,gap_se=nan
+09-A-F2-60%+×客-search,2026-11-08T15:58:41,09,A,F2,60%+×客,search,357,5,ev/gap,0.4860/0.0987,0.6805,0.714,0.23756,all_negative,gap_se=0.0027
+09-A-F3-德甲×<20%-search,2026-11-08T15:58:41,09,A,F3,德甲×<20%,search,171,15,ev/gap,1.5367/0.0186,0.9979,1.540,0.06180,insufficient,gap_se=0.0014
+09-A-F3-意甲×<20%-search,2026-11-08T15:58:41,09,A,F3,意甲×<20%,search,245,20,ev/gap,-1.0000/0.0216,0.0000,nan,,all_negative,gap_se=0.0019
+09-A-F3-法甲×<20%-search,2026-11-08T15:58:41,09,A,F3,法甲×<20%,search,167,28,ev/gap,0.4185/0.0165,0.6166,0.679,0.24866,insufficient,gap_se=0.0011
+09-A-F3-英冠×<20%-search,2026-11-08T15:58:41,09,A,F3,英冠×<20%,search,199,16,ev/gap,0.0969/0.0157,0.5922,0.164,0.43503,insufficient,gap_se=0.0008
+09-A-F3-英超×<20%-search,2026-11-08T15:58:41,09,A,F3,英超×<20%,search,241,21,ev/gap,-0.2167/0.0182,0.4302,-0.504,0.69276,all_negative,gap_se=0.0009
+09-A-F3-荷甲×<20%-search,2026-11-08T15:58:41,09,A,F3,荷甲×<20%,search,129,15,ev/gap,-0.6333/0.0230,0.3667,-1.727,0.95794,insufficient,gap_se=0.0037
+09-A-F3-葡超×<20%-search,2026-11-08T15:58:41,09,A,F3,葡超×<20%,search,156,47,ev/gap,-0.6667/0.0142,0.2335,-2.854,0.99784,insufficient,gap_se=0.0026
+09-A-F3-西甲×<20%-search,2026-11-08T15:58:41,09,A,F3,西甲×<20%,search,218,34,ev/gap,-0.3147/0.0220,0.3909,-0.805,0.78961,all_negative,gap_se=0.0031
+09-A-F3-德甲×20-40%-search,2026-11-08T15:58:41,09,A,F3,德甲×20-40%,search,400,20,ev/gap,0.1278/0.0329,0.3986,0.321,0.37428,all_negative,gap_se=0.0008
+09-A-F3-意甲×20-40%-search,2026-11-08T15:58:41,09,A,F3,意甲×20-40%,search,487,26,ev/gap,0.6800/0.0311,0.4264,1.595,0.05540,all_negative,gap_se=0.0007
+09-A-F3-法甲×20-40%-search,2026-11-08T15:58:41,09,A,F3,法甲×20-40%,search,459,31,ev/gap,0.2933/0.0342,0.3537,0.829,0.20346,all_negative,gap_se=0.0007
+09-A-F3-英冠×20-40%-search,2026-11-08T15:58:41,09,A,F3,英冠×20-40%,search,1004,37,ev/gap,-0.3643/0.0353,0.2241,-1.626,0.94800,all_negative,gap_se=0.0004
+09-A-F3-英超×20-40%-search,2026-11-08T15:58:41,09,A,F3,英超×20-40%,search,536,30,ev/gap,-0.2500/0.0330,0.3126,-0.800,0.78810,all_negative,gap_se=0.0007
+09-A-F3-荷甲×20-40%-search,2026-11-08T15:58:41,09,A,F3,荷甲×20-40%,search,255,15,ev/gap,-0.0264/0.0313,0.4372,-0.060,0.52410,all_negative,gap_se=0.0012
+09-A-F3-葡超×20-40%-search,2026-11-08T15:58:41,09,A,F3,葡超×20-40%,search,341,48,ev/gap,0.1235/0.0366,0.2774,0.445,0.32810,all_negative,gap_se=0.0012
+09-A-F3-西甲×20-40%-search,2026-11-08T15:58:41,09,A,F3,西甲×20-40%,search,545,51,ev/gap,-0.4704/0.0333,0.1880,-2.502,0.99383,all_negative,gap_se=0.0008
+09-A-F3-德甲×40-60%-search,2026-11-08T15:58:41,09,A,F3,德甲×40-60%,search,274,1,ev/gap,nan/0.0794,nan,nan,,all_negative,gap_se=0.0021
+09-A-F3-意甲×40-60%-search,2026-11-08T15:58:41,09,A,F3,意甲×40-60%,search,314,1,ev/gap,nan/0.0806,nan,nan,,all_negative,gap_se=0.0017
+09-A-F3-法甲×40-60%-search,2026-11-08T15:58:41,09,A,F3,法甲×40-60%,search,300,2,ev/gap,-1.0000/0.0798,0.0000,nan,,all_negative,gap_se=0.0017
+09-A-F3-英冠×40-60%-search,2026-11-08T15:58:41,09,A,F3,英冠×40-60%,search,621,3,ev/gap,-0.3500/0.0795,0.6500,-0.538,0.70487,all_negative,gap_se=0.0011
+09-A-F3-英超×40-60%-search,2026-11-08T15:58:41,09,A,F3,英超×40-60%,search,365,3,ev/gap,-1.0000/0.0794,0.0000,nan,,all_negative,gap_se=0.0017
+09-A-F3-荷甲×40-60%-search,2026-11-08T15:58:41,09,A,F3,荷甲×40-60%,search,180,2,ev/gap,1.0000/0.0804,2.0000,0.500,0.30854,insufficient,gap_se=0.0031
+09-A-F3-葡超×40-60%-search,2026-11-08T15:58:41,09,A,F3,葡超×40-60%,search,190,6,ev/gap,-0.5567/0.0742,0.4433,-1.256,0.89538,insufficient,gap_se=0.0042
+09-A-F3-西甲×40-60%-search,2026-11-08T15:58:41,09,A,F3,西甲×40-60%,search,323,8,ev/gap,-0.2562/0.0807,0.3647,-0.703,0.75887,all_negative,gap_se=0.0030
+09-A-F3-德甲×60%+-search,2026-11-08T15:58:41,09,A,F3,德甲×60%+,search,138,1,ev/gap,nan/0.1002,nan,nan,,insufficient,gap_se=0.0033
+09-A-F3-意甲×60%+-search,2026-11-08T15:58:41,09,A,F3,意甲×60%+,search,183,2,ev/gap,1.3500/0.0971,0.9500,1.421,0.07765,insufficient,gap_se=0.0034
+09-A-F3-法甲×60%+-search,2026-11-08T15:58:41,09,A,F3,法甲×60%+,search,104,1,ev/gap,nan/0.1013,nan,nan,,insufficient,gap_se=0.0025
+09-A-F3-英冠×60%+-search,2026-11-08T15:58:41,09,A,F3,英冠×60%+,search,88,0,ev/gap,nan/0.1013,nan,nan,,insufficient,gap_se=0.0022
+09-A-F3-英超×60%+-search,2026-11-08T15:58:41,09,A,F3,英超×60%+,search,167,0,ev/gap,nan/0.0968,nan,nan,,insufficient,gap_se=0.0019
+09-A-F3-荷甲×60%+-search,2026-11-08T15:58:41,09,A,F3,荷甲×60%+,search,107,2,ev/gap,2.7900/0.0931,0.7600,3.671,0.00012,insufficient,gap_se=0.0087
+09-A-F3-葡超×60%+-search,2026-11-08T15:58:41,09,A,F3,葡超×60%+,search,117,1,ev/gap,nan/0.1053,nan,nan,,insufficient,gap_se=0.0052
+09-A-F3-西甲×60%+-search,2026-11-08T15:58:41,09,A,F3,西甲×60%+,search,141,1,ev/gap,nan/0.0966,nan,nan,,insufficient,gap_se=0.0025
+09-A-F4-0-9时×<20%-search,2026-11-08T15:58:41,09,A,F4,0-9时×<20%,search,869,153,ev/gap,-0.3107/0.0191,0.1822,-1.705,0.95594,all_negative,gap_se=0.0011
+09-A-F4-15-21时×<20%-search,2026-11-08T15:58:41,09,A,F4,15-21时×<20%,search,124,5,ev/gap,1.0800/0.0190,1.2738,0.848,0.19826,insufficient,gap_se=0.0016
+09-A-F4-21-24时×<20%-search,2026-11-08T15:58:41,09,A,F4,21-24时×<20%,search,533,38,ev/gap,0.0803/0.0183,0.4219,0.190,0.42456,all_negative,gap_se=0.0010
+09-A-F4-0-9时×20-40%-search,2026-11-08T15:58:41,09,A,F4,0-9时×20-40%,search,1999,218,ev/gap,0.0003/0.0330,0.1198,0.002,0.49903,all_negative,gap_se=0.0004
+09-A-F4-15-21时×20-40%-search,2026-11-08T15:58:41,09,A,F4,15-21时×20-40%,search,309,1,ev/gap,nan/0.0339,nan,nan,,all_negative,gap_se=0.0007
+09-A-F4-21-24时×20-40%-search,2026-11-08T15:58:41,09,A,F4,21-24时×20-40%,search,1719,39,ev/gap,-0.3347/0.0345,0.2554,-1.310,0.90497,all_negative,gap_se=0.0003
+09-A-F4-0-9时×40-60%-search,2026-11-08T15:58:41,09,A,F4,0-9时×40-60%,search,1257,20,ev/gap,-0.2720/0.0805,0.2722,-0.999,0.84119,all_negative,gap_se=0.0012
+09-A-F4-15-21时×40-60%-search,2026-11-08T15:58:41,09,A,F4,15-21时×40-60%,search,194,1,ev/gap,nan/0.0790,nan,nan,,insufficient,gap_se=0.0018
+09-A-F4-21-24时×40-60%-search,2026-11-08T15:58:41,09,A,F4,21-24时×40-60%,search,1116,5,ev/gap,-1.0000/0.0783,0.0000,nan,,all_negative,gap_se=0.0009
+09-A-F4-0-9时×60%+-search,2026-11-08T15:58:41,09,A,F4,0-9时×60%+,search,619,7,ev/gap,0.7543/0.0968,0.7103,1.062,0.14414,all_negative,gap_se=0.0022
+09-A-F4-15-21时×60%+-search,2026-11-08T15:58:41,09,A,F4,15-21时×60%+,search,85,0,ev/gap,nan/0.1015,nan,nan,,insufficient,gap_se=0.0018
+09-A-F4-21-24时×60%+-search,2026-11-08T15:58:41,09,A,F4,21-24时×60%+,search,341,1,ev/gap,nan/0.1013,nan,nan,,all_negative,gap_se=0.0015
+09-A-F5-周中×<20%-search,2026-11-08T15:58:41,09,A,F5,周中×<20%,search,556,91,ev/gap,-0.2590/0.0200,0.2437,-1.063,0.85602,all_negative,gap_se=0.0015
+09-A-F5-周末×<20%-search,2026-11-08T15:58:41,09,A,F5,周末×<20%,search,970,105,ev/gap,-0.1437/0.0181,0.2313,-0.621,0.73279,all_negative,gap_se=0.0008
+09-A-F5-周中×20-40%-search,2026-11-08T15:58:41,09,A,F5,周中×20-40%,search,1325,144,ev/gap,0.0042/0.0329,0.1495,0.028,0.48886,all_negative,gap_se=0.0005
+09-A-F5-周末×20-40%-search,2026-11-08T15:58:41,09,A,F5,周末×20-40%,search,2702,114,ev/gap,-0.0997/0.0342,0.1580,-0.631,0.73597,all_negative,gap_se=0.0003
+09-A-F5-周中×40-60%-search,2026-11-08T15:58:41,09,A,F5,周中×40-60%,search,850,16,ev/gap,-0.4775/0.0802,0.2375,-2.010,0.97779,all_negative,gap_se=0.0015
+09-A-F5-周末×40-60%-search,2026-11-08T15:58:41,09,A,F5,周末×40-60%,search,1717,10,ev/gap,-0.3800/0.0791,0.4346,-0.874,0.80906,all_negative,gap_se=0.0008
+09-A-F5-周中×60%+-search,2026-11-08T15:58:41,09,A,F5,周中×60%+,search,391,6,ev/gap,0.2883/0.0961,0.6344,0.455,0.32472,all_negative,gap_se=0.0027
+09-A-F5-周末×60%+-search,2026-11-08T15:58:41,09,A,F5,周末×60%+,search,654,2,ev/gap,2.6400/0.1002,0.9100,2.901,0.00186,all_negative,gap_se=0.0015
+09-A-F6-Pin松×<20%-search,2026-11-08T15:58:41,09,A,F6,Pin松×<20%,search,413,60,ev/gap,-0.1108/0.0189,0.2999,-0.370,0.64413,all_negative,gap_se=0.0018
+09-A-F6-Pin紧×<20%-search,2026-11-08T15:58:41,09,A,F6,Pin紧×<20%,search,688,69,ev/gap,-0.6636/0.0198,0.1964,-3.378,0.99964,all_negative,gap_se=0.0010
+09-A-F6-≈×<20%-search,2026-11-08T15:58:41,09,A,F6,≈×<20%,search,423,67,ev/gap,0.1909/0.0172,0.3478,0.549,0.29156,all_negative,gap_se=0.0011
+09-A-F6-缺psc×<20%-search,2026-11-08T15:58:41,09,A,F6,缺psc×<20%,search,2,0,ev/gap,nan/0.0164,nan,nan,,insufficient,gap_se=0.0130
+09-A-F6-Pin松×20-40%-search,2026-11-08T15:58:41,09,A,F6,Pin松×20-40%,search,1390,95,ev/gap,-0.2283/0.0332,0.1671,-1.366,0.91409,all_negative,gap_se=0.0005
+09-A-F6-Pin紧×20-40%-search,2026-11-08T15:58:41,09,A,F6,Pin紧×20-40%,search,1282,55,ev/gap,-0.1240/0.0341,0.2189,-0.566,0.71437,all_negative,gap_se=0.0004
+09-A-F6-≈×20-40%-search,2026-11-08T15:58:41,09,A,F6,≈×20-40%,search,1354,108,ev/gap,0.1733/0.0339,0.1833,0.945,0.17226,all_negative,gap_se=0.0005
+09-A-F6-缺psc×20-40%-search,2026-11-08T15:58:41,09,A,F6,缺psc×20-40%,search,1,0,ev/gap,nan/nan,nan,nan,,insufficient,gap_se=nan
+09-A-F6-Pin松×40-60%-search,2026-11-08T15:58:41,09,A,F6,Pin松×40-60%,search,818,6,ev/gap,-0.2317/0.0832,0.4945,-0.468,0.68028,all_negative,gap_se=0.0014
+09-A-F6-Pin紧×40-60%-search,2026-11-08T15:58:41,09,A,F6,Pin紧×40-60%,search,891,10,ev/gap,-0.6250/0.0750,0.2500,-2.500,0.99379,all_negative,gap_se=0.0011
+09-A-F6-≈×40-60%-search,2026-11-08T15:58:41,09,A,F6,≈×40-60%,search,858,10,ev/gap,-0.3800/0.0805,0.4346,-0.874,0.80906,all_negative,gap_se=0.0013
+09-A-F6-缺psc×40-60%-search,2026-11-08T15:58:41,09,A,F6,缺psc×40-60%,search,0,0,ev/gap,nan/nan,nan,nan,,insufficient,gap_se=nan
+09-A-F6-Pin松×60%+-search,2026-11-08T15:58:41,09,A,F6,Pin松×60%+,search,273,2,ev/gap,0.6500/0.1016,1.6500,0.394,0.34681,all_negative,gap_se=0.0030
+09-A-F6-Pin紧×60%+-search,2026-11-08T15:58:41,09,A,F6,Pin紧×60%+,search,486,1,ev/gap,nan/0.0963,nan,nan,,all_negative,gap_se=0.0019
+09-A-F6-≈×60%+-search,2026-11-08T15:58:41,09,A,F6,≈×60%+,search,284,5,ev/gap,0.4320/0.0999,0.6458,0.669,0.25176,all_negative,gap_se=0.0028
+09-A-F6-缺psc×60%+-search,2026-11-08T15:58:41,09,A,F6,缺psc×60%+,search,2,0,ev/gap,nan/0.1023,nan,nan,,insufficient,gap_se=0.0285
+09-A-F7-≤-2×让方-search,2026-11-08T15:58:41,09,A,F7,≤-2×让方,search,26,0,gap,-0.0023,0.0045,-0.520,,structure_only,EV面未搜索(push语义)
+09-A-F7-≤-2×受让方-search,2026-11-08T15:58:41,09,A,F7,≤-2×受让方,search,26,0,gap,0.0023,0.0045,0.520,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×让方-search,2026-11-08T15:58:41,09,A,F7,-1×让方,search,282,0,gap,0.0117,0.0020,5.800,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×受让方-search,2026-11-08T15:58:41,09,A,F7,-1×受让方,search,282,0,gap,-0.0117,0.0020,-5.800,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×让方-search,2026-11-08T15:58:41,09,A,F7,+1×让方,search,182,0,gap,-0.0165,0.0022,-7.498,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×受让方-search,2026-11-08T15:58:41,09,A,F7,+1×受让方,search,182,0,gap,0.0165,0.0022,7.498,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×让方-search,2026-11-08T15:58:41,09,A,F7,≥+2×让方,search,11,0,gap,-0.0002,0.0063,-0.034,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×受让方-search,2026-11-08T15:58:41,09,A,F7,≥+2×受让方,search,11,0,gap,0.0002,0.0063,0.034,,structure_only,EV面未搜索(push语义)
+09-A-F7-≤-2×让方-validation,2026-11-08T15:58:41,09,A,F7,≤-2×让方,validation,21,0,gap,-0.0086,0.0043,-1.976,,structure_only,EV面未搜索(push语义)
+09-A-F7-≤-2×受让方-validation,2026-11-08T15:58:41,09,A,F7,≤-2×受让方,validation,21,0,gap,0.0086,0.0043,1.976,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×让方-validation,2026-11-08T15:58:41,09,A,F7,-1×让方,validation,186,0,gap,0.0083,0.0018,4.550,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×受让方-validation,2026-11-08T15:58:41,09,A,F7,-1×受让方,validation,186,0,gap,-0.0083,0.0018,-4.550,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×让方-validation,2026-11-08T15:58:41,09,A,F7,+1×让方,validation,94,0,gap,-0.0117,0.0027,-4.276,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×受让方-validation,2026-11-08T15:58:41,09,A,F7,+1×受让方,validation,94,0,gap,0.0117,0.0027,4.276,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×让方-validation,2026-11-08T15:58:41,09,A,F7,≥+2×让方,validation,10,0,gap,0.0043,0.0098,0.440,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×受让方-validation,2026-11-08T15:58:41,09,A,F7,≥+2×受让方,validation,10,0,gap,-0.0043,0.0098,-0.440,,structure_only,EV面未搜索(push语义)
+09-A-F7-≤-2×让方-confirmation,2026-11-08T15:58:41,09,A,F7,≤-2×让方,confirmation,28,0,gap,-0.0037,0.0049,-0.758,,structure_only,EV面未搜索(push语义)
+09-A-F7-≤-2×受让方-confirmation,2026-11-08T15:58:41,09,A,F7,≤-2×受让方,confirmation,28,0,gap,0.0037,0.0049,0.758,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×让方-confirmation,2026-11-08T15:58:41,09,A,F7,-1×让方,confirmation,230,0,gap,0.0090,0.0019,4.654,,structure_only,EV面未搜索(push语义)
+09-A-F7--1×受让方-confirmation,2026-11-08T15:58:41,09,A,F7,-1×受让方,confirmation,230,0,gap,-0.0090,0.0019,-4.654,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×让方-confirmation,2026-11-08T15:58:41,09,A,F7,+1×让方,confirmation,123,0,gap,-0.0126,0.0020,-6.188,,structure_only,EV面未搜索(push语义)
+09-A-F7-+1×受让方-confirmation,2026-11-08T15:58:41,09,A,F7,+1×受让方,confirmation,123,0,gap,0.0126,0.0020,6.188,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×让方-confirmation,2026-11-08T15:58:41,09,A,F7,≥+2×让方,confirmation,10,0,gap,-0.0046,0.0082,-0.565,,structure_only,EV面未搜索(push语义)
+09-A-F7-≥+2×受让方-confirmation,2026-11-08T15:58:41,09,A,F7,≥+2×受让方,confirmation,10,0,gap,0.0046,0.0082,0.565,,structure_only,EV面未搜索(push语义)
+09-A-F8-over-search,2026-11-08T15:58:44,09,A,F8,over,search,9964,2,ev/gap,-1.0000/0.0198,0.0000,nan,,all_negative,gap_se=0.0003
+09-A-F8-under-search,2026-11-08T15:58:44,09,A,F8,under,search,9964,62,ev/gap,-0.2172/-0.0198,0.1717,-1.265,0.89709,all_negative,gap_se=0.0003
+09-A-F8-德甲×over-search,2026-11-08T15:58:44,09,A,F8,德甲×over,search,870,0,ev/gap,nan/0.0290,nan,nan,,all_negative,gap_se=0.0009
+09-A-F8-德甲×under-search,2026-11-08T15:58:44,09,A,F8,德甲×under,search,870,8,ev/gap,0.1958/-0.0290,0.7118,0.275,0.39160,all_negative,gap_se=0.0009
+09-A-F8-意甲×over-search,2026-11-08T15:58:44,09,A,F8,意甲×over,search,1300,0,ev/gap,nan/0.0234,nan,nan,,all_negative,gap_se=0.0008
+09-A-F8-意甲×under-search,2026-11-08T15:58:44,09,A,F8,意甲×under,search,1300,12,ev/gap,-0.6333/-0.0234,0.2478,-2.556,0.99471,all_negative,gap_se=0.0008
+09-A-F8-法甲×over-search,2026-11-08T15:58:44,09,A,F8,法甲×over,search,1145,0,ev/gap,nan/0.0167,nan,nan,,all_negative,gap_se=0.0008
+09-A-F8-法甲×under-search,2026-11-08T15:58:44,09,A,F8,法甲×under,search,1145,7,ev/gap,-0.3071/-0.0167,0.3310,-0.928,0.82329,all_negative,gap_se=0.0008
+09-A-F8-苏超×over-search,2026-11-08T15:58:44,09,A,F8,苏超×over,search,478,0,ev/gap,nan/0.0158,nan,nan,,all_negative,gap_se=0.0012
+09-A-F8-苏超×under-search,2026-11-08T15:58:44,09,A,F8,苏超×under,search,478,0,ev/gap,nan/-0.0158,nan,nan,,all_negative,gap_se=0.0012
+09-A-F8-英冠×over-search,2026-11-08T15:58:44,09,A,F8,英冠×over,search,2314,0,ev/gap,nan/0.0105,nan,nan,,all_negative,gap_se=0.0005
+09-A-F8-英冠×under-search,2026-11-08T15:58:44,09,A,F8,英冠×under,search,2314,4,ev/gap,0.0083/-0.0105,0.3497,0.024,0.49049,all_negative,gap_se=0.0005
+09-A-F8-英超×over-search,2026-11-08T15:58:44,09,A,F8,英超×over,search,1308,0,ev/gap,nan/0.0257,nan,nan,,all_negative,gap_se=0.0008
+09-A-F8-英超×under-search,2026-11-08T15:58:44,09,A,F8,英超×under,search,1308,9,ev/gap,-0.3444/-0.0257,0.3390,-1.016,0.84522,all_negative,gap_se=0.0008
+09-A-F8-荷甲×over-search,2026-11-08T15:58:44,09,A,F8,荷甲×over,search,578,0,ev/gap,nan/0.0311,nan,nan,,all_negative,gap_se=0.0011
+09-A-F8-荷甲×under-search,2026-11-08T15:58:44,09,A,F8,荷甲×under,search,578,8,ev/gap,0.8521/-0.0311,0.8293,1.027,0.15210,all_negative,gap_se=0.0011
+09-A-F8-葡超×over-search,2026-11-08T15:58:44,09,A,F8,葡超×over,search,796,1,ev/gap,nan/0.0191,nan,nan,,all_negative,gap_se=0.0011
+09-A-F8-葡超×under-search,2026-11-08T15:58:44,09,A,F8,葡超×under,search,796,7,ev/gap,-0.4857/-0.0191,0.3320,-1.463,0.92824,all_negative,gap_se=0.0011
+09-A-F8-西甲×over-search,2026-11-08T15:58:44,09,A,F8,西甲×over,search,1175,1,ev/gap,nan/0.0202,nan,nan,,all_negative,gap_se=0.0009
+09-A-F8-西甲×under-search,2026-11-08T15:58:44,09,A,F8,西甲×under,search,1175,7,ev/gap,-0.8048/-0.0202,0.1952,-4.122,0.99998,all_negative,gap_se=0.0009
+09-A-F8-over-validation,2026-11-08T15:58:44,09,A,F8,over,validation,1796,3,ev/gap,-1.0000/0.0225,0.0000,nan,,all_negative,gap_se=0.0007
+09-A-F8-under-validation,2026-11-08T15:58:44,09,A,F8,under,validation,1796,43,ev/gap,-0.3078/-0.0225,0.1365,-2.254,0.98791,all_negative,gap_se=0.0007
+09-A-F8-德甲×over-validation,2026-11-08T15:58:44,09,A,F8,德甲×over,validation,125,0,ev/gap,nan/0.0370,nan,nan,,all_negative,gap_se=0.0022
+09-A-F8-德甲×under-validation,2026-11-08T15:58:44,09,A,F8,德甲×under,validation,125,4,ev/gap,0.2000/-0.0370,0.4474,0.447,0.32742,all_negative,gap_se=0.0022
+09-A-F8-意甲×over-validation,2026-11-08T15:58:44,09,A,F8,意甲×over,validation,357,3,ev/gap,-1.0000/0.0172,0.0000,nan,,all_negative,gap_se=0.0017
+09-A-F8-意甲×under-validation,2026-11-08T15:58:44,09,A,F8,意甲×under,validation,357,7,ev/gap,-0.2452/-0.0172,0.3710,-0.661,0.74569,all_negative,gap_se=0.0017
+09-A-F8-法甲×over-validation,2026-11-08T15:58:44,09,A,F8,法甲×over,validation,192,0,ev/gap,nan/0.0256,nan,nan,,all_negative,gap_se=0.0022
+09-A-F8-法甲×under-validation,2026-11-08T15:58:44,09,A,F8,法甲×under,validation,192,5,ev/gap,-0.2933/-0.0256,0.4509,-0.651,0.74235,all_negative,gap_se=0.0022
+09-A-F8-英冠×over-validation,2026-11-08T15:58:44,09,A,F8,英冠×over,validation,326,0,ev/gap,nan/0.0142,nan,nan,,all_negative,gap_se=0.0014
+09-A-F8-英冠×under-validation,2026-11-08T15:58:44,09,A,F8,英冠×under,validation,326,5,ev/gap,-1.0000/-0.0142,0.0000,nan,,all_negative,gap_se=0.0014
+09-A-F8-英超×over-validation,2026-11-08T15:58:44,09,A,F8,英超×over,validation,343,0,ev/gap,nan/0.0285,nan,nan,,all_negative,gap_se=0.0016
+09-A-F8-英超×under-validation,2026-11-08T15:58:44,09,A,F8,英超×under,validation,343,11,ev/gap,-0.2409/-0.0285,0.2663,-0.905,0.81721,all_negative,gap_se=0.0016
+09-A-F8-荷甲×over-validation,2026-11-08T15:58:44,09,A,F8,荷甲×over,validation,78,0,ev/gap,nan/0.0326,nan,nan,,all_negative,gap_se=0.0030
+09-A-F8-荷甲×under-validation,2026-11-08T15:58:44,09,A,F8,荷甲×under,validation,78,3,ev/gap,-1.0000/-0.0326,0.0000,nan,,all_negative,gap_se=0.0030
+09-A-F8-葡超×over-validation,2026-11-08T15:58:44,09,A,F8,葡超×over,validation,134,0,ev/gap,nan/0.0183,nan,nan,,all_negative,gap_se=0.0028
+09-A-F8-葡超×under-validation,2026-11-08T15:58:44,09,A,F8,葡超×under,validation,134,2,ev/gap,1.0167/-0.0183,0.0167,61.000,0.00000,all_negative,gap_se=0.0028
+09-A-F8-西甲×over-validation,2026-11-08T15:58:44,09,A,F8,西甲×over,validation,241,0,ev/gap,nan/0.0220,nan,nan,,all_negative,gap_se=0.0020
+09-A-F8-西甲×under-validation,2026-11-08T15:58:44,09,A,F8,西甲×under,validation,241,6,ev/gap,-0.3722/-0.0220,0.4137,-0.900,0.81587,all_negative,gap_se=0.0020
+09-A-F8-over-confirmation,2026-11-08T15:58:44,09,A,F8,over,confirmation,2162,5,ev/gap,-0.2400/0.0275,0.7600,-0.316,0.62392,all_negative,gap_se=0.0007
+09-A-F8-under-confirmation,2026-11-08T15:58:44,09,A,F8,under,confirmation,2162,86,ev/gap,-0.2442/-0.0275,0.1367,-1.787,0.96300,all_negative,gap_se=0.0007
+09-A-F8-德甲×over-confirmation,2026-11-08T15:58:44,09,A,F8,德甲×over,confirmation,196,1,ev/gap,nan/0.0398,nan,nan,,all_negative,gap_se=0.0023
+09-A-F8-德甲×under-confirmation,2026-11-08T15:58:44,09,A,F8,德甲×under,confirmation,196,12,ev/gap,-0.6347/-0.0398,0.1909,-3.324,0.99956,all_negative,gap_se=0.0023
+09-A-F8-意甲×over-confirmation,2026-11-08T15:58:44,09,A,F8,意甲×over,confirmation,463,2,ev/gap,0.9000/0.0161,1.9000,0.474,0.31786,all_negative,gap_se=0.0014
+09-A-F8-意甲×under-confirmation,2026-11-08T15:58:44,09,A,F8,意甲×under,confirmation,463,7,ev/gap,-0.4524/-0.0161,0.2586,-1.750,0.95990,all_negative,gap_se=0.0014
+09-A-F8-法甲×over-confirmation,2026-11-08T15:58:44,09,A,F8,法甲×over,confirmation,241,0,ev/gap,nan/0.0378,nan,nan,,all_negative,gap_se=0.0022
+09-A-F8-法甲×under-confirmation,2026-11-08T15:58:44,09,A,F8,法甲×under,confirmation,241,13,ev/gap,0.1590/-0.0378,0.5397,0.295,0.38417,all_negative,gap_se=0.0022
+09-A-F8-英冠×over-confirmation,2026-11-08T15:58:44,09,A,F8,英冠×over,confirmation,308,0,ev/gap,nan/0.0195,nan,nan,,all_negative,gap_se=0.0016
+09-A-F8-英冠×under-confirmation,2026-11-08T15:58:44,09,A,F8,英冠×under,confirmation,308,2,ev/gap,-0.3000/-0.0195,0.7000,-0.429,0.66588,all_negative,gap_se=0.0016
+09-A-F8-英超×over-confirmation,2026-11-08T15:58:44,09,A,F8,英超×over,confirmation,386,0,ev/gap,nan/0.0392,nan,nan,,all_negative,gap_se=0.0016
+09-A-F8-英超×under-confirmation,2026-11-08T15:58:44,09,A,F8,英超×under,confirmation,386,27,ev/gap,-0.3247/-0.0392,0.1701,-1.909,0.97186,all_negative,gap_se=0.0016
+09-A-F8-荷甲×over-confirmation,2026-11-08T15:58:44,09,A,F8,荷甲×over,confirmation,112,0,ev/gap,nan/0.0394,nan,nan,,all_negative,gap_se=0.0031
+09-A-F8-荷甲×under-confirmation,2026-11-08T15:58:44,09,A,F8,荷甲×under,confirmation,112,8,ev/gap,-0.2583/-0.0394,0.3913,-0.660,0.74543,all_negative,gap_se=0.0031
+09-A-F8-葡超×over-confirmation,2026-11-08T15:58:44,09,A,F8,葡超×over,confirmation,124,1,ev/gap,nan/0.0213,nan,nan,,all_negative,gap_se=0.0035
+09-A-F8-葡超×under-confirmation,2026-11-08T15:58:44,09,A,F8,葡超×under,confirmation,124,4,ev/gap,-0.3042/-0.0213,0.4035,-0.754,0.77453,all_negative,gap_se=0.0035
+09-A-F8-西甲×over-confirmation,2026-11-08T15:58:44,09,A,F8,西甲×over,confirmation,332,1,ev/gap,nan/0.0205,nan,nan,,all_negative,gap_se=0.0021
+09-A-F8-西甲×under-confirmation,2026-11-08T15:58:44,09,A,F8,西甲×under,confirmation,332,13,ev/gap,0.0282/-0.0205,0.5446,0.052,0.47935,all_negative,gap_se=0.0021
+10-B-B1-6h×1pp-search,2026-11-08T16:01:44,10,B,B1,6h×1pp,search,10461,64,ev,-0.5115,0.1641,-3.117,0.99909,all_negative,T=ko-2h PIT Pinnacle
+10-B-B1-6h×2pp-search,2026-11-08T16:01:44,10,B,B1,6h×2pp,search,10461,25,ev,-0.3996,0.2590,-1.543,0.93859,all_negative,T=ko-2h PIT Pinnacle
+10-B-B1-24h×1pp-search,2026-11-08T16:01:44,10,B,B1,24h×1pp,search,10429,37,ev,-0.1284,0.3296,-0.390,0.65157,all_negative,T=ko-2h PIT Pinnacle
+10-B-B1-24h×2pp-search,2026-11-08T16:01:44,10,B,B1,24h×2pp,search,10429,20,ev,0.4011,0.5587,0.718,0.23641,all_negative,T=ko-2h PIT Pinnacle
+10-B-B2-顺升-search,2026-11-08T16:01:44,10,B,B2,顺升,search,10071,155,ev,-0.0410,0.1561,-0.263,0.60353,all_negative,T=ko-2h PIT Pinnacle
+10-B-B2-顺降-search,2026-11-08T16:01:44,10,B,B2,顺降,search,10071,22,ev,-0.1741,0.3937,-0.442,0.67082,all_negative,T=ko-2h PIT Pinnacle
+10-B-B3-<6h-search,2026-11-08T16:01:44,10,B,B3,<6h,search,7684,351,ev,0.1274,0.1374,0.928,0.17682,all_negative,T=ko-2h PIT Pinnacle
+10-B-B3-6-12h-search,2026-11-08T16:01:44,10,B,B3,6-12h,search,1424,65,ev,0.1362,0.3152,0.432,0.33291,all_negative,T=ko-2h PIT Pinnacle
+10-B-B3->12h-search,2026-11-08T16:01:44,10,B,B3,>12h,search,1358,56,ev,-0.3084,0.1789,-1.724,0.95761,all_negative,T=ko-2h PIT Pinnacle
+10-B-B4-慢联赛带-search,2026-11-08T16:01:44,10,B,B4,慢联赛带,search,2466,5,ev,-1.0000,0.0000,nan,,all_negative,T=ko-2h PIT Pinnacle
+10-B-B4-快联赛带-search,2026-11-08T16:01:44,10,B,B4,快联赛带,search,7963,32,ev,0.0219,0.3802,0.058,0.47704,all_negative,T=ko-2h PIT Pinnacle
+10-C-C1-Elo低-search,2026-11-08T16:01:44,10,C,C1,Elo低,search,3454,163,ev,-0.1312,0.1736,-0.756,0.77520,all_negative,T=ko-2h PIT Pinnacle
+10-C-C1-≈-search,2026-11-08T16:01:44,10,C,C1,≈,search,3454,145,ev,0.4645,0.2479,1.874,0.03048,all_negative,T=ko-2h PIT Pinnacle
+10-C-C1-Elo高-search,2026-11-08T16:01:44,10,C,C1,Elo高,search,3558,164,ev,-0.0412,0.1715,-0.240,0.59484,all_negative,T=ko-2h PIT Pinnacle
+10-C-C2-≤3天-search,2026-11-08T16:01:44,10,C,C2,≤3天,search,1162,37,ev,0.1561,0.4720,0.331,0.37041,all_negative,T=ko-2h PIT Pinnacle
+10-C-C2-4-6天-search,2026-11-08T16:01:44,10,C,C2,4-6天,search,3489,177,ev,-0.1806,0.1482,-1.219,0.88856,all_negative,T=ko-2h PIT Pinnacle
+10-C-C2-≥7天-search,2026-11-08T16:01:44,10,C,C2,≥7天,search,5488,238,ev,0.1880,0.1645,1.143,0.12659,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-德甲-search,2026-11-08T16:01:44,10,C,C3,德甲,search,1099,38,ev,0.3623,0.4547,0.797,0.21282,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-意甲-search,2026-11-08T16:01:44,10,C,C3,意甲,search,1305,40,ev,0.1836,0.3612,0.508,0.30569,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-法甲-search,2026-11-08T16:01:44,10,C,C3,法甲,search,1210,88,ev,0.1401,0.2721,0.515,0.30328,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-苏超-search,2026-11-08T16:01:44,10,C,C3,苏超,search,360,22,ev,-0.4023,0.4160,-0.967,0.83321,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-英冠-search,2026-11-08T16:01:44,10,C,C3,英冠,search,2120,38,ev,-0.4518,0.2104,-2.147,0.98411,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-英超-search,2026-11-08T16:01:44,10,C,C3,英超,search,1358,52,ev,0.1087,0.4183,0.260,0.39753,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-荷甲-search,2026-11-08T16:01:44,10,C,C3,荷甲,search,802,28,ev,1.2352,0.5742,2.151,0.01573,candidate,T=ko-2h PIT Pinnacle
+10-C-C3-葡超-search,2026-11-08T16:01:44,10,C,C3,葡超,search,892,83,ev,-0.2901,0.2049,-1.416,0.92158,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-西甲-search,2026-11-08T16:01:44,10,C,C3,西甲,search,1320,83,ev,0.1741,0.2943,0.592,0.27705,all_negative,T=ko-2h PIT Pinnacle
+10-C-C3-荷甲-validation,2026-11-08T16:01:44,10,C,C3,荷甲,validation,156,4,ev,-1.0000,0.0000,nan,,dead,
+11-D-closeout-special,2026-11-08T16:10:00,11,D,-,JC未调价∧锚已动子集,n/a,8,8,gap/ev,0.0898/-0.5738,0.0100,nan,,refuted_by_prerequisite,H6先行refuted(票08)→按票文条款关闭;探查n=8描述性;零新增LLM成本
