@@ -1085,6 +1085,28 @@
         }
       }
     },
+    "/api/v1/paper-account": {
+      "get": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "纸面账户 P&L 面（只读聚合）",
+        "description": "auto-paper 票 04：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列；\n\nEV 实现差（实现 ROI vs 决策 EV 均值）为主指标；累计注数<200 时\nsample_sufficient=false（前端挂「样本不足，不判盈亏」横幅）；\nauto-v1 与人工纸面分列；税后=tax_on_prize 逐注奖金口径。",
+        "operationId": "paper_account_api_v1_paper_account_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperAccountView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pool/periods": {
       "get": {
         "tags": [
@@ -3731,6 +3753,25 @@
         "title": "CostSummaryView",
         "description": "期间成本摘要(金额与 credits 分列；仅统计已记账成本)。"
       },
+      "CurvePointView": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "value"
+        ],
+        "title": "CurvePointView",
+        "description": "累计曲线一点（结算日 → 账户现值）。"
+      },
       "DepositCreatedView": {
         "properties": {
           "event": {
@@ -5641,6 +5682,100 @@
         "title": "PairedFusedVsMl",
         "description": "同场双轨配对统计：fused vs ml 的 RPS 对照 + DM。"
       },
+      "PaperAccountView": {
+        "properties": {
+          "initial_bankroll": {
+            "type": "number",
+            "title": "Initial Bankroll"
+          },
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyFaceView"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "total_bets_n": {
+            "type": "integer",
+            "title": "Total Bets N"
+          },
+          "total_profit_settled": {
+            "type": "number",
+            "title": "Total Profit Settled"
+          },
+          "bankroll_now": {
+            "type": "number",
+            "title": "Bankroll Now"
+          },
+          "sample_sufficient": {
+            "type": "boolean",
+            "title": "Sample Sufficient"
+          },
+          "floating_stake_fixed": {
+            "type": "number",
+            "title": "Floating Stake Fixed"
+          },
+          "floating_stake_pool": {
+            "type": "number",
+            "title": "Floating Stake Pool"
+          },
+          "per_market": {
+            "items": {
+              "$ref": "#/components/schemas/PerMarketView"
+            },
+            "type": "array",
+            "title": "Per Market"
+          },
+          "tax_total": {
+            "type": "number",
+            "title": "Tax Total"
+          },
+          "profit_after_tax": {
+            "type": "number",
+            "title": "Profit After Tax"
+          }
+        },
+        "type": "object",
+        "required": [
+          "initial_bankroll",
+          "strategies",
+          "total_bets_n",
+          "total_profit_settled",
+          "bankroll_now",
+          "sample_sufficient",
+          "floating_stake_fixed",
+          "floating_stake_pool",
+          "per_market",
+          "tax_total",
+          "profit_after_tax"
+        ],
+        "title": "PaperAccountView",
+        "description": "纸面账户 P&L 面（票 04）：两策略分列，不混一个数字。"
+      },
+      "PerMarketView": {
+        "properties": {
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "bets_n": {
+            "type": "integer",
+            "title": "Bets N"
+          },
+          "profit": {
+            "type": "number",
+            "title": "Profit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "market",
+          "bets_n",
+          "profit"
+        ],
+        "title": "PerMarketView",
+        "description": "分玩法盈亏一行（已结算）。"
+      },
       "PoolMatchView": {
         "properties": {
           "match_seq": {
@@ -6827,6 +6962,91 @@
         ],
         "title": "StatusResponse",
         "description": "Machine-readable service identity."
+      },
+      "StrategyFaceView": {
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
+          },
+          "bets_n": {
+            "type": "integer",
+            "title": "Bets N"
+          },
+          "settled_n": {
+            "type": "integer",
+            "title": "Settled N"
+          },
+          "open_n": {
+            "type": "integer",
+            "title": "Open N"
+          },
+          "stake_settled": {
+            "type": "number",
+            "title": "Stake Settled"
+          },
+          "profit_settled": {
+            "type": "number",
+            "title": "Profit Settled"
+          },
+          "realized_roi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Roi"
+          },
+          "mean_decision_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Decision Ev"
+          },
+          "ev_realization_gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev Realization Gap"
+          },
+          "curve": {
+            "items": {
+              "$ref": "#/components/schemas/CurvePointView"
+            },
+            "type": "array",
+            "title": "Curve",
+            "default": []
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategy",
+          "bets_n",
+          "settled_n",
+          "open_n",
+          "stake_settled",
+          "profit_settled"
+        ],
+        "title": "StrategyFaceView",
+        "description": "一个策略面（auto-v1/人工）的账户行（票 04）。"
       },
       "TargetPlanPayload": {
         "properties": {

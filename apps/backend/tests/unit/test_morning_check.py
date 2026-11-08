@@ -168,6 +168,15 @@ def test_check_bets_observation(db: sqlite3.Connection) -> None:
     assert "0 注" in check_bets(db).detail
 
 
+def test_check_paper_account_observation(db: sqlite3.Connection) -> None:
+    """项 15（auto-paper 票 04）：空台账=未开始不冒充；行数/现值/锚注记齐。"""
+    item = mc.check_paper_account(db)
+    assert item.status == OK
+    assert "auto-v1 0/人工 0 注" in item.detail
+    assert "现值 ¥1000.00" in item.detail
+    assert "未开始" in item.detail
+
+
 def test_check_serve_log(tmp_path: Path) -> None:
     clean = tmp_path / "serve.log"
     clean.write_text("hello\n")

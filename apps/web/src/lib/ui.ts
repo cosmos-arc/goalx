@@ -59,6 +59,7 @@ export type AppRoute =
 	| "/history"
 	| "/validation"
 	| "/bankroll"
+	| "/paper-account"
 	| "/glossary"
 	| "/review"
 	| "/settings";

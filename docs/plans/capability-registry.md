@@ -38,6 +38,8 @@
 | **幂等提交意图指纹（票 09 批三）** | ✓ | — | ✓ | — | PR#234（[ba9831d](https://github.com/cosmos-arc/goalx/commit/ba9831d)）v41 intent_fingerprint：同键同意图 201 回带/异意图 409（域层预检+UNIQUE 竞态两路）；运行验收=新栈 v41 落列（2026-11-04 migrate+readyz 读数）；前端冲突恢复+e2e 响应丢失→改单→另建钉死 |
 | **语料发布边界（台账先行，票 11 批三）** | ✓ | ✓ | ✓ | — | PR#236（[879a077](https://github.com/cosmos-arc/goalx/commit/879a077)）ingest_raw BEGIN IMMEDIATE 先于正式替换（busy 官方字节零触碰/崩溃窗重写收敛两用例）；运行验收=新栈夜班+remat 增量在票 11 代码上首班收班（2026-11-04 夜 completed 请求=50、水位 15:31Z） |
 | serve 栈 + 晨检（19 面注册 + 09:05 十四项） | ✓ | — | ✓ | — | schedules.py；2026-11-04 23:46 换新栈（批三 HEAD 879a077，单树；四组孤儿 schedules 同日清毕）注册 19 面（+gold-rebuild）；晨检 14 项首读 ok=11/degraded=2/fail=1（[run-acceptance.md](report-audit-20261104/run-acceptance.md)）；readyz 真检查（库可读+schema 等值）随票 10 落地 |
+| **能力一：决策锚基准冻结（market-baseline-freeze）** | ✓ | — | ◐ | — | auto-paper 票 01（PR#261，[4fccd77](https://github.com/cosmos-arc/goalx/commit/4fccd77)）v42 两表+三锚 deployment（12:33/16:33/21:33）；首锚 2026-11-07 21:33 手动补拍 49 行（28 JC+21 EU）实证；运行验收=换栈后定拍锚积累（11-11） |
+| **能力二：auto-v1 策略落注 + 账户面** | ✓ | — | ◐ | — | 票 03+04（PR#275/#276）选票引擎（prereg 修订①-④）+auto-paper 双 deployment+锚台账 v43+`/api/v1/paper-account` 只读面+晨检第 15 项；运行验收=换栈后首锚真实落注（11-11） |
 
 ## V1 功能冻结矩阵（2026-11-06 定版，tag v1.0.0）
 
@@ -104,6 +106,7 @@
 
 ## 变更日志
 
+- 2026-11-08：auto-paper 票 04 补两行（能力一=决策锚基准冻结[PR#261]；能力二=auto-v1 策略落注+账户面[PR#275/本票]）——运行列 ◐ 待 11-11 换栈后首锚/首班验收；经济列空（红线：盈利唯一主指标在纸面账户层验证）；晨检 14→15 项（+纸面账户观察）。
 - 2026-11-06：V1 发布收口（票 06）——新增"V1 功能冻结矩阵"与"V1 冻结基线
   （实验记录必填字段）两节（tag v1.0.0 定版）；同日书商名展示解禁（用户
   裁决：合法数据分析），研究页直名展示随本发布落地（票 13，含 /validation //glossary 截图入册）。
