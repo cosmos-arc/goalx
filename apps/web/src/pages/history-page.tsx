@@ -85,7 +85,7 @@ export const EV_CALIBER_LABELS: Record<EvCaliber, string> = {
 	model: "模型口径",
 };
 
-/** summary 日桶按时间范围求和后的指标面（与旧客户端聚合同口径，票 10）。 */
+/** summary 日桶按时间范围求和后的指标面（票 10）。 */
 export type RangeMetrics = {
 	settledN: number;
 	wonN: number;
@@ -95,8 +95,9 @@ export type RangeMetrics = {
 };
 
 /**
- * 模式聚合面 × 时间范围 → 指标：日桶按北京业务日键过滤求和；EV 共识口径
- * 优先、两口径不混算（与票 41 客户端口径一致），无快照注不入分母。
+ * 模式聚合面 × 时间范围 → 指标：日桶按北京业务日键（日粒度，≥startDay
+ * 整日纳入——correctness：指标与明细表共用同一日粒度边界，不混 ms 精度）
+ * 过滤求和；EV 共识口径优先、两口径不混算（票 41 口径），无快照注不入分母。
  */
 export function summarizeRange(face: BetsModeSummary, startDay: string | null): RangeMetrics {
 	const days = startDay === null ? face.days : face.days.filter((day) => day.date >= startDay);
@@ -224,8 +225,9 @@ export function HistoryPage() {
 	const hasUnversioned = strategyValues.includes(null);
 
 	const range = RANGES.find((item) => item.key === rangeKey) ?? RANGES[3];
-	const startMs = range.days === null ? null : now - range.days * 86_400_000;
-	// 指标卡/曲线口径=模式+时间范围的服务端全量日桶（票 10：永不随列表有界截断）
+	// 指标卡/曲线口径=模式+时间范围的服务端全量日桶（票 10：永不随列表有界
+	// 截断）。correctness F1：时间边界统一日粒度（北京业务日 >= startDay 整日
+	// 纳入），明细表与指标卡共用同一口径——不再一个 ms 精度一个日粒度
 	const startDay = range.days === null ? null : beijingBusinessDate(now - range.days * 86_400_000);
 	const face = summaryQuery.data?.[mode];
 	const metrics = useMemo(() => (face ? summarizeRange(face, startDay) : null), [face, startDay]);
@@ -237,7 +239,7 @@ export function HistoryPage() {
 		() =>
 			modeSettled.filter((bet) => {
 				const settledMs = new Date(bet.settled_at ?? "").getTime();
-				if (startMs !== null && (Number.isNaN(settledMs) || settledMs < startMs)) {
+				if (startDay !== null && (Number.isNaN(settledMs) || beijingBusinessDate(settledMs) < startDay)) {
 					return false;
 				}
 				if (competition !== "" && !bet.legs.some((leg) => competitionByFixture.get(leg.fixture_id) === competition)) {
@@ -254,7 +256,7 @@ export function HistoryPage() {
 				}
 				return true;
 			}),
-		[modeSettled, startMs, competition, competitionByFixture, strategy, status],
+		[modeSettled, startDay, competition, competitionByFixture, strategy, status],
 	);
 
 	// 明细行按结算时点倒序（最近结算在前，与票 16 已结算段同序）
@@ -424,6 +426,14 @@ export function HistoryPage() {
 								message="该模式无已结算注"
 								hint="切另一模式查看，或到投注页锁定建议后等结算。"
 							/>
+						) : metrics.settledN === 0 ? (
+							/* correctness F3：时间范围空≠模式空——零值卡片不是空态，给出范围出口 */
+							<EmptyState
+								variant="no-data"
+								message="该时间范围内无已结算注"
+								hint="指标卡与曲线随时间范围联动；放宽范围或看全部。"
+								action={{ label: "看全部", onClick: () => setRangeKey("all") }}
+							/>
 						) : (
 							<>
 								<section aria-labelledby="history-metrics-heading" className="mb-8" data-testid="history-metrics">
@@ -501,7 +511,7 @@ export function HistoryPage() {
 									<div className="rounded-lg border border-border bg-card p-4">
 										{points.length < 2 ? (
 											<p data-testid="history-chart-empty" className="text-sm text-muted-foreground">
-												已结算注不足 2 注，累计曲线待数据积累。
+												有结算的业务日不足 2 天（曲线按日桶），待数据积累。
 											</p>
 										) : (
 											<CumulativeChart points={points} />

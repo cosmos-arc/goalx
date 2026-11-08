@@ -507,8 +507,11 @@ export function OverviewPage() {
 												<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(liveRoi)}`}>
 													{liveRoi === null ? "—" : signedPct(liveRoi)}
 												</p>
-												<p className="mt-1 text-xs text-muted-foreground">
-													已结算 {liveSettledCount} 注 · 未结 {liveOpenCount} 注不计。
+												<p className="mt-1 text-xs text-muted-foreground" data-testid="live-roi-counts">
+													{/* correctness F2：summary 单独失败时不把 0 当事实渲染 */}
+													{summaryQuery.isError
+														? "真金聚合加载失败——重试后恢复。"
+														: `已结算 ${liveSettledCount} 注 · 未结 ${liveOpenCount} 注不计。`}
 												</p>
 												<p className="mt-2 text-xs text-muted-foreground">判读：≥0 = 长期为正；红 = 正 · 绿 = 负。</p>
 											</div>

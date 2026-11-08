@@ -211,7 +211,7 @@ test("累计曲线不足 2 点不出图，显示积累提示", async () => {
 	mockAll({ bets: [settledPaper({ id: 1, profit: 10, settled_at: daysAgoIso(1) })] });
 	await renderAt("/history");
 
-	expect(await screen.findByTestId("history-chart-empty")).toHaveTextContent("已结算注不足 2 注");
+	expect(await screen.findByTestId("history-chart-empty")).toHaveTextContent("有结算的业务日不足 2 天");
 	expect(screen.queryByTestId("history-chart")).not.toBeInTheDocument();
 	expect(initMock).not.toHaveBeenCalled();
 });
@@ -567,6 +567,48 @@ test("票 10 不变量：列表窗截到 100，指标卡/曲线仍是全量口�
 	expect(screen.getByTestId("metric-pnl")).toHaveTextContent("+¥130.00");
 	await userEvent.setup().click(screen.getByTestId("detail-toggle"));
 	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(100); // 明细=窗内
+});
+
+test("correctness F1：时间范围边界=北京业务日粒度，指标卡与明细表同口径（边界日整日纳入）", async () => {
+	// 钉死统一后的口径：now=2026-11-08T10:30Z，近 7 天 startDay=2026-11-01；
+	// 注 1 结算于 11-01T02:00Z（边界北京日早盘）——日粒度下两面都纳入。
+	// 修复前明细走 ms 精度（02:00 < 10:30 被排除）与指标卡分叉
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date(Date.UTC(2026, 10, 8, 10, 30)));
+	try {
+		mockAll({
+			bets: [
+				settledPaper({ id: 1, profit: 5, settled_at: "2026-11-01T02:00:00+00:00" }),
+				settledPaper({ id: 2, profit: 3, settled_at: "2026-10-30T20:00:00+00:00" }),
+				settledPaper({ id: 3, profit: 2, settled_at: "2026-11-07T09:00:00+00:00" }),
+			],
+		});
+		await renderAt("/history");
+		expect(await screen.findByTestId("metric-count")).toHaveTextContent("3"); // 默认全部
+		await act(async () => {
+			screen.getByTestId("range-7d").click();
+		});
+		expect(screen.getByTestId("metric-count")).toHaveTextContent("2"); // 11-01 + 11-07 桶
+		await act(async () => {
+			screen.getByTestId("detail-toggle").click();
+		});
+		expect(screen.getAllByTestId("history-detail-row")).toHaveLength(2); // 明细同口径
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+test("correctness F3：时间范围内无已结算注 → 空态+范围出口，不渲染零值卡片", async () => {
+	mockAll({ bets: [settledPaper({ id: 1, profit: 5, settled_at: daysAgoIso(30) })] });
+	await renderAt("/history");
+
+	expect(await screen.findByTestId("metric-count")).toHaveTextContent("1"); // 全部范围有 1 注
+	await act(async () => {
+		screen.getByTestId("range-7d").click();
+	});
+	const state = await screen.findByTestId("empty-state");
+	expect(state).toHaveAttribute("data-variant", "no-data");
+	expect(state).toHaveTextContent("该时间范围内无已结算注");
 });
 
 test("后端不可用降级为三态空状态，重试后恢复", async () => {

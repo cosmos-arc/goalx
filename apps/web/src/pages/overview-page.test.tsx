@@ -342,6 +342,20 @@ test("no todos and no paper records: the card says 今日无事 and guides the f
 	expect(within(guide).getByRole("link", { name: "从场次页建第一笔建议" })).toHaveAttribute("href", "/fixtures");
 });
 
+test("correctness F2：/bets/summary 单独失败时真金卡诚实降级，不把 0 当事实渲染", async () => {
+	mockAll({
+		fixtures: [makeFixture({ fixture_id: 1 })],
+		bets: [],
+		bankroll: { balance: 5004.2, events: [] },
+	});
+	server.use(http.get("*/api/v1/bets/summary", () => HttpResponse.json({ detail: "down" }, { status: 503 })));
+	await renderAt("/");
+
+	const counts = await screen.findByTestId("live-roi-counts");
+	expect(counts).toHaveTextContent("真金聚合加载失败");
+	expect(counts).not.toHaveTextContent("已结算 0 注");
+});
+
 test("no deposits yet: the live zone shows the deposit onboarding empty state", async () => {
 	server.use(http.get("*/api/v1/bankroll", () => HttpResponse.json({ balance: null, events: [] })));
 	await renderAt("/");

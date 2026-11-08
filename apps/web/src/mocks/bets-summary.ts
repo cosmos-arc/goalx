@@ -52,20 +52,29 @@ export function summarizeBets(bets: readonly SummarySource[]): BetsSummary {
 			if (bet.status !== "void") {
 				bucket.decided_n += 1;
 			}
-			bucket.pnl = round2(bucket.pnl + (bet.profit ?? 0));
+			// correctness F4：桶内原值累计、发射时才舍入（对齐服务端
+			// summary.py——逐笔舍入在子分利润下会漂出服务端不产的数）
+			bucket.pnl += bet.profit ?? 0;
 			const consensus = bet.ev_snapshot?.ev_consensus ?? null;
 			if (consensus !== null) {
-				bucket.sum_ev_consensus = round6(bucket.sum_ev_consensus + consensus);
+				bucket.sum_ev_consensus += consensus;
 				bucket.n_ev_consensus += 1;
 			}
 			const model = bet.ev_snapshot?.ev_model ?? null;
 			if (model !== null) {
-				bucket.sum_ev_model = round6(bucket.sum_ev_model + model);
+				bucket.sum_ev_model += model;
 				bucket.n_ev_model += 1;
 			}
 			buckets.set(date, bucket);
 		}
-		const days = [...buckets.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+		const days = [...buckets.values()]
+			.map((bucket) => ({
+				...bucket,
+				pnl: round2(bucket.pnl),
+				sum_ev_consensus: round6(bucket.sum_ev_consensus),
+				sum_ev_model: round6(bucket.sum_ev_model),
+			}))
+			.sort((a, b) => (a.date < b.date ? -1 : 1));
 		return {
 			mode,
 			bets_n: scoped.length,
@@ -75,9 +84,9 @@ export function summarizeBets(bets: readonly SummarySource[]): BetsSummary {
 			decided_n: days.reduce((acc, day) => acc + day.decided_n, 0),
 			total_pnl: round2(days.reduce((acc, day) => acc + day.pnl, 0)),
 			stake_settled: round2(settled.reduce((acc, bet) => acc + (bet.actual_stake ?? bet.stake), 0)),
-			sum_ev_consensus: days.reduce((acc, day) => acc + day.sum_ev_consensus, 0),
+			sum_ev_consensus: round6(days.reduce((acc, day) => acc + day.sum_ev_consensus, 0)),
 			n_ev_consensus: days.reduce((acc, day) => acc + day.n_ev_consensus, 0),
-			sum_ev_model: days.reduce((acc, day) => acc + day.sum_ev_model, 0),
+			sum_ev_model: round6(days.reduce((acc, day) => acc + day.sum_ev_model, 0)),
 			n_ev_model: days.reduce((acc, day) => acc + day.n_ev_model, 0),
 			days,
 		};
