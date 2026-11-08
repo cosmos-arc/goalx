@@ -227,12 +227,34 @@ def hist_result_rows(
     return conn.execute(base + " WHERE match_date <= ?" + order, (as_of,)).fetchall()
 
 
+def voided_fixture_ids(conn: sqlite3.Connection) -> set[int]:
+    """
+    当前 void 的场次集合（票 02 报告侧剔除用）。
+
+    评分行 append-only 不删；报告真值对齐 draw_results 单源（ADR-0001）。
+    """
+    return {
+        int(row["fixture_id"])
+        for row in conn.execute(
+            "SELECT fixture_id FROM draw_results WHERE void != 0"
+        ).fetchall()
+    }
+
+
 def settled_jingcai_fixtures(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """已结算（非无效）的竞彩场次：前瞻评分集合的底盘（票 34）。"""
+    """
+    已结算（非无效）的竞彩场次：前瞻评分集合的底盘（票 34）。
+
+    半场比分随行带出（auto-paper 票 02：hafu 评分需要；源T 物化无半场
+    → NULL，评分侧按 skip_reason 诚实排除）。business_date 同行带出
+    （期次月键与覆盖账同钟面——kickoff 月在月界会与业务日月错位）。
+    """
     return conn.execute(
         """
         SELECT f.id AS fixture_id, f.kickoff_utc, c.name AS competition,
-               d.home_goals, d.away_goals
+               mc.business_date,
+               d.home_goals, d.away_goals,
+               d.half_home_goals, d.half_away_goals
         FROM fixtures f
         JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
         JOIN competitions c ON c.id = f.competition_id

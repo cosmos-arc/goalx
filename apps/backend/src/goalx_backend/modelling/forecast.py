@@ -613,6 +613,61 @@ def no_mapping_fixtures(conn: sqlite3.Connection, *, business_date: str) -> list
     return names
 
 
+def coverage_months(conn: sqlite3.Connection) -> list[str]:
+    """覆盖账出现过的月键清单（票 02 报告月块=覆盖月∪评分月）。"""
+    return [
+        str(row["m"])
+        for row in conn.execute(
+            """
+            SELECT DISTINCT substr(business_date, 1, 7) AS m FROM forecast_coverage
+            ORDER BY m DESC
+            """
+        ).fetchall()
+    ]
+
+
+def coverage_census_by_month(conn: sqlite3.Connection, month: str) -> dict[str, int]:
+    """
+    某月覆盖账普查（票 02 报告首行同源读）：按 covered/reason 汇总。
+
+    返回键：total/covered/not_fd_league/no_model/no_mapping/unknown——
+    未知 reason 归 unknown 不猜（与 record_coverage 写侧语义一致）。
+    """
+    rows = conn.execute(
+        """
+        SELECT covered, reason, COUNT(*) AS n FROM forecast_coverage
+        WHERE business_date LIKE ? GROUP BY covered, reason
+        """,
+        (f"{month}-%",),
+    ).fetchall()
+    census: dict[str, int] = dict.fromkeys(
+        ("total", "covered", "not_fd_league", "no_model", "no_mapping", "unknown"), 0
+    )
+    for row in rows:
+        n = int(row["n"])
+        census["total"] += n
+        if int(row["covered"]):
+            census["covered"] += n
+        else:
+            reason = str(row["reason"] or "unknown")
+            census[reason if reason in census else "unknown"] += n
+    return census
+
+
+def forecast_payloads_by_ids(
+    conn: sqlite3.Connection, forecast_ids: list[int]
+) -> dict[int, str]:
+    """按 id 批量取 Forecast payload（auto-paper 票 02 报告侧即时派生用）。"""
+    if not forecast_ids:
+        return {}
+    placeholders = ",".join("?" * len(forecast_ids))
+    rows = conn.execute(
+        f"SELECT id, payload FROM forecasts WHERE id IN ({placeholders})",  # noqa: S608 — 占位符拼接，值全参数化
+        forecast_ids,
+    ).fetchall()
+    return {int(row["id"]): str(row["payload"]) for row in rows}
+
+
 def record_coverage(
     conn: sqlite3.Connection,
     *,

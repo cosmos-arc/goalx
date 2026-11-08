@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
 import { ErrorBoundary } from "react-error-boundary";
+import { AccuracyPage } from "./pages/accuracy-page";
 import { BankrollPage } from "./pages/bankroll-page";
 import { BetsPage } from "./pages/bets-page";
 import { FixtureResearchPage } from "./pages/fixture-research-page";
@@ -112,6 +113,12 @@ const bankrollRoute = createRoute({
 	path: "/bankroll",
 	component: BankrollPage,
 });
+const accuracyRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/accuracy",
+	component: AccuracyPage,
+});
+
 const paperAccountRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/paper-account",
@@ -144,6 +151,7 @@ const routeTree = rootRoute.addChildren([
 	betsRoute,
 	bankrollRoute,
 	paperAccountRoute,
+	accuracyRoute,
 	validationRoute,
 	settingsRoute,
 ]);

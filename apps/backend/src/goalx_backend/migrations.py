@@ -2087,6 +2087,47 @@ def _apply_v43(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v44(conn: sqlite3.Connection) -> None:
+    """
+    v44（auto-paper-20261106 票 02）：前瞻准确率评分行。
+
+    forecast_scores：逐场逐玩法评分（acc-v1，prereg A 节冻结口径）。
+    UNIQUE(fixture_id, market, score_version) 吸收同结果重跑；结果更正
+    通道重评走 result_fingerprint 变化后的覆盖（幂等覆盖评分行）。
+    hhad 非整数线/无让球线、hafu 无半场比分 → skip_reason 行（覆盖账可
+    见，不删行）。表查询归 evaluation（ADR-0008）。派生概率分布不落库
+    （ADR-0006），只落指标值与 pred_prob_outcome 标量诊断（模型赋给实现
+    结果的概率）；校准分箱由报告侧自 payload 即时派生。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+            market TEXT NOT NULL CHECK (market IN ('had','hhad','ttg','crs','hafu')),
+            month_key TEXT NOT NULL,
+            kickoff_utc TEXT NOT NULL,
+            competition TEXT NOT NULL,
+            score_version TEXT NOT NULL,
+            forecast_id INTEGER NOT NULL,
+            model_metric REAL,
+            model_logloss REAL,
+            jc_baseline_metric REAL,
+            eu_baseline_metric REAL,
+            diff_jc REAL,
+            diff_eu REAL,
+            pred_prob_outcome REAL,
+            outcome TEXT NOT NULL,
+            hhad_goal_line REAL,
+            skip_reason TEXT,
+            result_fingerprint TEXT NOT NULL,
+            scored_at TEXT NOT NULL,
+            UNIQUE (fixture_id, market, score_version)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2131,6 +2172,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (41, _apply_v41),
     (42, _apply_v42),
     (43, _apply_v43),
+    (44, _apply_v44),
 )
 
 

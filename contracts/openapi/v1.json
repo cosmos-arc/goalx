@@ -606,6 +606,28 @@
         }
       }
     },
+    "/api/v1/accuracy/report": {
+      "get": {
+        "tags": [
+          "accuracy"
+        ],
+        "summary": "前瞻准确率报告(月×玩法×联赛)",
+        "description": "只读派生面：评分行聚合 + 覆盖账同源首行；判读规则文字随报告。",
+        "operationId": "get_accuracy_report_api_v1_accuracy_report_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccuracyReportView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/stake-advice": {
       "post": {
         "tags": [
@@ -2184,6 +2206,28 @@
   },
   "components": {
     "schemas": {
+      "AccuracyReportView": {
+        "properties": {
+          "reading_rule": {
+            "type": "string",
+            "title": "Reading Rule"
+          },
+          "months": {
+            "items": {
+              "$ref": "#/components/schemas/MonthBlockView"
+            },
+            "type": "array",
+            "title": "Months"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reading_rule",
+          "months"
+        ],
+        "title": "AccuracyReportView",
+        "description": "前瞻准确率报告（prereg acc-v1 冻结口径）。"
+      },
       "ActualLegOdds": {
         "properties": {
           "fixture_id": {
@@ -3391,6 +3435,35 @@
         "title": "BookQuoteView",
         "description": "研究页一行：某欧赔 book 的最新三向报价。\n\n``book`` 为快照 source 原值（``srct:<space>:<cid>`` 或 legacy\n``odds_api:<book>``）；``name`` 为书商字典显示名（name_en，仅\nsrct 源且字典有名时给，否则前端回退 cid 剥前缀展示）；\n``captured_at`` 取该 book 三向中最新的捕获时点。"
       },
+      "CalibBinView": {
+        "properties": {
+          "bin_index": {
+            "type": "integer",
+            "title": "Bin Index"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "mean_conf": {
+            "type": "number",
+            "title": "Mean Conf"
+          },
+          "hit_rate": {
+            "type": "number",
+            "title": "Hit Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bin_index",
+          "n",
+          "mean_conf",
+          "hit_rate"
+        ],
+        "title": "CalibBinView",
+        "description": "一个校准箱：模型最热向置信度 vs 实际命中率。"
+      },
       "ClvBasisEntry": {
         "properties": {
           "legs": {
@@ -3922,6 +3995,50 @@
         ],
         "title": "CostSummaryView",
         "description": "期间成本摘要(金额与 credits 分列；仅统计已记账成本)。"
+      },
+      "CoverageRowView": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "covered": {
+            "type": "integer",
+            "title": "Covered"
+          },
+          "not_fd_league": {
+            "type": "integer",
+            "title": "Not Fd League"
+          },
+          "no_model": {
+            "type": "integer",
+            "title": "No Model"
+          },
+          "no_mapping": {
+            "type": "integer",
+            "title": "No Mapping"
+          },
+          "unknown": {
+            "type": "integer",
+            "title": "Unknown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month",
+          "total",
+          "covered",
+          "not_fd_league",
+          "no_model",
+          "no_mapping",
+          "unknown"
+        ],
+        "title": "CoverageRowView",
+        "description": "覆盖率首行（与 forecast_coverage 同源）。"
       },
       "CurvePointView": {
         "properties": {
@@ -5595,6 +5712,171 @@
         "title": "ManualJoinPayload",
         "description": "人工映射输入（时间窗 join 残余补齐，票 20）。"
       },
+      "MarketRowView": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month"
+          },
+          "market": {
+            "type": "string",
+            "title": "Market"
+          },
+          "competition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competition"
+          },
+          "metric_kind": {
+            "type": "string",
+            "title": "Metric Kind"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "model_metric": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Metric"
+          },
+          "model_logloss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Logloss"
+          },
+          "jc_baseline": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jc Baseline"
+          },
+          "eu_baseline": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eu Baseline"
+          },
+          "diff_jc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Jc"
+          },
+          "diff_jc_se": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Jc Se"
+          },
+          "diff_eu": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Eu"
+          },
+          "diff_eu_se": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Eu Se"
+          },
+          "n_baseline": {
+            "type": "integer",
+            "title": "N Baseline"
+          },
+          "cum_n_baseline": {
+            "type": "integer",
+            "title": "Cum N Baseline"
+          },
+          "verdict_ready": {
+            "type": "boolean",
+            "title": "Verdict Ready"
+          },
+          "calibration": {
+            "items": {
+              "$ref": "#/components/schemas/CalibBinView"
+            },
+            "type": "array",
+            "title": "Calibration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month",
+          "market",
+          "competition",
+          "metric_kind",
+          "n",
+          "skipped",
+          "model_metric",
+          "model_logloss",
+          "jc_baseline",
+          "eu_baseline",
+          "diff_jc",
+          "diff_jc_se",
+          "diff_eu",
+          "diff_eu_se",
+          "n_baseline",
+          "cum_n_baseline",
+          "verdict_ready",
+          "calibration"
+        ],
+        "title": "MarketRowView",
+        "description": "月×玩法×联赛 一行（competition=None 为该月该玩法总体行）。"
+      },
       "ModeCounts": {
         "properties": {
           "bets": {
@@ -5666,6 +5948,27 @@
         ],
         "title": "ModelForecastView",
         "description": "该场最新 ML Forecast 的三向概率与模型 EV（模型概率 × 竞彩价 − 1）。"
+      },
+      "MonthBlockView": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/CoverageRowView"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/MarketRowView"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "coverage",
+          "rows"
+        ],
+        "title": "MonthBlockView",
+        "description": "一个月块：覆盖首行 + 玩法行（总体行在前）。"
       },
       "NoCandidateAttribution": {
         "properties": {

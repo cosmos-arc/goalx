@@ -21,6 +21,8 @@ const ALL_ROUTES = [
 	{ path: "/bankroll", heading: "GoalX · 资金" },
 	// auto-paper 票 04：纸面账户页（fixture sample_sufficient=false → 样本不足横幅）
 	{ path: "/paper-account", heading: "GoalX · 纸面账户" },
+	// auto-paper 票 02：准确率页（空态=判读规则横幅 + 无月块）
+	{ path: "/accuracy", heading: "GoalX · 准确率" },
 	{ path: "/glossary", heading: "GoalX · 词典" },
 	{ path: "/review", heading: "GoalX · 复核" },
 	{ path: "/settings", heading: "GoalX · 设置" },
