@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import type { GoalsFixture, GoalsSelection } from "../api/goalx";
 import { createBet, fetchBankroll, fetchGoalsMarket } from "../api/goalx";
@@ -7,32 +6,16 @@ import { AppShell } from "../components/app-shell";
 import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { type GoalsLeg, GoalsMarketCard, goalsLabel } from "../components/goals-ui";
-import { BasketFormFields, BasketSubmitButton } from "../components/had-basket";
+import { BasketBarView, BasketDrawerView } from "../components/had-basket";
 import { evClass, kickoffInfo, localTime } from "../components/had-quote-ui";
 import { MarketTabs } from "../components/market-tabs";
 import { bankrollForAdvice, StakeAdviceNote } from "../components/stake-advice";
 import { StatusToast } from "../components/status-toast";
-import {
-	Drawer,
-	DrawerClose,
-	DrawerContent,
-	DrawerDescription,
-	DrawerFooter,
-	DrawerHeader,
-	DrawerTitle,
-} from "../components/ui/drawer";
-import { basketActions, basketStore, newRequestId, useBasket, withFreshRequestIds } from "../lib/basket-store";
+import { basketActions, basketStore, newRequestId, requestIdForLegs, useBasket } from "../lib/basket-store";
+import { submitBasketUnits } from "../lib/basket-submit";
 import { buildGoalsCombo, GOALS_COMBO_CONFIG, type GoalsMarket, rankGoalsFixturesForFeed } from "../lib/combo-engine";
-import { bankrollKey, goalsMarketKey, invalidateBets, invalidateLegQuoteQueries } from "../lib/query-keys";
-import {
-	betTermsLabel,
-	conflictRestoreMessage,
-	currentQuotes,
-	dayNoteOf,
-	errorText,
-	intentConflict,
-	TABULAR_NUMS,
-} from "../lib/ui";
+import { bankrollKey, goalsMarketKey, invalidateLegQuoteQueries } from "../lib/query-keys";
+import { dayNoteOf, errorText, TABULAR_NUMS } from "../lib/ui";
 import { useNow } from "../lib/use-now";
 
 /**
@@ -88,9 +71,10 @@ export function MarketGoalsPage() {
 	/** 选注规则：同选项再点=移除；上限=行内提示；独立单关允许同场多注。
 	 * request_id 生成于 pick（票 06）：重试同键，服务端不落双行。
 	 * 提交中篮内容冻结（correctness F1）：逐腿派发期间 pick/移除/带入
-	 * 全禁——失败处理按提交时快照留篮，中途变更会被快照覆写复活。 */
+	 * 全禁——失败处理按提交时快照留篮，中途变更会被快照覆写复活。
+	 * 预检只认 store 布尔 goalsPending（票 08 收敛，本页 isPending 是其子集）。 */
 	function pick(fixture: GoalsFixture, pickedMarket: GoalsMarket, selection: GoalsSelection) {
-		if (selection.odds === null || selection.odds === undefined || createSuggestion.isPending) {
+		if (selection.odds === null || selection.odds === undefined || goalsPending) {
 			return;
 		}
 		const existing = legs.find(
@@ -125,8 +109,8 @@ export function MarketGoalsPage() {
 	}
 
 	function removeLeg(index: number) {
-		if (createSuggestion.isPending) {
-			return; // 同 pick：飞行中锁定编辑
+		if (goalsPending) {
+			return; // 同 pick：飞行中锁定编辑（票 08 收敛只认 store 布尔）
 		}
 		basketActions.setGoalsLegs(legs.filter((_, i) => i !== index));
 		setMessage(null);
@@ -135,7 +119,7 @@ export function MarketGoalsPage() {
 	/** 一键带入：组合腿就地进本页选注篮（每注独立单关，注额预填）。 */
 	function applyCombo() {
 		// 全局冻结门（票 04，同 had 侧 F2）：别页/前次飞行本页 isPending 看不到
-		if (combo === null || combo.picks.length === 0 || createSuggestion.isPending || goalsPending) {
+		if (combo === null || combo.picks.length === 0 || goalsPending) {
 			return;
 		}
 		basketActions.setGoalsLegs(
@@ -161,107 +145,44 @@ export function MarketGoalsPage() {
 	}
 
 	const createSuggestion = useMutation({
-		// 票 08：飞行状态机 withFlight 包提交（原 onMutate/onSettled 对已删）
-		mutationFn: (): Promise<{
-			created: number[];
-			failedAt: number | null;
-			labels: string[];
-		}> =>
-			basketStore.withFlight(
-				"goals",
-				async (): Promise<{
-					created: number[];
-					failedAt: number | null;
-					labels: string[];
-				}> => {
-					// 进球类以单关为主：每腿独立一注（服务器侧 non-had 腿按既有行为不校验）。
-					// 票 06：逐腿 try/catch——一成一败时已成注保留账面、失败腿起留篮
-					// 可重试（同 request_id 只补发失败腿，不重复已建注）
-					const created: number[] = [];
-					const labels: string[] = []; // 服务器实际返回的模式/金额（票 09：回带注≠本次输入）
-					for (const [index, leg] of legs.entries()) {
-						try {
-							const bet = await createBet({
-								mode,
-								stake: Number(stake),
-								strategy_version: strategyVersion.trim() === "" ? null : strategyVersion.trim(),
-								client_request_id: leg.request_id,
-								legs: [
-									{
-										fixture_id: leg.fixture_id,
-										market_code: leg.market,
-										selection_code: leg.selection,
-										locked_odds: leg.odds,
-									},
-								],
-							});
-							created.push(bet.id);
-							labels.push(betTermsLabel(bet));
-						} catch (error) {
-							// 意图冲突（票 09）：同键原提交其实已成功——恢复原结果、该腿
-							// 换新键留篮（未提交腿不动），新意图待用户再点提交另建
-							const conflict = intentConflict(error);
-							if (conflict !== null) {
-								invalidateBets(queryClient);
-								basketActions.replaceGoalsLegs([...withFreshRequestIds([leg]), ...legs.slice(index + 1)]);
-								setMessage(
-									conflictRestoreMessage(`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）`, conflict) +
-										(created.length > 0 ? `；此前已建 #${created.join("、#")}` : ""),
-								);
-								return { created, failedAt: index, labels };
-							}
-							// 价变 409（票 08：goals 向 had 对齐——walker 抓出的漂移，
-							// 旧实现腿留旧价+旧 request_id 重试死循环）：清篮+刷新逐场
-							// 价，按新价重选
-							const quotes = currentQuotes(error);
-							if (quotes !== null && quotes.length > 0) {
-								basketActions.replaceGoalsLegs([]);
-								setBasketOpen(false); // review P2-2：对齐 had——关抽屉露出页面级提示
-								if (created.length > 0) {
-									invalidateBets(queryClient);
-								}
-								// review P1-1：本页价格源=goals-market（推荐流/组合卡/选注
-								// 按钮）——不失效它则页面停留旧价，重选仍旧价再 409
-								void queryClient.invalidateQueries({ queryKey: ["goals-market"] });
-								invalidateLegQuoteQueries(
-									queryClient,
-									legs.map((leg) => leg.fixture_id),
-								);
-								setMessage(
-									`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）报价已变（${quotes
-										.map((q) => `${q.selection_code} → ${q.server_odds.toFixed(2)}`)
-										.join(
-											"、",
-										)}）——已刷新列表${created.length > 0 ? `，已建 #${created.join("、#")}` : ""}；请按新价重新选注`,
-								);
-								return { created, failedAt: index, labels };
-							}
-							// 失败腿起整段留篮（前面的已成注保留账面）；未提交 ≠ 失败，
-							// 分开计数（correctness F3）
-							basketActions.replaceGoalsLegs(legs.slice(created.length));
-							if (created.length > 0) {
-								invalidateBets(queryClient);
-							}
-							setMessage(
-								`第 ${index + 1} 笔（${leg.match_code} ${leg.label}）失败：${errorText(error)}` +
-									`——成功 ${created.length} · 失败 1 · 未提交 ${legs.length - index - 1}，失败/未提交腿留篮可重试`,
-							);
-							return { created, failedAt: index, labels };
-						}
-					}
-					return { created, failedAt: null, labels };
-				},
+		// 票 08：飞行状态机 withFlight 包提交 + 共享环 submitBasketUnits（409/
+		// 冲突/失败政策与 had 单源）。进球类以单关为主：每腿独立一单元一注
+		mutationFn: () =>
+			basketStore.withFlight("goals", () =>
+				submitBasketUnits({
+					client: queryClient,
+					units: legs.map((leg) => [leg]),
+					post: (unit) =>
+						createBet({
+							mode,
+							stake: Number(stake),
+							strategy_version: strategyVersion.trim() === "" ? null : strategyVersion.trim(),
+							// 单腿单元=腿键（票 06 幂等：requestIdForLegs 恒等 leg.request_id）
+							client_request_id: requestIdForLegs(unit),
+							legs: unit.map((leg) => ({
+								fixture_id: leg.fixture_id,
+								market_code: leg.market,
+								selection_code: leg.selection,
+								locked_odds: leg.odds,
+							})),
+						}),
+					infix: ([leg]) => (leg ? `（${leg.match_code} ${leg.label}）` : ""),
+					successNote: (created, labels) => `已建 ${created.length} 条单关建议（${labels.join("、")}）— 去投注页锁定`,
+					// 未提交 ≠ 失败，分开计数（correctness F3）
+					failureNote: (error, created, index) =>
+						`第 ${index + 1} 笔（${legs[index]?.match_code ?? ""} ${legs[index]?.label ?? ""}）失败：${errorText(error)}` +
+						`——成功 ${created.length} · 失败 1 · 未提交 ${legs.length - index - 1}，失败/未提交腿留篮可重试`,
+					// review P1-1：本页价格源=goals-market（推荐流/组合卡/选注按钮）
+					// ——不失效它则页面停留旧价，重选仍旧价再 409
+					invalidatePriceSource: (client, fixtureIds) => {
+						void client.invalidateQueries({ queryKey: ["goals-market"] });
+						invalidateLegQuoteQueries(client, fixtureIds);
+					},
+					replaceLegs: basketActions.replaceGoalsLegs,
+					report: setMessage,
+					closeBasket: () => setBasketOpen(false),
+				}),
 			),
-		onSuccess: ({ created, failedAt, labels }) => {
-			if (failedAt === null) {
-				setMessage(`已建 ${created.length} 条单关建议（${labels.join("、")}）— 去投注页锁定`);
-				basketActions.replaceGoalsLegs([]);
-				setBasketOpen(false);
-			}
-			if (created.length > 0) {
-				invalidateBets(queryClient);
-			}
-		},
 	});
 
 	return (
@@ -508,143 +429,88 @@ export function MarketGoalsPage() {
 				) : null}
 			</div>
 
-			{/* 底部常驻选注条 + 右侧 Drawer（每注独立单关，复用场次页模式） */}
-			<div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
-				<div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
-					<span className="text-sm">
-						选注篮{" "}
-						<span className={`${TABULAR_NUMS} font-medium`} data-testid="goals-basket-count">
-							{legs.length}/{MAX_GOALS_LEGS}
-						</span>
-						<span className="ml-2 hidden text-xs text-muted-foreground sm:inline">独立单关</span>
-					</span>
-					{legs.length > 0 ? (
-						<span
-							className={`${TABULAR_NUMS} hidden text-xs text-muted-foreground sm:inline`}
-							data-testid="goals-basket-summary"
-						>
-							{legs
-								.map((leg) => `${leg.match_code} ${leg.market === "ttg" ? "总进球" : "比分"} ${leg.label}`)
-								.join("；")}
-						</span>
-					) : (
-						<span className="hidden text-xs text-muted-foreground sm:inline">
-							点推荐流赔率或"一键带入"加入；单关须单固
-						</span>
-					)}
-					{hadLegs.length > 0 ? (
-						<span className="hidden text-xs text-info sm:inline" data-testid="goals-basket-cross-had">
-							另有胜平负草稿 {hadLegs.length} 腿（场次/玩法页提交）
-						</span>
-					) : null}
-					<button
-						type="button"
-						data-testid="goals-basket-open"
-						className="ml-auto rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-						disabled={legs.length === 0}
-						onClick={() => setBasketOpen(true)}
-					>
-						展开选注篮
-					</button>
-				</div>
-			</div>
+			{/* 底部常驻选注条 + 右侧 Drawer：票 08 续作起复用参数化共享件
+			 * （手搓 ~140 行复刻删除——文案/计数/409 政策漂移面随删除消失） */}
+			<BasketBarView
+				testidPrefix="goals-basket"
+				legs={legs}
+				maxLegs={MAX_GOALS_LEGS}
+				summary={
+					legs.length > 0
+						? legs.map((leg) => `${leg.match_code} ${leg.market === "ttg" ? "总进球" : "比分"} ${leg.label}`).join("；")
+						: null
+				}
+				emptyHint='点推荐流赔率或"一键带入"加入；单关须单固'
+				countNote="独立单关"
+				crossNote={hadLegs.length > 0 ? `另有胜平负草稿 ${hadLegs.length} 腿（场次/玩法页提交）` : null}
+				onOpen={() => setBasketOpen(true)}
+			/>
 
-			<Drawer open={basketOpen} onOpenChange={setBasketOpen} swipeDirection="right">
-				<DrawerContent className="mx-0 w-full sm:max-w-md">
-					<DrawerHeader>
-						<DrawerTitle>选注篮（独立单关）</DrawerTitle>
-						<DrawerDescription>
-							每条按一注独立单关提交（进球类不组串）；单关须单固（提交时以服务器为准）
-						</DrawerDescription>
-					</DrawerHeader>
-					<div className="flex-1 overflow-y-auto p-4">
-						{legs.length === 0 ? (
-							<p className="text-sm text-muted-foreground">未选择。点推荐流赔率或组合卡"一键带入"加入。</p>
-						) : (
-							<ul className="space-y-2">
-								{legs.map((leg, index) => {
-									const countdown = kickoffInfo(leg.kickoff_utc, now);
-									return (
-										<li
-											key={`${leg.fixture_id}-${leg.market}-${leg.selection}`}
-											className="flex items-center justify-between rounded-md border border-border p-3 text-sm"
-											data-testid="goals-basket-leg"
-										>
-											<span>
-												<span className="text-xs text-muted-foreground">{leg.match_code}</span>
-												<br />
-												{leg.home_team} vs {leg.away_team}
-												<br />
-												<span className="font-medium">
-													{leg.market === "ttg" ? "总进球" : "比分"} {leg.label}
-												</span>
-												<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
-												<span
-													className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
-													data-testid="goals-basket-leg-deadline"
-												>
-													开球 {localTime(leg.kickoff_utc)} · {countdown.text}
-												</span>
-											</span>
-											<button
-												type="button"
-												className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-												aria-label={`移除 ${leg.match_code} ${leg.label}`}
-												onClick={() => removeLeg(index)}
-											>
-												移除
-											</button>
-										</li>
-									);
-								})}
-							</ul>
-						)}
-						{legs.length > 0 ? (
-							<div className="mt-3">
-								<StakeAdviceNote
-									mode={basketAdvice.mode}
-									bankroll={basketAdvice.bankroll}
-									ev={basketAdvice.ev}
-									odds={basketAdvice.odds}
-									note="篮内为独立单关同额提交——建议按最高 EV 一注的口径（模型×竞彩价，各注 EV 见列表）"
-									testid="goals-basket-stake-advice"
-								/>
-							</div>
-						) : null}
+			<BasketDrawerView
+				testidPrefix="goals-basket"
+				open={basketOpen}
+				onOpenChange={setBasketOpen}
+				title="选注篮（独立单关）"
+				description="每条按一注独立单关提交（进球类不组串）；单关须单固（提交时以服务器为准）"
+				emptyHint='未选择。点推荐流赔率或组合卡"一键带入"加入。'
+				legs={legs}
+				legKey={(leg) => `${leg.fixture_id}-${leg.market}-${leg.selection}`}
+				renderLeg={(leg) => {
+					const countdown = kickoffInfo(leg.kickoff_utc, now); // 共享滴答钟（页面级 now）
+					return (
+						<span>
+							<span className="text-xs text-muted-foreground">{leg.match_code}</span>
+							<br />
+							{leg.home_team} vs {leg.away_team}
+							<br />
+							<span className="font-medium">
+								{leg.market === "ttg" ? "总进球" : "比分"} {leg.label}
+							</span>
+							<span className={`${TABULAR_NUMS} ml-2 text-muted-foreground`}>@{leg.odds.toFixed(2)}</span>
+							<span
+								className={`${TABULAR_NUMS} ml-2 text-xs ${countdown.urgent ? "text-warning" : "text-muted-foreground"}`}
+								data-testid="goals-basket-leg-deadline"
+							>
+								开球 {localTime(leg.kickoff_utc)} · {countdown.text}
+							</span>
+						</span>
+					);
+				}}
+				removeLabel={(leg) => `移除 ${leg.match_code} ${leg.label}`}
+				onRemove={(leg) => removeLeg(legs.indexOf(leg))}
+				form={{
+					state: {
+						mode,
+						setMode: basketActions.setMode,
+						stake,
+						setStake: basketActions.setStake,
+						strategyVersion,
+						setStrategyVersion: basketActions.setStrategyVersion,
+					},
+					stakeLabel: "每注金额(¥)",
+					stakeMin: 2,
+					disabled: goalsPending || hadPending,
+				}}
+				submit={{
+					pending: goalsPending,
+					disabled: legs.length === 0,
+					label: `建立 ${legs.length > 0 ? `${legs.length} 注` : ""}单关建议`,
+					onSubmit: () => createSuggestion.mutate(),
+				}}
+			>
+				{legs.length > 0 ? (
+					<div className="mt-3">
+						<StakeAdviceNote
+							mode={basketAdvice.mode}
+							bankroll={basketAdvice.bankroll}
+							ev={basketAdvice.ev}
+							odds={basketAdvice.odds}
+							note="篮内为独立单关同额提交——建议按最高 EV 一注的口径（模型×竞彩价，各注 EV 见列表）"
+							testid="goals-basket-stake-advice"
+						/>
 					</div>
-					<DrawerFooter>
-						<BasketFormFields
-							testid="goals-basket"
-							state={{
-								mode,
-								setMode: basketActions.setMode,
-								stake,
-								setStake: basketActions.setStake,
-								strategyVersion,
-								setStrategyVersion: basketActions.setStrategyVersion,
-							}}
-							stakeLabel="每注金额(¥)"
-							stakeMin={2}
-							disabled={goalsPending || hadPending}
-						/>
-						<BasketSubmitButton
-							testid="goals-basket-submit"
-							pending={goalsPending}
-							disabled={legs.length === 0}
-							label={`建立 ${legs.length > 0 ? `${legs.length} 注` : ""}单关建议`}
-							onSubmit={() => createSuggestion.mutate()}
-						/>
-						<div className="flex items-center justify-between text-xs">
-							<DrawerClose className="rounded-md px-1 py-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-								继续浏览
-							</DrawerClose>
-							<Link to="/bets" className="text-primary underline-offset-2 hover:underline">
-								去投注页锁定 →
-							</Link>
-						</div>
-					</DrawerFooter>
-				</DrawerContent>
-			</Drawer>
+				) : null}
+			</BasketDrawerView>
 		</AppShell>
 	);
 }
