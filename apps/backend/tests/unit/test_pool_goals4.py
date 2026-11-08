@@ -106,6 +106,9 @@ def test_goals4_selections_are_goal_bands(db: sqlite3.Connection) -> None:
     assert prob["a3"] == 0.1
     assert all(s.prob_source == "model" for s in sels)
     assert all(s.share is None for s in sels)
+    assert all(
+        s.share_source == "none" for s in sels
+    )  # goals4 无 JC 玩法，不走投影（票 07）
     assert all(s.ev is None for s in sels)
 
 

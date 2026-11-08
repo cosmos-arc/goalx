@@ -72,9 +72,11 @@ class PoolPeriodDetailView(BaseModel):
 
 CALIBER_TEXT = (
     "概率 = 模型（映射场次有赛前 Forecast 时）或期次页三向欧指去水；"
-    "份额 = 公众分布代理（人气源已下线，常规环境恒空；官方仅开奖后 published 数据）；"
+    "份额 = 实测人气（源B 停采前存量）或 JC 官方赔率去水隐含投影（P0，"
+    "share_source=projected 标注，非实测；官方仅开奖后 published 数据）；"
     "估计派彩赔率 = 返奖率 65% ÷ 份额（抽水折算）；"
-    "EV = 概率 × 估计赔率 − 1（缺份额不可算），未建模 price impact 与分彩风险。"
+    "EV = 概率 × 估计赔率 − 1（缺份额不可算），份额为投影时 EV 门槛不放宽、"
+    "读数自带投影不确定性，未建模 price impact 与分彩风险。"
 )
 CALIBER_TEXT_GOALS4 = (
     "四场进球每场主/客各选一档（0/1/2/3+球）；档位概率 = 模型边际，"
