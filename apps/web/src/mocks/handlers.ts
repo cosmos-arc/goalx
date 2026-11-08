@@ -429,6 +429,51 @@ export const betsFixture = [
 	},
 ] as const satisfies readonly DeepReadonly<Bet>[];
 
+/** auto-paper 票 04：纸面账户面（合成账=本票后端测试同款口径）。 */
+export const paperAccountFixture = {
+	initial_bankroll: 1000,
+	strategies: [
+		{
+			strategy: "auto-v1",
+			bets_n: 2,
+			settled_n: 2,
+			open_n: 0,
+			stake_settled: 4,
+			profit_settled: 0,
+			realized_roi: 0,
+			mean_decision_ev: 0.05,
+			ev_realization_gap: -0.05,
+			curve: [
+				{ date: "2026-11-09", value: 1002 },
+				{ date: "2026-11-10", value: 1000 },
+			],
+			max_drawdown: 2,
+		},
+		{
+			strategy: "manual",
+			bets_n: 2,
+			settled_n: 1,
+			open_n: 1,
+			stake_settled: 10,
+			profit_settled: 14990,
+			realized_roi: 1499,
+			mean_decision_ev: null,
+			ev_realization_gap: null,
+			curve: [{ date: "2026-11-09", value: 15990 }],
+			max_drawdown: 0,
+		},
+	],
+	total_bets_n: 4,
+	total_profit_settled: 14990,
+	bankroll_now: 15990,
+	sample_sufficient: false,
+	floating_stake_fixed: 5,
+	floating_stake_pool: 4,
+	per_market: [{ market: "ttg", bets_n: 3, profit: 14992 }],
+	tax_total: 3000,
+	profit_after_tax: 11992,
+};
+
 /**
  * 票 20：事件时间相对 now 动态生成（今日页同思路）——余额迷你曲线的"近 30 天"
  * 窗口过滤不因测试日期推移而漂移；金额与余额断言不受影响。
@@ -560,6 +605,7 @@ export const handlers = [
 	),
 	http.post("*/api/v1/draw-results", () => HttpResponse.json({ imported: 1 }, { status: 201 })),
 	http.get("*/api/v1/bankroll", () => HttpResponse.json(bankrollFixture)),
+	http.get("*/api/v1/paper-account", () => HttpResponse.json(paperAccountFixture)),
 	// 票 20：入金端点 mock（无状态：按当前 fixture 余额 + 载荷金额回 201；
 	// 需要"提交后刷新"闭环的测试在用例内用 server.use 覆盖为有状态版本）
 	http.post("*/api/v1/bankroll/deposits", async ({ request }) => {

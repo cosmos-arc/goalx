@@ -11,6 +11,7 @@ import { MarketHadPage } from "./pages/market-had-page";
 import { MarketPoolPage } from "./pages/market-pool-page";
 import { MarketPool4Page } from "./pages/market-pool4-page";
 import { OverviewPage } from "./pages/overview-page";
+import { PaperAccountPage } from "./pages/paper-account-page";
 import { ReviewPage } from "./pages/review-page";
 import { StubPage } from "./pages/stub-page";
 import { ValidationPage } from "./pages/validation-page";
@@ -111,6 +112,11 @@ const bankrollRoute = createRoute({
 	path: "/bankroll",
 	component: BankrollPage,
 });
+const paperAccountRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/paper-account",
+	component: PaperAccountPage,
+});
 const validationRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/validation",
@@ -137,6 +143,7 @@ const routeTree = rootRoute.addChildren([
 	reviewRoute,
 	betsRoute,
 	bankrollRoute,
+	paperAccountRoute,
 	validationRoute,
 	settingsRoute,
 ]);

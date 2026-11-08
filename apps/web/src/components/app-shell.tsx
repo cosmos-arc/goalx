@@ -18,6 +18,7 @@ const PRIMARY_NAV = [
 	{ to: "/history", label: "历史" },
 	{ to: "/validation", label: "验证" },
 	{ to: "/bankroll", label: "资金" },
+	{ to: "/paper-account", label: "纸面账户" },
 ] as const;
 
 const SECONDARY_NAV = [

@@ -383,6 +383,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/paper-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 纸面账户 P&L 面（只读聚合）
+         * @description auto-paper 票 04：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列；
+         *
+         *     EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；累计注数<200 时
+         *     sample_sufficient=false（前端挂「样本不足，不判盈亏」横幅）；
+         *     auto-v1 与人工纸面分列；税后=tax_on_prize 逐注奖金口径。
+         */
+        get: operations["paper_account_api_v1_paper_account_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pool/periods": {
         parameters: {
             query?: never;
@@ -1591,6 +1615,16 @@ export interface components {
             items: components["schemas"]["CostItemView"][];
         };
         /**
+         * CurvePointView
+         * @description 累计曲线一点（结算日 → 账户现值）。
+         */
+        CurvePointView: {
+            /** Date */
+            date: string;
+            /** Value */
+            value: number;
+        };
+        /**
          * DepositCreatedView
          * @description 入金结果：新流水事件与入金后余额。
          */
@@ -2350,6 +2384,46 @@ export interface components {
             span_weeks: number;
         };
         /**
+         * PaperAccountView
+         * @description 纸面账户 P&L 面（票 04）：两策略分列，不混一个数字。
+         */
+        PaperAccountView: {
+            /** Initial Bankroll */
+            initial_bankroll: number;
+            /** Strategies */
+            strategies: components["schemas"]["StrategyFaceView"][];
+            /** Total Bets N */
+            total_bets_n: number;
+            /** Total Profit Settled */
+            total_profit_settled: number;
+            /** Bankroll Now */
+            bankroll_now: number;
+            /** Sample Sufficient */
+            sample_sufficient: boolean;
+            /** Floating Stake Fixed */
+            floating_stake_fixed: number;
+            /** Floating Stake Pool */
+            floating_stake_pool: number;
+            /** Per Market */
+            per_market: components["schemas"]["PerMarketView"][];
+            /** Tax Total */
+            tax_total: number;
+            /** Profit After Tax */
+            profit_after_tax: number;
+        };
+        /**
+         * PerMarketView
+         * @description 分玩法盈亏一行（已结算）。
+         */
+        PerMarketView: {
+            /** Market */
+            market: string;
+            /** Bets N */
+            bets_n: number;
+            /** Profit */
+            profit: number;
+        };
+        /**
          * PoolMatchView
          * @description 一期一场对阵。
          */
@@ -2791,6 +2865,40 @@ export interface components {
             /** App Version */
             app_version: string;
             environment: components["schemas"]["Environment"];
+        };
+        /**
+         * StrategyFaceView
+         * @description 一个策略面（auto-v1/人工）的账户行（票 04）。
+         */
+        StrategyFaceView: {
+            /** Strategy */
+            strategy: string;
+            /** Bets N */
+            bets_n: number;
+            /** Settled N */
+            settled_n: number;
+            /** Open N */
+            open_n: number;
+            /** Stake Settled */
+            stake_settled: number;
+            /** Profit Settled */
+            profit_settled: number;
+            /** Realized Roi */
+            realized_roi?: number | null;
+            /** Mean Decision Ev */
+            mean_decision_ev?: number | null;
+            /** Ev Realization Gap */
+            ev_realization_gap?: number | null;
+            /**
+             * Curve
+             * @default []
+             */
+            curve: components["schemas"]["CurvePointView"][];
+            /**
+             * Max Drawdown
+             * @default 0
+             */
+            max_drawdown: number;
         };
         /**
          * TargetPlanPayload
@@ -3638,6 +3746,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paper_account_api_v1_paper_account_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperAccountView"];
                 };
             };
         };

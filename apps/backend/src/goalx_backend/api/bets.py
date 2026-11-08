@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from goalx_backend.api.deps import get_db
+from goalx_backend.betting import account
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     ActualTerms,
@@ -791,3 +792,101 @@ def create_pool_slip(payload: PoolSlipCreate, db: DbDep) -> SlipView:
     if row is None:
         raise HTTPException(status_code=500, detail="slip vanished after insert")
     return _slip_view(row)
+
+
+class CurvePointView(BaseModel):
+    """累计曲线一点（结算日 → 账户现值）。"""
+
+    date: str
+    value: float
+
+
+class StrategyFaceView(BaseModel):
+    """一个策略面（auto-v1/人工）的账户行（票 04）。"""
+
+    strategy: str
+    bets_n: int
+    settled_n: int
+    open_n: int
+    stake_settled: float
+    profit_settled: float
+    realized_roi: float | None = None
+    mean_decision_ev: float | None = None
+    ev_realization_gap: float | None = None
+    curve: list[CurvePointView] = []
+    max_drawdown: float = 0.0
+
+
+class PerMarketView(BaseModel):
+    """分玩法盈亏一行（已结算）。"""
+
+    market: str
+    bets_n: int
+    profit: float
+
+
+class PaperAccountView(BaseModel):
+    """纸面账户 P&L 面（票 04）：两策略分列，不混一个数字。"""
+
+    initial_bankroll: float
+    strategies: list[StrategyFaceView]
+    total_bets_n: int
+    total_profit_settled: float
+    bankroll_now: float
+    sample_sufficient: bool
+    floating_stake_fixed: float
+    floating_stake_pool: float
+    per_market: list[PerMarketView]
+    tax_total: float
+    profit_after_tax: float
+
+
+@router.get(
+    "/api/v1/paper-account",
+    summary="纸面账户 P&L 面（只读聚合）",
+    response_model=PaperAccountView,
+)
+def paper_account(db: DbDep) -> PaperAccountView:
+    """
+    auto-paper 票 04：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列；
+
+    EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；累计注数<200 时
+    sample_sufficient=false（前端挂「样本不足，不判盈亏」横幅）；
+    auto-v1 与人工纸面分列；税后=tax_on_prize 逐注奖金口径。
+    """
+    face = account.paper_account_face(db)
+    return PaperAccountView(
+        initial_bankroll=face.initial_bankroll,
+        strategies=[
+            StrategyFaceView(
+                strategy=f.strategy,
+                bets_n=f.bets_n,
+                settled_n=f.settled_n,
+                open_n=f.open_n,
+                stake_settled=f.stake_settled,
+                profit_settled=f.profit_settled,
+                realized_roi=f.realized_roi,
+                mean_decision_ev=f.mean_decision_ev,
+                ev_realization_gap=f.ev_realization_gap,
+                curve=[CurvePointView(date=d, value=v) for d, v in f.curve],
+                max_drawdown=f.max_drawdown,
+            )
+            for f in face.strategies
+        ],
+        total_bets_n=face.total_bets_n,
+        total_profit_settled=face.total_profit_settled,
+        bankroll_now=face.bankroll_now,
+        sample_sufficient=face.sample_sufficient,
+        floating_stake_fixed=face.floating_stake_fixed,
+        floating_stake_pool=face.floating_stake_pool,
+        per_market=[
+            PerMarketView(
+                market=str(row["market"]),
+                bets_n=int(row["bets_n"]),
+                profit=float(row["profit"]),
+            )
+            for row in face.per_market
+        ],
+        tax_total=face.tax_total,
+        profit_after_tax=face.profit_after_tax,
+    )

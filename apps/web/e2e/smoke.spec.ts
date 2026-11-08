@@ -19,6 +19,8 @@ const ALL_ROUTES = [
 	{ path: "/history", heading: "GoalX · 历史" },
 	{ path: "/validation", heading: "GoalX · 验证" },
 	{ path: "/bankroll", heading: "GoalX · 资金" },
+	// auto-paper 票 04：纸面账户页（fixture sample_sufficient=false → 样本不足横幅）
+	{ path: "/paper-account", heading: "GoalX · 纸面账户" },
 	{ path: "/glossary", heading: "GoalX · 词典" },
 	{ path: "/review", heading: "GoalX · 复核" },
 	{ path: "/settings", heading: "GoalX · 设置" },
@@ -312,6 +314,60 @@ test("theme toggle switches to dark and persists across reload", async ({ page }
 	await page.reload();
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await expect(page.getByRole("heading", { name: "GoalX · 总览" })).toBeVisible();
+});
+
+// auto-paper 票 04 验收：样本不足横幅渲染（<200 注不判盈亏）——route mock
+// 自包含（运行栈未换版前真后端无此端点，e2e 不依赖部署版本）
+test("paper account renders strategy split and insufficient-sample banner", async ({ page }) => {
+	await page.route("**/api/v1/paper-account", (route) =>
+		route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify({
+				initial_bankroll: 1000,
+				strategies: [
+					{
+						strategy: "auto-v1",
+						bets_n: 2,
+						settled_n: 2,
+						open_n: 0,
+						stake_settled: 4,
+						profit_settled: 0,
+						realized_roi: 0,
+						mean_decision_ev: 0.05,
+						ev_realization_gap: -0.05,
+						curve: [{ date: "2026-11-09", value: 1002 }],
+						max_drawdown: 2,
+					},
+					{
+						strategy: "manual",
+						bets_n: 2,
+						settled_n: 1,
+						open_n: 1,
+						stake_settled: 10,
+						profit_settled: 14990,
+						realized_roi: 1499,
+						mean_decision_ev: null,
+						ev_realization_gap: null,
+						curve: [],
+						max_drawdown: 0,
+					},
+				],
+				total_bets_n: 4,
+				total_profit_settled: 14990,
+				bankroll_now: 15990,
+				sample_sufficient: false,
+				floating_stake_fixed: 5,
+				floating_stake_pool: 4,
+				per_market: [{ market: "ttg", bets_n: 3, profit: 14992 }],
+				tax_total: 3000,
+				profit_after_tax: 11992,
+			}),
+		}),
+	);
+	await page.goto("/paper-account");
+	await expect(page.getByTestId("paper-account-insufficient")).toContainText("样本不足");
+	await expect(page.getByTestId("paper-account-auto-v1")).toContainText("auto-v1");
+	await expect(page.getByTestId("paper-account-manual")).toContainText("人工纸面");
 });
 
 // 票 13 验收基调：逐页跑 axe，零严重违例（票 wb-02 起含研究页，票 wb-03 起含玩法组三页）

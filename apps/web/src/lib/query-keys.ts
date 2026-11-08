@@ -17,6 +17,7 @@ export const betsKey = ["bets"] as const;
 export const drawResultsKey = ["draw-results"] as const;
 export const drawSyncKey = ["draw-sync"] as const;
 export const bankrollKey = ["bankroll"] as const;
+export const paperAccountKey = ["paper-account"] as const;
 export const validationProgressKey = ["validation-progress"] as const;
 export const backtestRunsKey = ["backtest-runs"] as const;
 export const slipsKey = ["slips"] as const;

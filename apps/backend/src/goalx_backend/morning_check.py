@@ -1,5 +1,7 @@
 """
-09:05 晨检代码化（ingest-orchestration 票 01；票 08 加第 14 项）：14 项只读红绿面。
+09:05 晨检代码化：15 项只读红绿面。
+
+（ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第 15 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -27,7 +29,7 @@ from typing import Any, cast
 import httpx
 
 from goalx_backend import db as db_mod
-from goalx_backend.betting import funnel
+from goalx_backend.betting import account, funnel
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
@@ -272,6 +274,35 @@ def check_bets(conn: sqlite3.Connection) -> CheckItem:
     return CheckItem("bets", OK, f"累计 {bets_store.bets_total(conn)} 注")
 
 
+def check_paper_account(conn: sqlite3.Connection) -> CheckItem:
+    """
+    项 15 纸面账户观察（auto-paper 票 04；只报数不判红）。
+
+    当日新注数/账户行数/最近落注锚——auto-v1 换栈前台账可能为空，
+    无行=「未开始」，不绿冒充。
+    """
+    face = account.paper_account_face(conn)
+    auto_face = next(f for f in face.strategies if f.strategy == "auto-v1")
+    manual_face = next(f for f in face.strategies if f.strategy == "manual")
+    new_today, anchor = account.auto_v1_pulse(conn)
+    if anchor is not None:
+        zero = f"，{anchor['zero_note']}" if anchor["zero_note"] else ""
+        anchor_note = (
+            f"最近锚 {anchor['business_date']} {anchor['anchor_label']}"
+            f"（注 {anchor['bets']}{zero}）"
+        )
+    else:
+        anchor_note = "未开始"
+    return CheckItem(
+        "paper_account",
+        OK,
+        f"账户行 auto-v1 {auto_face.bets_n}"
+        + f"/人工 {manual_face.bets_n} 注，"
+        + f"现值 ¥{face.bankroll_now:.2f}，今日新 {new_today} 注；"
+        + anchor_note,
+    )
+
+
 def check_freshness_shadow(
     conn: sqlite3.Connection, *, now: datetime | None = None
 ) -> CheckItem:
@@ -427,7 +458,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 14 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 15 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -449,6 +480,7 @@ def run_morning_check(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
                 check_bets(conn),
+                check_paper_account(conn),
                 check_freshness_shadow(conn, now=resolved_now),
                 check_jc_waiting(
                     conn,
