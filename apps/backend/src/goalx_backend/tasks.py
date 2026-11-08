@@ -28,6 +28,7 @@ import duckdb
 import httpx
 from loguru import logger
 
+from goalx_backend.betting import auto_strategy
 from goalx_backend.betting import frozen as frozen_mod
 from goalx_backend.betting.funnel import (
     TRACK2_OFFSETS,
@@ -265,6 +266,42 @@ def baseline_freeze() -> dict[str, int]:
         "eu_absent": stats.eu_absent,
         "duplicates": stats.duplicates,
     }
+
+
+def auto_paper() -> dict[str, int]:
+    """
+    auto-v1 策略落注（auto-paper 票 03）：锚后 1 分钟跑当前锚的选票+落注。
+
+    读 prereg B 节冻结参数（修订①-④）：单关限 crs/ttg 每场至多一注
+    top-3（quarter-Kelly 封顶 ¥2）、串关限 had/hhad 前五张各 ¥2（单场
+    ≤2 张）；官方性通道逐腿对 sporttery 快照同比对（漂价弃注留痕）；
+    彩池每期次一票（source=auto-v1 幂等）；锚台账 upsert（没跑/没得买
+    可分）。语料缺席降级 legacy reads（与 freeze 同款）。
+    """
+    label = anchor_label_at()
+    if label is None:
+        raise RuntimeError("当前北京时早于首锚 12:30，无锚可跑（误拍防护）")
+    settings = get_settings()
+    with task_conn() as conn:
+        reads = None
+        try:
+            duck_con = corpus_duckdb.connect(settings)
+        except Exception:
+            duck_con = None
+            logger.warning("corpus duckdb 缺席：auto-v1 资格校验降级 legacy reads")
+        try:
+            if duck_con is not None:
+                reads = bind_quote_reads(
+                    conn, duck_con, lambda fid: mapping.srct_sid_for_fixture(conn, fid)
+                )
+            stats = auto_strategy.run_auto_v1(
+                conn, run_at=datetime.now(UTC), anchor_label=label, reads=reads
+            )
+        finally:
+            if duck_con is not None:
+                duck_con.close()
+    logger.info("auto-v1 anchor: {}", stats)
+    return stats
 
 
 def odds_anchor_dense() -> dict[str, object]:

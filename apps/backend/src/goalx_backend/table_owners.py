@@ -96,6 +96,8 @@ OWNERS: dict[str, set[str]] = {
     "betting": {
         "bets",
         "bet_legs",
+        # auto-paper 票 03：auto-v1 锚执行台账（betting/auto_strategy.py）
+        "auto_paper_runs",
         "bet_slips",
         "bet_price_timeline",
         "combinations",

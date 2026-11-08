@@ -114,6 +114,8 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "weekly-refresh",
         "daily-wrap",
         "baseline-freeze",
+        "auto-paper-day",
+        "auto-paper-evening",
         *_RECORD_NAMES,
     )
     crons = {}
@@ -143,6 +145,8 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "weekly-refresh": "10 6 * * 1",
         "daily-wrap": "30 23 * * *",
         "baseline-freeze": "33 12,16,21 * * *",
+        "auto-paper-day": "31 12,16 * * *",
+        "auto-paper-evening": "1 21 * * *",
         "pool-snapshot": "20 10,16,22 * * *",
         "intel-collect": "40 10,22 * * *",
         "scout-line": "50 10,22 * * *",
@@ -172,6 +176,8 @@ def test_resume_derivation() -> None:
         "weekly-refresh",
         "daily-wrap",
         "baseline-freeze",
+        "auto-paper-day",
+        "auto-paper-evening",
         *_RECORD_NAMES,
     } - set(datasets.dead_names())
     assert set(datasets.resume_names()).isdisjoint(datasets.dead_names())

@@ -92,6 +92,14 @@ def forecast_daily_flow(business_date: str | None = None) -> dict[str, int]:
     return tasks.forecast_daily(business_date)
 
 
+@flow(name="auto-paper", log_prints=True)
+def auto_paper_flow() -> dict[str, int]:
+    """auto-v1 策略落注（auto-paper 票 03）：锚后 1 分钟跑当前锚。"""
+    stats = tasks.auto_paper()
+    logger.info("auto-paper: {}", stats)
+    return stats
+
+
 @flow(name="baseline-freeze", log_prints=True)
 def baseline_freeze_flow() -> dict[str, int]:
     """三锚市场基准冻结（auto-paper 票 01）：12:33/16:33/21:33 读库 as-of 冻结。"""

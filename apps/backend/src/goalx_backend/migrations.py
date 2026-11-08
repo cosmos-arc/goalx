@@ -2060,6 +2060,33 @@ def _apply_v42(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v43(conn: sqlite3.Connection) -> None:
+    """
+    v43（auto-paper-20261106 票 03）：auto-v1 锚执行台账。
+
+    auto_paper_runs：每锚一行 upsert（行存在=跑过；zero_note 区分
+    no_candidates/no_positive_ev/price_drift/gate_rejected——"没跑"与
+    "没得买"可分）。detail_json 存完整统计（排除账含）。表查询归
+    betting（ADR-0008）。CREATE IF NOT EXISTS 幂等（correctness W1 同款
+    守卫语义：同版本重跑零效果）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto_paper_runs (
+            business_date TEXT NOT NULL,
+            anchor_label TEXT NOT NULL,
+            ran_at TEXT NOT NULL,
+            candidates INTEGER NOT NULL DEFAULT 0,
+            bets INTEGER NOT NULL DEFAULT 0,
+            slips INTEGER NOT NULL DEFAULT 0,
+            zero_note TEXT,
+            detail_json TEXT,
+            PRIMARY KEY (business_date, anchor_label)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2103,6 +2130,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (40, _apply_v40),
     (41, _apply_v41),
     (42, _apply_v42),
+    (43, _apply_v43),
 )
 
 
