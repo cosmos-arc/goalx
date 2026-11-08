@@ -549,7 +549,9 @@ export function BetsPage() {
 									已结算 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{settled.length}</span>
 								</h2>
 								<span className="text-xs text-muted-foreground">
-									{settled.length === 100
+									{/* 列表窗打满=更早注不在窗内（含混合 open 行挤占窗的情形）；
+										展示面截断被明示，经济账始终走历史页全量口径 */}
+									{(bets.data?.length ?? 0) === 100
 										? "展示最新 100 注（历史页聚合为全量口径）"
 										: "复盘资格按证据链判定；盈亏红盈绿亏"}
 								</span>

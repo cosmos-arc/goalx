@@ -38,7 +38,7 @@ class DayBucket:
 
 @dataclass(frozen=True)
 class ModeSummary:
-    """一个模式（paper/live）的全量聚合行。"""
+    """一个模式（paper/live）的全量聚合行（总量=日桶归约，单一记账源）。"""
 
     mode: str
     bets_n: int
@@ -56,69 +56,44 @@ class ModeSummary:
 
 
 @dataclass
-class _ModeAcc:
-    """聚合过程中的可变累计器（结算行进日桶，计数器进总量）。"""
+class _DayAcc:
+    """日桶累计器（可变）；ModeSummary 的全部日桶口径字段由此归约。"""
 
-    mode: str
-    bets_n: int = 0
-    open_n: int = 0
     settled_n: int = 0
     won_n: int = 0
     decided_n: int = 0
-    total_pnl: float = 0.0
-    stake_settled: float = 0.0
+    pnl: float = 0.0
     sum_ev_consensus: float = 0.0
     n_ev_consensus: int = 0
     sum_ev_model: float = 0.0
     n_ev_model: int = 0
-    days: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def add(self, row: sqlite3.Row) -> None:
+        """一行已结算注入桶（won/decided 命中率口径与历史页一致：void 不入分母）。"""
+        status = str(row["status"])
+        self.settled_n += 1
+        if status == "won":
+            self.won_n += 1
+        if status != "void":
+            self.decided_n += 1
+        self.pnl += float(row["profit"] or 0.0)
+        if row["snap_ev_consensus"] is not None:
+            self.sum_ev_consensus += float(row["snap_ev_consensus"])
+            self.n_ev_consensus += 1
+        if row["snap_ev_model"] is not None:
+            self.sum_ev_model += float(row["snap_ev_model"])
+            self.n_ev_model += 1
 
 
-def _add_settled(acc: _ModeAcc, row: sqlite3.Row) -> None:
-    """一行已结算注进累计器与日桶（profit NULL 按 0 入账，与历史页客户端口径一致）。"""
-    acc.settled_n += 1
-    status = str(row["status"])
-    if status == "won":
-        acc.won_n += 1
-    if status != "void":
-        acc.decided_n += 1
-    pnl = float(row["profit"] or 0.0)
-    acc.total_pnl += pnl
-    acc.stake_settled += float(
-        row["actual_stake"] if row["actual_stake"] is not None else row["stake"]
-    )
-    if row["snap_ev_consensus"] is not None:
-        acc.sum_ev_consensus += float(row["snap_ev_consensus"])
-        acc.n_ev_consensus += 1
-    if row["snap_ev_model"] is not None:
-        acc.sum_ev_model += float(row["snap_ev_model"])
-        acc.n_ev_model += 1
-    day = beijing_business_date(datetime.fromisoformat(str(row["settled_at"])))
-    bucket = acc.days.setdefault(
-        day,
-        {
-            "settled_n": 0,
-            "won_n": 0,
-            "decided_n": 0,
-            "pnl": 0.0,
-            "evc": 0.0,
-            "nec": 0,
-            "evm": 0.0,
-            "nem": 0,
-        },
-    )
-    bucket["settled_n"] += 1
-    if status == "won":
-        bucket["won_n"] += 1
-    if status != "void":
-        bucket["decided_n"] += 1
-    bucket["pnl"] += pnl
-    if row["snap_ev_consensus"] is not None:
-        bucket["evc"] += float(row["snap_ev_consensus"])
-        bucket["nec"] += 1
-    if row["snap_ev_model"] is not None:
-        bucket["evm"] += float(row["snap_ev_model"])
-        bucket["nem"] += 1
+@dataclass
+class _ModeAcc:
+    """模式级累计器：bets_n/open_n/stake 全量记，结算行只进日桶（单源）。"""
+
+    mode: str
+    bets_n: int = 0
+    open_n: int = 0
+    stake_settled: float = 0.0
+    days: dict[str, _DayAcc] = field(default_factory=dict)
 
 
 def bets_summary(conn: sqlite3.Connection) -> list[ModeSummary]:
@@ -139,38 +114,43 @@ def bets_summary(conn: sqlite3.Connection) -> list[ModeSummary]:
         if row["status"] == "open":
             acc.open_n += 1
         if row["purchased"] and row["settled_at"]:
-            _add_settled(acc, row)
+            acc.stake_settled += float(
+                row["actual_stake"] if row["actual_stake"] is not None else row["stake"]
+            )
+            day = beijing_business_date(datetime.fromisoformat(str(row["settled_at"])))
+            acc.days.setdefault(day, _DayAcc()).add(row)
     faces: list[ModeSummary] = []
     for mode in BetMode:
         acc = accs[mode.value]
+        buckets = [
+            DayBucket(
+                date=day,
+                settled_n=bucket.settled_n,
+                won_n=bucket.won_n,
+                decided_n=bucket.decided_n,
+                pnl=round(bucket.pnl, 2),
+                sum_ev_consensus=round(bucket.sum_ev_consensus, 6),
+                n_ev_consensus=bucket.n_ev_consensus,
+                sum_ev_model=round(bucket.sum_ev_model, 6),
+                n_ev_model=bucket.n_ev_model,
+            )
+            for day, bucket in sorted(acc.days.items())
+        ]
         faces.append(
             ModeSummary(
                 mode=acc.mode,
                 bets_n=acc.bets_n,
                 open_n=acc.open_n,
-                settled_n=acc.settled_n,
-                won_n=acc.won_n,
-                decided_n=acc.decided_n,
-                total_pnl=round(acc.total_pnl, 2),
+                settled_n=sum(b.settled_n for b in buckets),
+                won_n=sum(b.won_n for b in buckets),
+                decided_n=sum(b.decided_n for b in buckets),
+                total_pnl=round(sum(b.pnl for b in buckets), 2),
                 stake_settled=round(acc.stake_settled, 2),
-                sum_ev_consensus=round(acc.sum_ev_consensus, 6),
-                n_ev_consensus=acc.n_ev_consensus,
-                sum_ev_model=round(acc.sum_ev_model, 6),
-                n_ev_model=acc.n_ev_model,
-                days=[
-                    DayBucket(
-                        date=day,
-                        settled_n=int(bucket["settled_n"]),
-                        won_n=int(bucket["won_n"]),
-                        decided_n=int(bucket["decided_n"]),
-                        pnl=round(bucket["pnl"], 2),
-                        sum_ev_consensus=round(bucket["evc"], 6),
-                        n_ev_consensus=int(bucket["nec"]),
-                        sum_ev_model=round(bucket["evm"], 6),
-                        n_ev_model=int(bucket["nem"]),
-                    )
-                    for day, bucket in sorted(acc.days.items())
-                ],
+                sum_ev_consensus=round(sum(b.sum_ev_consensus for b in buckets), 6),
+                n_ev_consensus=sum(b.n_ev_consensus for b in buckets),
+                sum_ev_model=round(sum(b.sum_ev_model for b in buckets), 6),
+                n_ev_model=sum(b.n_ev_model for b in buckets),
+                days=buckets,
             )
         )
     return faces

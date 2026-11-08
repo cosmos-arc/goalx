@@ -43,6 +43,10 @@ from goalx_backend.models import (
 router = APIRouter(tags=["bets"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
 
+# iterate 票 10：列表窗=渲染事实（slips/draw_results 同族有界口径）；
+# 经济账聚合走 /bets/summary 全量，不受本窗截断
+LIST_LIMIT = 100
+
 
 class LegPayload(BaseModel):
     """一腿输入（市场/选项按 markets 闭集拒收，审计批B #7）。"""
@@ -536,7 +540,7 @@ async def list_bets(
     天然小、不有界。
     """
     rows = bt_store.list_bets(
-        db, mode=mode, only_open=only_open, limit=None if only_open else 100
+        db, mode=mode, only_open=only_open, limit=None if only_open else LIST_LIMIT
     )
     reviews = review_views(db, rows)
     return [_bet_view(row, reviews.get(int(row["id"]))) for row in rows]

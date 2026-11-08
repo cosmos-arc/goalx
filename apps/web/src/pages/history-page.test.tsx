@@ -549,6 +549,26 @@ test("EV 均值纯函数（票 10 日桶求和版）：共识优先不混算，�
 	expect(summarizeRange(face([bucket({})]), null).ev).toBeNull();
 });
 
+test("票 10 不变量：列表窗截到 100，指标卡/曲线仍是全量口径（130 注 fixture）", async () => {
+	// 130 注已结算（近两日分布）；服务端缺省面只回最新 100 → 明细 ≤100，
+	// 指标卡与曲线取 /bets/summary 全量（130 注口径，第 101 注起不截断）
+	const all: Bet[] = Array.from({ length: 130 }, (_, index) =>
+		settledPaper({ id: index + 1, profit: 1, settled_at: daysAgoIso(index % 2) }),
+	);
+	server.use(
+		http.get("*/api/v1/bets", () => HttpResponse.json(all.slice(0, 100))),
+		http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(all))),
+		http.get("*/api/v1/fixtures/today", () => HttpResponse.json([])),
+	);
+	await renderAt("/history");
+
+	const count = await screen.findByTestId("metric-count");
+	expect(count).toHaveTextContent("130"); // 全量口径，不是窗内 100
+	expect(screen.getByTestId("metric-pnl")).toHaveTextContent("+¥130.00");
+	await userEvent.setup().click(screen.getByTestId("detail-toggle"));
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(100); // 明细=窗内
+});
+
 test("后端不可用降级为三态空状态，重试后恢复", async () => {
 	const user = userEvent.setup();
 	server.use(http.get("*/api/v1/bets/summary", () => HttpResponse.json({ detail: "down" }, { status: 503 })));
