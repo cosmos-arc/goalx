@@ -1,7 +1,8 @@
 """
-09:05 晨检代码化：15 项只读红绿面。
+09:05 晨检代码化：16 项只读红绿面。
 
-（ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第 15 项。）
+（ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
+15 项；identity 票 02 加第 16 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -45,6 +46,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
+from goalx_backend.modelling import forecast
 
 OK = "ok"
 DEGRADED = "degraded"
@@ -403,6 +405,41 @@ def check_jc_waiting(
     return CheckItem("jc_waiting", status, detail)
 
 
+def check_alias_coverage(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
+    """
+    项 16 覆盖守门（identity 票 02）：最近业务日 no_mapping > 0 即红。
+
+    31 队静默洞数月无人知的教训：容忍度=0，任何 no_mapping 行都附队名列单
+    （canonical + 模型侧断名）。覆盖账无行=守门失效，黄面自报；账存在但
+    落后 >1 业务日且无 no_mapping=黄（陈账的 0 不冒充新鲜）。
+    """
+    latest = forecast.latest_coverage_date(conn)
+    if latest is None:
+        return CheckItem(
+            "alias_coverage",
+            DEGRADED,
+            "覆盖账无行（forecast_daily 未落账或库早于 v42）",
+        )
+    names = forecast.no_mapping_fixtures(conn, business_date=latest)
+    if names:
+        shown = "；".join(names[:_CRITICAL_NAME_CAP])
+        return CheckItem(
+            "alias_coverage",
+            FAIL,
+            f"{latest} no_mapping {len(names)} 场：{shown}"
+            + ("…" if len(names) > _CRITICAL_NAME_CAP else ""),
+        )
+    today = fx_store.beijing_business_date(now)
+    lag_days = (datetime.fromisoformat(today) - datetime.fromisoformat(latest)).days
+    if lag_days > 1:
+        return CheckItem(
+            "alias_coverage",
+            DEGRADED,
+            f"{latest} no_mapping 0，但覆盖账落后 {lag_days} 个业务日",
+        )
+    return CheckItem("alias_coverage", OK, f"{latest} no_mapping 0")
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -458,7 +495,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 15 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 16 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -479,6 +516,7 @@ def run_morning_check(
                 check_today_eu(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
+                check_alias_coverage(conn, now=resolved_now),
                 check_bets(conn),
                 check_paper_account(conn),
                 check_freshness_shadow(conn, now=resolved_now),

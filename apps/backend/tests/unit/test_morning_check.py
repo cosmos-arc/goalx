@@ -163,6 +163,66 @@ def test_check_today_eu_buckets(db: sqlite3.Connection) -> None:
     assert check_today_eu(db, business_date=business_date).status == OK
 
 
+def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
+    """项 16（identity 票 02）：no_mapping>0=红附队名；清零=绿；无账=黄。"""
+    assert mc.check_alias_coverage(db, now=NOW).status == DEGRADED  # 覆盖账无行
+    business_date = fx_store.beijing_business_date(NOW)
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    home = fx_store.upsert_team(db, "谢周三")
+    away = fx_store.upsert_team(db, "普利茅斯")
+    fixture = fx_store.upsert_fixture(db, comp, "2026-11-01T18:00:00+00:00", home, away)
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=fixture,
+            kind="jingcai",
+            business_date=business_date,
+            code="周日002",
+        ),
+    )
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, detail, recorded_at)"
+        " VALUES (?, ?, 0, 'no_mapping', 'home=None away=None', ?)",
+        (business_date, fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(db, now=NOW)
+    assert item.status == FAIL
+    assert "谢周三" in item.detail
+    assert "普利茅斯" in item.detail
+    assert "home=None" in item.detail  # 模型侧断名随单报出
+    db.execute(
+        "UPDATE forecast_coverage SET reason = 'not_fd_league', detail = NULL"
+        " WHERE fixture_id = ?",
+        (fixture,),
+    )
+    db.commit()
+    assert mc.check_alias_coverage(db, now=NOW).status == OK
+
+
+def test_check_alias_coverage_stale_account(db: sqlite3.Connection) -> None:
+    """陈账的 no_mapping 0 不冒充新鲜：落后 >1 业务日=黄。"""
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    fixture = fx_store.upsert_fixture(
+        db,
+        comp,
+        "2026-10-20T18:00:00+00:00",
+        fx_store.upsert_team(db, "利兹联"),
+        fx_store.upsert_team(db, "米尔顿"),
+    )
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, recorded_at)"
+        " VALUES ('2026-10-20', ?, 1, NULL, ?)",
+        (fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(db, now=NOW)
+    assert item.status == DEGRADED
+    assert "落后" in item.detail
+
+
 def test_check_bets_observation(db: sqlite3.Connection) -> None:
     assert check_bets(db).status == OK
     assert "0 注" in check_bets(db).detail

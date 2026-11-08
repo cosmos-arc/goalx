@@ -159,6 +159,11 @@ def match_model_team(model_teams: list[str], aliases: list[str]) -> str | None:
     return None
 
 
+# identity 票 02：align-report 辅线守门阈值——覆盖率低于此值报 degraded
+# （起步 0.95，达标后收紧）
+ALIGNMENT_DEGRADED_COVERAGE = 0.95
+
+
 @dataclass
 class AlignmentReport:
     """五大 hist 队名 ↔ 当前别名的覆盖率报告（票 25 验收）。"""
@@ -172,6 +177,11 @@ class AlignmentReport:
         total = sum(comp["total"] for comp in self.per_competition.values())
         matched = sum(comp["matched"] for comp in self.per_competition.values())
         return matched / total if total else 0.0
+
+    @property
+    def status(self) -> str:
+        """覆盖率守门（identity 票 02）：< 阈值 → degraded。"""
+        return "degraded" if self.coverage < ALIGNMENT_DEGRADED_COVERAGE else "ok"
 
 
 def build_alignment_report(conn: sqlite3.Connection) -> AlignmentReport:

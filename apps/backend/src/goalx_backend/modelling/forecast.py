@@ -565,6 +565,54 @@ def forecast_matrix_from_payload(payload: dict[str, Any]) -> ScoreMatrix:
     )
 
 
+def latest_coverage_date(conn: sqlite3.Connection) -> str | None:
+    """最近有覆盖账的业务日；表缺失（只读旧库）→ None 不炸调用方。"""
+    try:
+        row = conn.execute(
+            "SELECT MAX(business_date) AS latest FROM forecast_coverage"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return str(row["latest"]) if row is not None and row["latest"] else None
+
+
+def no_mapping_fixtures(conn: sqlite3.Connection, *, business_date: str) -> list[str]:
+    """
+    该业务日 no_mapping 覆盖行的队名清单（晨检守门面，identity 票 02）。
+
+    forecast_coverage 只存 fixture_id；canonical 队名经 fx_store 按业务日取
+    （fixtures 表 SQL 归 data 域，不跨包 join），detail 保留模型侧断名供
+    补别名定位。
+    """
+    rows = conn.execute(
+        """
+        SELECT fixture_id, detail FROM forecast_coverage
+        WHERE business_date = ? AND reason = 'no_mapping'
+        ORDER BY fixture_id
+        """,
+        (business_date,),
+    ).fetchall()
+    if not rows:
+        return []
+    by_id = {
+        int(row["id"]): row
+        for row in fx_store.fixtures_for_business_date(conn, business_date)
+    }
+    names: list[str] = []
+    for row in rows:
+        fixture = by_id.get(int(row["fixture_id"]))
+        label = (
+            f"{fixture['home_team']} vs {fixture['away_team']}"
+            if fixture is not None
+            else f"fixture#{row['fixture_id']}"
+        )
+        detail = str(row["detail"] or "").strip()
+        if detail:
+            label = f"{label}（{detail}）"
+        names.append(label)
+    return names
+
+
 def record_coverage(
     conn: sqlite3.Connection,
     *,

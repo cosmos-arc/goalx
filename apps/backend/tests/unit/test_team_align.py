@@ -158,10 +158,43 @@ def test_alignment_report_coverage_and_unmatched(db) -> None:
     report = ta.build_alignment_report(db)
     assert report.per_competition["E0"] == {"total": 3, "matched": 2}
     assert report.coverage == pytest.approx(2 / 3)
+    # identity 票 02：覆盖率守门——2/3 < 0.95 → degraded
+    assert report.status == "degraded"
     assert {"competition": "E0", "team": "Everton"} in report.unmatched
     # 幂等：重跑同报告
     again = ta.build_alignment_report(db)
     assert again.per_competition == report.per_competition
+
+
+def test_alignment_report_status_ok_when_covered(db) -> None:
+    """identity 票 02：全部命中 → ok；空报告（无 hist 数据）→ degraded。"""
+    seed_teams_with_aliases(db, [("曼联", [("odds_api", "Man United")])])
+    rs_store.upsert_hist_matches(
+        db,
+        [
+            {
+                "competition": "E0",
+                "season": "2526",
+                "match_date": "2025-08-16",
+                "home_team": "Man United",
+                "away_team": "Liverpool",
+                "fthg": 1,
+                "ftag": 0,
+                "ftr": "H",
+                "psc_home": 2.1,
+                "psc_draw": 3.4,
+                "psc_away": 3.6,
+                "avgc_home": 2.0,
+                "avgc_draw": 3.5,
+                "avgc_away": 3.7,
+            },
+        ],
+    )
+    seed_teams_with_aliases(db, [("利物浦", [("odds_api", "Liverpool")])])
+    full = ta.build_alignment_report(db)
+    assert full.coverage == pytest.approx(1.0)
+    assert full.status == "ok"
+    assert ta.AlignmentReport().status == "degraded"  # 空分母=覆盖率 0，不冒充达标
 
 
 def test_backfill_aliases_from_events(db) -> None:
