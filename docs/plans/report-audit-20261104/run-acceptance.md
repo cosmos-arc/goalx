@@ -64,3 +64,18 @@
 | 前端包体 | 单 chunk **1.66MB**（gzip 前） | 报告二"大包懒加载"维持暂缓清单（map Out of scope）；读数留档，拆不拆等观察期后一并裁 |
 
 结论：除 validation/progress 外全绿；该面已记入观察期跟踪项。
+
+## 八、gold 安静盒全量重建验收（2026-11-08，v1 票 08；栈 sha `23b14e5`）
+
+窗口=周日晨 10:07-10:15（12:30 下一采集拍前干净窗）；CLI `gold-build`（与定拍 08:40 同源 `tasks.gold_rebuild`），工作树=栈同 sha，真实语料（market quotes 198 万 AH/226 万 OU、169 分区）。四要素：
+
+| 要素 | 实测 |
+|---|---|
+| 耗时 | **514.65s**（8m35s；对照同库当日 08:40 定拍班 340s，差异见下） |
+| 峰值内存 | time -l max RSS **3.52GB**（段进程合计采样峰 2.95GB；对照 11-07 手动班 market 4.7GB/gold 2.6GB 同量级） |
+| 降级事件 | **degraded=None，零 deferred**（余量三探/锁互斥护栏全程未触发） |
+| 最终状态 | **绿 EXIT=0**——gold rows 49,140 与同晨 08:40 定拍班逐项一致（fixture/market_quote/xg/elo 摘要 digest 全同；odds_change_event 因 10:05 采集班合理前移），corpus.duckdb 视图刷新成功 |
+
+环境事件如实记（不外推）：10:14:32 起 ditto 仓库测试班重启（外部负载 ~3GB）与 gold 段（2.9GB，正常画像）叠加 → swapfile5/6 新建（swap used 3.67→5.95GB），gold 段被换页拖长、wall 拉大至 514s；gold 班自身内存有界、未触任何护栏。另 swapfile4=今晨 08:44 定拍班所留（b9a1960 栈，全绿）。
+
+前序证据链：11-07 00:23 护栏路径实证（`deferred_low_headroom 4.9GiB` 零写入让位，3.92s/exit 0）→ 11-07 09:28 手动班全绿（351s，批 C 前）→ 11-08 08:40 定拍班全绿（340s，批 C 后 b9a1960）→ 本班（批 C/D/E+W4 全含 23b14e5）。票面"成功或明确 deferred 后恢复均可验收"——本班=成功路径，四次 OOM/SIGKILL 史路径未复现。边界重申（评审 B）：duck_limits 非进程硬上限，本页只记实测值。
