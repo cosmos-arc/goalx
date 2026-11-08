@@ -29,7 +29,7 @@ from typing import Any, cast
 import httpx
 
 from goalx_backend import db as db_mod
-from goalx_backend.betting import account, funnel
+from goalx_backend.betting import account, funnel, summary
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
@@ -270,8 +270,22 @@ def check_today_eu(conn: sqlite3.Connection, *, business_date: str) -> CheckItem
 
 
 def check_bets(conn: sqlite3.Connection) -> CheckItem:
-    """项 9 纸面闭环观察（观察项：只报数不判红）。"""
-    return CheckItem("bets", OK, f"累计 {bets_store.bets_total(conn)} 注")
+    """
+    项 9 纸面闭环观察（观察项：只报数不判红；票 10 起并报 summary 聚合面）。
+
+    detail 即 history 页指标卡的晨检对账面：已结=已锁定且已结算 canon，
+    两模式分列不混算——人读可跨 UI/晨检对数。
+    """
+    faces = {face.mode: face for face in summary.bets_summary(conn)}
+
+    def face_note(mode: str) -> str:
+        face = faces[mode]
+        pnl = f"{face.total_pnl:+.2f}"
+        return f"{mode} 已结 {face.settled_n} 注 {pnl}/未结 {face.open_n}"
+
+    total = bets_store.bets_total(conn)
+    detail = f"累计 {total} 注（{face_note('paper')}；{face_note('live')}）"
+    return CheckItem("bets", OK, detail)
 
 
 def check_paper_account(conn: sqlite3.Connection) -> CheckItem:

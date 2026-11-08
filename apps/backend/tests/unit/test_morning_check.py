@@ -164,8 +164,34 @@ def test_check_today_eu_buckets(db: sqlite3.Connection) -> None:
 
 
 def test_check_bets_observation(db: sqlite3.Connection) -> None:
+    """项 9：空库零数不冒充；票 10 起 detail 带 summary 两模式聚合对账面。"""
     assert check_bets(db).status == OK
-    assert "0 注" in check_bets(db).detail
+    assert (
+        check_bets(db).detail
+    ) == "累计 0 注（paper 已结 0 注 +0.00/未结 0；live 已结 0 注 +0.00/未结 0）"
+
+
+def test_check_bets_observation_with_summary_faces(db: sqlite3.Connection) -> None:
+    """项 9 对账面=history 指标卡同源（已锁定且已结算 canon，两模式不混算）。"""
+    db.executemany(
+        """
+        INSERT INTO bets (mode, market_kind, purchased, stake, created_at, status,
+                          payout, profit, settled_at)
+        VALUES (?, 'fixed', ?, 2, '2026-11-01T10:00:00+00:00', ?, NULL, ?, ?)
+        """,
+        [
+            ("paper", 1, "won", 1.0, "2026-11-02T12:00:00+00:00"),
+            ("paper", 1, "lost", -0.5, "2026-11-02T13:00:00+00:00"),
+            ("paper", 1, "open", None, None),
+            ("live", 1, "lost", -2.0, "2026-11-02T14:00:00+00:00"),
+        ],
+    )
+    db.commit()
+    item = check_bets(db)
+    assert item.status == OK
+    assert "累计 4 注" in item.detail
+    assert "paper 已结 2 注 +0.50/未结 1" in item.detail
+    assert "live 已结 1 注 -2.00/未结 0" in item.detail
 
 
 def test_check_paper_account_observation(db: sqlite3.Connection) -> None:
