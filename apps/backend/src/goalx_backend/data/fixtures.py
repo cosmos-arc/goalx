@@ -611,6 +611,58 @@ ORDER BY captured_at, odds
     return _latest_from_rows(rows)
 
 
+def jingcai_roster(conn: sqlite3.Connection, business_date: str) -> list[sqlite3.Row]:
+    """某业务日的竞彩在售场次名册（auto-paper 票 03 决策面原料）。"""
+    return conn.execute(
+        """
+        SELECT mc.code AS match_code, f.id AS fixture_id, f.kickoff_utc
+        FROM match_codes mc
+        JOIN fixtures f ON f.id = mc.fixture_id
+        WHERE mc.kind = 'jingcai' AND mc.business_date = ?
+        ORDER BY mc.code
+        """,
+        (business_date,),
+    ).fetchall()
+
+
+# 有效观测时刻表达式（票 01 准入语义单源）：observed_at 缺失时仅 odds_api
+# 旧行兜底 captured_at；sporttery 旧行观测未知=不可证明可见，不进锚
+_EFFECTIVE_SEEN_AT = (
+    "COALESCE(observed_at, CASE WHEN source LIKE 'odds_api:%' THEN captured_at END)"
+)
+
+
+def latest_odds_evidence_asof(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str,
+    as_of: str,
+    *,
+    source: str = "sporttery",
+) -> dict[str, sqlite3.Row]:
+    """
+    as-of 有效观测价 + 行身份（auto-paper 票 03 官方性通道）。
+
+    与 latest_odds_by_selection_asof 同准入语义（有效观测时刻 <= as_of，
+    观测时刻未知不进锚），但保留整行（id/meta）供腿级证据身份与
+    goal_line 提取——返回 selection -> Row(id, odds, meta, seen_at)。
+    """
+    rows = conn.execute(
+        f"""
+        SELECT id, selection_code, odds, meta, {_EFFECTIVE_SEEN_AT} AS seen_at
+        FROM odds_snapshots
+        WHERE fixture_id = ? AND market_code = ? AND source = ?
+          AND {_EFFECTIVE_SEEN_AT} <= ?
+        ORDER BY seen_at, odds
+        """,  # noqa: S608 — seen 为常量表达式，值全参数化
+        (fixture_id, market_code, source, as_of),
+    ).fetchall()
+    latest: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        latest[str(row["selection_code"])] = row
+    return latest
+
+
 def latest_odds_by_selection_bulk(
     conn: sqlite3.Connection,
     fixture_ids: list[int],

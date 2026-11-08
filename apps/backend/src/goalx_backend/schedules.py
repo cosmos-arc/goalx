@@ -63,6 +63,7 @@ from goalx_backend import datasets
 from goalx_backend.config import get_settings
 from goalx_backend.db import connect as db_connect
 from goalx_backend.flows import (
+    auto_paper_flow,
     baseline_freeze_flow,
     daily_capture_flow,
     daily_wrap_flow,
@@ -144,6 +145,23 @@ def build_deployments() -> dict[str, RunnerDeployment]:
             schedule=Schedule(cron="33 12,16,21 * * *", timezone="Asia/Shanghai"),
         ),
     )
+    # auto-paper 票 03：三锚（12:30/16:30/21:00）后 1 分钟跑 auto-v1 落注。
+    # Prefect 单 deployment 单 cron → 12:31/16:31 与 21:01 双面（与
+    # baseline-freeze 的 +3min 错拍，冻结先于决策读数落地）。
+    auto_day = cast(
+        RunnerDeployment,
+        auto_paper_flow.to_deployment(
+            name="protocol-v1-day",
+            schedule=Schedule(cron="31 12,16 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
+    auto_evening = cast(
+        RunnerDeployment,
+        auto_paper_flow.to_deployment(
+            name="protocol-v1-evening",
+            schedule=Schedule(cron="1 21 * * *", timezone="Asia/Shanghai"),
+        ),
+    )
     deployments: dict[str, RunnerDeployment] = {
         "daily-capture": daily,
         "daily-capture-window": daily_window,
@@ -152,6 +170,8 @@ def build_deployments() -> dict[str, RunnerDeployment]:
         "weekly-refresh": weekly,
         "daily-wrap": wrap,
         "baseline-freeze": freeze,
+        "auto-paper-day": auto_day,
+        "auto-paper-evening": auto_evening,
     }
     # 注册表面（票 03 全量：单 cron 定拍数据集，含两判死面）
     deployments.update(datasets.build_deployments())
@@ -240,6 +260,8 @@ RESUME_DEPLOYMENTS = (
     "weekly-refresh",
     "daily-wrap",
     "baseline-freeze",
+    "auto-paper-day",
+    "auto-paper-evening",
     *datasets.resume_names(),
 )
 DEAD_DEPLOYMENTS = datasets.dead_names()

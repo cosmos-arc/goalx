@@ -73,6 +73,7 @@
 | `bet_slips` / `bet_legs` / `combinations` / `pool_picks` | 票/腿/复式物化/池票选场 | 腿引用锁定 OddsSnapshot；combinations=任9 笛卡尔积落行 | append |
 | `settlements` / `settlement_revisions` | 结算与更正留痕 | 单关返本、串关无效腿按 1 继续 | append / append |
 | `bankroll_events` | 资金事件 | balance_after 链式核对；**只真金记录进 Bankroll** | append |
+| `auto_paper_runs` | auto-v1 锚执行台账（票 03） | 每锚一行 upsert：行存在=跑过；zero_note 区分 no_candidates/no_positive_ev/price_drift/gate_rejected（没跑≠没得买） | upsert（bets/candidates 首写保真 MAX 合并） |
 
 ### evaluation 域
 
@@ -117,6 +118,9 @@ as-of 纯函数重放即决策存证；EVAssessment 口径在视图与 betting �
 erDiagram
     admin_match_exclusions {
         INTEGER id PK
+    }
+    auto_paper_runs {
+        TEXT business_date PK
     }
     backtest_bets {
         INTEGER id PK
@@ -1225,6 +1229,22 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `slip_id` | INTEGER | FK→bet_slips.id |
 | `note` | TEXT | — |
 <!-- schema-doc:END:table:bankroll_events -->
+<!-- schema-doc:BEGIN:table:auto_paper_runs -->
+#### `auto_paper_runs`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `business_date` | TEXT | PK，NOT NULL |
+| `anchor_label` | TEXT | PK，NOT NULL |
+| `ran_at` | TEXT | NOT NULL |
+| `candidates` | INTEGER | NOT NULL，DEFAULT 0 |
+| `bets` | INTEGER | NOT NULL，DEFAULT 0 |
+| `slips` | INTEGER | NOT NULL，DEFAULT 0 |
+| `zero_note` | TEXT | — |
+| `detail_json` | TEXT | — |
+
+唯一键 `UNIQUE(`business_date`, `anchor_label`)`
+<!-- schema-doc:END:table:auto_paper_runs -->
 <!-- schema-doc:BEGIN:table:funnel_days -->
 #### `funnel_days`
 
