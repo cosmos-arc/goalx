@@ -405,13 +405,14 @@ def check_jc_waiting(
     return CheckItem("jc_waiting", status, detail)
 
 
-def check_alias_coverage(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
+def check_alias_coverage(conn: sqlite3.Connection, *, business_date: str) -> CheckItem:
     """
     项 16 覆盖守门（identity 票 02）：最近业务日 no_mapping > 0 即红。
 
     31 队静默洞数月无人知的教训：容忍度=0，任何 no_mapping 行都附队名列单
     （canonical + 模型侧断名）。覆盖账无行=守门失效，黄面自报；账存在但
-    落后 >1 业务日且无 no_mapping=黄（陈账的 0 不冒充新鲜）。
+    落后 >1 天且无 no_mapping=黄（陈账的 0 不冒充新鲜；竞彩连日空板会
+    良性触发，人工看单即辨）。
     """
     latest = forecast.latest_coverage_date(conn)
     if latest is None:
@@ -429,13 +430,14 @@ def check_alias_coverage(conn: sqlite3.Connection, *, now: datetime) -> CheckIte
             f"{latest} no_mapping {len(names)} 场：{shown}"
             + ("…" if len(names) > _CRITICAL_NAME_CAP else ""),
         )
-    today = fx_store.beijing_business_date(now)
-    lag_days = (datetime.fromisoformat(today) - datetime.fromisoformat(latest)).days
+    lag_days = (
+        datetime.fromisoformat(business_date) - datetime.fromisoformat(latest)
+    ).days
     if lag_days > 1:
         return CheckItem(
             "alias_coverage",
             DEGRADED,
-            f"{latest} no_mapping 0，但覆盖账落后 {lag_days} 个业务日",
+            f"{latest} no_mapping 0，但覆盖账落后 {lag_days} 天",
         )
     return CheckItem("alias_coverage", OK, f"{latest} no_mapping 0")
 
@@ -516,7 +518,9 @@ def run_morning_check(
                 check_today_eu(
                     conn, business_date=fx_store.beijing_business_date(resolved_now)
                 ),
-                check_alias_coverage(conn, now=resolved_now),
+                check_alias_coverage(
+                    conn, business_date=fx_store.beijing_business_date(resolved_now)
+                ),
                 check_bets(conn),
                 check_paper_account(conn),
                 check_freshness_shadow(conn, now=resolved_now),

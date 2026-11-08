@@ -165,7 +165,12 @@ def test_check_today_eu_buckets(db: sqlite3.Connection) -> None:
 
 def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
     """项 16（identity 票 02）：no_mapping>0=红附队名；清零=绿；无账=黄。"""
-    assert mc.check_alias_coverage(db, now=NOW).status == DEGRADED  # 覆盖账无行
+    assert (
+        mc.check_alias_coverage(
+            db, business_date=fx_store.beijing_business_date(NOW)
+        ).status
+        == DEGRADED
+    )  # 覆盖账无行
     business_date = fx_store.beijing_business_date(NOW)
     comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
     home = fx_store.upsert_team(db, "谢周三")
@@ -187,7 +192,9 @@ def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
         (business_date, fixture, _iso(1)),
     )
     db.commit()
-    item = mc.check_alias_coverage(db, now=NOW)
+    item = mc.check_alias_coverage(
+        db, business_date=fx_store.beijing_business_date(NOW)
+    )
     assert item.status == FAIL
     assert "谢周三" in item.detail
     assert "普利茅斯" in item.detail
@@ -198,7 +205,12 @@ def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
         (fixture,),
     )
     db.commit()
-    assert mc.check_alias_coverage(db, now=NOW).status == OK
+    assert (
+        mc.check_alias_coverage(
+            db, business_date=fx_store.beijing_business_date(NOW)
+        ).status
+        == OK
+    )
 
 
 def test_check_alias_coverage_stale_account(db: sqlite3.Connection) -> None:
@@ -218,7 +230,9 @@ def test_check_alias_coverage_stale_account(db: sqlite3.Connection) -> None:
         (fixture, _iso(1)),
     )
     db.commit()
-    item = mc.check_alias_coverage(db, now=NOW)
+    item = mc.check_alias_coverage(
+        db, business_date=fx_store.beijing_business_date(NOW)
+    )
     assert item.status == DEGRADED
     assert "落后" in item.detail
 

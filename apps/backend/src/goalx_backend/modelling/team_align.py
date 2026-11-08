@@ -23,6 +23,10 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
 from goalx_backend.db import atomic
 
+# identity 票 02：align-report 辅线守门阈值——覆盖率低于此值报 degraded
+# （起步 0.95，达标后收紧）
+ALIGNMENT_DEGRADED_COVERAGE = 0.95
+
 # 俱乐部法律形态词元（两侧都剥离，使 "FC Koln"↔"Koln" 等价）
 STRIP_TOKENS = frozenset(
     {
@@ -157,11 +161,6 @@ def match_model_team(model_teams: list[str], aliases: list[str]) -> str | None:
         if pos is not None:
             return model_teams[pos]
     return None
-
-
-# identity 票 02：align-report 辅线守门阈值——覆盖率低于此值报 degraded
-# （起步 0.95，达标后收紧）
-ALIGNMENT_DEGRADED_COVERAGE = 0.95
 
 
 @dataclass
