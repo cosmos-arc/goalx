@@ -430,9 +430,14 @@ def check_alias_coverage(conn: sqlite3.Connection, *, business_date: str) -> Che
             f"{latest} no_mapping {len(names)} 场：{shown}"
             + ("…" if len(names) > _CRITICAL_NAME_CAP else ""),
         )
-    lag_days = (
-        datetime.fromisoformat(business_date) - datetime.fromisoformat(latest)
-    ).days
+    try:
+        lag_days = (
+            datetime.fromisoformat(business_date) - datetime.fromisoformat(latest)
+        ).days
+    except ValueError:
+        # 写侧 --date 无 argparse 校验（cli forecast --date 2026-11-7 可入库），
+        # 坏串只降级本项不炸整检（correctness F1：晨检防缺数据也防自身崩）
+        return CheckItem("alias_coverage", DEGRADED, f"覆盖账业务日坏串：{latest!r}")
     if lag_days > 1:
         return CheckItem(
             "alias_coverage",

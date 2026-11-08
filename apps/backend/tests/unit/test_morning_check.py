@@ -213,6 +213,29 @@ def test_check_alias_coverage_states(db: sqlite3.Connection) -> None:
     )
 
 
+def test_check_alias_coverage_bad_business_date(db: sqlite3.Connection) -> None:
+    """correctness F1：写侧无校验的业务日坏串只降级本项，不炸整检。"""
+    comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
+    fixture = fx_store.upsert_fixture(
+        db,
+        comp,
+        "2026-11-07T18:00:00+00:00",
+        fx_store.upsert_team(db, "斯托克城"),
+        fx_store.upsert_team(db, "加的夫城"),
+    )
+    # cli forecast --date 2026-11-7 未校验即入库；'2026-11-7' 文本序还赢当月日期
+    db.execute(
+        "INSERT INTO forecast_coverage"
+        " (business_date, fixture_id, covered, reason, recorded_at)"
+        " VALUES ('2026-11-7', ?, 1, NULL, ?)",
+        (fixture, _iso(1)),
+    )
+    db.commit()
+    item = mc.check_alias_coverage(db, business_date="2026-11-07")
+    assert item.status == DEGRADED
+    assert "2026-11-7" in item.detail
+
+
 def test_check_alias_coverage_stale_account(db: sqlite3.Connection) -> None:
     """陈账的 no_mapping 0 不冒充新鲜：落后 >1 业务日=黄。"""
     comp = fx_store.upsert_competition(db, "英冠", tier=Tier.TIER1)
