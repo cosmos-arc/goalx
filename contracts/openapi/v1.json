@@ -800,8 +800,8 @@
         "tags": [
           "bets"
         ],
-        "summary": "复盘列表(注级; 含前瞻资格与 closing 完整性)",
-        "description": "全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。",
+        "summary": "复盘列表(注级; 最新 100; 聚合口径走 /bets/summary)",
+        "description": "投注记录列表：结算状态、盈亏、建议 vs 实际条款、复盘资格。\n\niterate 票 10：缺省面有界最新 100（渲染事实——聚合页不得从本列表\n取经济账，静默截断=复盘口径腐坏）；only_open 面（待办/结算判定集合）\n天然小、不有界。",
         "operationId": "list_bets_api_v1_bets_get",
         "parameters": [
           {
@@ -852,6 +852,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bets/summary": {
+      "get": {
+        "tags": [
+          "bets"
+        ],
+        "summary": "注级全量聚合(两模式分列; totalPnl/命中率/日桶累计; 不随列表有界截断)",
+        "description": "复盘经济账的服务端单源（iterate 票 10）。\n\n结算口径=已锁定且已结算；日桶=北京业务日。EV 双口径（共识/模型）给和\n与计数，均值由消费方取口径后相除——共识优先、两口径不混算。",
+        "operationId": "get_bets_summary_api_v1_bets_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetsSummaryView"
                 }
               }
             }
@@ -3106,6 +3128,154 @@
         ],
         "title": "BetView",
         "description": "一注的复盘视图。"
+      },
+      "BetsDayBucketView": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "settled_n": {
+            "type": "integer",
+            "title": "Settled N"
+          },
+          "won_n": {
+            "type": "integer",
+            "title": "Won N"
+          },
+          "decided_n": {
+            "type": "integer",
+            "title": "Decided N"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "sum_ev_consensus": {
+            "type": "number",
+            "title": "Sum Ev Consensus"
+          },
+          "n_ev_consensus": {
+            "type": "integer",
+            "title": "N Ev Consensus"
+          },
+          "sum_ev_model": {
+            "type": "number",
+            "title": "Sum Ev Model"
+          },
+          "n_ev_model": {
+            "type": "integer",
+            "title": "N Ev Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "settled_n",
+          "won_n",
+          "decided_n",
+          "pnl",
+          "sum_ev_consensus",
+          "n_ev_consensus",
+          "sum_ev_model",
+          "n_ev_model"
+        ],
+        "title": "BetsDayBucketView",
+        "description": "一个北京业务日的已结算聚合（按日求和可复原任意时间范围口径）。"
+      },
+      "BetsModeSummaryView": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "bets_n": {
+            "type": "integer",
+            "title": "Bets N"
+          },
+          "open_n": {
+            "type": "integer",
+            "title": "Open N"
+          },
+          "settled_n": {
+            "type": "integer",
+            "title": "Settled N"
+          },
+          "won_n": {
+            "type": "integer",
+            "title": "Won N"
+          },
+          "decided_n": {
+            "type": "integer",
+            "title": "Decided N"
+          },
+          "total_pnl": {
+            "type": "number",
+            "title": "Total Pnl"
+          },
+          "stake_settled": {
+            "type": "number",
+            "title": "Stake Settled"
+          },
+          "sum_ev_consensus": {
+            "type": "number",
+            "title": "Sum Ev Consensus"
+          },
+          "n_ev_consensus": {
+            "type": "integer",
+            "title": "N Ev Consensus"
+          },
+          "sum_ev_model": {
+            "type": "number",
+            "title": "Sum Ev Model"
+          },
+          "n_ev_model": {
+            "type": "integer",
+            "title": "N Ev Model"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/BetsDayBucketView"
+            },
+            "type": "array",
+            "title": "Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "bets_n",
+          "open_n",
+          "settled_n",
+          "won_n",
+          "decided_n",
+          "total_pnl",
+          "stake_settled",
+          "sum_ev_consensus",
+          "n_ev_consensus",
+          "sum_ev_model",
+          "n_ev_model",
+          "days"
+        ],
+        "title": "BetsModeSummaryView",
+        "description": "一个模式（paper/live）的全量聚合行（iterate 票 10）。"
+      },
+      "BetsSummaryView": {
+        "properties": {
+          "paper": {
+            "$ref": "#/components/schemas/BetsModeSummaryView"
+          },
+          "live": {
+            "$ref": "#/components/schemas/BetsModeSummaryView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper",
+          "live"
+        ],
+        "title": "BetsSummaryView",
+        "description": "全量聚合面（票 10）：两模式分列不混算，永不随列表有界截断。"
       },
       "BlindReviewPayload": {
         "properties": {

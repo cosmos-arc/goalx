@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Bet, DrawResultView, TodayFixture } from "../api/goalx";
+import { summarizeBets } from "../mocks/bets-summary";
 import { attributionFixture } from "../mocks/handlers";
 import { server } from "../mocks/server";
 import { router } from "../router";
@@ -115,6 +116,8 @@ function mockAll({
 	server.use(
 		http.get("*/api/v1/fixtures/today", () => HttpResponse.json(fixtures)),
 		http.get("*/api/v1/bets", () => HttpResponse.json(bets)),
+		// 票 10：summary 与列表同源派生——快照卡断言值即这份 bets 的全量聚合
+		http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(bets))),
 		http.get("*/api/v1/bankroll", () => HttpResponse.json(bankroll ?? { balance: null, events: [] })),
 		http.get("*/api/v1/draw-results", () => HttpResponse.json(results ?? [])),
 	);
@@ -148,7 +151,7 @@ test("default snapshot: todo rules ①③ fire, four cards render, validation li
 	const roi = within(liveZone).getByTestId("card-roi");
 	expect(roi).toHaveTextContent("+90.0%"); // 10.8 / 12
 	expect(within(roi).getByText("+90.0%")).toHaveClass("text-profit");
-	expect(roi).toHaveTextContent("未结 0 注不计");
+	expect(roi).toHaveTextContent("未结 1 注不计"); // 真金建议 #3 已回 open（未动=未结）
 
 	// 机会卡：fixture 1、2 可投（3 已停售）；验证进度三条件全未达成 → 0/3
 	expect(screen.getByTestId("card-pickable")).toHaveTextContent("2");
@@ -450,6 +453,7 @@ test("shows the loading skeleton before core data arrives", async () => {
 	server.use(
 		http.get("*/api/v1/fixtures/today", () => new Promise<Response>(() => {})),
 		http.get("*/api/v1/bets", () => new Promise<Response>(() => {})),
+		http.get("*/api/v1/bets/summary", () => new Promise<Response>(() => {})),
 		http.get("*/api/v1/bankroll", () => new Promise<Response>(() => {})),
 	);
 	await renderAt("/");
@@ -461,7 +465,7 @@ test("shows the loading skeleton before core data arrives", async () => {
 
 test("shows the backend-unavailable state when every core endpoint fails, and retry recovers", async () => {
 	const user = userEvent.setup();
-	for (const path of ["/api/v1/fixtures/today", "/api/v1/bets", "/api/v1/bankroll"]) {
+	for (const path of ["/api/v1/fixtures/today", "/api/v1/bets", "/api/v1/bets/summary", "/api/v1/bankroll"]) {
 		server.use(http.get(`*${path}`, () => HttpResponse.json({ detail: "unavailable" }, { status: 503 })));
 	}
 	await renderAt("/");

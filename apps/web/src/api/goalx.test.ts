@@ -5,6 +5,7 @@ import {
 	createBet,
 	fetchBankroll,
 	fetchBets,
+	fetchBetsSummary,
 	fetchCostSummary,
 	fetchDrawResults,
 	fetchGoalsMarket,
@@ -34,13 +35,24 @@ test("fetchers round-trip against msw handlers", async () => {
 	expect(goals[0]?.ttg?.selections?.[0]?.probability).toBeNull();
 	expect(goals[2]?.ttg?.sale_state).toBe("stopped");
 
+	// 票 10：/bets 面 honors mode/only_open（only_open=待办判定集合不有界）
 	const bets = await fetchBets({ mode: "paper", only_open: false });
-	expect(bets).toHaveLength(4);
+	expect(bets).toHaveLength(2); // fixture 纸面 #1/#2
+
+	const openBets = await fetchBets({ only_open: true });
+	expect(openBets).toHaveLength(2); // 建议 #1（纸面）+ #3（真金）都还挂着
 
 	const allBets = await fetchBets();
 	expect(allBets).toHaveLength(4);
 	expect(allBets[3]?.actual_stake).toBe(12);
 	expect(allBets[3]?.review?.forward).toBe("live_separate");
+
+	// /bets/summary 全量聚合往返：两模式分列，日桶随 fixture 结算日
+	const summary = await fetchBetsSummary();
+	expect(summary.paper.settled_n).toBe(1);
+	expect(summary.paper.total_pnl).toBe(26.6);
+	expect(summary.live.stake_settled).toBe(12);
+	expect(summary.paper.days[0]?.pnl).toBe(26.6);
 
 	const created = await createBet({
 		mode: "paper",

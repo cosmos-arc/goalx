@@ -270,8 +270,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 复盘列表(注级; 含前瞻资格与 closing 完整性)
-         * @description 全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。
+         * 复盘列表(注级; 最新 100; 聚合口径走 /bets/summary)
+         * @description 投注记录列表：结算状态、盈亏、建议 vs 实际条款、复盘资格。
+         *
+         *     iterate 票 10：缺省面有界最新 100（渲染事实——聚合页不得从本列表
+         *     取经济账，静默截断=复盘口径腐坏）；only_open 面（待办/结算判定集合）
+         *     天然小、不有界。
          */
         get: operations["list_bets_api_v1_bets_get"];
         put?: never;
@@ -296,6 +300,29 @@ export interface paths {
          *     原决策已落库，腿事后停售/价变不改变"该请求已建注"的事实。
          */
         post: operations["create_bet_api_v1_bets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bets/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 注级全量聚合(两模式分列; totalPnl/命中率/日桶累计; 不随列表有界截断)
+         * @description 复盘经济账的服务端单源（iterate 票 10）。
+         *
+         *     结算口径=已锁定且已结算；日桶=北京业务日。EV 双口径（共识/模型）给和
+         *     与计数，均值由消费方取口径后相除——共识优先、两口径不混算。
+         */
+        get: operations["get_bets_summary_api_v1_bets_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1324,6 +1351,70 @@ export interface components {
             price_source?: string | null;
             /** Client Request Id */
             client_request_id?: string | null;
+        };
+        /**
+         * BetsDayBucketView
+         * @description 一个北京业务日的已结算聚合（按日求和可复原任意时间范围口径）。
+         */
+        BetsDayBucketView: {
+            /** Date */
+            date: string;
+            /** Settled N */
+            settled_n: number;
+            /** Won N */
+            won_n: number;
+            /** Decided N */
+            decided_n: number;
+            /** Pnl */
+            pnl: number;
+            /** Sum Ev Consensus */
+            sum_ev_consensus: number;
+            /** N Ev Consensus */
+            n_ev_consensus: number;
+            /** Sum Ev Model */
+            sum_ev_model: number;
+            /** N Ev Model */
+            n_ev_model: number;
+        };
+        /**
+         * BetsModeSummaryView
+         * @description 一个模式（paper/live）的全量聚合行（iterate 票 10）。
+         */
+        BetsModeSummaryView: {
+            /** Mode */
+            mode: string;
+            /** Bets N */
+            bets_n: number;
+            /** Open N */
+            open_n: number;
+            /** Settled N */
+            settled_n: number;
+            /** Won N */
+            won_n: number;
+            /** Decided N */
+            decided_n: number;
+            /** Total Pnl */
+            total_pnl: number;
+            /** Stake Settled */
+            stake_settled: number;
+            /** Sum Ev Consensus */
+            sum_ev_consensus: number;
+            /** N Ev Consensus */
+            n_ev_consensus: number;
+            /** Sum Ev Model */
+            sum_ev_model: number;
+            /** N Ev Model */
+            n_ev_model: number;
+            /** Days */
+            days: components["schemas"]["BetsDayBucketView"][];
+        };
+        /**
+         * BetsSummaryView
+         * @description 全量聚合面（票 10）：两模式分列不混算，永不随列表有界截断。
+         */
+        BetsSummaryView: {
+            paper: components["schemas"]["BetsModeSummaryView"];
+            live: components["schemas"]["BetsModeSummaryView"];
         };
         /**
          * BlindReviewPayload
@@ -3574,6 +3665,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_bets_summary_api_v1_bets_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BetsSummaryView"];
                 };
             };
         };
