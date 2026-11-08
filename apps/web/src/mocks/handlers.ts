@@ -1,6 +1,5 @@
 import { HttpResponse, http } from "msw";
 import type { components } from "../api/generated/schema";
-
 import type {
 	BacktestRun,
 	Bankroll,
@@ -18,6 +17,7 @@ import type {
 	ValidationProgress,
 } from "../api/goalx";
 import { beijingBusinessDate } from "../lib/ui";
+import { summarizeBets } from "./bets-summary";
 
 type StatusResponse = components["schemas"]["StatusResponse"];
 
@@ -379,7 +379,9 @@ export const betsFixture = [
 		placed_at: null,
 		locked_at: null,
 		created_at: "2026-09-12T11:00:00+00:00",
-		status: "partial",
+		// 票 10：未动真金建议=还挂着的 open 行（原 partial+settled_at null 是
+		// 半途态怪行——结算后未回录建议不再是待办，不进建议段）
+		status: "open",
 		payout: null,
 		profit: null,
 		settled_at: null,
@@ -584,7 +586,21 @@ export const handlers = [
 			} → ¥${stake.toFixed(2)}；单注硬区间 1%–${(cap * 100).toFixed(0)}%（竞彩最低 ¥2）`,
 		});
 	}),
-	http.get("*/api/v1/bets", () => HttpResponse.json(betsFixture)),
+	// iterate 票 10：缺省面=列表（服务端有界 100，fixture 短无需截）；honors
+	// mode/only_open 查询参——only_open 面=待办/结算判定集合不有界
+	http.get("*/api/v1/bets", ({ request }) => {
+		const params = new URL(request.url).searchParams;
+		let rows = [...betsFixture];
+		const mode = params.get("mode");
+		if (mode === "paper" || mode === "live") {
+			rows = rows.filter((bet) => bet.mode === mode);
+		}
+		if (params.get("only_open") === "true") {
+			rows = rows.filter((bet) => bet.status === "open");
+		}
+		return HttpResponse.json(rows);
+	}),
+	http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(betsFixture))),
 	http.post("*/api/v1/bet-slips", () =>
 		HttpResponse.json(
 			{

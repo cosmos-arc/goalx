@@ -13,7 +13,13 @@ import type { QueryClient } from "@tanstack/react-query";
 
 // ---- 无参键（单例读模型）----
 
+/**
+ * bets 三读面（iterate 票 10）：betsKey=["bets"] 兼作前缀键——react-query
+ * 失效按前缀匹配，既有 invalidation(betsKey) 已覆盖 open/summary 两面。
+ */
 export const betsKey = ["bets"] as const;
+export const openBetsKey = ["bets", "open"] as const;
+export const betsSummaryKey = ["bets", "summary"] as const;
 export const drawResultsKey = ["draw-results"] as const;
 export const drawSyncKey = ["draw-sync"] as const;
 export const bankrollKey = ["bankroll"] as const;

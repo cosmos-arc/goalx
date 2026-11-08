@@ -1,7 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { type Bet, type BetEvSnapshot, fetchBets, fetchTodayFixtures } from "../api/goalx";
+import {
+	type BetsDayBucket,
+	type BetsModeSummary,
+	fetchBets,
+	fetchBetsSummary,
+	fetchTodayFixtures,
+} from "../api/goalx";
 import { AppShell } from "../components/app-shell";
 import type { EChartsOption } from "../components/charts/echarts";
 import { useECharts } from "../components/charts/use-echarts";
@@ -9,21 +15,35 @@ import { EmptyState } from "../components/empty-state";
 import { GlossaryTerm } from "../components/glossary-term";
 import { StatusBadge } from "../components/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
-import { betsKey, todayFixturesKey } from "../lib/query-keys";
-import { cssVar, legText, pnlClass, shortTime, signedCny, stakeText, TABULAR_NUMS } from "../lib/ui";
+import { betsKey, betsSummaryKey, todayFixturesKey } from "../lib/query-keys";
+import {
+	beijingBusinessDate,
+	cssVar,
+	legText,
+	pnlClass,
+	shortTime,
+	signedCny,
+	stakeText,
+	TABULAR_NUMS,
+} from "../lib/ui";
 import { useNow } from "../lib/use-now";
 
 /**
  * 票 17：历史复盘页落地（票 07 定稿 = 唯一事实源）。分析优先：五指标卡 + 盈亏累计
- * 曲线 + "查看明细"同页展开，流水是下钻层不是主界面。数据源 = 现有 `GET /bets`
- * 前端过滤聚合（票 10 定稿零新端点），样本口径 = 已锁定（purchased）且已结算
- * （settled_at 非空，与票 16 已结算段同判定）；纸面/真金大标签常显、分别统计不混算。
+ * 曲线 + "查看明细"同页展开，流水是下钻层不是主界面。
+ * iterate 票 10：五指标与累计曲线改 `GET /bets/summary` 服务端全量聚合（永不随
+ * 列表有界 100 截断）；`GET /bets` 有界列表只供明细表与二级筛选。样本口径 =
+ * 已锁定（purchased）且已结算（settled_at 非空）；纸面/真金大标签常显、分别
+ * 统计不混算。
  *
  * 口径红线：
  * - 页头固定一行按 07 Answer 逐字："统计已锁定且已结算的注；前瞻验证口径（含排除
  *   规则）见验证页。"两页数字不同时各自以口径标注为准；术语"前瞻纳入"由 17 号的
  *   链接占位升级为 18 号的 GlossaryTerm Popover（悬停/聚焦就地看口径）。
- * - 平均 EV（票 41 点亮）：建注时随 BetView 落注级快照（共识/模型双口径概率与
+ * - 指标卡口径=模式+时间范围（服务端全量）；二层筛选（Competition/策略版本/
+ *   结果状态）只作用于明细表——服务端无注级 competition 维度，且聚合面不得
+ *   被任何有界列表静默截断（票 10 不变量）。
+ * - 平均 EV（票 41）：建注时随 BetView 落注级快照（共识/模型双口径概率与
  *   EV），均值共识口径优先、两口径不混算，样本数（有快照注 / 筛选注数）注明，
  *   无快照注保持"—"兜底；平均 CLV 仍缺注级 API 字段（clv_records 已有链路，
  *   BetView 增量待后续票），按缺失显示"—"并注明口径与判读方向（CLV 正 = 买在
@@ -57,17 +77,6 @@ const STATUS_OPTIONS = [
 	{ value: "void", label: "退款" },
 ] as const;
 
-/** 结算时点升序的累计盈亏点（每注一个点；profit 缺失按 0 接力，不做断点）。 */
-export function buildCumulativePoints(bets: Bet[]): Array<{ label: string; value: number }> {
-	const at = (bet: Bet): number => new Date(bet.settled_at ?? "").getTime();
-	const ordered = [...bets].sort((a, b) => at(a) - at(b));
-	let cumulative = 0;
-	return ordered.map((bet) => {
-		cumulative += bet.profit ?? 0;
-		return { label: shortTime(bet.settled_at), value: Math.round(cumulative * 100) / 100 };
-	});
-}
-
 /** EV 口径标签：均值展示与样本数注明共用（共识优先，模型为回退口径）。 */
 export type EvCaliber = "consensus" | "model";
 
@@ -76,33 +85,51 @@ export const EV_CALIBER_LABELS: Record<EvCaliber, string> = {
 	model: "模型口径",
 };
 
+/** summary 日桶按时间范围求和后的指标面（票 10）。 */
+export type RangeMetrics = {
+	settledN: number;
+	wonN: number;
+	decidedN: number;
+	pnl: number;
+	ev: { value: number; caliber: EvCaliber; count: number } | null;
+};
+
 /**
- * 注级 EV 快照均值（票 41）：共识口径优先，共识/模型两口径不混算——共识有
- * 样本只算共识，全缺才回退模型；无快照注不入分母（null 兜底由调用方处理）。
+ * 模式聚合面 × 时间范围 → 指标：日桶按北京业务日键（日粒度，≥startDay
+ * 整日纳入——correctness：指标与明细表共用同一日粒度边界，不混 ms 精度）
+ * 过滤求和；EV 共识口径优先、两口径不混算（票 41 口径），无快照注不入分母。
  */
-export function averageEv(bets: Bet[]): { value: number; caliber: EvCaliber; count: number } | null {
-	const collect = (pick: (snapshot: BetEvSnapshot) => number | null | undefined): number[] =>
-		bets.flatMap((bet) => {
-			const value = bet.ev_snapshot ? pick(bet.ev_snapshot) : null;
-			return value == null ? [] : [value];
-		});
-	const consensus = collect((snapshot) => snapshot.ev_consensus);
-	if (consensus.length > 0) {
-		return {
-			value: consensus.reduce((acc, value) => acc + value, 0) / consensus.length,
-			caliber: "consensus",
-			count: consensus.length,
-		};
-	}
-	const model = collect((snapshot) => snapshot.ev_model);
-	if (model.length > 0) {
-		return {
-			value: model.reduce((acc, value) => acc + value, 0) / model.length,
-			caliber: "model",
-			count: model.length,
-		};
-	}
-	return null;
+export function summarizeRange(face: BetsModeSummary, startDay: string | null): RangeMetrics {
+	const days = startDay === null ? face.days : face.days.filter((day) => day.date >= startDay);
+	const sum = (pick: (day: BetsDayBucket) => number): number => days.reduce((acc, day) => acc + pick(day), 0);
+	const nConsensus = sum((day) => day.n_ev_consensus);
+	const nModel = sum((day) => day.n_ev_model);
+	const ev =
+		nConsensus > 0
+			? { value: sum((day) => day.sum_ev_consensus) / nConsensus, caliber: "consensus" as const, count: nConsensus }
+			: nModel > 0
+				? { value: sum((day) => day.sum_ev_model) / nModel, caliber: "model" as const, count: nModel }
+				: null;
+	return {
+		settledN: sum((day) => day.settled_n),
+		wonN: sum((day) => day.won_n),
+		decidedN: sum((day) => day.decided_n),
+		pnl: Math.round(sum((day) => day.pnl) * 100) / 100,
+		ev,
+	};
+}
+
+/** 日桶 → 累计曲线点（升序累计，label=月-日；与旧逐注曲线同判读）。 */
+export function buildDailyCumulativePoints(
+	days: readonly BetsDayBucket[],
+	startDay: string | null,
+): Array<{ label: string; value: number }> {
+	const scoped = startDay === null ? days : days.filter((day) => day.date >= startDay);
+	let cumulative = 0;
+	return scoped.map((day) => {
+		cumulative += day.pnl;
+		return { label: day.date.slice(5), value: Math.round(cumulative * 100) / 100 };
+	});
 }
 
 /** 数据 → option 的纯映射（use-echarts 测试约定）：折线 + 0 基准虚线 markline。 */
@@ -164,6 +191,7 @@ function CumulativeChart({ points }: { points: Array<{ label: string; value: num
 
 export function HistoryPage() {
 	const betsQuery = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	const summaryQuery = useQuery({ queryKey: betsSummaryKey, queryFn: fetchBetsSummary });
 	const todayQuery = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
 	const [mode, setMode] = useState<Mode>("paper");
 	const [rangeKey, setRangeKey] = useState<RangeKey>("all");
@@ -174,9 +202,8 @@ export function HistoryPage() {
 	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
 	const allBets = betsQuery.data ?? [];
-	// 样本口径：已锁定且已结算（票 07 定稿；与票 16 已结算段同判定）。
-	// 票 05 E17 correctness F2：下方过滤/积分链逐层 useMemo——30s useNow
-	// 滴答重渲染不得给 points 换新身份（否则图表 setOption 重置交互态）
+	// 明细/筛选面：有界列表内已锁定且已结算的注（票 07 定稿口径；票 10 起
+	// 列表=最新 100 渲染事实，只供明细表与筛选选项，不供指标卡）
 	const modeSettled = useMemo(
 		() => allBets.filter((bet) => bet.mode === mode && bet.purchased && bet.settled_at !== null),
 		[allBets, mode],
@@ -198,13 +225,21 @@ export function HistoryPage() {
 	const hasUnversioned = strategyValues.includes(null);
 
 	const range = RANGES.find((item) => item.key === rangeKey) ?? RANGES[3];
-	const startMs = range.days === null ? null : now - range.days * 86_400_000;
+	// 指标卡/曲线口径=模式+时间范围的服务端全量日桶（票 10：永不随列表有界
+	// 截断）。correctness F1：时间边界统一日粒度（北京业务日 >= startDay 整日
+	// 纳入），明细表与指标卡共用同一口径——不再一个 ms 精度一个日粒度
+	const startDay = range.days === null ? null : beijingBusinessDate(now - range.days * 86_400_000);
+	const face = summaryQuery.data?.[mode];
+	const metrics = useMemo(() => (face ? summarizeRange(face, startDay) : null), [face, startDay]);
+	// 票 05 E17 correctness F2：points 身份稳定——30s useNow 滴答重渲染不得
+	// 给 points 换新身份（否则图表 setOption 重置交互态）
+	const points = useMemo(() => (face ? buildDailyCumulativePoints(face.days, startDay) : []), [face, startDay]);
 
 	const filtered = useMemo(
 		() =>
 			modeSettled.filter((bet) => {
 				const settledMs = new Date(bet.settled_at ?? "").getTime();
-				if (startMs !== null && (Number.isNaN(settledMs) || settledMs < startMs)) {
+				if (startDay !== null && (Number.isNaN(settledMs) || beijingBusinessDate(settledMs) < startDay)) {
 					return false;
 				}
 				if (competition !== "" && !bet.legs.some((leg) => competitionByFixture.get(leg.fixture_id) === competition)) {
@@ -221,7 +256,7 @@ export function HistoryPage() {
 				}
 				return true;
 			}),
-		[modeSettled, startMs, competition, competitionByFixture, strategy, status],
+		[modeSettled, startDay, competition, competitionByFixture, strategy, status],
 	);
 
 	// 明细行按结算时点倒序（最近结算在前，与票 16 已结算段同序）
@@ -229,16 +264,11 @@ export function HistoryPage() {
 		(a, b) => new Date(b.settled_at ?? "").getTime() - new Date(a.settled_at ?? "").getTime(),
 	);
 
-	// ---- 五指标（随筛选联动；07 定稿：各带判读方向） ----
-	const profits = filtered.flatMap((bet) => (bet.profit === null ? [] : [bet.profit]));
-	const totalPnl = profits.reduce((acc, value) => acc + value, 0);
-	const wonCount = filtered.filter((bet) => bet.status === "won").length;
-	const decidedCount = filtered.filter((bet) => bet.status !== "void").length;
-	const hitRate = decidedCount > 0 ? wonCount / decidedCount : null;
-	// 注级 EV 均值（票 41）：共识口径优先、两口径不混算、样本数注明
-	const ev = averageEv(filtered);
-
-	const points = useMemo(() => buildCumulativePoints(filtered), [filtered]);
+	// ---- 五指标（模式+时间范围全量口径，服务端聚合；07 定稿：各带判读方向） ----
+	const totalPnl = metrics?.pnl ?? 0;
+	const hasPnl = (metrics?.settledN ?? 0) > 0;
+	const hitRate = metrics && metrics.decidedN > 0 ? metrics.wonN / metrics.decidedN : null;
+	const ev = metrics?.ev ?? null;
 
 	function clearFilters() {
 		setRangeKey("all");
@@ -306,7 +336,7 @@ export function HistoryPage() {
 					</fieldset>
 				</div>
 
-				{betsQuery.isPending ? (
+				{summaryQuery.isPending || betsQuery.isPending ? (
 					<div className="space-y-4" data-testid="history-loading">
 						<span className="sr-only">加载历史数据…</span>
 						<div className="h-10 animate-pulse rounded-lg bg-muted" />
@@ -314,20 +344,20 @@ export function HistoryPage() {
 					</div>
 				) : null}
 
-				{betsQuery.isError ? (
+				{summaryQuery.isError ? (
 					<EmptyState
 						variant="backend-unavailable"
-						message="历史数据加载失败。"
+						message="历史聚合数据加载失败。"
 						hint={
 							<>
 								用 <code>task server</code> 启动 API。
 							</>
 						}
-						action={{ label: "重试", onClick: () => void betsQuery.refetch() }}
+						action={{ label: "重试", onClick: () => void summaryQuery.refetch() }}
 					/>
 				) : null}
 
-				{betsQuery.data ? (
+				{face && metrics ? (
 					<>
 						{/* 二层折叠筛选：选项随当前模式样本推导，不写死 */}
 						<details data-testid="filters-more" className="mb-6 rounded-lg border border-border px-4 py-2.5">
@@ -390,12 +420,19 @@ export function HistoryPage() {
 							</div>
 						</details>
 
-						{filtered.length === 0 ? (
+						{face.settled_n === 0 ? (
 							<EmptyState
 								variant="no-data"
-								message="该筛选下无已结算注"
-								hint="放宽时间范围或清除二级筛选；纸面/真金分别查看。"
-								action={{ label: "清筛选", onClick: clearFilters }}
+								message="该模式无已结算注"
+								hint="切另一模式查看，或到投注页锁定建议后等结算。"
+							/>
+						) : metrics.settledN === 0 ? (
+							/* correctness F3：时间范围空≠模式空——零值卡片不是空态，给出范围出口 */
+							<EmptyState
+								variant="no-data"
+								message="该时间范围内无已结算注"
+								hint="指标卡与曲线随时间范围联动；放宽范围或看全部。"
+								action={{ label: "看全部", onClick: () => setRangeKey("all") }}
 							/>
 						) : (
 							<>
@@ -403,23 +440,23 @@ export function HistoryPage() {
 									<h2 id="history-metrics-heading" className="mb-3 text-sm font-medium">
 										聚合指标
 										<span className="ml-2 text-xs font-normal text-muted-foreground">
-											随筛选联动 · 纸面/真金分别统计不混算
+											模式+时间范围全量口径 · 二级筛选只作用于明细
 										</span>
 									</h2>
 									<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
 										<div className="rounded-lg border border-border p-4" data-testid="metric-pnl">
 											<p className="text-xs text-muted-foreground">总盈亏</p>
 											<p
-												className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(profits.length > 0 ? totalPnl : null)}`}
+												className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(hasPnl ? totalPnl : null)}`}
 											>
-												{profits.length > 0 ? signedCny(totalPnl) : "—"}
+												{hasPnl ? signedCny(totalPnl) : "—"}
 											</p>
 											<p className="mt-2 text-xs text-muted-foreground">判读：红 = 盈 · 绿 = 亏（正负号为准）。</p>
 										</div>
 										<div className="rounded-lg border border-border p-4" data-testid="metric-count">
 											<p className="text-xs text-muted-foreground">注数</p>
-											<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS}`}>{filtered.length}</p>
-											<p className="mt-2 text-xs text-muted-foreground">当前筛选下已结算的注。</p>
+											<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS}`}>{metrics.settledN}</p>
+											<p className="mt-2 text-xs text-muted-foreground">当前模式与时间范围下已结算的注（全量）。</p>
 										</div>
 										<div className="rounded-lg border border-border p-4" data-testid="metric-hitrate">
 											<p className="text-xs text-muted-foreground">命中率</p>
@@ -427,7 +464,7 @@ export function HistoryPage() {
 												{hitRate === null ? "—" : `${(hitRate * 100).toFixed(1)}%`}
 											</p>
 											<p className="mt-2 text-xs text-muted-foreground">
-												判读：越高越准；胜 {wonCount} / 已分胜负 {decidedCount}（退款不计）。
+												判读：越高越准；胜 {metrics.wonN} / 已分胜负 {metrics.decidedN}（退款不计）。
 											</p>
 										</div>
 										<div className="rounded-lg border border-border p-4" data-testid="metric-ev">
@@ -444,7 +481,7 @@ export function HistoryPage() {
 													<>
 														判读：正 = 有正期望。
 														<GlossaryTerm id="bet-ev-snapshot">{EV_CALIBER_LABELS[ev.caliber]}</GlossaryTerm>
-														快照均值 {ev.count}/{filtered.length} 注（无快照注不计）。
+														快照均值 {ev.count}/{metrics.settledN} 注（无快照注不计）。
 													</>
 												) : (
 													"判读：正 = 有正期望。暂无带 EV 快照的已结算注（快照随新注落库，存量注无快照不计；机会级 EV 见今日页）。"
@@ -468,13 +505,13 @@ export function HistoryPage() {
 									<h2 id="history-chart-heading" className="mb-3 text-sm font-medium">
 										盈亏累计曲线
 										<span className="ml-2 text-xs font-normal text-muted-foreground">
-											按结算时点累计 · 虚线为 0 基准
+											按结算日（北京业务日）累计 · 虚线为 0 基准
 										</span>
 									</h2>
 									<div className="rounded-lg border border-border bg-card p-4">
 										{points.length < 2 ? (
 											<p data-testid="history-chart-empty" className="text-sm text-muted-foreground">
-												已结算注不足 2 注，累计曲线待数据积累。
+												有结算的业务日不足 2 天（曲线按日桶），待数据积累。
 											</p>
 										) : (
 											<CumulativeChart points={points} />
@@ -486,6 +523,9 @@ export function HistoryPage() {
 									<div className="mb-3 flex flex-wrap items-center justify-between gap-2">
 										<h2 id="history-detail-heading" className="text-sm font-medium">
 											注明细 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{filteredDesc.length}</span>
+											{betsQuery.isError ? (
+												<span className="ml-2 text-xs font-normal text-warning">明细加载失败——指标不受影响。</span>
+											) : null}
 										</h2>
 										<button
 											type="button"
@@ -500,36 +540,57 @@ export function HistoryPage() {
 									</div>
 									{detailOpen ? (
 										<div data-testid="history-detail" id="history-detail">
-											<div className="overflow-x-auto rounded-lg border border-border">
-												<Table data-density="compact">
-													<TableHeader>
-														<TableRow>
-															<TableHead>内容</TableHead>
-															<TableHead>注金</TableHead>
-															<TableHead>状态</TableHead>
-															<TableHead>盈亏</TableHead>
-															<TableHead>结算时点</TableHead>
-														</TableRow>
-													</TableHeader>
-													<TableBody>
-														{filteredDesc.map((bet) => (
-															<TableRow key={bet.id} data-testid="history-detail-row">
-																<TableCell className="whitespace-nowrap">{legText(bet)}</TableCell>
-																<TableCell className={`${TABULAR_NUMS} whitespace-nowrap`}>{stakeText(bet)}</TableCell>
-																<TableCell>
-																	<StatusBadge status={bet.status} />
-																</TableCell>
-																<TableCell className={`${TABULAR_NUMS} whitespace-nowrap ${pnlClass(bet.profit)}`}>
-																	{bet.profit === null ? "—" : `${bet.profit >= 0 ? "+" : ""}${bet.profit.toFixed(2)}`}
-																</TableCell>
-																<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
-																	{shortTime(bet.settled_at)}
-																</TableCell>
+											{filteredDesc.length === 0 ? (
+												<p
+													data-testid="history-detail-empty"
+													className="rounded-lg border border-border p-4 text-sm text-muted-foreground"
+												>
+													当前筛选下（最新 100 注内）无已结算注——放宽时间范围或
+													<button
+														type="button"
+														className="ml-1 text-primary underline-offset-2 hover:underline"
+														onClick={clearFilters}
+													>
+														清二级筛选
+													</button>
+													。
+												</p>
+											) : (
+												<div className="overflow-x-auto rounded-lg border border-border">
+													<Table data-density="compact">
+														<TableHeader>
+															<TableRow>
+																<TableHead>内容</TableHead>
+																<TableHead>注金</TableHead>
+																<TableHead>状态</TableHead>
+																<TableHead>盈亏</TableHead>
+																<TableHead>结算时点</TableHead>
 															</TableRow>
-														))}
-													</TableBody>
-												</Table>
-											</div>
+														</TableHeader>
+														<TableBody>
+															{filteredDesc.map((bet) => (
+																<TableRow key={bet.id} data-testid="history-detail-row">
+																	<TableCell className="whitespace-nowrap">{legText(bet)}</TableCell>
+																	<TableCell className={`${TABULAR_NUMS} whitespace-nowrap`}>
+																		{stakeText(bet)}
+																	</TableCell>
+																	<TableCell>
+																		<StatusBadge status={bet.status} />
+																	</TableCell>
+																	<TableCell className={`${TABULAR_NUMS} whitespace-nowrap ${pnlClass(bet.profit)}`}>
+																		{bet.profit === null
+																			? "—"
+																			: `${bet.profit >= 0 ? "+" : ""}${bet.profit.toFixed(2)}`}
+																	</TableCell>
+																	<TableCell className={`${TABULAR_NUMS} whitespace-nowrap text-muted-foreground`}>
+																		{shortTime(bet.settled_at)}
+																	</TableCell>
+																</TableRow>
+															))}
+														</TableBody>
+													</Table>
+												</div>
+											)}
 										</div>
 									) : null}
 								</section>

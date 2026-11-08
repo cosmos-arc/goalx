@@ -14,6 +14,9 @@ export type BetLeg = Schemas["BetLegView"];
 export type BetReview = Schemas["BetReviewView"];
 export type BetEvSnapshot = Schemas["BetEvSnapshotView"];
 export type Slip = Schemas["SlipView"];
+export type BetsSummary = Schemas["BetsSummaryView"];
+export type BetsModeSummary = Schemas["BetsModeSummaryView"];
+export type BetsDayBucket = Schemas["BetsDayBucketView"];
 export type DrawResultView = Schemas["DrawResultView"];
 export type DrawResultPreview = Schemas["DrawResultPreviewResponse"];
 export type DrawSyncStatus = Schemas["DrawSyncStatusView"];
@@ -115,6 +118,14 @@ export function fetchBets(params?: { mode?: "paper" | "live"; only_open?: boolea
 			params: { query: { mode: params?.mode ?? null, only_open: params?.only_open ?? false } },
 		}),
 	);
+}
+
+/**
+ * 注级全量聚合（iterate 票 10）：经济账服务端单源——totalPnl/命中率/日桶
+ * 累计永不随列表有界 100 截断；history 五指标与 overview 快照卡各取所需。
+ */
+export function fetchBetsSummary(): Promise<BetsSummary> {
+	return unwrap(client.GET("/api/v1/bets/summary"));
 }
 
 export function createBet(payload: BetCreateInput): Promise<Bet> {

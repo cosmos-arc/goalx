@@ -5,6 +5,7 @@ import {
 	type AttributionBucket,
 	fetchBankroll,
 	fetchBets,
+	fetchBetsSummary,
 	fetchDrawResults,
 	fetchNoCandidateAttribution,
 	fetchTodayFixtures,
@@ -18,8 +19,9 @@ import { Badge } from "../components/ui/badge";
 import {
 	attributionKey,
 	bankrollKey,
-	betsKey,
+	betsSummaryKey,
 	drawResultsKey,
+	openBetsKey,
 	todayFixturesKey,
 	validationProgressKey,
 } from "../lib/query-keys";
@@ -31,6 +33,7 @@ import {
 	signedCnyAlways,
 	TABULAR_NUMS,
 } from "../lib/ui";
+
 import { useNow } from "../lib/use-now";
 
 /**
@@ -160,7 +163,10 @@ function BucketCard({
 
 export function OverviewPage() {
 	const todayQuery = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
-	const betsQuery = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	// 票 10：待办规则走 only_open 面（待办/结算判定集合，服务端不有界）；
+	// 经济面（真金 ROI/未结数、今日纸面盈亏）走 /bets/summary 全量聚合
+	const betsQuery = useQuery({ queryKey: openBetsKey, queryFn: () => fetchBets({ only_open: true }) });
+	const summaryQuery = useQuery({ queryKey: betsSummaryKey, queryFn: fetchBetsSummary });
 	const bankrollQuery = useQuery({ queryKey: bankrollKey, queryFn: () => fetchBankroll() });
 	const drawQuery = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
 	const progressQuery = useQuery({ queryKey: validationProgressKey, queryFn: () => fetchValidationProgress() });
@@ -176,13 +182,14 @@ export function OverviewPage() {
 	const bets = betsQuery.data ?? [];
 	const results = drawQuery.data ?? [];
 
-	const coreQueries = [todayQuery, betsQuery, bankrollQuery];
+	const coreQueries = [todayQuery, betsQuery, summaryQuery, bankrollQuery];
 	const corePending = coreQueries.some((query) => query.isPending);
 	const coreFailed = coreQueries.every((query) => query.isError);
 
 	function retryAll() {
 		void todayQuery.refetch();
 		void betsQuery.refetch();
+		void summaryQuery.refetch();
 		void bankrollQuery.refetch();
 		void drawQuery.refetch();
 		void progressQuery.refetch();
@@ -192,8 +199,9 @@ export function OverviewPage() {
 	const resultIds = new Set(results.map((row) => row.fixture_id));
 	const todos: TodoItem[] = [];
 
-	// ① 未锁定建议：最早开赛 <2h 琥珀紧迫倒计时 → /fixtures（票 wb-01 起路径）
-	const suggestions = bets.filter((bet) => !bet.purchased);
+	// ① 未锁定建议：最早开赛 <2h 琥珀紧迫倒计时 → /fixtures（票 wb-01 起路径）。
+	// 票 10：口径=还挂着的建议（open 且未锁）——结算批扫过的死建议不再计数
+	const suggestions = bets.filter((bet) => !bet.purchased && bet.status === "open");
 	const kickoffById = new Map(fixtures.map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));
 	const earliest = earliestKickoffMs(
 		suggestions.flatMap((bet) => bet.legs),
@@ -289,7 +297,7 @@ export function OverviewPage() {
 		}
 	}
 
-	// ---- 快照四卡 ----
+	// ---- 快照四卡（票 10：真金/纸面经济面走 /bets/summary 全量聚合） ----
 	const balance = bankrollQuery.data ? bankrollQuery.data.balance : null;
 	const todayLivePnlEvents = (bankrollQuery.data?.events ?? []).filter(
 		(event) => (event.kind === "bet_stake" || event.kind === "bet_payout") && isSameBeijingDay(event.occurred_at, now),
@@ -297,18 +305,16 @@ export function OverviewPage() {
 	const todayLivePnl =
 		todayLivePnlEvents.length > 0 ? todayLivePnlEvents.reduce((acc, event) => acc + event.amount_cny, 0) : null;
 
-	const liveSettled = bets.filter((bet) => bet.mode === "live" && bet.status !== "open" && bet.profit !== null);
-	const liveProfit = liveSettled.reduce((acc, bet) => acc + (bet.profit ?? 0), 0);
-	const liveStake = liveSettled.reduce((acc, bet) => acc + (bet.actual_stake ?? bet.stake), 0);
-	const liveRoi = liveStake > 0 ? liveProfit / liveStake : null;
-	const liveOpenCount = bets.filter((bet) => bet.mode === "live" && bet.status === "open").length;
+	// 真金累计 = 已回录（purchased）且已结算的全量账；真金未锁建议不进资金面
+	const liveFace = summaryQuery.data?.live;
+	const liveRoi = liveFace && liveFace.stake_settled > 0 ? liveFace.total_pnl / liveFace.stake_settled : null;
+	const liveSettledCount = liveFace?.settled_n ?? 0;
+	const liveOpenCount = liveFace?.open_n ?? 0;
 
-	const paperBets = bets.filter((bet) => bet.mode === "paper");
-	const paperSettledToday = paperBets.filter(
-		(bet) => bet.profit !== null && bet.settled_at !== null && isSameBeijingDay(bet.settled_at, now),
-	);
-	const todayPaperPnl =
-		paperSettledToday.length > 0 ? paperSettledToday.reduce((acc, bet) => acc + (bet.profit ?? 0), 0) : null;
+	const paperFace = summaryQuery.data?.paper;
+	const paperTodayBucket = paperFace?.days.find((bucket) => bucket.date === beijingBusinessDate(now)) ?? null;
+	const todayPaperPnl = paperTodayBucket && paperTodayBucket.settled_n > 0 ? paperTodayBucket.pnl : null;
+	const paperSettledTodayCount = paperTodayBucket?.settled_n ?? 0;
 
 	const pickableCount = fixtures.filter((fixture) => isPickable(fixture, now)).length;
 
@@ -501,8 +507,11 @@ export function OverviewPage() {
 												<p className={`mt-1 text-2xl font-semibold ${TABULAR_NUMS} ${pnlClass(liveRoi)}`}>
 													{liveRoi === null ? "—" : signedPct(liveRoi)}
 												</p>
-												<p className="mt-1 text-xs text-muted-foreground">
-													已结算 {liveSettled.length} 注 · 未结 {liveOpenCount} 注不计。
+												<p className="mt-1 text-xs text-muted-foreground" data-testid="live-roi-counts">
+													{/* correctness F2：summary 单独失败时不把 0 当事实渲染 */}
+													{summaryQuery.isError
+														? "真金聚合加载失败——重试后恢复。"
+														: `已结算 ${liveSettledCount} 注 · 未结 ${liveOpenCount} 注不计。`}
 												</p>
 												<p className="mt-2 text-xs text-muted-foreground">判读：≥0 = 长期为正；红 = 正 · 绿 = 负。</p>
 											</div>
@@ -530,9 +539,9 @@ export function OverviewPage() {
 									<p className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
 										<Badge className="bg-warning/10 text-foreground">纸面</Badge>模拟盘 · 不进真金资金池
 									</p>
-									{betsQuery.isError ? (
+									{summaryQuery.isError ? (
 										<p className="text-sm text-muted-foreground">纸面数据加载失败——重试后恢复。</p>
-									) : paperBets.length === 0 ? (
+									) : (paperFace?.bets_n ?? 0) === 0 ? (
 										<p className="text-sm text-muted-foreground" data-testid="paper-guide">
 											还没有纸面记录——
 											<Link to="/fixtures" className="text-primary underline-offset-2 hover:underline">
@@ -547,9 +556,7 @@ export function OverviewPage() {
 												{todayPaperPnl === null ? "—" : signedCnyAlways(todayPaperPnl)}
 											</p>
 											<p className="mt-1 text-xs text-muted-foreground">
-												{todayPaperPnl === null
-													? "今日无已结算纸面注。"
-													: `今日已结算 ${paperSettledToday.length} 注。`}
+												{todayPaperPnl === null ? "今日无已结算纸面注。" : `今日已结算 ${paperSettledTodayCount} 注。`}
 											</p>
 											<p className="mt-2 text-xs text-muted-foreground">
 												判读：红 = 盈 · 绿 = 亏；模拟口径，与真金分开看。

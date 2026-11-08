@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from goalx_backend.api.deps import get_db
-from goalx_backend.betting import account
+from goalx_backend.betting import account, summary
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     ActualTerms,
@@ -42,6 +42,10 @@ from goalx_backend.models import (
 
 router = APIRouter(tags=["bets"])
 DbDep = Annotated[sqlite3.Connection, Depends(get_db)]
+
+# iterate 票 10：列表窗=渲染事实（slips/draw_results 同族有界口径）；
+# 经济账聚合走 /bets/summary 全量，不受本窗截断
+LIST_LIMIT = 100
 
 
 class LegPayload(BaseModel):
@@ -522,19 +526,112 @@ def create_bet(payload: BetCreate, db: DbDep) -> BetView:
 
 @router.get(
     "/api/v1/bets",
-    summary="复盘列表(注级; 含前瞻资格与 closing 完整性)",
+    summary="复盘列表(注级; 最新 100; 聚合口径走 /bets/summary)",
     response_model=list[BetView],
 )
 async def list_bets(
     db: DbDep, mode: BetMode | None = None, only_open: bool = False
 ) -> list[BetView]:
-    """全部投注记录：结算状态、盈亏、建议 vs 实际条款、复盘资格。"""
-    # 票 04 correctness F1：本端点不做有界——history/overview 页客户端聚合
-    # 假定完整集，静默截断=复盘口径腐坏（auto-v1 数百注后在第 101 注翻车）。
-    # 有界化随分页/服务端聚合票先行（slips/draw_results 消费面纯展示可截）。
-    rows = bt_store.list_bets(db, mode=mode, only_open=only_open)
+    """
+    投注记录列表：结算状态、盈亏、建议 vs 实际条款、复盘资格。
+
+    iterate 票 10：缺省面有界最新 100（渲染事实——聚合页不得从本列表
+    取经济账，静默截断=复盘口径腐坏）；only_open 面（待办/结算判定集合）
+    天然小、不有界。
+    """
+    rows = bt_store.list_bets(
+        db, mode=mode, only_open=only_open, limit=None if only_open else LIST_LIMIT
+    )
     reviews = review_views(db, rows)
     return [_bet_view(row, reviews.get(int(row["id"]))) for row in rows]
+
+
+class BetsDayBucketView(BaseModel):
+    """一个北京业务日的已结算聚合（按日求和可复原任意时间范围口径）。"""
+
+    date: str
+    settled_n: int
+    won_n: int
+    decided_n: int
+    pnl: float
+    sum_ev_consensus: float
+    n_ev_consensus: int
+    sum_ev_model: float
+    n_ev_model: int
+
+
+class BetsModeSummaryView(BaseModel):
+    """一个模式（paper/live）的全量聚合行（iterate 票 10）。"""
+
+    mode: str
+    bets_n: int
+    open_n: int
+    settled_n: int
+    won_n: int
+    decided_n: int
+    total_pnl: float
+    stake_settled: float
+    sum_ev_consensus: float
+    n_ev_consensus: int
+    sum_ev_model: float
+    n_ev_model: int
+    days: list[BetsDayBucketView]
+
+
+class BetsSummaryView(BaseModel):
+    """全量聚合面（票 10）：两模式分列不混算，永不随列表有界截断。"""
+
+    paper: BetsModeSummaryView
+    live: BetsModeSummaryView
+
+
+def _mode_summary_view(face: summary.ModeSummary) -> BetsModeSummaryView:
+    return BetsModeSummaryView(
+        mode=face.mode,
+        bets_n=face.bets_n,
+        open_n=face.open_n,
+        settled_n=face.settled_n,
+        won_n=face.won_n,
+        decided_n=face.decided_n,
+        total_pnl=face.total_pnl,
+        stake_settled=face.stake_settled,
+        sum_ev_consensus=face.sum_ev_consensus,
+        n_ev_consensus=face.n_ev_consensus,
+        sum_ev_model=face.sum_ev_model,
+        n_ev_model=face.n_ev_model,
+        days=[
+            BetsDayBucketView(
+                date=bucket.date,
+                settled_n=bucket.settled_n,
+                won_n=bucket.won_n,
+                decided_n=bucket.decided_n,
+                pnl=bucket.pnl,
+                sum_ev_consensus=bucket.sum_ev_consensus,
+                n_ev_consensus=bucket.n_ev_consensus,
+                sum_ev_model=bucket.sum_ev_model,
+                n_ev_model=bucket.n_ev_model,
+            )
+            for bucket in face.days
+        ],
+    )
+
+
+@router.get(
+    "/api/v1/bets/summary",
+    summary="注级全量聚合(两模式分列; totalPnl/命中率/日桶累计; 不随列表有界截断)",
+    response_model=BetsSummaryView,
+)
+def get_bets_summary(db: DbDep) -> BetsSummaryView:
+    """
+    复盘经济账的服务端单源（iterate 票 10）。
+
+    结算口径=已锁定且已结算；日桶=北京业务日。EV 双口径（共识/模型）给和
+    与计数，均值由消费方取口径后相除——共识优先、两口径不混算。
+    """
+    paper_face, live_face = summary.bets_summary(db)
+    return BetsSummaryView(
+        paper=_mode_summary_view(paper_face), live=_mode_summary_view(live_face)
+    )
 
 
 @router.post(

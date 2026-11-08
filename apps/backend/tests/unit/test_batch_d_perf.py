@@ -40,14 +40,12 @@ def _seed_fixtures(db: sqlite3.Connection, n: int) -> list[int]:
     return ids
 
 
-# --- D11：列表端点有界（bets 例外见 api/bets.py correctness F1 注记）---
+# --- D11：列表端点有界（bets 缺省面有界随 iterate 票 10 落地）---
 
 
-def test_list_bets_stays_unbounded_for_client_aggregates(
-    db: sqlite3.Connection,
-) -> None:
-    """correctness F1：/bets 无界——history/overview 客户端聚合假定完整集，
-    有界化随分页/服务端聚合票先行（本测试钉住该裁决不被顺手改掉）。"""
+def test_list_bets_limit_bounds_api_face(db: sqlite3.Connection) -> None:
+    """iterate 票 10：limit 有界展示面（API 缺省 100）；store 缺省全量不变
+    （settle/复盘内部调用方语义不动）；聚合口径移 /bets/summary 服务端算。"""
     from goalx_backend.betting.bets import BetDraft, create_bet_with_legs
     from goalx_backend.models import BetMode, LegInput
 
@@ -68,6 +66,7 @@ def test_list_bets_stays_unbounded_for_client_aggregates(
                 ],
             ),
         )
+    assert len(bt.list_bets(db, limit=100)) == 100
     assert len(bt.list_bets(db)) == 120
 
 

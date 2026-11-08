@@ -411,12 +411,14 @@ def list_bets(
     *,
     mode: BetMode | None = None,
     only_open: bool = False,
+    limit: int | None = None,
 ) -> list[sqlite3.Row]:
     """
     List bets with their legs aggregated as JSON (复盘列表; 含实际条款列)。
 
-    票 04 correctness F1：保持无界——history/overview 页客户端聚合假定
-    完整集；有界化随分页/服务端聚合票先行。
+    iterate 票 10：limit 有界展示面（API 缺省 100）；聚合口径移
+    /bets/summary 服务端算，本列表不再承担聚合源职责。only_open 面
+    （待办/结算判定）天然小，调用方不传 limit 保持全量。
     """
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
@@ -446,6 +448,9 @@ FROM bets b LEFT JOIN bet_slips s ON s.id = b.slip_id WHERE 1=1
     if only_open:
         sql += " AND b.status = 'open'"
     sql += " ORDER BY b.created_at DESC, b.id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
     return conn.execute(sql, params).fetchall()
 
 

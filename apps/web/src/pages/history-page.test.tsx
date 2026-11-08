@@ -4,16 +4,17 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test, vi } from "vitest";
-import type { Bet, TodayFixture } from "../api/goalx";
+import type { Bet, BetsDayBucket, BetsModeSummary, TodayFixture } from "../api/goalx";
+import { summarizeBets } from "../mocks/bets-summary";
 import { server } from "../mocks/server";
 import { router } from "../router";
-import { averageEv, buildCumulativePoints } from "./history-page";
+import { buildDailyCumulativePoints, summarizeRange } from "./history-page";
 
 /**
- * 票 17 历史页测试：口径行（07 定稿文案逐字）/两层筛选联动（模式不混算 + 时间范围
- * + Competition/策略版本/结果状态）/五指标聚合计算与 EV·CLV 缺失口径/累计曲线
- * （≥2 点出图 + 0 基准 markline，不足 2 点不出图）/空态清筛选/明细同页展开/
- * 后端不可用降级。echarts/core 按票 11 约定在测试文件内 mock。
+ * 票 17 历史页测试：口径行（07 定稿文案逐字）/模式+时间范围联动（票 10 起
+ * 指标卡=服务端 summary 全量口径，二层筛选只作用于明细表）/五指标聚合计算
+ * 与 EV·CLV 缺失口径/累计曲线（≥2 桶出图 + 0 基准 markline，不足不出图）/
+ * 明细同页展开/后端不可用降级。echarts/core 按票 11 约定在测试文件内 mock。
  */
 
 const initMock = vi.fn();
@@ -112,6 +113,8 @@ function settledPaper(overrides: Partial<Bet> & { id: number }): Bet {
 function mockAll({ bets, fixtures }: { bets: Bet[]; fixtures?: TodayFixture[] }) {
 	server.use(
 		http.get("*/api/v1/bets", () => HttpResponse.json(bets)),
+		// 票 10：summary 与列表同源派生——指标卡断言值即这份 bets 的全量聚合
+		http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(bets))),
 		http.get("*/api/v1/fixtures/today", () => HttpResponse.json(fixtures ?? [])),
 	);
 }
@@ -137,7 +140,7 @@ test("口径行按 07 定稿逐字常显，术语 tooltip 就位，模式默认�
 	expect(screen.queryByTestId("history-detail")).not.toBeInTheDocument();
 });
 
-test("五指标聚合随默认筛选联动：live 不入纸面口径，EV/CLV 缺失注明口径", async () => {
+test("五指标=模式+时间范围全量口径（服务端 summary）：live 不入纸面口径，EV/CLV 缺失注明口径", async () => {
 	mockAll({
 		bets: [
 			// 样本外：未购买建议、未结算锁定注 → 不计入
@@ -172,7 +175,7 @@ test("五指标聚合随默认筛选联动：live 不入纸面口径，EV/CLV �
 	expect(screen.queryByText("-¥12.00")).not.toBeInTheDocument();
 });
 
-test("累计曲线：≥2 点出图，option 按结算时点升序累计并带 0 基准 markline；不足 2 点不出图", async () => {
+test("累计曲线：≥2 日桶出图，按北京业务日升序累计并带 0 基准 markline；不足不出图", async () => {
 	const bets = [
 		settledPaper({ id: 1, profit: 10, settled_at: "2026-09-12T10:00:00+00:00" }),
 		settledPaper({ id: 2, profit: -4, settled_at: "2026-09-13T10:00:00+00:00" }),
@@ -181,11 +184,13 @@ test("累计曲线：≥2 点出图，option 按结算时点升序累计并带 0
 	mockAll({ bets });
 	await renderAt("/history");
 
-	// 纯函数口径：乱序入参按 settled_at 升序（9-11, 9-12, 9-13）累计 → [2.5, 12.5, 8.5]
-	expect(buildCumulativePoints(bets)).toEqual([
-		{ label: "09-11 18:00", value: 2.5 },
-		{ label: "09-12 18:00", value: 12.5 },
-		{ label: "09-13 18:00", value: 8.5 },
+	// 纯函数口径：日桶升序（UTC 10:00 结算=北京同日 18:00，日界不漂）累计
+	// → [2.5, 12.5, 8.5]；startDay 过滤=时间范围联动（票 10）
+	const days = summarizeBets(bets).paper.days;
+	expect(buildDailyCumulativePoints(days, null)).toEqual([
+		{ label: "09-11", value: 2.5 },
+		{ label: "09-12", value: 12.5 },
+		{ label: "09-13", value: 8.5 },
 	]);
 
 	await screen.findByTestId("history-chart");
@@ -198,7 +203,7 @@ test("累计曲线：≥2 点出图，option 按结算时点升序累计并带 0
 	};
 	expect(option.series[0]?.data).toEqual([2.5, 12.5, 8.5]);
 	expect(option.series[0]?.markLine.data).toEqual([{ yAxis: 0 }]);
-	expect(option.xAxis.data).toEqual(["09-11 18:00", "09-12 18:00", "09-13 18:00"]);
+	expect(option.xAxis.data).toEqual(["09-11", "09-12", "09-13"]);
 	expect(screen.queryByTestId("history-chart-empty")).not.toBeInTheDocument();
 });
 
@@ -206,7 +211,7 @@ test("累计曲线不足 2 点不出图，显示积累提示", async () => {
 	mockAll({ bets: [settledPaper({ id: 1, profit: 10, settled_at: daysAgoIso(1) })] });
 	await renderAt("/history");
 
-	expect(await screen.findByTestId("history-chart-empty")).toHaveTextContent("已结算注不足 2 注");
+	expect(await screen.findByTestId("history-chart-empty")).toHaveTextContent("有结算的业务日不足 2 天");
 	expect(screen.queryByTestId("history-chart")).not.toBeInTheDocument();
 	expect(initMock).not.toHaveBeenCalled();
 });
@@ -257,7 +262,7 @@ test("模式切换不混算：真金口径只聚合真金已结算注", async ()
 	expect(screen.getByTestId("metric-count")).toHaveTextContent("1");
 });
 
-test("二层筛选：Competition 归因今日列表、策略版本与结果状态组合过滤，清筛选一键还原", async () => {
+test("二层筛选只作用于明细表：指标卡保持全量口径，明细随筛选收窄，清筛选还原", async () => {
 	const user = userEvent.setup();
 	mockAll({
 		fixtures: [
@@ -321,32 +326,32 @@ test("二层筛选：Competition 归因今日列表、策略版本与结果状�
 	});
 	await renderAt("/history");
 
+	// 票 10 不变量：指标卡=服务端全量口径，二级筛选不联动（防有界列表截断聚合面）
 	expect(await screen.findByTestId("metric-count")).toHaveTextContent("3");
+	await user.click(screen.getByTestId("detail-toggle"));
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(3);
 	await user.click(screen.getByTestId("filters-more").querySelector("summary") as HTMLElement);
 
-	// Competition 过滤：英超 → 仅注 1
+	// Competition 过滤：英超 → 明细仅注 1；指标卡仍 3
 	await user.selectOptions(screen.getByTestId("filter-competition"), "英超");
-	expect(screen.getByTestId("metric-count")).toHaveTextContent("1");
+	expect(screen.getByTestId("metric-count")).toHaveTextContent("3");
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(1);
 	await user.selectOptions(screen.getByTestId("filter-competition"), "");
 
-	// 策略版本过滤：未标注 → 注 2、3；dc-demo-v1 → 仅注 1
+	// 策略版本过滤：未标注 → 明细注 2、3；dc-demo-v1 → 仅注 1
 	await user.selectOptions(screen.getByTestId("filter-strategy"), "none");
-	expect(screen.getByTestId("metric-count")).toHaveTextContent("2");
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(2);
 	await user.selectOptions(screen.getByTestId("filter-strategy"), "dc-demo-v1");
-	expect(screen.getByTestId("metric-count")).toHaveTextContent("1");
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(1);
 	await user.selectOptions(screen.getByTestId("filter-strategy"), "");
 
-	// 结果状态过滤：负 → 仅注 2
+	// 结果状态过滤：负 → 仅注 2；组合到空 → 明细空态 + 清二级筛选一键还原
 	await user.selectOptions(screen.getByTestId("filter-status"), "lost");
-	expect(screen.getByTestId("metric-count")).toHaveTextContent("1");
-
-	// 组合到空 → no-data 空态 + 清筛选动作还原
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(1);
 	await user.selectOptions(screen.getByTestId("filter-status"), "void");
-	const state = await screen.findByTestId("empty-state");
-	expect(state).toHaveAttribute("data-variant", "no-data");
-	expect(state).toHaveTextContent("该筛选下无已结算注");
-	await user.click(within(state).getByRole("button", { name: "清筛选" }));
-	expect(await screen.findByTestId("metric-count")).toHaveTextContent("3");
+	expect(screen.getByTestId("history-detail-empty")).toBeInTheDocument();
+	await user.click(within(screen.getByTestId("history-detail-empty")).getByRole("button", { name: "清二级筛选" }));
+	expect(await screen.findAllByTestId("history-detail-row")).toHaveLength(3);
 	expect(screen.getByTestId("range-all")).toHaveAttribute("aria-pressed", "true");
 	expect(screen.getByTestId("filter-competition")).toHaveDisplayValue("全部");
 	expect(screen.getByTestId("filter-strategy")).toHaveDisplayValue("全部");
@@ -492,37 +497,123 @@ test("平均 EV 模型口径回退：无共识快照时用模型口径并如实�
 	expect(ev).toHaveTextContent("2/2 注（无快照注不计）");
 });
 
-test("平均 EV 纯函数：口径选择与均值算术（averageEv 导出口径）", () => {
-	type Snapshot = NonNullable<Bet["ev_snapshot"]>;
-	const snapshot = (overrides: Partial<Snapshot>): Snapshot => ({
-		prob_consensus: null,
-		prob_model: null,
-		ev_consensus: null,
-		ev_model: null,
+test("EV 均值纯函数（票 10 日桶求和版）：共识优先不混算，模型回退，无快照 null", () => {
+	const bucket = (overrides: Partial<BetsDayBucket>): BetsDayBucket => ({
+		date: "2026-11-01",
+		settled_n: 1,
+		won_n: 0,
+		decided_n: 1,
+		pnl: 0,
+		sum_ev_consensus: 0,
+		n_ev_consensus: 0,
+		sum_ev_model: 0,
+		n_ev_model: 0,
 		...overrides,
 	});
-	const consensusFirst = averageEv([
-		makeBet({ id: 1, ev_snapshot: snapshot({ ev_consensus: 0.02, ev_model: 0.9 }) }),
-		makeBet({ id: 2, ev_snapshot: snapshot({ ev_model: 0.5 }) }),
-	]);
-	// 共识样本存在 → 只算共识（模型值再大也不混入）
-	expect(consensusFirst?.caliber).toBe("consensus");
-	expect(consensusFirst?.count).toBe(1);
-	expect(consensusFirst?.value).toBeCloseTo(0.02);
-	const modelFallback = averageEv([
-		makeBet({ id: 1, ev_snapshot: snapshot({ ev_model: 0.1 }) }),
-		makeBet({ id: 2, ev_snapshot: snapshot({ ev_model: -0.3 }) }),
-	]);
-	expect(modelFallback?.caliber).toBe("model");
-	expect(modelFallback?.count).toBe(2);
-	expect(modelFallback?.value).toBeCloseTo(-0.1);
-	expect(averageEv([makeBet({ id: 1, ev_snapshot: null })])).toBeNull();
-	expect(averageEv([])).toBeNull();
+	const face = (days: BetsDayBucket[]): BetsModeSummary => ({
+		mode: "paper",
+		bets_n: days.length,
+		open_n: 0,
+		settled_n: days.length,
+		won_n: 0,
+		decided_n: 0,
+		total_pnl: 0,
+		stake_settled: 0,
+		sum_ev_consensus: 0,
+		n_ev_consensus: 0,
+		sum_ev_model: 0,
+		n_ev_model: 0,
+		days,
+	});
+	// 共识样本存在 → 只算共识（模型值再大也不混入；跨桶求和同口径）
+	const consensusFirst = summarizeRange(
+		face([
+			bucket({ n_ev_consensus: 1, sum_ev_consensus: 0.02, n_ev_model: 1, sum_ev_model: 0.9 }),
+			bucket({ date: "2026-11-02", n_ev_model: 1, sum_ev_model: 0.5 }),
+		]),
+		null,
+	);
+	expect(consensusFirst.ev?.caliber).toBe("consensus");
+	expect(consensusFirst.ev?.count).toBe(1);
+	expect(consensusFirst.ev?.value).toBeCloseTo(0.02);
+	const modelFallback = summarizeRange(
+		face([
+			bucket({ n_ev_model: 1, sum_ev_model: 0.1 }),
+			bucket({ date: "2026-11-02", n_ev_model: 1, sum_ev_model: -0.3 }),
+		]),
+		null,
+	);
+	expect(modelFallback.ev?.caliber).toBe("model");
+	expect(modelFallback.ev?.count).toBe(2);
+	expect(modelFallback.ev?.value).toBeCloseTo(-0.1);
+	expect(summarizeRange(face([bucket({})]), null).ev).toBeNull();
+});
+
+test("票 10 不变量：列表窗截到 100，指标卡/曲线仍是全量口径（130 注 fixture）", async () => {
+	// 130 注已结算（近两日分布）；服务端缺省面只回最新 100 → 明细 ≤100，
+	// 指标卡与曲线取 /bets/summary 全量（130 注口径，第 101 注起不截断）
+	const all: Bet[] = Array.from({ length: 130 }, (_, index) =>
+		settledPaper({ id: index + 1, profit: 1, settled_at: daysAgoIso(index % 2) }),
+	);
+	server.use(
+		http.get("*/api/v1/bets", () => HttpResponse.json(all.slice(0, 100))),
+		http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(all))),
+		http.get("*/api/v1/fixtures/today", () => HttpResponse.json([])),
+	);
+	await renderAt("/history");
+
+	const count = await screen.findByTestId("metric-count");
+	expect(count).toHaveTextContent("130"); // 全量口径，不是窗内 100
+	expect(screen.getByTestId("metric-pnl")).toHaveTextContent("+¥130.00");
+	await userEvent.setup().click(screen.getByTestId("detail-toggle"));
+	expect(screen.getAllByTestId("history-detail-row")).toHaveLength(100); // 明细=窗内
+});
+
+test("correctness F1：时间范围边界=北京业务日粒度，指标卡与明细表同口径（边界日整日纳入）", async () => {
+	// 钉死统一后的口径：now=2026-11-08T10:30Z，近 7 天 startDay=2026-11-01；
+	// 注 1 结算于 11-01T02:00Z（边界北京日早盘）——日粒度下两面都纳入。
+	// 修复前明细走 ms 精度（02:00 < 10:30 被排除）与指标卡分叉
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(new Date(Date.UTC(2026, 10, 8, 10, 30)));
+	try {
+		mockAll({
+			bets: [
+				settledPaper({ id: 1, profit: 5, settled_at: "2026-11-01T02:00:00+00:00" }),
+				settledPaper({ id: 2, profit: 3, settled_at: "2026-10-30T20:00:00+00:00" }),
+				settledPaper({ id: 3, profit: 2, settled_at: "2026-11-07T09:00:00+00:00" }),
+			],
+		});
+		await renderAt("/history");
+		expect(await screen.findByTestId("metric-count")).toHaveTextContent("3"); // 默认全部
+		await act(async () => {
+			screen.getByTestId("range-7d").click();
+		});
+		expect(screen.getByTestId("metric-count")).toHaveTextContent("2"); // 11-01 + 11-07 桶
+		await act(async () => {
+			screen.getByTestId("detail-toggle").click();
+		});
+		expect(screen.getAllByTestId("history-detail-row")).toHaveLength(2); // 明细同口径
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+test("correctness F3：时间范围内无已结算注 → 空态+范围出口，不渲染零值卡片", async () => {
+	mockAll({ bets: [settledPaper({ id: 1, profit: 5, settled_at: daysAgoIso(30) })] });
+	await renderAt("/history");
+
+	expect(await screen.findByTestId("metric-count")).toHaveTextContent("1"); // 全部范围有 1 注
+	await act(async () => {
+		screen.getByTestId("range-7d").click();
+	});
+	const state = await screen.findByTestId("empty-state");
+	expect(state).toHaveAttribute("data-variant", "no-data");
+	expect(state).toHaveTextContent("该时间范围内无已结算注");
 });
 
 test("后端不可用降级为三态空状态，重试后恢复", async () => {
 	const user = userEvent.setup();
-	server.use(http.get("*/api/v1/bets", () => HttpResponse.json({ detail: "down" }, { status: 503 })));
+	server.use(http.get("*/api/v1/bets/summary", () => HttpResponse.json({ detail: "down" }, { status: 503 })));
 	await renderAt("/history");
 
 	const state = await screen.findByTestId("empty-state");
@@ -537,6 +628,7 @@ test("后端不可用降级为三态空状态，重试后恢复", async () => {
 test("加载中先出骨架屏", async () => {
 	server.use(
 		http.get("*/api/v1/bets", () => new Promise<Response>(() => {})),
+		http.get("*/api/v1/bets/summary", () => new Promise<Response>(() => {})),
 		http.get("*/api/v1/fixtures/today", () => new Promise<Response>(() => {})),
 	);
 	await renderAt("/history");
@@ -549,37 +641,37 @@ test("加载中先出骨架屏", async () => {
 test("票 05 E17 correctness F2：30s 滴答重渲染不给图表换 option（交互态不重置）", async () => {
 	vi.useFakeTimers({ shouldAdvanceTime: true });
 	try {
+		const bets: Bet[] = [
+			{
+				...makeBet({ id: 1, status: "won", profit: 2, settled_at: daysAgoIso(1) }),
+				legs: [
+					{
+						fixture_id: 1,
+						market_code: "had",
+						selection_code: "h",
+						locked_odds: 2,
+						actual_odds: null,
+						goal_line: null,
+					},
+				],
+			},
+			{
+				...makeBet({ id: 2, status: "lost", profit: -2, settled_at: daysAgoIso(2) }),
+				legs: [
+					{
+						fixture_id: 2,
+						market_code: "had",
+						selection_code: "h",
+						locked_odds: 2,
+						actual_odds: null,
+						goal_line: null,
+					},
+				],
+			},
+		];
 		server.use(
-			http.get("*/api/v1/bets", () =>
-				HttpResponse.json([
-					{
-						id: 1,
-						mode: "paper",
-						market_kind: "fixed",
-						purchased: true,
-						stake: 2,
-						status: "won",
-						payout: 4,
-						profit: 2,
-						settled_at: daysAgoIso(1),
-						strategy_version: null,
-						legs: [{ fixture_id: 1, market_code: "had", selection_code: "h", locked_odds: 2 }],
-					},
-					{
-						id: 2,
-						mode: "paper",
-						market_kind: "fixed",
-						purchased: true,
-						stake: 2,
-						status: "lost",
-						payout: 0,
-						profit: -2,
-						settled_at: daysAgoIso(2),
-						strategy_version: null,
-						legs: [{ fixture_id: 2, market_code: "had", selection_code: "h", locked_odds: 2 }],
-					},
-				]),
-			),
+			http.get("*/api/v1/bets", () => HttpResponse.json(bets)),
+			http.get("*/api/v1/bets/summary", () => HttpResponse.json(summarizeBets(bets))),
 			http.get("*/api/v1/fixtures/today*", () => HttpResponse.json([])),
 		);
 		await renderAt("/history");

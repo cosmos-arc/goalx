@@ -31,6 +31,7 @@ import {
 	drawResultsKey,
 	drawSyncKey,
 	invalidateSettlementViews,
+	openBetsKey,
 	slipsKey,
 	todayFixturesKey,
 } from "../lib/query-keys";
@@ -209,13 +210,16 @@ export function BetsPage() {
 	const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewDrawResults>> | null>(null);
 
 	const bets = useQuery({ queryKey: betsKey, queryFn: () => fetchBets() });
+	// 票 10：列表面有界最新 100——未锁定建议/已锁定两段（待办集合，天然小）
+	// 改走 only_open 面（服务端不有界），已结算段留有界列表（渲染事实）
+	const openBets = useQuery({ queryKey: openBetsKey, queryFn: () => fetchBets({ only_open: true }) });
 	const drawResults = useQuery({ queryKey: drawResultsKey, queryFn: () => fetchDrawResults() });
 	const drawSync = useQuery({ queryKey: drawSyncKey, queryFn: () => fetchDrawSyncStatus() });
 	const today = useQuery({ queryKey: todayFixturesKey(1), queryFn: () => fetchTodayFixtures(undefined, 1) });
 	const slips = useQuery({ queryKey: slipsKey, queryFn: () => fetchSlips() });
 	const now = useNow(); // 共享滴答时钟：倒计时/年龄不冻结在一次性渲染
 
-	const allBets = bets.data ?? [];
+	const openRows = openBets.data ?? [];
 	const kickoffById = new Map((today.data ?? []).map((fixture) => [fixture.fixture_id, fixture.kickoff_utc]));
 
 	function refresh() {
@@ -224,15 +228,15 @@ export function BetsPage() {
 
 	// ---- 生命周期三段（票 06 定稿：未锁定建议 / 已锁定 / 已结算），各段倒序 ----
 	const suggestions = sortByDesc(
-		allBets.filter((bet) => !bet.purchased),
+		openRows.filter((bet) => !bet.purchased && bet.status === "open"),
 		(bet) => bet.created_at,
 	);
 	const locked = sortByDesc(
-		allBets.filter((bet) => bet.purchased && bet.settled_at === null),
+		openRows.filter((bet) => bet.purchased),
 		(bet) => bet.locked_at ?? bet.created_at,
 	);
 	const settled = sortByDesc(
-		allBets.filter((bet) => bet.purchased && bet.settled_at !== null),
+		(bets.data ?? []).filter((bet) => bet.purchased && bet.settled_at !== null),
 		(bet) => bet.settled_at ?? bet.locked_at ?? bet.created_at,
 	);
 
@@ -306,7 +310,7 @@ export function BetsPage() {
 	}
 
 	// ---- 真实回录 Drawer（票 06：实际金额/逐腿赔率/时点 + 快照对照） ----
-	const actualBet = actualFor === null ? null : (allBets.find((bet) => bet.id === actualFor) ?? null);
+	const actualBet = actualFor === null ? null : (openRows.find((bet) => bet.id === actualFor) ?? null);
 	const actualStakeValue = Number(actualForm.stake);
 	const actualStakeValid = actualForm.stake.trim() !== "" && !Number.isNaN(actualStakeValue) && actualStakeValue > 0;
 
@@ -355,7 +359,7 @@ export function BetsPage() {
 
 	// ---- 赛果同步面板（06 预裁决 = 同步优先；本票降级态 + 人工兜底通道） ----
 	const resultIds = new Set((drawResults.data ?? []).map((row) => row.fixture_id));
-	const openFixtureIds = openBetFixtureIds(allBets);
+	const openFixtureIds = openBetFixtureIds(openRows);
 	const pendingFixtures = (today.data ?? []).filter((fixture) => {
 		const kickoff = new Date(fixture.kickoff_utc).getTime();
 		return !Number.isNaN(kickoff) && kickoff <= now && !resultIds.has(fixture.fixture_id);
@@ -426,7 +430,7 @@ export function BetsPage() {
 		value: fixture.fixture_id,
 		label: `${fixture.match_code} ${fixture.home_team} vs ${fixture.away_team}`,
 	}));
-	const staleOpenFixtureIds: number[] = Array.from(openBetFixtureIds(allBets)).filter(
+	const staleOpenFixtureIds: number[] = Array.from(openBetFixtureIds(openRows)).filter(
 		(fixtureId) => !fixtureOptions.some((option) => option.value === fixtureId),
 	);
 	const openBetFixtures = staleOpenFixtureIds.map((fixtureId) => ({
@@ -468,14 +472,14 @@ export function BetsPage() {
 					</p>
 				) : null}
 
-				{bets.isPending ? <p data-testid="bets-loading">加载投注记录…</p> : null}
-				{bets.isError ? (
+				{bets.isPending || openBets.isPending ? <p data-testid="bets-loading">加载投注记录…</p> : null}
+				{bets.isError || openBets.isError ? (
 					<p data-testid="bets-error" className="text-sm text-muted-foreground">
 						后端不可用 — 用 <code>task server</code> 启动 API。
 					</p>
 				) : null}
 
-				{bets.data ? (
+				{openBets.data ? (
 					<>
 						<section aria-labelledby="bets-suggestions-heading" className="mb-8" data-testid="section-suggestions">
 							<div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -544,13 +548,21 @@ export function BetsPage() {
 								<h2 id="bets-settled-heading" className="text-sm font-medium">
 									已结算 <span className={`${TABULAR_NUMS} text-muted-foreground`}>{settled.length}</span>
 								</h2>
-								<span className="text-xs text-muted-foreground">复盘资格按证据链判定；盈亏红盈绿亏</span>
+								<span className="text-xs text-muted-foreground">
+									{/* 列表窗打满=更早注不在窗内（含混合 open 行挤占窗的情形）；
+										展示面截断被明示，经济账始终走历史页全量口径 */}
+									{(bets.data?.length ?? 0) === 100
+										? "展示最新 100 注（历史页聚合为全量口径）"
+										: "复盘资格按证据链判定；盈亏红盈绿亏"}
+								</span>
 							</div>
-							<BetTable
-								rows={settled}
-								timePick={(bet) => bet.settled_at ?? bet.locked_at ?? bet.created_at}
-								emptyText="尚无已结算注——开奖导入并结算后在这里复盘。"
-							/>
+							{bets.data ? (
+								<BetTable
+									rows={settled}
+									timePick={(bet) => bet.settled_at ?? bet.locked_at ?? bet.created_at}
+									emptyText="尚无已结算注——开奖导入并结算后在这里复盘。"
+								/>
+							) : null}
 						</section>
 
 						<section aria-labelledby="bets-slips-heading" className="mb-8" data-testid="section-slips">
