@@ -96,6 +96,17 @@ class _ModeAcc:
     days: dict[str, _DayAcc] = field(default_factory=dict)
 
 
+def _r2(value: float) -> float:
+    """
+    分位舍入 + 负零归零。
+
+    correctness：0.3-0.1-0.2 型浮点残差 round 出 -0.0，晨检 f"{:+.2f}"
+    与 API 面都不该渗出 -0.00/-0.0。
+    """
+    rounded = round(value, 2)
+    return rounded + 0.0  # -0.0 + 0.0 == 0.0
+
+
 def bets_summary(conn: sqlite3.Connection) -> list[ModeSummary]:
     """两模式全量聚合（[paper, live] 恒定序；SQL 归 betting 域，ADR-0008）。"""
     accs = {mode.value: _ModeAcc(mode=mode.value) for mode in BetMode}
@@ -128,7 +139,7 @@ def bets_summary(conn: sqlite3.Connection) -> list[ModeSummary]:
                 settled_n=bucket.settled_n,
                 won_n=bucket.won_n,
                 decided_n=bucket.decided_n,
-                pnl=round(bucket.pnl, 2),
+                pnl=_r2(bucket.pnl),
                 sum_ev_consensus=round(bucket.sum_ev_consensus, 6),
                 n_ev_consensus=bucket.n_ev_consensus,
                 sum_ev_model=round(bucket.sum_ev_model, 6),
@@ -144,7 +155,7 @@ def bets_summary(conn: sqlite3.Connection) -> list[ModeSummary]:
                 settled_n=sum(b.settled_n for b in buckets),
                 won_n=sum(b.won_n for b in buckets),
                 decided_n=sum(b.decided_n for b in buckets),
-                total_pnl=round(sum(b.pnl for b in buckets), 2),
+                total_pnl=_r2(sum(b.pnl for b in buckets)),
                 stake_settled=round(acc.stake_settled, 2),
                 sum_ev_consensus=round(sum(b.sum_ev_consensus for b in buckets), 6),
                 n_ev_consensus=sum(b.n_ev_consensus for b in buckets),

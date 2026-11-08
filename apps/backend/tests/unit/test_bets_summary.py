@@ -194,3 +194,13 @@ def test_summary_actual_stake_overrides(db: sqlite3.Connection) -> None:
     _insert_bet(db, mode="live", stake=2.0, profit=-2.0)
     faces = {face.mode: face for face in bets_summary(db)}
     assert faces[BetMode.LIVE.value].stake_settled == 7.0
+
+
+def test_summary_no_negative_zero_pnl(db: sqlite3.Connection) -> None:
+    """correctness：0.3-0.1-0.2 型浮点残差不得 round 出 -0.0（API/晨检不渗 -0.00）。"""
+    for profit in (0.3, -0.1, -0.2):
+        _insert_bet(db, status="won" if profit > 0 else "lost", profit=profit)
+    face = {f.mode: f for f in bets_summary(db)}[BetMode.PAPER.value]
+    assert face.total_pnl == 0.0
+    assert str(face.total_pnl) == "0.0"  # -0.0 的 str 是 "-0.0"
+    assert str(face.days[0].pnl) == "0.0"
