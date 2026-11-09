@@ -228,6 +228,56 @@ def test_calibration_probe_had_face_reaches_clv_coverage(
     assert rows[0]["edge_source"] == "calibration_probe"
 
 
+def test_calibration_probe_reserves_had_clv_slot(db: sqlite3.Connection) -> None:
+    """had 保底槽：crs/ttg 长票霸榜时末槽让位最优 had 单关（CLV 不断流）。
+
+    十年逆向选择实证=claimed-EV 排名几乎恒被 crs/ttg 占据，而源T 收盘
+    锚只覆盖 had——无保底则每注 CLV 仪器饿死（Spec 审查发现）。
+    """
+    fixtures = [
+        _seed_fixture(db, tag, code=f"周六00{i}")
+        for i, tag in enumerate(("丑", "寅", "卯"), 1)
+    ]
+    matrix = _matrix(1.3, 1.1)
+    for fixture in fixtures:
+        _seed_on_sale(db, fixture)
+        _seed_forecast(db, fixture)
+        # crs 最优 EV 显著压过 had（+80% vs +20%）→ 纯排名 top-3 全 crs
+        crs = matrix.crs()
+        best_crs = max(crs, key=lambda sel: crs[sel])
+        _snap(db, fixture, "crs", best_crs, round(1.8 / crs[best_crs], 2))
+        had = matrix.had()
+        for sel, prob in had.items():
+            _snap(db, fixture, "had", sel, round(1.2 / prob, 2))
+    db.commit()
+
+    stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 3
+    rows = _v2_rows(db)
+    assert {row["market_code"] for row in rows} == {"crs", "had"}
+    had_rows = [row for row in rows if row["market_code"] == "had"]
+    assert len(had_rows) == 1  # 末槽让位：三场 crs 霸榜仍有一注 had
+    assert all(row["edge_source"] == "calibration_probe" for row in rows)
+    # 每注仍平注 ¥2（帽不破）
+    assert all(row["stake"] == 2.0 for row in rows)
+
+
+def test_calibration_probe_no_had_candidate_no_slot(db: sqlite3.Connection) -> None:
+    """无正 EV had 候选：保底槽不硬凑（诚实零 had，CLV 缺省如实）。"""
+    fixture = _seed_fixture(db, "辰", code="周日009")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture)
+    ttg = _matrix(1.3, 1.1).ttg()
+    best = max(ttg, key=lambda sel: ttg[sel])
+    _snap(db, fixture, "ttg", best, round(1.5 / ttg[best], 2))
+    db.commit()
+
+    stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 1
+    rows = _v2_rows(db)
+    assert rows[0]["market_code"] == "ttg"
+
+
 def test_zero_signal_day_ledger(db: sqlite3.Connection) -> None:
     """无候选日：台账留痕 no_candidates，熄灯探针在 detail_json 可见。"""
     import json

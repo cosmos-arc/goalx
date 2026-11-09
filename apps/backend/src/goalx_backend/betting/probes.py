@@ -72,6 +72,11 @@ class AutoV2Params:
     single_markets: tuple[str, ...] = ("had", "hhad", "crs", "ttg")
     parlay_markets: tuple[str, ...] = ()
     top_singles: int = 3
+    # had 保底槽：claimed-EV 纯 EV 排名几乎恒被 crs/ttg 长票占据（十年
+    # 逆向选择实证），而源T 收盘锚只覆盖 had——无 had 单关则每注 CLV
+    # 仪器断流（票 01 问题陈述：无每注 CLV 则验证轨缺最高样本效率的
+    # 仪表）。开启=末槽让位给未入选项中最优正 EV had 单关。
+    had_clv_slot: bool = True
     sale_buffer_minutes: int = 30
     kickoff_guard_minutes: int = 10
     stake_per_combination: float = 2.0
@@ -85,6 +90,30 @@ class AutoV2Params:
 
 
 AUTO_V2_PARAMS = AutoV2Params()
+
+
+def _with_had_slot(
+    chosen: list[au.Pick], singles: list[au.Pick], params: AutoV2Params
+) -> list[au.Pick]:
+    """
+    末槽让位换入最优正 EV had 单关（修订单见 AutoV2Params.had_clv_slot）。
+
+    末槽=保留集（前 N−1）之外让位：被让位场自身的 had 候选随之解禁，
+    修订①每场至多一注不变（换入者只取保留集外场次）。
+    """
+    if not params.had_clv_slot or any(p.market_code == "had" for p in chosen):
+        return chosen
+    retained = chosen[:-1]
+    taken = {p.fixture_id for p in retained}
+    had_best = au.select_singles(
+        [
+            pick
+            for pick in singles
+            if pick.market_code == "had" and pick.fixture_id not in taken
+        ],
+        params,
+    )
+    return [*retained, had_best[0]] if had_best else chosen
 
 
 def _run_calibration_probe(
@@ -104,7 +133,7 @@ def _run_calibration_probe(
     )
     run_iso = run_at.astimezone(UTC).isoformat()
     created = drift = rejected = replayed = 0
-    for pick in au.select_singles(singles, params):
+    for pick in _with_had_slot(au.select_singles(singles, params), singles, params):
         request_id = (
             f"{AUTO_V2}:{business_date}:{anchor_label}:"
             f"cal:{pick.fixture_id}:{pick.market_code}"
@@ -141,25 +170,17 @@ def _run_calibration_probe(
 def _pool_stake_today(
     conn: sqlite3.Connection, source: str, business_date: str
 ) -> float:
-    """某 source 当业务日已落池票组合金额（帽余量计算）。"""
-    rows = conn.execute(
+    """某 source 当业务日已落池票组合金额（帽余量计算；日期下推 SQL）。"""
+    row = conn.execute(
         """
-        SELECT s.placed_at AS placed_at, COALESCE(SUM(c.stake), 0) AS stake
+        SELECT COALESCE(SUM(c.stake), 0) AS stake
         FROM bet_slips s JOIN combinations c ON c.slip_id = s.id
-        WHERE s.source = ? AND s.placed_at IS NOT NULL
-        GROUP BY s.id
+        WHERE s.source = ?
+          AND substr(datetime(s.placed_at, '+8 hours'), 1, 10) = ?
         """,
-        (source,),
-    ).fetchall()
-    total = 0.0
-    for row in rows:
-        try:
-            placed = datetime.fromisoformat(str(row["placed_at"]))
-        except ValueError:
-            continue
-        if fx_store.beijing_business_date(placed) == business_date:
-            total += float(row["stake"])
-    return total
+        (source, business_date),
+    ).fetchone()
+    return float(row["stake"]) if row is not None else 0.0
 
 
 def run_auto_v2(
