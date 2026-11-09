@@ -378,12 +378,13 @@ def paper_account_face(conn: sqlite3.Connection) -> PaperAccountFace:
     settled_ctx = _settled_bet_context(conn)
     tax_total, after_tax = _after_tax(settled_ctx)
     # 分母收窄（票 13）：已结算、合格（非 void 退款）、按场独立的暴露数——
-    # 未结注与同场多锚不虚增「样本充足」（prereg 判读规则的独立暴露语义）
+    # 未结注与同场多锚不虚增「样本充足」（prereg 判读规则的独立暴露语义）。
+    # partial（赛果更正回待开，correctness F1）非最终结算，不入分母
     exposures = len(
         {
             fid
             for bet in settled_ctx.values()
-            if bet.status != "void"
+            if bet.status in ("won", "lost")
             for fid in bet.fixtures
         }
     )
@@ -489,6 +490,10 @@ def edge_source_faces(conn: sqlite3.Connection) -> list[EdgeSourceFace]:
         entry.profit = round(entry.profit + float(row["profit"] or 0.0), 2)
         if row["clv"] is not None:
             raw = row["fixtures"]
+            # shortcut: 聚类键=票内场次集合精确相等，非按场归属（单关(A)与
+            # 串关(A,B)共享 A 仍算两簇）；当前唯一写入方 auto-v2 探针=单腿+
+            # 每场至多一注（修订①），前提成立。当探针下串关或 v1 注打
+            # edge_source 标签时升级为按场归属聚类（correctness F2）
             cluster_key = (
                 (int(row["id"]),)
                 if raw is None

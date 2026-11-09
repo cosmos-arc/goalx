@@ -130,7 +130,7 @@ _Avoid_: Payout（单独使用）
 _Avoid_: Balance, 余额
 
 **IndependentExposure / 独立暴露**:
-sample_sufficient 的分母单位：已结算、非 void、按场去重后的暴露数——同场多注只计一场（edge-audit 票 13；未结算与场内重复注不虚增样本）。
+sample_sufficient 的分母单位：已结算（won/lost；赛果更正回待开的 partial 不算）、非 void、按场去重后的暴露数——同场多注只计一场（edge-audit 票 13；未结算与场内重复注不虚增样本）。
 _Avoid_: 注数（作样本充分性分母时）
 
 **计税组**:

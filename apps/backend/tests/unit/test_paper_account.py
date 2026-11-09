@@ -376,6 +376,33 @@ def _bulk_single(
     db.commit()
 
 
+def test_sample_sufficient_excludes_partial_correction_rows(
+    db: sqlite3.Connection,
+) -> None:
+    """correctness F1 回归：partial（赛果更正回待开）非最终结算，不入暴露分母。
+
+    2 腿 partial 串关覆盖 2 场 + 1 条 won 单关 1 场 → 分母=1（partial 两场剔除）。
+    """
+    fid_a = _fixture(db, "辰", 20)
+    fid_b = _fixture(db, "辰", 21)
+    fid_c = _fixture(db, "辰", 22)
+    _bulk_single(db, fid_c, status="won", settled=True)
+    db.execute(
+        "INSERT INTO bets (mode, market_kind, stake, created_at, status)"
+        " VALUES ('paper', 'fixed', 2.0, '2026-11-08T10:00:00+00:00', 'partial')"
+    )
+    partial_id = int(db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    db.executemany(
+        "INSERT INTO bet_legs (bet_id, fixture_id, market_code, selection_code,"
+        " locked_odds) VALUES (?, ?, 'ttg', '2', 2.0)",
+        [(partial_id, fid_a), (partial_id, fid_b)],
+    )
+    db.commit()
+    face = paper_account_face(db)
+    assert face.independent_exposures_n == 1
+    assert face.sample_sufficient is False
+
+
 def test_sample_sufficient_200_unsettled_same_fixture(
     db: sqlite3.Connection,
 ) -> None:
