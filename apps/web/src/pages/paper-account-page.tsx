@@ -14,9 +14,12 @@ import { pnlClass, signedCny, TABULAR_NUMS } from "../lib/ui";
  * - 账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列（open 注+彩池未开奖），
  *   绝不计入已实现——「浮仓」块与「已实现」块物理分栏。
  * - auto-v1 与人工纸面分列（两行账户行+两条曲线要点），不混一个数字。
- * - EV 实现差（实现 ROI vs 决策 EV 均值）为主指标列；累计注数<200 时
- *   页首挂「样本不足，只报曲线不判盈亏」横幅（sample_sufficient=false）。
- * - 税后=逐注奖金计税口径（≤1 万免/超限全额 20%），与毛额并排展示。
+ * - EV 实现差（实现 ROI vs 决策 EV 均值）为主指标列；ROI 双栏=等注口径
+ *   （Σ利润/Σ注金）与按场口径（场 ROI 先并再跨场等权）并列（票 13）。
+ * - 独立暴露（已结算、非退款、按场独立）<200 时页首挂「样本不足，只报
+ *   曲线不判盈亏」横幅（sample_sufficient=false）。
+ * - 税后=同人+同期+同游戏归集计税（2024 年第 12 号公告：≤1 万免/超限
+ *   全额 20%），与毛额并排展示。
  */
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -59,7 +62,7 @@ function AccountBody({ face }: { face: PaperAccount }) {
 		<div className="space-y-6" data-testid="paper-account">
 			{face.sample_sufficient ? null : (
 				<StatusToast testid="paper-account-insufficient">
-					样本不足（累计 {face.total_bets_n} 注 &lt; 200）——只报曲线，不判盈亏
+					样本不足（独立暴露 {face.independent_exposures_n ?? face.total_bets_n} 场 &lt; 200）——只报曲线，不判盈亏
 				</StatusToast>
 			)}
 			<header className="grid gap-3 sm:grid-cols-4">
@@ -75,7 +78,7 @@ function AccountBody({ face }: { face: PaperAccount }) {
 					className="text-info"
 				/>
 				<StatCard
-					label="税后已实现（逐注奖金口径）"
+					label="税后已实现（同期同游戏归集计税）"
 					value={signedCny(face.profit_after_tax)}
 					className={pnlClass(face.profit_after_tax)}
 				/>
@@ -95,7 +98,8 @@ function AccountBody({ face }: { face: PaperAccount }) {
 							<TableHead>注数（已结算/open）</TableHead>
 							<TableHead>已结算投注</TableHead>
 							<TableHead>已实现 P&L</TableHead>
-							<TableHead>实现 ROI</TableHead>
+							<TableHead>实现 ROI（等注）</TableHead>
+							<TableHead>实现 ROI（按场）</TableHead>
 							<TableHead>决策 EV 均值</TableHead>
 							<TableHead>EV 实现差（主指标）</TableHead>
 							<TableHead>最大回撤</TableHead>
@@ -114,6 +118,9 @@ function AccountBody({ face }: { face: PaperAccount }) {
 								</TableCell>
 								<TableCell className={TABULAR_NUMS}>
 									{row.realized_roi == null ? "—" : `${(row.realized_roi * 100).toFixed(1)}%`}
+								</TableCell>
+								<TableCell className={TABULAR_NUMS}>
+									{row.realized_roi_per_match == null ? "—" : `${(row.realized_roi_per_match * 100).toFixed(1)}%`}
 								</TableCell>
 								<TableCell className={TABULAR_NUMS}>
 									{row.mean_decision_ev == null ? "—" : `${(row.mean_decision_ev * 100).toFixed(1)}%`}
@@ -176,7 +183,8 @@ function AccountBody({ face }: { face: PaperAccount }) {
 				</Table>
 				{face.tax_total > 0 ? (
 					<p className="mt-2 text-xs text-muted-foreground" data-testid="paper-account-tax-note">
-						税后口径：中奖注奖金超 ¥10,000 全额 20% 计税，本账已计税 ¥{face.tax_total.toFixed(2)}。
+						税后口径：同人+同期+同游戏奖金归集（2024 年第 12 号公告：≤1 万免、超限全额 20%）， 本账已计税 ¥
+						{face.tax_total.toFixed(2)}。
 					</p>
 				) : null}
 			</section>
