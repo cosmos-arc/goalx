@@ -544,6 +544,45 @@ def test_edge_source_faces_pnl_and_clv_rolling(
     assert [f.source for f in full.per_edge_source] == ["calibration_probe"]
 
 
+def test_edge_source_clv_se_clusters_by_fixture(db: sqlite3.Connection) -> None:
+    """票 13 反例③（外部审计数值例）：同场复制行 CLV SE 按场并一。
+
+    两场各 25 注、场内 CLV 相同（0.03/0.01）：按行独立口径 SE=0.001429
+    （同场多锚重复贡献证据，精度虚增 7 倍）；按场聚类（同场多锚并一）
+    收敛到两独立场均值的量级 SE=0.01。
+    """
+    fixture_a = _seed_fixture(db, "乾", code="周日101")
+    fixture_b = _seed_fixture(db, "坤", code="周日102")
+    for fixture, clv in ((fixture_a, 0.03), (fixture_b, 0.01)):
+        for _ in range(25):
+            db.execute(
+                "INSERT INTO bets (mode, market_kind, stake, created_at, status,"
+                " payout, profit, settled_at, strategy_version, edge_source, clv)"
+                " VALUES ('paper', 'fixed', 2.0, '2026-11-09T12:00:00+00:00',"
+                " 'won', 4.0, 2.0, '2026-11-09T13:00:00+00:00', 'auto-v2',"
+                " 'calibration_probe', ?)",
+                (clv,),
+            )
+            bet_id = int(
+                db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+            )
+            db.execute(
+                "INSERT INTO bet_legs (bet_id, fixture_id, market_code,"
+                " selection_code, locked_odds) VALUES (?, ?, 'had', 'h', 2.0)",
+                (bet_id, fixture),
+            )
+    db.commit()
+
+    faces = account.edge_source_faces(db)
+    assert [f.source for f in faces] == ["calibration_probe"]
+    face = faces[0]
+    assert face.bets_n == 50
+    assert face.clv_n == 50
+    assert face.clv_mean == pytest.approx(0.02)  # 按场并一均值=场均值再跨场平均
+    assert face.clv_mean_last50 == pytest.approx(0.02)
+    assert face.clv_se_last50 == pytest.approx(0.01)  # 行独立口径为 0.001429
+
+
 def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
