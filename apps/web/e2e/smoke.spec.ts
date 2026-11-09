@@ -143,8 +143,15 @@ test("fixtures page renders data or degrades honestly", async ({ page }) => {
 	await page.goto("/fixtures");
 
 	await expect(page.getByRole("heading", { name: "GoalX · 场次" })).toBeVisible();
-	// 数据路径（常驻后端）或三态空状态（无数据/后端不可用）都算通过
-	await expect(page.getByTestId("fixtures-row").first().or(page.getByTestId("empty-state"))).toBeVisible({
+	// 数据路径（常驻后端）或三态空状态（无数据/后端不可用）都算通过；
+	// 空窗日（wb-01：有他日数据但当日无场次，深夜常现）也是诚实态
+	await expect(
+		page
+			.getByTestId("fixtures-row")
+			.first()
+			.or(page.getByTestId("empty-state"))
+			.or(page.getByTestId("fixtures-day-empty")),
+	).toBeVisible({
 		timeout: 20_000,
 	});
 });
