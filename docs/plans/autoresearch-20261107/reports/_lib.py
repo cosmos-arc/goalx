@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import gzip
 import json
 import math
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Sequence
@@ -550,6 +552,80 @@ def bh_family(zs: Sequence[tuple[str, float]], alpha: float = 0.05) -> set[str]:
     """
     pv = [(eid, one_sided_p(z) if math.isfinite(z) else 1.0) for eid, z in zs]
     return bh(pv, alpha)
+
+
+# --------------------------------- 轮级单家族装载（edge-audit-20261109 票 20，E-32 修订 C）
+
+EM1_ROUND_BH_GROUPS: tuple[tuple[str, str], ...] = (("09", "A"), ("10", "B"), ("10", "C"))
+"""一轮 EM 的 BH 贡献组（协议预注册轮定义，09-em1-protocol.md 修订 C）：
+拥有搜索→候选→晋升门路径的全部 (ticket, facet) 组。facet D（票 11）按前置
+refuted 关闭、无候选路径，不入组；未来 facet 开候选路径时在此扩组（粒度
+跑数前预注册，跑数后不得更换）。"""
+
+
+def read_trial_ledger(path: str) -> list[dict]:
+    """读 EM-1 试验账全部行（文件不存在→空表，视作该账尚未落任何条目）。"""
+    if not os.path.exists(path):
+        return []
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _parse_z(s: str) -> float:
+    """试验账 z 列 → float；空串/不可解析 → nan（bh_family 按 p=1.0 入族）。"""
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def em1_round_family(rows: Sequence[dict]) -> list[tuple[str, float]]:
+    """轮级单家族成员装载（E-32 修订 C，票 20）。
+
+    家族=该轮进入验证窗的全部候选：试验账 window=search 且 stage=candidate
+    的**全部条目跨 facet 并集**（不分脚本/组，任何按组先筛减族=违约）；全阴、
+    样本不足、验证窗无行者均在族内，验证条目缺失或 z 不可计算 → nan
+    （bh_family 按 p=1.0 入族，只放大分母不放松分位阈值）。返回
+    (validation_entry_id, z)，与各脚本晋升成员身份口径一致。
+    """
+    val_z: dict[str, float] = {}
+    for r in rows:
+        if r.get("window") != "validation":
+            continue
+        base, _sep, _w = r["entry_id"].rpartition("-")
+        val_z[base] = _parse_z(r.get("z", ""))
+    family: list[tuple[str, float]] = []
+    for r in rows:
+        if r.get("window") == "search" and r.get("stage") == "candidate":
+            base, _sep, _w = r["entry_id"].rpartition("-")
+            family.append((f"{base}-validation", val_z.get(base, float("nan"))))
+    return family
+
+
+def em1_round_missing_groups(rows: Sequence[dict]) -> list[tuple[str, str]]:
+    """轮完整性 fail-closed 判据：预注册 BH 贡献组中尚无任何 search 落账的组。
+
+    修订 C 下家族=轮内全部候选——兄弟组未跑搜索就把族缩成「本脚本候选」
+    与先筛后校同罪；返回非空时调用方不得做轮级 BH 裁定（候选留 bh_pending，
+    待轮内其余脚本落账后重跑收口；脚本幂等，无「先跑谁」硬序）。
+    """
+    seen = {(r.get("ticket"), r.get("facet")) for r in rows if r.get("window") == "search"}
+    return [g for g in EM1_ROUND_BH_GROUPS if g not in seen]
+
+
+def em1_round_adjudicate(ledger_path: str) -> tuple[set[str], list[tuple[str, float]], list[tuple[str, str]]]:
+    """轮级单家族 BH 裁定（09/10 共用接缝；须在调用方落完搜索+验证账后调）。
+
+    装载全轮族→完整性 fail-closed→一次 BH：missing_groups 非空时返回
+    bh_pass=空集（不裁，候选留 bh_pending，调用方打印收口指引），否则
+    返回 bh_family(round_family)。返回 (bh_pass, round_family, missing_groups)。
+    """
+    ledger_all = read_trial_ledger(ledger_path)
+    round_family = em1_round_family(ledger_all)
+    missing = em1_round_missing_groups(ledger_all)
+    if missing:
+        return set(), round_family, missing
+    return bh_family(round_family), round_family, missing
 
 
 def load_pin_ah(sids: Iterable[str]) -> dict[str, list[tuple[dt.datetime, float, float, float]]]:

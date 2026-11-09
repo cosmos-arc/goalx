@@ -4,6 +4,9 @@
 # 决策时刻 T=开球−2h（固定规则，无前视）：JC 报价@T × PIT 欧锚（Pinnacle
 # @T）公允 >1 → 价值侧下注，实现 EV=odds@T×hit−1；特征只用 T 之前信息。
 # 三窗+门+BH 全按票 09 协议；切片入同一试验账（facet=B/C）。
+# BH=轮级单家族（E-32 修订 C，票 20）：本脚本 B/C 与票 09 A(F1-F8) 的
+# 验证窗候选并成一个家族过一次 BH；族成员从试验账装载，轮不完整时
+# fail-closed 不裁（无「先跑 09 还是 10」硬序，脚本幂等可重跑收口）。
 #
 # facet B 切片族（预注册）：
 #   B1 陈盘：T−{6h,24h} 窗内 Pinnacle 隐含动 ≥{1,2}pp 且 JC 该向未跟
@@ -28,9 +31,9 @@ from collections import defaultdict
 import numpy as np
 
 from _lib import (
-    bh_family,
     clustered_mean,
     devig,
+    em1_round_adjudicate,
     load_jc,
     load_jc_traj,
     load_euro,
@@ -289,7 +292,8 @@ def main() -> None:
                 denom, bet = d2, b2
                 break
         if denom is None:
-            # 验证窗无行：不入账（既有行为），但入 BH 家族（z=nan，票 12 修正）
+            # 验证窗无行：不入账（既有行为），但仍入轮级 BH 家族（台账装载无
+            # 验证条目 → z=nan → p=1.0，修订 C）
             val_cache[(facet, family, sname)] = (None, False)
             continue
         m = metrics(denom, bet)
@@ -303,14 +307,22 @@ def main() -> None:
             "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
             "stage": "bh_pending" if ok else "dead", "note": "",
         })
-    # BH 家族=当轮全部候选（含全阴与验证窗无行者；票 12 修正：先筛后校废除）
-    val_family = [
-        (f"10-{f}-{fa}-{s}-validation", (m["ev_z"] if m is not None else float("nan")))
-        for (f, fa, s), (m, _ok) in val_cache.items()
-    ]
-    bh_pass = bh_family(val_family)
+    # ---- 轮级单家族 BH（E-32 修订 C，票 20）：先落搜索+验证账，再从台账
+    # 装载全轮族（本脚本 B/C 与票 09 A 的候选并集，含全阴与验证窗无行者
+    # z=nan→p=1.0），一次校正统裁定（_lib.em1_round_adjudicate 共用接口，
+    # 两脚本同一 fail-closed 门）。脚本独立运行无硬序：轮不完整（预注册
+    # BH 贡献组缺 search 账）→ 不裁，候选留 bh_pending，待轮内其余脚本
+    # 落账后重跑本脚本幂等收口。
+    append_ledger(ledger_rows)
+    bh_pass, round_family, missing_groups = em1_round_adjudicate(LEDGER)
+    if missing_groups:
+        print(
+            f"[轮级 BH 未裁] 轮族不完整：缺 {missing_groups} 的 search 账——缺报缩族与先筛后校"
+            "同罪（修订 C）；候选留 bh_pending，轮内其余脚本落账后重跑本脚本收口"
+        )
     promoted = [k for k, (_m, ok) in val_cache.items() if ok and f"10-{k[0]}-{k[1]}-{k[2]}-validation" in bh_pass]
 
+    conf_rows: list[dict] = []
     survivors = []
     for facet, family, sname in promoted:
         denom, bet = None, None
@@ -324,7 +336,7 @@ def main() -> None:
         ok = conf_gate(m)
         if ok:
             survivors.append((facet, family, sname, m))
-        ledger_rows.append({
+        conf_rows.append({
             "entry_id": f"10-{facet}-{family}-{sname}-confirmation", "ts": dt.datetime.now().isoformat(timespec="seconds"),
             "ticket": "10", "facet": facet, "family": family, "slice": sname, "window": "confirmation",
             "n_fx": m["n_fx"], "n_sel": m["n_sel"], "metric": "ev", "value": f"{m['ev']:.4f}",
@@ -332,11 +344,14 @@ def main() -> None:
             "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
             "stage": "survivor" if ok else "dead", "note": "",
         })
+    append_ledger(conf_rows)
 
-    append_ledger(ledger_rows)
     n_gate = sum(1 for _m, ok in val_cache.values() if ok)
-    print(f"\nB/C：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；BH 后晋升 {len(promoted)}；确认幸存 {len(survivors)}")
-    print(f"多重校正账：BH 家族=验证窗全部候选 m={len(val_family)}（含全阴，票 12 修正），α=0.05 预期假阳性 {len(val_family)*0.05:.1f}")
+    print(f"\nB/C：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；轮级 BH 后晋升 {len(promoted)}；确认幸存 {len(survivors)}")
+    print(
+        f"多重校正账（E-32 修订 C，轮级单家族）：BH 家族=本轮全 facet 候选并集 m={len(round_family)}"
+        f"（含全阴/验证窗无行者，z 不可计算 p=1.0），α=0.05 预期假阳性 {len(round_family) * 0.05:.1f}"
+    )
 
     print("\n[覆盖账]")
     print("  xG 面：未搜索（match_features.xg=赛后实际值，无赛前预测面=后视）")
