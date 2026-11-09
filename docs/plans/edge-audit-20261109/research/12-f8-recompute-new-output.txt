@@ -1,0 +1,132 @@
+============================================================================
+票 09：EM-1 facet A 定价差主面（协议=09-em1-protocol.md）
+============================================================================
+配对漏斗: {'jc_rows': 24009, 'eu_rows': 49180, 'paired_name': 15672, 'paired_bootstrap': 4797, 'unpaired_jc': 3540, 'alias_learned': 248}
+had 分析行 32937（窗分布 [('confirmation', 10752), ('search', 13764), ('validation', 8421)]）
+pin_dev 三分位切点（搜索窗冻结）：-0.0022 / +0.0039
+
+F1-F6：搜索切片候选 0；验证过 promo 门 0；BH 后晋升 0；确认窗幸存 0
+多重校正账：BH 家族=验证窗全部候选 m=0（含全阴，票 12 修正），α=0.05 预期假阳性 0.0
+F8(ttg 篮子=修订B)：搜索候选 0；验证过门 0；BH 家族 m=0；BH 后晋升 0；确认幸存 0
+
+试验账已落/更新：/Users/chevy/Desktop/code/goalx-ea12/docs/plans/autoresearch-20261107/reports/09-em1-trial-ledger.csv（本票条目 168）
+
+[覆盖账]
+  crs/hafu：未搜索（无欧锚对照面，协议§1 固定行）
+  hhad：线不匹配/无AH收盘 8419 场不入 F7；F7 结构行 2406（结构面 only）
+  ttg：无 over2.5 赛前板 6017 场不入 F8（修订B 篮子）；F8 分析行 27844
+  OU 锚（票 12 修正=每书末价→跨书均值）：2.5 线书覆盖 median=7.0 p10=1.0；报价年龄（最陈旧书）median=7.2h p90=264.6h
+
+[搜索窗 F1-F6 全切片 EV/gap 摘要（* = 候选；insufficient = n_fx<200）]
+  F1             德甲: n_fx=  489 n_sel=   37 EV=+74.106% z=+1.54 gap=+4.670%
+  F1             意甲: n_fx=  595 n_sel=   49 EV=-5.057% z=-0.20 gap=+4.629%
+  F1             法甲: n_fx=  516 n_sel=   62 EV=+26.780% z=+0.81 gap=+4.641%
+  F1             英冠: n_fx= 1026 n_sel=   56 EV=-18.137% z=-0.76 gap=+4.653%
+  F1             英超: n_fx=  626 n_sel=   54 EV=-29.038% z=-1.21 gap=+4.656%
+  F1             荷甲: n_fx=  328 n_sel=   34 EV=-4.031% z=-0.13 gap=+4.672%
+  F1             葡超: n_fx=  406 n_sel=  102 EV=-31.337% z=-1.83 gap=+4.694%
+  F1             西甲: n_fx=  602 n_sel=   94 EV=-38.727% z=-2.10 gap=+4.658%
+  F2         <20%×主: n_fx=  511 n_sel=   74 EV=-6.081% z=-0.21 gap=+1.789%
+  F2         <20%×平: n_fx=  561 n_sel=    5 EV=-100.000% z=+nan gap=+2.526%
+  F2         <20%×客: n_fx= 1015 n_sel=  117 EV=-27.650% z=-1.33 gap=+1.703%
+  F2       20-40%×主: n_fx= 1774 n_sel=   99 EV=-14.707% z=-0.92 gap=+3.852%
+  F2       20-40%×平: n_fx= 4027 n_sel=   45 EV=+14.933% z=+0.51 gap=+3.177%
+  F2       20-40%×客: n_fx= 2264 n_sel=  114 EV=-2.886% z=-0.17 gap=+4.281%
+  F2       40-60%×主: n_fx= 1615 n_sel=   18 EV=-44.722% z=-1.65 gap=+7.618%
+  F2       40-60%×平: n_fx=    0 n_sel=    0 EV=+nan% z=+nan gap=+nan% (insufficient)
+  F2       40-60%×客: n_fx=  952 n_sel=    8 EV=-42.375% z=-1.11 gap=+8.506%
+  F2         60%+×主: n_fx=  688 n_sel=    3 EV=+152.667% z=+1.14 gap=+9.865%
+  F2         60%+×平: n_fx=    0 n_sel=    0 EV=+nan% z=+nan gap=+nan% (insufficient)
+  F2         60%+×客: n_fx=  357 n_sel=    5 EV=+48.600% z=+0.71 gap=+9.867%
+  F3        德甲×<20%: n_fx=  171 n_sel=   15 EV=+153.667% z=+1.54 gap=+1.857% (insufficient)
+  F3        意甲×<20%: n_fx=  245 n_sel=   20 EV=-100.000% z=+nan gap=+2.159%
+  F3        法甲×<20%: n_fx=  167 n_sel=   28 EV=+41.852% z=+0.68 gap=+1.649% (insufficient)
+  F3        英冠×<20%: n_fx=  199 n_sel=   16 EV=+9.687% z=+0.16 gap=+1.573% (insufficient)
+  F3        英超×<20%: n_fx=  241 n_sel=   21 EV=-21.667% z=-0.50 gap=+1.823%
+  F3        荷甲×<20%: n_fx=  129 n_sel=   15 EV=-63.333% z=-1.73 gap=+2.297% (insufficient)
+  F3        葡超×<20%: n_fx=  156 n_sel=   47 EV=-66.667% z=-2.85 gap=+1.420% (insufficient)
+  F3        西甲×<20%: n_fx=  218 n_sel=   34 EV=-31.471% z=-0.81 gap=+2.201%
+  F3      德甲×20-40%: n_fx=  400 n_sel=   20 EV=+12.778% z=+0.32 gap=+3.292%
+  F3      意甲×20-40%: n_fx=  487 n_sel=   26 EV=+68.000% z=+1.59 gap=+3.114%
+  F3      法甲×20-40%: n_fx=  459 n_sel=   31 EV=+29.333% z=+0.83 gap=+3.424%
+  F3      英冠×20-40%: n_fx= 1004 n_sel=   37 EV=-36.429% z=-1.63 gap=+3.532%
+  F3      英超×20-40%: n_fx=  536 n_sel=   30 EV=-25.000% z=-0.80 gap=+3.297%
+  F3      荷甲×20-40%: n_fx=  255 n_sel=   15 EV=-2.643% z=-0.06 gap=+3.135%
+  F3      葡超×20-40%: n_fx=  341 n_sel=   48 EV=+12.349% z=+0.45 gap=+3.662%
+  F3      西甲×20-40%: n_fx=  545 n_sel=   51 EV=-47.042% z=-2.50 gap=+3.329%
+  F3      德甲×40-60%: n_fx=  274 n_sel=    1 EV=+nan% z=+nan gap=+7.937%
+  F3      意甲×40-60%: n_fx=  314 n_sel=    1 EV=+nan% z=+nan gap=+8.060%
+  F3      法甲×40-60%: n_fx=  300 n_sel=    2 EV=-100.000% z=+nan gap=+7.975%
+  F3      英冠×40-60%: n_fx=  621 n_sel=    3 EV=-35.000% z=-0.54 gap=+7.953%
+  F3      英超×40-60%: n_fx=  365 n_sel=    3 EV=-100.000% z=+nan gap=+7.939%
+  F3      荷甲×40-60%: n_fx=  180 n_sel=    2 EV=+100.000% z=+0.50 gap=+8.043% (insufficient)
+  F3      葡超×40-60%: n_fx=  190 n_sel=    6 EV=-55.667% z=-1.26 gap=+7.424% (insufficient)
+  F3      西甲×40-60%: n_fx=  323 n_sel=    8 EV=-25.625% z=-0.70 gap=+8.074%
+  F3        德甲×60%+: n_fx=  138 n_sel=    1 EV=+nan% z=+nan gap=+10.020% (insufficient)
+  F3        意甲×60%+: n_fx=  183 n_sel=    2 EV=+135.000% z=+1.42 gap=+9.705% (insufficient)
+  F3        法甲×60%+: n_fx=  104 n_sel=    1 EV=+nan% z=+nan gap=+10.125% (insufficient)
+  F3        英冠×60%+: n_fx=   88 n_sel=    0 EV=+nan% z=+nan gap=+10.128% (insufficient)
+  F3        英超×60%+: n_fx=  167 n_sel=    0 EV=+nan% z=+nan gap=+9.679% (insufficient)
+  F3        荷甲×60%+: n_fx=  107 n_sel=    2 EV=+279.000% z=+3.67 gap=+9.306% (insufficient)
+  F3        葡超×60%+: n_fx=  117 n_sel=    1 EV=+nan% z=+nan gap=+10.531% (insufficient)
+  F3        西甲×60%+: n_fx=  141 n_sel=    1 EV=+nan% z=+nan gap=+9.664% (insufficient)
+  F4      0-9时×<20%: n_fx=  869 n_sel=  153 EV=-31.074% z=-1.71 gap=+1.909%
+  F4    15-21时×<20%: n_fx=  124 n_sel=    5 EV=+108.000% z=+0.85 gap=+1.898% (insufficient)
+  F4    21-24时×<20%: n_fx=  533 n_sel=   38 EV=+8.026% z=+0.19 gap=+1.834%
+  F4    0-9时×20-40%: n_fx= 1999 n_sel=  218 EV=+0.029% z=+0.00 gap=+3.304%
+  F4  15-21时×20-40%: n_fx=  309 n_sel=    1 EV=+nan% z=+nan gap=+3.390%
+  F4  21-24时×20-40%: n_fx= 1719 n_sel=   39 EV=-33.472% z=-1.31 gap=+3.449%
+  F4    0-9时×40-60%: n_fx= 1257 n_sel=   20 EV=-27.200% z=-1.00 gap=+8.054%
+  F4  15-21时×40-60%: n_fx=  194 n_sel=    1 EV=+nan% z=+nan gap=+7.902% (insufficient)
+  F4  21-24时×40-60%: n_fx= 1116 n_sel=    5 EV=-100.000% z=+nan gap=+7.835%
+  F4      0-9时×60%+: n_fx=  619 n_sel=    7 EV=+75.429% z=+1.06 gap=+9.683%
+  F4    15-21时×60%+: n_fx=   85 n_sel=    0 EV=+nan% z=+nan gap=+10.151% (insufficient)
+  F4    21-24时×60%+: n_fx=  341 n_sel=    1 EV=+nan% z=+nan gap=+10.128%
+  F5        周中×<20%: n_fx=  556 n_sel=   91 EV=-25.899% z=-1.06 gap=+2.005%
+  F5        周末×<20%: n_fx=  970 n_sel=  105 EV=-14.369% z=-0.62 gap=+1.811%
+  F5      周中×20-40%: n_fx= 1325 n_sel=  144 EV=+0.417% z=+0.03 gap=+3.285%
+  F5      周末×20-40%: n_fx= 2702 n_sel=  114 EV=-9.971% z=-0.63 gap=+3.415%
+  F5      周中×40-60%: n_fx=  850 n_sel=   16 EV=-47.750% z=-2.01 gap=+8.015%
+  F5      周末×40-60%: n_fx= 1717 n_sel=   10 EV=-38.000% z=-0.87 gap=+7.914%
+  F5        周中×60%+: n_fx=  391 n_sel=    6 EV=+28.833% z=+0.45 gap=+9.613%
+  F5        周末×60%+: n_fx=  654 n_sel=    2 EV=+264.000% z=+2.90 gap=+10.017%
+  F6      Pin松×<20%: n_fx=  413 n_sel=   60 EV=-11.083% z=-0.37 gap=+1.888%
+  F6      Pin紧×<20%: n_fx=  688 n_sel=   69 EV=-66.364% z=-3.38 gap=+1.979%
+  F6         ≈×<20%: n_fx=  423 n_sel=   67 EV=+19.091% z=+0.55 gap=+1.719%
+  F6      缺psc×<20%: n_fx=    2 n_sel=    0 EV=+nan% z=+nan gap=+1.641% (insufficient)
+  F6    Pin松×20-40%: n_fx= 1390 n_sel=   95 EV=-22.833% z=-1.37 gap=+3.325%
+  F6    Pin紧×20-40%: n_fx= 1282 n_sel=   55 EV=-12.396% z=-0.57 gap=+3.409%
+  F6       ≈×20-40%: n_fx= 1354 n_sel=  108 EV=+17.330% z=+0.95 gap=+3.389%
+  F6    缺psc×20-40%: n_fx=    1 n_sel=    0 EV=+nan% z=+nan gap=+nan% (insufficient)
+  F6    Pin松×40-60%: n_fx=  818 n_sel=    6 EV=-23.167% z=-0.47 gap=+8.325%
+  F6    Pin紧×40-60%: n_fx=  891 n_sel=   10 EV=-62.500% z=-2.50 gap=+7.499%
+  F6       ≈×40-60%: n_fx=  858 n_sel=   10 EV=-38.000% z=-0.87 gap=+8.053%
+  F6    缺psc×40-60%: n_fx=    0 n_sel=    0 EV=+nan% z=+nan gap=+nan% (insufficient)
+  F6      Pin松×60%+: n_fx=  273 n_sel=    2 EV=+65.000% z=+0.39 gap=+10.163%
+  F6      Pin紧×60%+: n_fx=  486 n_sel=    1 EV=+nan% z=+nan gap=+9.626%
+  F6         ≈×60%+: n_fx=  284 n_sel=    5 EV=+43.200% z=+0.67 gap=+9.989%
+  F6      缺psc×60%+: n_fx=    2 n_sel=    0 EV=+nan% z=+nan gap=+10.226% (insufficient)
+
+[搜索窗 F8 篮子摘要（候选标 *）]
+  F8       over: n_fx= 9964 n_sel=    2 EV=-100.000% z=+nan gap=+1.940%
+  F8      under: n_fx= 9964 n_sel=   61 EV=-24.098% z=-1.39 gap=-1.940%
+  F8    德甲×over: n_fx=  870 n_sel=    0 EV=+nan% z=+nan gap=+2.834%
+  F8   德甲×under: n_fx=  870 n_sel=    8 EV=+19.583% z=+0.28 gap=-2.834%
+  F8    意甲×over: n_fx= 1300 n_sel=    0 EV=+nan% z=+nan gap=+2.394%
+  F8   意甲×under: n_fx= 1300 n_sel=   12 EV=-62.917% z=-2.51 gap=-2.394%
+  F8    法甲×over: n_fx= 1145 n_sel=    0 EV=+nan% z=+nan gap=+1.743%
+  F8   法甲×under: n_fx= 1145 n_sel=    7 EV=-30.714% z=-0.93 gap=-1.743%
+  F8    苏超×over: n_fx=  478 n_sel=    0 EV=+nan% z=+nan gap=+1.431%
+  F8   苏超×under: n_fx=  478 n_sel=    0 EV=+nan% z=+nan gap=-1.431%
+  F8    英冠×over: n_fx= 2314 n_sel=    1 EV=+nan% z=+nan gap=+0.921%
+  F8   英冠×under: n_fx= 2314 n_sel=    4 EV=+6.667% z=+0.18 gap=-0.921%
+  F8    英超×over: n_fx= 1308 n_sel=    0 EV=+nan% z=+nan gap=+2.532%
+  F8   英超×under: n_fx= 1308 n_sel=    9 EV=-57.593% z=-1.97 gap=-2.532%
+  F8    荷甲×over: n_fx=  578 n_sel=    0 EV=+nan% z=+nan gap=+3.133%
+  F8   荷甲×under: n_fx=  578 n_sel=    9 EV=+79.444% z=+1.08 gap=-3.133%
+  F8    葡超×over: n_fx=  796 n_sel=    1 EV=+nan% z=+nan gap=+1.931%
+  F8   葡超×under: n_fx=  796 n_sel=    5 EV=-63.333% z=-1.73 gap=-1.931%
+  F8    西甲×over: n_fx= 1175 n_sel=    0 EV=+nan% z=+nan gap=+1.942%
+  F8   西甲×under: n_fx= 1175 n_sel=    7 EV=-80.476% z=-4.12 gap=-1.942%
+
+[幸存者] had F1-F6: 无；ttg F8: 无
