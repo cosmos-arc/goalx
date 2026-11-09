@@ -79,3 +79,42 @@
 环境事件如实记（不外推）：10:14:32 起 ditto 仓库测试班重启（外部负载 ~3GB）与 gold 段（2.9GB，正常画像）叠加 → swapfile5/6 新建（swap used 3.67→5.95GB），gold 段被换页拖长、wall 拉大至 514s；gold 班自身内存有界、未触任何护栏。另 swapfile4=今晨 08:44 定拍班所留（b9a1960 栈，全绿）。
 
 前序证据链：11-07 00:23 护栏路径实证（`deferred_low_headroom 4.9GiB` 零写入让位，3.92s/exit 0）→ 11-07 09:28 手动班全绿（351s，批 C 前）→ 11-08 08:40 定拍班全绿（340s，批 C 后 b9a1960）→ 本班（批 C/D/E+W4 全含 23b14e5）。票面"成功或明确 deferred 后恢复均可验收"——本班=成功路径，四次 OOM/SIGKILL 史路径未复现。边界重申（评审 B）：duck_limits 非进程硬上限，本页只记实测值。
+
+## 九、当前版本运行快照（2026-11-09，v1-release 票 07；栈 sha `a6d3bd8`）
+
+补 §一/§二（11-04 `879a077` 读数）之后的证据缺口：V1 发布后栈随 main 前移，本段记录快照时点（19:41-20:00 CST）的栈身份与运行事实，**跨栈证据按实际执行栈归属标注，不冒充当前版本**。
+
+### (a) 运行身份
+
+- 今日三次换栈：11:35（`969e35f`，schema 44）→ 13:35（`f4599c6` #282，schema 45）→ **19:34（`a6d3bd8` #283+#284，schema 46）**，均按 PID 直杀换栈惯例。
+- **快照清障发现**：19:34 复核时，16:02 时代旧 server worker 孤儿（PID 5562，ppid=1）仍与 8000 端口**并听**（SO_REUSEPORT）——healthz 应答可能来自任一进程；已直杀并复核单监听。换栈复核清单补"lsof 双监听"一查（观察项：孤儿不抢调度但抢端口应答权）。
+- 单树复核：schedules 33712→33713、server 33716→33717 一棵树；prefect server（goalx+ditto 共用，11-07 起）与 ditto worker 未动（惯例）。
+- **双面指纹一致**：healthz = schedules 启动日志（19:34:27）= `git_sha a6d3bd821d3c…`、dirty=false、`config_hash 3d3ac0fd…`、schema 46；今日三次换栈 config_hash 同值=配置零漂移（指纹=生效 Settings 规范 JSON 的 sha256，`run_fingerprint.process_face`，可解释）。
+- readyz 真检查：只读连接实测业务库 schema==部署迁移链末版（低/高均 503 拒服务），实测 `ready`/46。
+- deployments 32 条注册，无 (flow,name) 重复；活跃面 22（19:34:27 `--only` 清单在册，auto-v2 探针阵 auto-paper-day/evening、srct-remat、gold-rebuild 全含，夜间预排 21:01 首锚/23:30 首班在列）；停采面（margin-published×4/fred-published/daily-repair/daily-ingestion）旧注册保留不重启、deployment_version 留旧戳属预期，无重复调度。
+
+### (b) 采集到消费端
+
+- 当前栈已执行：19:40 odds-anchor-dense（sale_stop_probe candidates=0）+ track2-snapshots（24h/12h 全 0）Completed——**零候选原因在册**：今晚（11-09 CST）无开赛场次；4 场在售（fixture 616-619）开球均在 11-11/11-12 凌晨，超出探针 24h 窗（sale_statuses 观测至 19:00:02 CST 仍 on_sale，非断供）。
+- 今日完整链（12:30 窗，**归属 11:35 栈 `969e35f`**，如实标注）：JC 官方页 4 场 43 快照（12:30）→ sale_statuses 观测续至 19:00 → srct-shift raw_new 12 行 → remat mode=incremental（watermark 04:30:23Z，触及以甲/英议南等 10 分区）→ 今日页 API 0 场（真实）。
+- 增量物化在册：checkpoint.db `srct_remat_state` watermark `2026-11-09T11:30:00Z`（19:30 前栈末拍）/last_rowid 386298，锁空置；当前栈首拍=今晚 23:30 shift 钩子+明晨 08:10 定班。
+- 当前栈自身首条"采集→wrap"链=今晚（21:01 auto-v2 首锚、23:30 首班 wrap 含 PR#282 尾挂扫描器步首跑），读数入 daily-log 11-10 行，不入本段冒充。
+
+### (c) 日终完整性
+
+最近一班完整 wrap=**2026-11-08 23:30:03→23:31:54 CST Completed（ver=`23b14e56`，归属 11-08 09:32 栈）**，111s，五阶段明确（票 02 修复代码上的**首班**=2026-11-07 23:30 班，33934f1 栈，同构五阶段：settled=0/CLV 0/audit 0/m3 paired=50·未证明，逐班延续至今）：
+
+| 阶段 | 读数 |
+|---|---|
+| settlement | settled=0 / still_open=0（11-08 slate 已清） |
+| frozen_reconcile | considered=0；price sweep 账龄截断 WARNING 102 行>14 天 NULL 冻结不再重查（设计行为留痕） |
+| CLV | recorded=0 / skipped=[] |
+| ledger/audit | audit_findings=0 |
+| **M3 边界（票 02 修复后）** | tier_a/tier_b=未证明（样本不足）、paired=65、post_settle_enqueued=3——独立异常边界生效、返回体可见，如实报"未证明" |
+
+funnel：n_on_sale=12 → loss_reasons l5_sale_not_on_sale×12（11-08 slate 收尾）；frozen n_cards=36 全 ineligible。当前栈首班 wrap=今晚 23:30，明晨 09:05 晨检读数。
+
+### (d) 计数器镜像与仪器修复
+
+- schema 46（healthz/readyz/主库三处一致）；**bets=0 / bet_price_timeline=0 / freshness_shadow=0 / bankroll_events=0**——与 §一 同为诚实空读数。
+- **快照期间发现并修复（本票 v47）**：freshness_shadow 日拍自 2026-11-04 首拍（10:00:05）起逐班降级 `no column named clock_gap_seconds`——v38 DDL 落库后被 9c5b3ce review 修整**原地补列未升版本**，主库表停缺列形态、CREATE IF NOT EXISTS 不重建；§一 第 5 行"未拍属预期"实为仪器坏（当时读数 0 属实、归因错误）。v1-release 票 03（11-06）晨检口径升级后该项持续判 degraded"测量断线"，观察期未单独开票，本票收口：v47 守卫 ALTER 补列（新库 v38 DDL 已含列，幂等跳过；回归测试复现主库形态→修复→写入恢复）。首拍=修复合栈后首个采集窗；11-13 预注册首读（prereg-price-edge）前置。

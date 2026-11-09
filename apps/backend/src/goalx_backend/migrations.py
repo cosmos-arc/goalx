@@ -2221,6 +2221,20 @@ def _apply_v46(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE auto_paper_runs_v46 RENAME TO auto_paper_runs")
 
 
+def _apply_v47(conn: sqlite3.Connection) -> None:
+    """
+    v47（v1-release 票 07）：freshness_shadow 补 clock_gap_seconds 列。
+
+    v38 DDL 落库后又被 9c5b3ce review 修整原地补列而未升版本——主库表停在
+    缺列形态，日拍 INSERT 自 2026-11-04 首拍起逐班降级（"no column named
+    clock_gap_seconds"），影子读数恒 0 被误读为"未拍"。守卫 ALTER 补列
+    （同 v37 client_request_id / v31 W1 先例）；新库 v38 DDL 已含列，本
+    迁移幂等跳过。11-13 预注册首读（prereg-price-edge）前置。
+    """
+    if not _column_exists(conn, "freshness_shadow", "clock_gap_seconds"):
+        conn.execute("ALTER TABLE freshness_shadow ADD COLUMN clock_gap_seconds REAL")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2268,6 +2282,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (44, _apply_v44),
     (45, _apply_v45),
     (46, _apply_v46),
+    (47, _apply_v47),
 )
 
 
