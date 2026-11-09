@@ -48,7 +48,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
 from goalx_backend.db import atomic, table_sql, trigger_sqls, utc_now_iso
-from goalx_backend.markets import GOALS_MARKETS
+from goalx_backend.markets import GOALS_MARKETS, JC_POOL_MARKETS
 from goalx_backend.models import (
     MatchCodeInput,
     ObservationInput,
@@ -59,10 +59,13 @@ from goalx_backend.models import (
 )
 
 CST = timezone(timedelta(hours=8))  # 竞彩官方时区：北京时间
-POOL_CODES = ("had", "hhad", "crs", "ttg", "hafu")
+# 五池玩法码单源（markets.JC_POOL_MARKETS，edge-audit 票 14）：请求参数
+# 与玩法资格链共用一处定义——此前此处自持元组，两处硬写会漂。
+POOL_CODES = JC_POOL_MARKETS
 # v3（票 38）：had 单固补 poolList 池级解析（v2 会把 poolList single=1 的
 # 场次误记为非单固）；重解析历史证据时以本版本为准。
-PARSE_VERSION = "sporttery_calculator_v4"  # v4=票09 sellStatus 语义修正
+# v5（edge-audit 票 14）：hhad/hafu 市场行落库（玩法资格链前向数据面）。
+PARSE_VERSION = "sporttery_calculator_v5"  # v4=票09 sellStatus 语义修正
 
 # sellStatus 原始值 → 内部状态（票 09 语义修正，2026-10-29 考据实证）：
 # 计算器端点只列在售场次（49 份 raw×845 行 matchStatus 全='Selling'）；
@@ -161,14 +164,22 @@ class ParsedMatch:
         return None if self.is_single else False
 
     def goals_single_eligible(self, market_code: str) -> bool | None:
+        """进球类（ttg/crs）单固资格（票 wb-04；委托池级链，名字保留历史）。"""
+        if market_code not in GOALS_MARKETS:
+            raise ValueError(f"非进球类玩法: {market_code}")
+        return self.pool_single_eligible(market_code)
+
+    def pool_single_eligible(self, market_code: str) -> bool | None:
         """
-        进球类（ttg/crs）单固资格（票 wb-04）。
+        非 had 池（ttg/crs/hhad/hafu）单固资格（hhad/hafu 票 14 接入）。
 
         市场块 single 优先（实测恒缺，防御性保留）→ poolList 各池 single
         （实测唯一可靠来源）→ 比赛级否决（bettingSingle=0 → False）→ None。
+        hhad/hafu 市场行自此落库（前向生效）：此前无行时代的单关资格按
+        未知处理（消费方 fail-closed），历史不回扫补判。
         """
-        if market_code not in GOALS_MARKETS:
-            raise ValueError(f"非进球类玩法: {market_code}")
+        if market_code not in ("hhad", "hafu", *GOALS_MARKETS):
+            raise ValueError(f"非池级单固玩法: {market_code}")
         for quote in self.markets:
             if quote.market_code == market_code and quote.single is not None:
                 return quote.single
@@ -485,15 +496,17 @@ def store_matches(
                     fx_store.record_had_confirmation(
                         conn, fixture, observed, observation_id
                     )
-            elif quote.market_code in GOALS_MARKETS:
-                # 进球类单固（票 wb-04）：poolList 池级 single
+            elif quote.market_code in ("hhad", "hafu", *GOALS_MARKETS):
+                # 非 had 池市场行（进球类票 wb-04；hhad/hafu 票 14 接入）：
+                # 单固链 poolList 池级 → 市场块 → 比赛级否决（前向生效，
+                # 历史无行时代单关资格按未知拒，不回扫）
                 _append_sale_status_once(
                     conn,
                     SaleStatusInput(
                         fixture_id=fixture,
                         market_code=quote.market_code,
                         sale_state=match.sale_state,
-                        single_eligible=match.goals_single_eligible(quote.market_code),
+                        single_eligible=match.pool_single_eligible(quote.market_code),
                         observed_at=observed,
                         observation_id=observation_id,
                     ),

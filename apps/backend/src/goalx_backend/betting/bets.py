@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.snapshot import build_ev_snapshot
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import quote_evidence
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
@@ -432,6 +433,60 @@ def _record_discovery_stages(
         )
 
 
+def market_eligibility_problem(
+    conn: sqlite3.Connection,
+    fixture_id: int,
+    market_code: str,
+    as_of: str,
+    *,
+    requires_single: bool,
+) -> str | None:
+    """
+    玩法级销售资格单源判定（edge-audit-20261109 票 14）。
+
+    返回 None=该玩法该场在 as_of 时点可投；否则返回拒绝理由（词表与
+    had 深链一致：sale_status_unknown / sale_stopped / sale_not_on_sale /
+    sale_window_closed / sale_status_unknown_value / single_ineligible /
+    single_unknown）。预筛（auto_strategy.anchor_candidates）与下游建注
+    资格链（validate_had_selections 非 had 腿）两处引用、一处定义。
+
+    语义以官方规则为准，此处为仪器可达的近似口径（docstring 随口径同步）：
+    - 在售状态 = latest_sale_status_asof 共享读（市场级行优先于比赛级
+      行、observed_at≤as_of）——市场行缺失的玩法退化为比赛级行；比赛级
+      停售（探测行）晚于玩法行时不被读为停售，这是共享读的既有取舍
+      （had 深链同口径），本票不另造语义。玩法停售（单池下架）在采集
+      面只表现为市场块消失，仪器不可分辨——近似为「沿用玩法行最后态」。
+    - 单关资格 = 命中行 single_eligible（poolList 池级单固，ingest 票
+      wb-04/38 链）；未知即拒（票 35 验收 4 同纪律）。串关腿
+      （requires_single=False）不看单关资格。
+    - 开球/报价新鲜度不在本谓词：had 腿深链 adjudicate_had_quote 司其
+      职，非 had 腿的深链验证不在本票范围。
+
+    仅前向生效：资格未齐的历史记录不追溯改判——既有已建/已结注不回扫
+    重判，本谓词只在新建注/锁定动作时点消费。
+    """
+    sale = fx_store.latest_sale_status_asof(conn, fixture_id, market_code, as_of)
+    problem: str | None
+    if sale is None:
+        problem = "sale_status_unknown"
+    elif (state := str(sale["sale_state"])) == "stopped":
+        problem = "sale_stopped"
+    elif state == "not_on_sale":
+        phase = fx_store.sale_window_phase(
+            as_of, anchor=fx_store.sale_window_anchor_for(conn, as_of)
+        )
+        problem = fx_store.not_on_sale_reject_reason(phase)
+    elif state != "on_sale":
+        problem = "sale_status_unknown_value"
+    elif requires_single and sale["single_eligible"] is None:
+        problem = "single_unknown"
+    elif requires_single and not bool(sale["single_eligible"]):
+        problem = "single_ineligible"
+    else:
+        problem = None
+    return problem
+
+
 def validate_had_selections(
     conn: sqlite3.Connection,
     legs: list[LegInput],
@@ -440,12 +495,15 @@ def validate_had_selections(
     reads: quote_evidence.QuoteReads | None = None,
 ) -> None:
     """
-    Had 选择资格（票 36 选择入口/锁定再校验，消费票 35 判定）：
+    选择资格链（票 36 入口/锁定再校验；edge-audit 票 14 补玩法级验证）。
 
     - 任一 had 腿判定 rejected（停售/已开赛/三向不全/源过期/场次不存在）→ 拒绝；
     - 单关（仅一腿且为 had）须 single_eligible 为 True，未知按拒绝；
-    - 串关在同一 as_of 判定全部腿，即共同可购买时点；非 had 市场暂不在
-      证据契约内，不判定（保持既有行为）。
+    - 串关在同一 as_of 判定全部腿，即共同可购买时点；
+    - 非 had 腿（hhad/ttg/crs/hafu…）走 market_eligibility_problem 玩法级
+      判定（在售 + 单腿时单关资格）——外部审计缺陷 5 的下游半边：此前非
+      had 腿完全跳过验证，had 在售即可携 ttg 停售腿过闸。仅前向生效，
+      历史已建注不追溯改判。
 
     票 07：reads=域内下传 reader；缺省 legacy（无 corpus 链解析）。
     """
@@ -466,6 +524,20 @@ def validate_had_selections(
         ):
             problems.append(
                 f"fixture {leg.fixture_id} 非单固(单关须 single_eligible=true)"
+            )
+    for leg in legs:
+        if leg.market_code == "had":
+            continue  # 深链已判
+        problem = market_eligibility_problem(
+            conn,
+            leg.fixture_id,
+            leg.market_code,
+            moment,
+            requires_single=len(legs) == 1,
+        )
+        if problem is not None:
+            problems.append(
+                f"fixture {leg.fixture_id} {leg.market_code} 玩法资格不符: {problem}"
             )
     if problems:
         raise BetEligibilityError("; ".join(problems))

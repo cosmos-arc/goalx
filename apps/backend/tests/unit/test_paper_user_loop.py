@@ -70,21 +70,25 @@ def test_validate_had_selections_rules(db: sqlite3.Connection, demo) -> None:
         validate_had_selections(db, [_had_leg(int(blank))])
 
 
-def test_non_had_legs_skip_had_evidence(db: sqlite3.Connection, demo) -> None:
-    """非 had 市场不在证据契约内：保持既有行为，不因缺证据拒绝。"""
-    single_ok, _, _ = ids(demo)
-    validate_had_selections(
-        db,
-        [
-            LegInput(
-                fixture_id=single_ok,
-                market_code="hhad",
-                selection_code="h",
-                locked_odds=2.0,
-                goal_line=-1.0,
-            )
-        ],
+def test_non_had_leg_gets_market_level_validation(db: sqlite3.Connection, demo) -> None:
+    """票 14：非 had 市场走玩法级资格（在售 + 单关）——不再整体跳过。
+
+    demo 种子的 hhad 无市场行 → 比赛级行不携带单固资格 → 单关未知即拒；
+    串关腿（两腿）无单关要求，销售态按比赛级行在售 → 通过。
+    """
+    single_ok, parlay_only, _ = ids(demo)
+    hhad_leg = LegInput(
+        fixture_id=single_ok,
+        market_code="hhad",
+        selection_code="h",
+        locked_odds=2.0,
+        goal_line=-1.0,
     )
+    # 单关：hhad 单固资格未知（demo 无 hhad 市场行）→ 拒
+    with pytest.raises(BetEligibilityError, match=r"hhad.*single_unknown"):
+        validate_had_selections(db, [hhad_leg])
+    # 串关：不同场两腿，无单关要求 → 通过
+    validate_had_selections(db, [hhad_leg, _had_leg(parlay_only)])
 
 
 def test_record_purchase_actual_terms_flow(db: sqlite3.Connection, demo) -> None:
