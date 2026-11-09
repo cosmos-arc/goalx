@@ -183,6 +183,40 @@ def bets_total(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) FROM bets").fetchone()[0])
 
 
+def paper_ev_realization_rows(
+    conn: sqlite3.Connection, *, settled_from: str, settled_to: str
+) -> list[sqlite3.Row]:
+    """
+    S2 EV 实现差读面（autoresearch 票 02）：窗内已结算纸面注（含模型 EV 快照）。
+
+    与正式成绩面 settled_purchased_bets 同守卫：manual_research 排除（历史
+    NULL 不回溯）、携带 actual 条款的异常旧行排除（其实际结算按
+    actual_stake/odds，与本面 profit/建议 stake 单位不符）。两处有意收窄：
+    ① 只取 purchased=0——回录锁定价重绑（record_purchase）会刷 locked_odds
+    而快照不刷新，重绑行的实现差跨条款配对失真（correctness F1）；未回录
+    注（auto-v1 系统纸面）建注即决策，条款自建后未变。② void 不进（本金
+    退回无实现信号）；EV 快照缺席（非 had 面/快照上线前旧行）非模型口径
+    可判面，不硬凑。窗=settled_at 日期。
+    """
+    return conn.execute(
+        """
+        SELECT id, strategy_version, stake, profit, snap_ev_model, settled_at
+        FROM bets
+        WHERE mode = 'paper' AND snap_ev_model IS NOT NULL
+          AND purchased = 0
+          AND status IN ('won', 'lost')
+          AND NOT (price_source IS 'manual_research')
+          AND NOT (actual_stake IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM bet_legs la
+                              WHERE la.bet_id = bets.id
+                                AND la.actual_odds IS NOT NULL))
+          AND substr(settled_at, 1, 10) BETWEEN ? AND ?
+        ORDER BY settled_at, id
+        """,
+        (settled_from, settled_to),
+    ).fetchall()
+
+
 def count_unpurchased_open(conn: sqlite3.Connection) -> int:
     """未回录且未结算的固定注数（验证页「待回录」计数）。"""
     return int(

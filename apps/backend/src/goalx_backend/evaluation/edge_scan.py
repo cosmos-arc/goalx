@@ -18,6 +18,11 @@
   （n≥门 且 |dev|>2SE）落发现。``run_s1_decade`` = 研究库
   backtest_predictions 十年回放（口径验证面；只落观测不落发现——十年
   手工版已裁决"长赔高估 3-4pp、扣 13% 抽水后无正 EV 桶"，research/60）。
+- **s2 模型校准/EV 实现**（票 02）：评分层报告面的台账化输出（不重算）。
+  面 A=逐玩法最热向置信 10 箱 vs 实际命中（accuracy 报告同款派生）；
+  面 B=已结算纸面注逐注实现单位损益 − 建注模型 EV 快照的配对差。两面
+  同窗（90 日滚动）同门（n≥200 且 |dev|>2SE）落发现；纸面注未起量期
+  如实记零面。
 - **s4 陈盘观测日**（票 04）：逐场决策时点（开球−60min）陈盘信号
   confirmed/fired/命中计数留痕——"有分辨观测日"积累器（had_quote 闸 +
   ``stale_line_signal`` 既有面，B1 已关闭可交易性→纯监测不产候选）。
@@ -33,16 +38,19 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from statistics import fmean, pstdev
 from typing import Any, cast
 
 from goalx_backend import odds_math as om
 from goalx_backend import run_fingerprint as rfp
+from goalx_backend.betting import store as bet_store
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data import quote_evidence as qe
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
+from goalx_backend.evaluation import accuracy
 
 REPORTS_DIR = "reports"
 REPORT_BASENAME = "edge-scan-digest"
@@ -51,6 +59,9 @@ REPORT_BASENAME = "edge-scan-digest"
 S1_WINDOW_DAYS = 90
 S1_MIN_N = 100
 S1_GATE_SE = 2.0
+
+# ---- S2 口径常量（票 02 冻结：门=n≥200 且 |dev|>2SE；窗与 S1 同 90 日） ----
+S2_MIN_N = 200
 #: 价格带边界（上界, 标签）——与十年手工版/edge 板 03 同一分桶口径
 BUCKET_EDGES: tuple[tuple[float, str], ...] = (
     (0.10, "p00-10"),
@@ -117,6 +128,22 @@ def bucket_label(prob: float) -> str:
     raise ValueError(msg)
 
 
+def _binomial_gate(
+    mean_prob: float, actual_freq: float, n: int, *, min_n: int
+) -> dict[str, Any]:
+    """一段的二项 SE 越门判定（S1/S2 校准面共口径；dev=af−mean）。"""
+    dev = actual_freq - mean_prob
+    se = math.sqrt(mean_prob * (1.0 - mean_prob) / n)
+    return {
+        "n": n,
+        "mean_prob": round(mean_prob, 6),
+        "actual_freq": round(actual_freq, 6),
+        "dev": round(dev, 6),
+        "se": round(se, 6),
+        "crossed": n >= min_n and abs(dev) > S1_GATE_SE * se,
+    }
+
+
 def calibration_segments(rows: list[ObsRow]) -> dict[str, dict[str, Any]]:
     """
     分桶累计 + 二项 SE 越门判定（十年手工版同款口径）。
@@ -129,23 +156,15 @@ def calibration_segments(rows: list[ObsRow]) -> dict[str, dict[str, Any]]:
     for row in rows:
         key = f"{bucket_label(row.prob)}:{row.direction}"
         grouped.setdefault(key, []).append(row)
-    segments: dict[str, dict[str, Any]] = {}
-    for key in sorted(grouped):
-        group = grouped[key]
-        n = len(group)
-        mean_prob = sum(r.prob for r in group) / n
-        actual_freq = sum(r.hit for r in group) / n
-        dev = actual_freq - mean_prob
-        se = math.sqrt(mean_prob * (1.0 - mean_prob) / n)
-        segments[key] = {
-            "n": n,
-            "mean_prob": round(mean_prob, 6),
-            "actual_freq": round(actual_freq, 6),
-            "dev": round(dev, 6),
-            "se": round(se, 6),
-            "crossed": n >= S1_MIN_N and abs(dev) > S1_GATE_SE * se,
-        }
-    return segments
+    return {
+        key: _binomial_gate(
+            sum(r.prob for r in group) / len(group),
+            sum(r.hit for r in group) / len(group),
+            len(group),
+            min_n=S1_MIN_N,
+        )
+        for key, group in sorted(grouped.items())
+    }
 
 
 # ---- 台账读写（两表 SQL 归本包） ----
@@ -418,6 +437,133 @@ def run_s1_decade(
     }
 
 
+# ---- S2：模型校准/EV 实现扫描（票 02） ----
+
+
+def _calib_bin_segments(
+    bins: tuple[accuracy.CalibBin, ...], *, market: str
+) -> dict[str, dict[str, Any]]:
+    """面 A 段落：一个玩法的置信 10 箱 → 台账段（二项门与 S1 共口径）。"""
+    return {
+        f"{market}:b{b.bin_index}": _binomial_gate(
+            b.mean_conf, b.hit_rate, b.n, min_n=S2_MIN_N
+        )
+        for b in bins
+    }
+
+
+def _ev_realization_segments(
+    rows: list[sqlite3.Row],
+) -> dict[str, dict[str, Any]]:
+    """
+    面 B 段落：纸面注 EV 实现差（分来源=策略版本；无版本行=manual）。
+
+    逐注配对差 = 实现单位损益(profit/stake) − 建注模型 EV 快照；段 SE=
+    配对差标准误（pstdev/√n，accuracy._se 同款）——EV 与实现都随注波动，
+    二项 SE 不适用。零方差段（同质注批 diff 恒定）SE 不可估 → 不越门：
+    恒定差只证批内无分辨，不构成台账级证据（Spec 审查裁定）。
+    """
+    triples_by_source: dict[str, list[tuple[float, float, float]]] = {}
+    for row in rows:
+        stake = float(row["stake"])
+        if stake <= 0:
+            continue  # CHECK(stake>=0) 的零注无单位损益，非实现观测
+        realized = float(row["profit"]) / stake
+        expected = float(row["snap_ev_model"])
+        source = str(row["strategy_version"] or "manual")
+        triples_by_source.setdefault(source, []).append(
+            (expected, realized, realized - expected)
+        )
+    segments: dict[str, dict[str, Any]] = {}
+    for source, triples in sorted(triples_by_source.items()):
+        n = len(triples)
+        dev = fmean(t[2] for t in triples)
+        sd = pstdev(t[2] for t in triples)
+        se = sd / math.sqrt(n)
+        segments[f"ev:{source}"] = {
+            "n": n,
+            "mean_ev": round(fmean(t[0] for t in triples), 6),
+            "mean_realized": round(fmean(t[1] for t in triples), 6),
+            "dev": round(dev, 6),
+            "se": round(se, 6),
+            # sd=0（恒定 diff）SE 不可估不越门：dev≠0 也不构成证据
+            "crossed": sd > 0 and n >= S2_MIN_N and abs(dev) > S1_GATE_SE * se,
+        }
+    return segments
+
+
+def run_s2(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
+    """
+    S2 模型校准/EV 实现扫描（票 02）：评分层报告面 → 台账化输出（不重算）。
+
+    面 A（校准）：forecast_scores（acc-v1）逐玩法最热向置信 10 箱 vs 实际
+    命中，accuracy 报告同款派生（payload 即时算，ADR-0006）；窗=kickoff
+    UTC 日期。面 B（EV 实现）：已结算纸面注逐注配对差（betting 读面）；
+    窗=settled 日期。两窗同 90 日滚动；越门（n≥200 且 |dev|>2SE）落
+    发现，其余留观测。同窗重跑幂等；纸面注未起量=面 B 如实空面。
+    """
+    window_end = _validated_business_date(ctx.business_date)
+    window_from = (
+        date.fromisoformat(window_end) - timedelta(days=S1_WINDOW_DAYS - 1)
+    ).isoformat()
+    window = f"{window_from}..{window_end}"
+    # 读相一个 deferred 读事务（s1 同款）：评分行/纸面注不被并发拍涂改
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN")
+    try:
+        calib_bins = accuracy.calibration_bins_by_market(
+            conn, date_from=window_from, date_to=window_end
+        )
+        ev_rows = bet_store.paper_ev_realization_rows(
+            conn, settled_from=window_from, settled_to=window_end
+        )
+    finally:
+        if own_txn:
+            conn.execute("ROLLBACK")
+    calib_segments: dict[str, dict[str, Any]] = {}
+    for market, bins in sorted(calib_bins.items()):
+        calib_segments.update(_calib_bin_segments(bins, market=market))
+    ev_segments = _ev_realization_segments(ev_rows)
+    # coverage 与段分母同源（零注额行不进段也不进 coverage——两数可对账）
+    calib_binned = sum(s["n"] for s in calib_segments.values())
+    ev_used = sum(s["n"] for s in ev_segments.values())
+    segments = {**calib_segments, **ev_segments}
+    landed = insert_findings(
+        conn,
+        scanner="s2",
+        window=window,
+        segments=segments,
+        extra_notes={
+            "window_days": S1_WINDOW_DAYS,
+            "faces": "calibration+ev_realization",
+        },
+    )
+    _record_observation(
+        conn,
+        "s2",
+        window_end,
+        {
+            "window": window,
+            "window_days": S1_WINDOW_DAYS,
+            "gate": {"min_n": S2_MIN_N, "gate_se": S1_GATE_SE},
+            "coverage": {"calib_binned": calib_binned, "ev_bets": ev_used},
+            "calibration": calib_segments,
+            "ev": ev_segments,
+        },
+    )
+    conn.commit()
+    return {
+        "scanner": "s2",
+        "window": window,
+        "calib_binned": calib_binned,
+        "ev_bets": ev_used,
+        "n_segments": len(segments),
+        "crossed": sorted(k for k, v in segments.items() if v["crossed"]),
+        "findings_landed": landed,
+    }
+
+
 # ---- S4：陈盘观测日（票 04） ----
 
 
@@ -671,6 +817,12 @@ _S1_SPEC = ScannerSpec(
     description="市场校准滚动窗（90 日，价格带×方向，二项 SE 越门）",
     run=run_s1,
 )
+_S2_SPEC = ScannerSpec(
+    name="s2",
+    cadence="daily",
+    description="模型校准/EV 实现滚动窗（分玩法×置信箱 + 纸面注配对差）",
+    run=run_s2,
+)
 _S4_SPEC = ScannerSpec(
     name="s4",
     cadence="daily",
@@ -685,10 +837,10 @@ _S5_SPEC = ScannerSpec(
 )
 
 SCANNERS: dict[str, ScannerSpec] = {
-    spec.name: spec for spec in (_S1_SPEC, _S4_SPEC, _S5_SPEC)
+    spec.name: spec for spec in (_S1_SPEC, _S2_SPEC, _S4_SPEC, _S5_SPEC)
 }
-#: 日扫定拍序（wrap 23:30 收尾后；S2/S3 点亮后追加）
-ACTIVE_SCANNERS: tuple[str, ...] = ("s1", "s4", "s5")
+#: 日扫定拍序（wrap 23:30 收尾后；S3 点亮后追加）
+ACTIVE_SCANNERS: tuple[str, ...] = ("s1", "s2", "s4", "s5")
 
 
 def yesterday_business_date(now: datetime | None = None) -> str:
@@ -724,7 +876,8 @@ def edge_scan_day(
     日扫编排：全部在册扫描器对同一观察日跑一轮（读写同连接）。
 
     扫描器间独立异常边界（m3/freshness_shadow 先例）：单扫描器炸只降级
-    自身，其余照常留痕——"无信号日如实记零"的保证不因部分失败丢失。
+    自身（未提交事务随之回滚，半套写入不落库），其余照常留痕——
+    "无信号日如实记零"的保证不因部分失败丢失。
     """
     ctx = ScanContext(
         business_date=business_date or yesterday_business_date(now),
@@ -736,6 +889,10 @@ def edge_scan_day(
         try:
             stats[name] = SCANNERS[name].run(conn, ctx)
         except Exception as exc:
+            # 炸在写相的扫描器回滚其未提交事务——半套写入不得被后续扫描器
+            # 的 commit 顺带落库（correctness F3：发现行无观测行的泄漏账）
+            if conn.in_transaction:
+                conn.rollback()
             stats[name] = {"error": str(exc), "degraded": True}
     return stats
 
@@ -743,14 +900,15 @@ def edge_scan_day(
 # ---- 周报 digest（票 04） ----
 
 
-def _latest_s1_face(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """最新 s1 运行面观测（decade 验证面不进周报主位）。"""
+def _latest_face(conn: sqlite3.Connection, scanner: str) -> dict[str, Any] | None:
+    """最新运行面观测（s1 decade 验证面不进周报主位；键=日期序）。"""
     row = conn.execute(
         """
         SELECT payload FROM edge_observations
-        WHERE scanner = 's1' AND window_key NOT LIKE 'decade:%'
+        WHERE scanner = ? AND window_key NOT LIKE 'decade:%'
         ORDER BY window_key DESC LIMIT 1
-        """
+        """,
+        (scanner,),
     ).fetchone()
     return json.loads(str(row[0])) if row is not None else None
 
@@ -789,12 +947,21 @@ def _assemble_digest(
     conn: sqlite3.Connection, *, week_start: str, week_end: str
 ) -> dict[str, Any]:
     """周报读相装配（调用方负责读事务壳与落盘）。"""
-    latest_s1 = _latest_s1_face(conn)
+    latest_s1 = _latest_face(conn, "s1")
     latest_segments: dict[str, Any] = (latest_s1 or {}).get("segments") or {}
     crossed_now: set[str] = {
         key for key, seg in latest_segments.items() if seg.get("crossed")
     }
-    findings_week = [
+    latest_s2 = _latest_face(conn, "s2")
+    s2_calib: dict[str, Any] = (latest_s2 or {}).get("calibration") or {}
+    s2_ev: dict[str, Any] = (latest_s2 or {}).get("ev") or {}
+    # 晋升建议的"仍越门"集按扫描器各查各面（s1 段表 / s2 校准+EV 两面）
+    crossed_by_scanner: dict[str, set[str]] = {"s1": crossed_now, "s2": set()}
+    for face in (s2_calib, s2_ev):
+        crossed_by_scanner["s2"].update(
+            key for key, seg in face.items() if seg.get("crossed")
+        )
+    findings_week: list[dict[str, Any]] = [
         {
             "scanner": str(r["scanner"]),
             "segment_key": str(r["segment_key"]),
@@ -855,7 +1022,8 @@ def _assemble_digest(
         {
             f"{f['scanner']}:{f['segment_key']}"
             for f in findings_week
-            if f["status"] == "new" and f["segment_key"] in crossed_now
+            if f["status"] == "new"
+            and f["segment_key"] in crossed_by_scanner.get(f["scanner"], set())
         }
     )
     report: dict[str, Any] = {
@@ -868,6 +1036,12 @@ def _assemble_digest(
             "segments_crossed": sorted(crossed_now),
             "segments": latest_s1.get("segments") if latest_s1 else None,
         },
+        "s2": {
+            "latest_window": latest_s2.get("window") if latest_s2 else None,
+            "coverage": latest_s2.get("coverage") if latest_s2 else None,
+            "calibration": s2_calib,
+            "ev": s2_ev,
+        },
         "s4": {"days": s4_days},
         "s5": {"week_periods": len(s5_week), "week": s5_week, "all_time": s5_all_time},
         "findings": {
@@ -878,6 +1052,7 @@ def _assemble_digest(
         "notes": [
             "晋升=人裁开验证票（六步门），不自动建；dead 同理。",
             "S1 多重比较未校正（21 段×逐日；形式化随票 05）。",
+            "S2 面 A 置信箱（10×5 玩法）同有多重比较未校正；负 dev=模型高估。",
             "S5 标注不另算 EV——池面 EV 结论已由 H7 裁决归档。",
         ],
     }
@@ -913,6 +1088,21 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- S1 最新窗 {s1['latest_window']}：越门段 "
         + (", ".join(s1["segments_crossed"]) or "无")
     )
+    s2 = report["s2"]
+    s2_ev: dict[str, Any] = s2["ev"] or {}
+    s2_crossed = sorted(
+        {
+            key
+            for face in (s2["calibration"] or {}, s2_ev)
+            for key, seg in face.items()
+            if seg.get("crossed")
+        }
+    )
+    w(
+        f"- S2 最新窗 {s2['latest_window']}：校准 {len(s2['calibration'] or {})} 段"
+        + f" / EV 实现差 {len(s2_ev)} 段"
+        + f"：越门 {', '.join(s2_crossed) or '无'}"
+    )
     s4_days = report["s4"]["days"]
     totals = {
         k: sum(d.get(k, 0) for d in s4_days)
@@ -937,6 +1127,22 @@ def _render_markdown(report: dict[str, Any]) -> str:
     for key, seg in sorted(render_segments.items()):
         w(
             f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
+            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
+        )
+    w("")
+    w("## S2 模型分箱表（最新窗）")
+    w("")
+    w("| 段 | n | 期望 | 实测 | dev | se | 越门 |")
+    w("|---|---|---|---|---|---|---|")
+    render_calib: dict[str, Any] = s2["calibration"] or {}
+    for key, seg in sorted(render_calib.items()):
+        w(
+            f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
+            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
+        )
+    for key, seg in sorted(s2_ev.items()):
+        w(
+            f"| {key} | {seg['n']} | {seg.get('mean_ev')} | {seg.get('mean_realized')}"
             + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
         )
     w("")

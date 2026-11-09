@@ -85,7 +85,7 @@
 | `market_baseline_snapshots` | 决策锚基准冻结（auto-paper 票 01） | 三锚（12:30/16:30/21:00）write-once：jc_official=JC SP 原始赔率、eu_consensus=Shin 概率（prices JSON 按 source 解释）；as-of=captured_at≤cutoff_at 防锚后到价倒填 | append+幂等 UNIQUE 五元组 |
 | `forecast_scores` | 前瞻准确率评分行（auto-paper 票 02） | acc-v1：had/hhad=RPS、ttg/crs/hafu=Brier+log-loss；双基准差值=票 01 快照同窗（缺=unknown NULL）；hhad 仅整数线/hafu 缺半场 → skip_reason 行；派生概率不落库（ADR-0006） | upsert UNIQUE(fixture,market,version)；结果更正 fingerprint 覆盖重评 |
 | `edge_findings` | 探索轨发现台账（autoresearch 票 01） | 越门发现一行（scanner/segment/metric_value/n/se/window）；晋升=人裁开验证票（status new→promoted\|dead） | append+幂等 UNIQUE(scanner,segment,window)；status 人裁 UPDATE |
-| `edge_observations` | 扫描器运行/观测留痕（autoresearch 票 01/04） | s1 逐窗统计快照/s4 观测日（无信号日记零）/s5 期次回看（滚存标注）；派生态非证据 | 同键 REPLACE 重跑重建 |
+| `edge_observations` | 扫描器运行/观测留痕（autoresearch 票 01/04/02） | s1 逐窗统计快照/s2 模型校准分箱+EV 实现差（票 02：分玩法置信 10 箱 + 纸面注配对差，n≥200 门）/s4 观测日（无信号日记零）/s5 期次回看（滚存标注）；派生态非证据 | 同键 REPLACE 重跑重建 |
 
 ### infra / 脚手架
 
