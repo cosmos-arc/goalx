@@ -1,8 +1,8 @@
 """
-09:05 晨检代码化：16 项只读红绿面。
+09:05 晨检代码化：17 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
-15 项；identity 票 02 加第 16 项。）
+15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -46,6 +46,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
+from goalx_backend.evaluation import edge_scan
 from goalx_backend.modelling import forecast
 
 OK = "ok"
@@ -461,6 +462,27 @@ def check_alias_coverage(conn: sqlite3.Connection, *, business_date: str) -> Che
     return CheckItem("alias_coverage", OK, f"{latest} no_mapping 0")
 
 
+def check_edge_scan(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
+    """
+    项 17 探索轨扫描器绿（autoresearch 票 04）：s1/s4 最新留痕 26h 内。
+
+    观察项（degraded 不红）：wrap 夜拍断线/首跑前如实黄——发现台账与
+    周报都吃这两张留痕表，断流须晨检可见。只查日频扫描器（s5 按期次
+    兑付节奏，其 created_at 随近窗刷新，作新鲜度信号会失真）。
+    """
+    parts: list[str] = []
+    worst = OK
+    for scanner in ("s1", "s4"):  # 日频面（s5 期次节奏不进新鲜度）
+        latest = edge_scan.latest_observation_at(conn, scanner)
+        age = _age_hours(latest, now)
+        if age is None or age > _FRESH_HOURS:
+            worst = DEGRADED
+            parts.append(f"{scanner}={latest or '无留痕'}")
+        else:
+            parts.append(f"{scanner} {age:.1f}h")
+    return CheckItem("edge_scan", worst, "; ".join(parts))
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -516,7 +538,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 16 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 17 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -543,6 +565,7 @@ def run_morning_check(
                 check_bets(conn),
                 check_paper_account(conn),
                 check_freshness_shadow(conn, now=resolved_now),
+                check_edge_scan(conn, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

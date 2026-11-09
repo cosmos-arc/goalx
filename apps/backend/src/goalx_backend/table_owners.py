@@ -94,6 +94,10 @@ OWNERS: dict[str, set[str]] = {
         "market_baseline_snapshots",
         # auto-paper 票 02：前瞻准确率评分行（evaluation/accuracy.py）
         "forecast_scores",
+        # autoresearch 票 01/04：探索轨发现台账 + 扫描器观测留痕
+        # （evaluation/edge_scan.py）
+        "edge_findings",
+        "edge_observations",
     },
     "betting": {
         "bets",

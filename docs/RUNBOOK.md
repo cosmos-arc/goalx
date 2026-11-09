@@ -24,7 +24,7 @@ curl -sf http://127.0.0.1:4200/api/health              # Prefect
 pgrep -f goalx_backend.schedules                       # 调度进程
 ```
 
-**readyz 职责边界**：只证业务库存在可读 + schema 版本与部署迁移链一致（低/高都 503 拒服务）；不做 corpus 扫描、研究库或数据新鲜度检查——那由晨检（`uv run --no-sync python -m goalx_backend.cli morning-check` 十六项；09:05 由本机侧自动化定时执行，非 deployment，不入库）与页面降级表达。`/healthz` 只证进程活着并带运行指纹（git_sha/dirty/schema）。
+**readyz 职责边界**：只证业务库存在可读 + schema 版本与部署迁移链一致（低/高都 503 拒服务）；不做 corpus 扫描、研究库或数据新鲜度检查——那由晨检（`uv run --no-sync python -m goalx_backend.cli morning-check` 十七项；09:05 由本机侧自动化定时执行，非 deployment，不入库）与页面降级表达。`/healthz` 只证进程活着并带运行指纹（git_sha/dirty/schema）。
 
 重启顺序：先启 Prefect server（serve-schedules 自带），再启 API server；两者无依赖也可并行。Mac 睡眠会暂停进程，漏跑窗口如实计入分母（协议允许）；长期无人值守时改 `caffeinate -s task serve-schedules` 或迁 launchd/远端，flow 与 deployment 不用动。
 

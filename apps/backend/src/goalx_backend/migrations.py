@@ -2128,6 +2128,48 @@ def _apply_v44(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v45(conn: sqlite3.Connection) -> None:
+    """
+    v45（autoresearch-20261107 票 01/04）：探索轨扫描器阵列两表。
+
+    edge_findings：发现台账（append-only，唯一事实源）。越门发现一行，
+    UNIQUE(scanner, segment_key, window) 吸收同窗重跑；status 生命周期
+    new→promoted|dead 由人裁经属主函数 UPDATE（晋升=开验证票）。
+    edge_observations：扫描器运行/观测留痕（s1 逐窗统计、s4 观测日、
+    s5 期次回看；s4 无信号日如实记零）。派生态非证据，同键重跑 REPLACE
+    重建（forecast_coverage 同语义）。两表查询归 evaluation（ADR-0008）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS edge_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scanner TEXT NOT NULL,
+            segment_key TEXT NOT NULL,
+            metric_value REAL NOT NULL,
+            n INTEGER NOT NULL,
+            se REAL NOT NULL,
+            window TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new'
+                CHECK (status IN ('new', 'promoted', 'dead')),
+            found_at TEXT NOT NULL,
+            notes TEXT,
+            UNIQUE (scanner, segment_key, window)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS edge_observations (
+            scanner TEXT NOT NULL,
+            window_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (scanner, window_key)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2173,6 +2215,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (42, _apply_v42),
     (43, _apply_v43),
     (44, _apply_v44),
+    (45, _apply_v45),
 )
 
 

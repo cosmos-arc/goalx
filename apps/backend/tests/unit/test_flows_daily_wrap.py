@@ -2,7 +2,8 @@
 
 裸编排体（``daily_wrap_flow.fn``，不拉 Prefect runtime）+ 全依赖替换：
 控制流注入一次 M3 EOFError，断言返回体含 error 且后续四项
-（冻结对账/CLV/账本回填/账务核查）确实执行。
+（冻结对账/CLV/账本回填/账务核查）确实执行。autoresearch 票 01/04 追加
+探索轨日扫步（wrap 尾）与周一周报门（funnel 业务日历判）。
 """
 
 from __future__ import annotations
@@ -20,8 +21,8 @@ class _FakeClv:
     n: int = 0
 
 
-def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> None:
-    """注入一次 M3 读取异常 → 错误可见（返回体含 error）→ 后续四项确实执行。"""
+def _patch_all(monkeypatch: Any, business_date: str) -> list[str]:
+    """替换 daily-wrap 全依赖并记录执行序（返回 order 供断言）。"""
     order: list[str] = []
 
     def step(name: str, value: Any) -> Any:
@@ -48,7 +49,7 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
     monkeypatch.setattr(
         flows.tasks,
         "funnel_day",
-        lambda: step("funnel", {"business_date": "2026-11-05"}),
+        lambda: step("funnel", {"business_date": business_date}),
     )
     monkeypatch.setattr(flows.tasks, "m3_evaluation", boom)
     monkeypatch.setattr(
@@ -79,7 +80,22 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "frozen_summary",
         lambda conn, business_date: step("frozen_summary", {"date": business_date}),
     )
+    monkeypatch.setattr(
+        flows.tasks,
+        "edge_scan_day",
+        lambda: step("edge_scan", {"business_date": business_date}),
+    )
+    monkeypatch.setattr(
+        flows.tasks,
+        "edge_digest_week",
+        lambda: step("edge_digest", {"week": "ok"}),
+    )
+    return order
 
+
+def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> None:
+    """注入一次 M3 读取异常 → 错误可见（返回体含 error）→ 后续步确实执行。"""
+    order = _patch_all(monkeypatch, "2026-11-05")  # 周四：无周报
     result = flows.daily_wrap_flow.fn()
 
     # M3 失败可见：error + degraded 标记，不生成任何有效判词（失败≠通过）
@@ -87,7 +103,8 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "error": "corpus 并发读窗口（写完重读正常）",
         "degraded": True,
     }
-    # 后续四项确实执行，且都在 M3 之后（对账审计不被拖挂）
+    # 后续各步确实执行，且都在 M3 之后（对账审计不被拖挂）；探索轨日扫
+    # 挂 wrap 尾部（结算后才有"昨日已结算场"）
     assert order == [
         "settlement",
         "funnel",
@@ -100,8 +117,34 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "ledger_summary",
         "audit",
         "frozen_summary",
+        "edge_scan",
     ]
     assert result["frozen_reconcile"] == {"ok": True}
     assert result["clv"] == {"n": 2}
     assert result["price_ledger"]["backfilled"] == 7
     assert result["audit_findings"] == 0
+    assert result["edge_scan"] == {"business_date": "2026-11-05"}
+    # 非周一：周报不跑（funnel 业务日为周四）
+    assert result["edge_digest"] is None
+
+
+def test_monday_runs_weekly_digest(monkeypatch: Any) -> None:
+    """周一（funnel 业务日）→ 日扫后加跑周报 digest。"""
+    order = _patch_all(monkeypatch, "2026-11-09")  # 周一
+    result = flows.daily_wrap_flow.fn()
+    assert order[-2:] == ["edge_scan", "edge_digest"]
+    assert result["edge_digest"] == {"week": "ok"}
+
+
+def test_edge_scan_failure_degrades_without_dragging_return(monkeypatch: Any) -> None:
+    """探索轨日扫异常 → 返回体含 error+degraded（失败≠通过，不炸 wrap）。"""
+    order = _patch_all(monkeypatch, "2026-11-05")
+
+    def boom_scan() -> dict[str, object]:
+        order.append("edge_scan")
+        raise RuntimeError("扫描面断线")
+
+    monkeypatch.setattr(flows.tasks, "edge_scan_day", boom_scan)
+    result = flows.daily_wrap_flow.fn()
+    assert result["edge_scan"] == {"error": "扫描面断线", "degraded": True}
+    assert result["frozen_summary"] == {"date": "2026-11-05"}

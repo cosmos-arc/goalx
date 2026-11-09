@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict
+from datetime import date
 from typing import Any
 
 from loguru import logger
@@ -186,6 +187,21 @@ def daily_wrap_flow() -> dict[str, object]:
         findings = len(audit_ledger(conn)["manual_review"])
         # 日终冻结汇总面（measure-08：含税前/税后 tax_face）
         frozen_face = frozen_mod.frozen_summary(conn, str(funnel["business_date"]))
+    # 探索轨日扫（autoresearch 票 01/04）：结算之后才有"昨日已结算场"——
+    # 挂 wrap 尾部（赛果已落、漏斗已拍）；降级不拖返回体（同 M3 先例）。
+    # 周一（业务日）加跑周报 digest（周一版覆盖前 7 日）。
+    try:
+        edge_scan = tasks.edge_scan_day()
+    except Exception as exc:
+        logger.warning("edge scan degraded: {}", exc)
+        edge_scan = {"error": str(exc), "degraded": True}
+    edge_digest: dict[str, object] | None = None
+    if date.fromisoformat(str(funnel["business_date"])).weekday() == 0:
+        try:
+            edge_digest = tasks.edge_digest_week()
+        except Exception as exc:
+            logger.warning("edge digest degraded: {}", exc)
+            edge_digest = {"error": str(exc), "degraded": True}
     logger.info(
         "daily wrap: settlement={}, funnel={}, clv={}," + " audit_findings={}, m3={}",
         settlement,
@@ -205,4 +221,6 @@ def daily_wrap_flow() -> dict[str, object]:
         "audit_findings": findings,
         "price_ledger": {"backfilled": ledger_filled, **ledger_face},
         "frozen_summary": frozen_face,
+        "edge_scan": edge_scan,
+        "edge_digest": edge_digest,
     }
