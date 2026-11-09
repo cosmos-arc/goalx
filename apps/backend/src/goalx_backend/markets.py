@@ -31,6 +31,11 @@ CRS_SELECTIONS: tuple[str, ...] = (
 # 进球类玩法（MarketGroup 进球类；半全场暂不呈现，spec 工作台 v2）
 GOALS_MARKETS: tuple[str, ...] = ("ttg", "crs")
 
+# 竞彩五池玩法码（sporttery poolList 池码全集，edge-audit 票 14 单源）：
+# 玩法资格链（在售/单关逐玩法判定）与采集请求参数（sporttery.POOL_CODES）
+# 共用一处置——两处硬写会漂（采集侧原 POOL_CODES 同集同序）。
+JC_POOL_MARKETS: tuple[str, ...] = ("had", "hhad", "crs", "ttg", "hafu")
+
 
 # goals4（四场进球）档位码闭集（票 10 单源）：每场主/客各 0/1/2/3+ 档，
 # 3+ 聚尾。betting 构票校验与 settlement 档位判定共用——两处各自硬写会漂。

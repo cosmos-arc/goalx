@@ -357,9 +357,38 @@ def test_api_bet_view_parlay_both_calibers(tmp_path: Path) -> None:
 
 
 def test_api_bet_view_legacy_and_out_of_scope_null(demo_client: TestClient) -> None:
-    """存量形状：SQL 直插旧注（无快照）与 hhad 腿注 → ev_snapshot 为 null。"""
-    single_ok, _parlay_ok, _stopped = _demo_ids(demo_client)
+    """存量形状：SQL 直插旧注（无快照）与 hhad 腿注 → ev_snapshot 为 null。
+
+    票 14：hhad 单关在 demo 无市场行 → 单固资格未知即拒（fail-closed），
+    故 hhad 腿经串关面覆盖（快照范围=全 had 腿，串关含 hhad 同为 null）。
+    """
+    single_ok, parlay_ok, _stopped = _demo_ids(demo_client)
     legacy = demo_client.post(
+        "/api/v1/bets",
+        json={
+            "mode": "paper",
+            "stake": 10.0,
+            "legs": [
+                {
+                    "fixture_id": single_ok,
+                    "market_code": "hhad",
+                    "selection_code": "a",
+                    "locked_odds": 1.9,
+                    "goal_line": -1.0,
+                },
+                {
+                    "fixture_id": parlay_ok,
+                    "market_code": "had",
+                    "selection_code": "h",
+                    "locked_odds": 3.0,
+                },
+            ],
+        },
+    )
+    assert legacy.status_code == 201
+    assert legacy.json()["ev_snapshot"] is None
+    # 同面单关（仅 hhad 腿）：单固资格未知 → 400（票 14 fail-closed）
+    hhad_single = demo_client.post(
         "/api/v1/bets",
         json={
             "mode": "paper",
@@ -375,7 +404,6 @@ def test_api_bet_view_legacy_and_out_of_scope_null(demo_client: TestClient) -> N
             ],
         },
     )
-    assert legacy.status_code == 201
-    assert legacy.json()["ev_snapshot"] is None
+    assert hhad_single.status_code == 400
     listing = demo_client.get("/api/v1/bets").json()
     assert all(bet["ev_snapshot"] is None for bet in listing)

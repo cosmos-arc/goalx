@@ -10,8 +10,12 @@ system_paper+腿级快照身份落库；锚后价漂→该注弃置留痕（pric
 shortcut: ttg 相邻档复式（修订④）需组合选择码与结算判别支持，现行腿
 模型（每注腿必异场）不可表达——本版降级为单档，升级=腿模型支持组合
 码。池面 v2 反火锅结构（修订②③）同理降级为既有全稳/贪心底注。
-shortcut: 只开 hhad 不开 had 的场次按 not_on_sale 保守排除（rec_manual
-的任一玩法行兜底未复刻），升级=按玩法行逐市场判在售。
+
+玩法资格链（edge-audit-20261109 票 14）：预筛与下游建注闸共用
+bets.market_eligibility_problem 单源判定，按玩法（had/hhad/ttg/crs/
+hafu）分别验在售状态与单关资格（单关候选须 poolList 池级单固，未知
+即拒）；原「预筛硬编码 had 在售 + 非 had 腿跳过验证」的两处缺口退役
+（外部审计缺陷 5）。资格未齐的历史记录不追溯改判——仅前向生效。
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from goalx_backend.betting.bets import (
     SameFixtureParlayError,
     create_bet_with_legs,
     intent_fingerprint,
+    market_eligibility_problem,
     validate_had_selections,
 )
 from goalx_backend.data import fixtures as fx_store
@@ -60,6 +65,8 @@ class AutoV1Params:
 
     可购判定=锚时在售且开球晚于锚+30min 缓冲+10min 开球前置（JC 逐场
     停售时刻不可查的近似：停售≈开球，凌晨场有高估风险，台账可见）。
+    在售/单关按玩法行分别判（票 14 起，market_eligibility_problem 单
+    源）：单关候选须该玩法池级单固在档，未知即拒。
     """
 
     initial_bankroll: float = 1000.0
@@ -214,14 +221,13 @@ def anchor_candidates(
     singles: list[Pick] = []
     parlay_pool: list[Pick] = []
     excluded: dict[str, int] = {}
+    market_excluded: set[tuple[int, str]] = set()
+    # 玩法资格判定缓存（同场同玩法同角色只查一次——crs 31 档不重复查库）
+    eligibility: dict[tuple[int, str, bool], str | None] = {}
     for row in roster:
         fixture_id = int(row["fixture_id"])
         reason = _roster_exclusion_reason(
-            conn,
-            row,
-            anchor_at=anchor_at,
-            min_kickoff=min_kickoff,
-            anchor_iso=anchor_iso,
+            row, anchor_at=anchor_at, min_kickoff=min_kickoff
         )
         if reason is not None:
             excluded[reason] = excluded.get(reason, 0) + 1
@@ -240,7 +246,27 @@ def anchor_candidates(
         for pick in _fixture_picks(
             row, fixture_id, matrix, odds_by_market, params=params
         ):
-            if pick.market_code in params.single_markets:
+            # 玩法级资格预筛（票 14）：按玩法分别验在售与单关资格——与
+            # 下游建注闸同源（market_eligibility_problem 一处定义两处
+            # 引用）。排除账按（场×玩法）去重计一次。
+            requires_single = pick.market_code in params.single_markets
+            cache_key = (fixture_id, pick.market_code, requires_single)
+            if cache_key not in eligibility:
+                eligibility[cache_key] = market_eligibility_problem(
+                    conn,
+                    fixture_id,
+                    pick.market_code,
+                    anchor_iso,
+                    requires_single=requires_single,
+                )
+            problem = eligibility[cache_key]
+            if problem is not None:
+                if (fixture_id, pick.market_code) not in market_excluded:
+                    market_excluded.add((fixture_id, pick.market_code))
+                    key = f"market_{problem}"
+                    excluded[key] = excluded.get(key, 0) + 1
+                continue
+            if requires_single:
                 singles.append(pick)
             else:
                 parlay_pool.append(pick)
@@ -293,22 +319,21 @@ def _request_exists(conn: sqlite3.Connection, request_id: str) -> bool:
 
 
 def _roster_exclusion_reason(
-    conn: sqlite3.Connection,
     row: sqlite3.Row,
     *,
     anchor_at: datetime,
     min_kickoff: datetime,
-    anchor_iso: str,
 ) -> str | None:
-    """锚时可购性预筛（可购判定近似口径见 AutoV1Params docstring）。"""
+    """
+    锚时时间面预筛（可购判定近似口径见 AutoV1Params docstring）。
+
+    只判开球可购窗口；在售/单关资格由 anchor_candidates 的玩法级闸
+    （market_eligibility_problem，票 14）逐市场判定——原 had 硬编码
+    检查退役（外部审计缺陷 5：非 had 票蹭 had 在售过闸）。
+    """
     kickoff = _parse_utc(str(row["kickoff_utc"]))
     if kickoff is None or kickoff <= anchor_at or kickoff < min_kickoff:
         return "not_playable"
-    sale = fx_store.latest_sale_status_asof(
-        conn, int(row["fixture_id"]), "had", anchor_iso
-    )
-    if sale is None or sale["sale_state"] != "on_sale":
-        return "not_on_sale"
     return None
 
 
@@ -453,8 +478,10 @@ def _place(
         intent_fingerprint=intent_fingerprint(BetMode.PAPER, stake, legs),
     )
     try:
-        if any(leg.market_code in ("had", "hhad") for leg in legs):
-            validate_had_selections(conn, legs, reads=reads)
+        # 资格闸全腿无条件过（票 14）：had 腿深链 + 非 had 腿玩法级
+        # （market_eligibility_problem）——原「仅 had/hhad 在场才验」跳过
+        # 了纯 ttg/crs 注。与预筛同源，前向生效（历史注不追溯改判）。
+        validate_had_selections(conn, legs, reads=reads)
         create_bet_with_legs(
             conn, draft, reads=reads, price_source=PRICE_SOURCE_SYSTEM_PAPER
         )
