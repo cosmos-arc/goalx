@@ -32,6 +32,7 @@ from goalx_backend.betting.auto_strategy import AUTO_V1
 from goalx_backend.betting.probes import AUTO_V2
 from goalx_backend.betting.tax import tax_on_prize
 from goalx_backend.data.fixtures import beijing_business_date, jingcai_business_dates
+from goalx_backend.data.pool import pool_period_meta
 
 INITIAL_BANKROLL = 1000.0  # prereg B：账户=初始 ¥1000+已结算 P&L
 # prereg 判读规则（票 13 收窄语义）：独立暴露（已结算、合格、按场独立）
@@ -311,14 +312,20 @@ def _settled_bet_context(conn: sqlite3.Connection) -> dict[int, _SettledBetCtx]:
     jc_dates = jingcai_business_dates(
         conn, sorted({fid for fids in legs.values() for fid in fids})
     )
-    pool_rows = {
-        int(row["slip_id"]): (str(row["market_code"]), str(row["period_no"]))
+    slip_periods = {
+        int(row["slip_id"]): int(row["pid"])
         for row in conn.execute(
             """
-            SELECT s.id AS slip_id, p.market_code, p.period_no
-            FROM bet_slips s JOIN pool_periods p ON p.id = s.pool_period_id
+            SELECT id AS slip_id, pool_period_id AS pid
+            FROM bet_slips WHERE pool_period_id IS NOT NULL
             """
         )
+    }
+    period_meta = pool_period_meta(conn, sorted(set(slip_periods.values())))
+    pool_rows = {
+        slip_id: period_meta[pid]
+        for slip_id, pid in slip_periods.items()
+        if pid in period_meta
     }
     context: dict[int, _SettledBetCtx] = {}
     for row in bets:
