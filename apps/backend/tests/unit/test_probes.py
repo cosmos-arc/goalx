@@ -547,8 +547,8 @@ def test_edge_source_faces_pnl_and_clv_rolling(
 def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 46
-    assert migrate(db) == 46
+    assert migrate(db) == 47
+    assert migrate(db) == 47
     cols = {row["name"] for row in db.execute("PRAGMA table_info(bets)").fetchall()}
     assert {"edge_source", "clv"} <= cols
     run_cols = {

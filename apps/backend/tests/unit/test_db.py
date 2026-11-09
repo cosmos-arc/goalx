@@ -15,8 +15,8 @@ def test_migrate_applies_v1_and_is_idempotent() -> None:
     assert db.current_version(conn) == 0
     # v7..v26 = 票 40/41/42/43/09/11/13/44/45/48/50 + A4 排除表 + 票 13 换键
     # + caliber-loop 票 04 机会漏斗表
-    assert db.migrate(conn) == 46
-    assert db.migrate(conn) == 46  # 重跑幂等
+    assert db.migrate(conn) == 47
+    assert db.migrate(conn) == 47  # 重跑幂等
     # v16（票 48）：ev_assessments 脚手架 DROP
     dropped = {
         row["name"]
@@ -189,7 +189,7 @@ def test_upgrade_from_v3_preserves_data_and_audit_cli_is_readonly(
     assert main(["audit-ledger"]) == 0
     assert json.loads(capsys.readouterr().out)["repairs_applied"] is False
     assert db.current_version(conn) == 3
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     assert [
         dict(row) for row in conn.execute("SELECT * FROM bankroll_events")
     ] == before
@@ -223,7 +223,7 @@ def test_upgrade_from_v24_carries_legacy_predictions(tmp_path, monkeypatch) -> N
                     '{"h":0.4}', '{"h":0.5}', 'psc', 'fp', '2023-12-31')
             """
         )
-        assert db.migrate(conn) == 46
+        assert db.migrate(conn) == 47
         row = conn.execute(
             "SELECT * FROM backtest_predictions WHERE run_id = 1"
         ).fetchone()
@@ -261,7 +261,7 @@ def test_v32_survives_orphan_temp_table_from_crash_window() -> None:
     sale_statuses_v32——重跑 migrate 不得 table already exists 卡死全栈。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     conn.execute("INSERT INTO competitions (name, created_at) VALUES ('x', 't')")
     conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('a', 't')")
     conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('b', 't')")
@@ -284,7 +284,7 @@ def test_v32_survives_orphan_temp_table_from_crash_window() -> None:
     conn.execute("DELETE FROM schema_migrations WHERE version = 32")
     conn.execute("CREATE TABLE sale_statuses_v32 (junk INTEGER)")
     conn.commit()
-    assert db.migrate(conn) == 46  # 残迹被清扫，不抛 already exists
+    assert db.migrate(conn) == 47  # 残迹被清扫，不抛 already exists
     row = conn.execute(
         "SELECT sale_state FROM sale_statuses WHERE fixture_id = 1"
     ).fetchone()
@@ -298,7 +298,7 @@ def test_v32_not_on_sale_value_domain_and_reentrant() -> None:
     """v32（票 09）：not_on_sale 入值域、表重建保行保索引保防线、重入幂等。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     conn.execute("INSERT INTO competitions (name, created_at) VALUES ('x', 't')")
     conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('a', 't')")
     conn.execute("INSERT INTO teams (canonical_name, created_at) VALUES ('b', 't')")
@@ -330,7 +330,7 @@ def test_v32_not_on_sale_value_domain_and_reentrant() -> None:
     # 中断窗重入：抹 32 戳重跑，CHECK 已含 not_on_sale → 守卫短路
     conn.execute("DELETE FROM schema_migrations WHERE version = 32")
     conn.commit()
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     assert conn.execute("SELECT COUNT(*) AS n FROM sale_statuses").fetchone()["n"] == 1
     conn.close()
 
@@ -340,10 +340,10 @@ def test_v40_reentrant_after_interrupted_migration() -> None:
     未提交的崩溃窗后重跑 migrate 不得 already exists 卡死。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     conn.execute("DELETE FROM schema_migrations WHERE version = 40")
     conn.commit()
-    assert db.migrate(conn) == 46  # 重入不抛（IF NOT EXISTS 短路）
+    assert db.migrate(conn) == 47  # 重入不抛（IF NOT EXISTS 短路）
     triggers = {
         r[0]
         for r in conn.execute(
@@ -363,11 +363,11 @@ def test_v31_reentrant_after_interrupted_migration() -> None:
     （或中间版代码先动过主库）后重跑 migrate 不得 duplicate column 卡死。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     # 模拟中断窗：抹掉版本戳但保留 v31 列（DDL 已提交、戳未提交）
     conn.execute("DELETE FROM schema_migrations WHERE version = 31")
     conn.commit()
-    assert db.migrate(conn) == 46  # 重入不抛，列存在守卫短路 ALTER
+    assert db.migrate(conn) == 47  # 重入不抛，列存在守卫短路 ALTER
     cols = {r[1] for r in conn.execute("PRAGMA table_info(frozen_decisions)")}
     assert {"anchor_ref", "close_ref"} <= cols
     conn.close()
@@ -419,7 +419,7 @@ def test_v33_haircut_calibrations_era_rebuild() -> None:
         """
     )
     conn.commit()
-    assert db.migrate(conn) == 46  # v33 重建腿：旧形态表 → source_era 维度入表
+    assert db.migrate(conn) == 47  # v33 重建腿：旧形态表 → source_era 维度入表
     rows = conn.execute(
         "SELECT scope, source_era FROM haircut_calibrations ORDER BY scope"
     ).fetchall()
@@ -448,7 +448,7 @@ def test_v33_haircut_calibrations_era_rebuild() -> None:
     # 崩溃窗重入：抹 33 戳重跑，source_era 列已在 → 守卫短路，数据保住
     conn.execute("DELETE FROM schema_migrations WHERE version = 33")
     conn.commit()
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     assert (
         conn.execute("SELECT COUNT(*) AS n FROM haircut_calibrations").fetchone()["n"]
         == 3
@@ -461,7 +461,7 @@ def test_v33_survives_orphan_temp_table_from_crash_window() -> None:
     孤儿 haircut_calibrations_v33 不卡死重跑 migrate（残迹被清扫）。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     # 退回旧形态表 + 在册行（模拟 v32 生产库）
     conn.execute("DROP TABLE haircut_calibrations")
     conn.execute(
@@ -492,7 +492,7 @@ def test_v33_survives_orphan_temp_table_from_crash_window() -> None:
     conn.execute("DELETE FROM schema_migrations WHERE version = 33")
     conn.execute("CREATE TABLE haircut_calibrations_v33 (junk INTEGER)")
     conn.commit()
-    assert db.migrate(conn) == 46  # 残迹被清扫，不抛 already exists
+    assert db.migrate(conn) == 47  # 残迹被清扫，不抛 already exists
     row = conn.execute(
         "SELECT haircut, source_era FROM haircut_calibrations WHERE scope='overall'"
     ).fetchone()
@@ -513,10 +513,10 @@ def test_v34_reentrant_after_interrupted_migration() -> None:
     重跑 migrate 不得 duplicate column 卡死；empty_markets 列在位。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 46
+    assert db.migrate(conn) == 47
     conn.execute("DELETE FROM schema_migrations WHERE version = 34")
     conn.commit()
-    assert db.migrate(conn) == 46  # 重入不抛，列存在守卫短路 ALTER
+    assert db.migrate(conn) == 47  # 重入不抛，列存在守卫短路 ALTER
     cols = {r[1] for r in conn.execute("PRAGMA table_info(pool_sync_runs)")}
     assert "empty_markets" in cols
     conn.close()
@@ -764,3 +764,50 @@ def test_apply_chain_concurrent_migrate_applies_once(tmp_path) -> None:
         t.join()
     assert results == {"a": 2, "b": 2}
     assert calls == 1  # 无锁版此处=2（两线程都过 applied 检查都施用）
+
+
+def test_v47_repairs_pre_column_freshness_shadow() -> None:
+    """v47（v1-release 票 07）：主库 v38 表停在缺列形态（DDL 落库后被
+    9c5b3ce 原地补列未升版本，CREATE IF NOT EXISTS 不重建）——日拍
+    INSERT 逐班降级。守卫 ALTER 补列；重跑幂等；写入路径恢复。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    # 复现主库形态：04:21 版 DDL 先建表（无 clock_gap_seconds），v38 的
+    # CREATE IF NOT EXISTS 随后短路
+    conn.execute(
+        """
+        CREATE TABLE freshness_shadow (
+            id INTEGER PRIMARY KEY,
+            fixture_id INTEGER NOT NULL,
+            business_date TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            rule_stale_source INTEGER NOT NULL,
+            observed_stale INTEGER NOT NULL,
+            price_age_seconds REAL,
+            observed_age_seconds REAL,
+            sale_age_seconds REAL,
+            eu_age_seconds REAL,
+            pair_gap_seconds REAL,
+            UNIQUE(fixture_id, business_date)
+        )
+        """
+    )
+    conn.commit()
+    assert db.migrate(conn) == 47
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(freshness_shadow)")}
+    assert "clock_gap_seconds" in cols
+    assert db.migrate(conn) == 47  # 列存在守卫：重入不抛 duplicate column
+    # 日拍写入路径恢复（INSERT 携带 clock_gap_seconds 列不再降级）
+    conn.execute(
+        """
+        INSERT INTO freshness_shadow
+            (fixture_id, business_date, as_of, rule_stale_source,
+             observed_stale, clock_gap_seconds)
+        VALUES (1, '2026-11-09', '2026-11-09T12:00:00+00:00', 0, 0, -3590.0)
+        """
+    )
+    gap = conn.execute(
+        "SELECT clock_gap_seconds FROM freshness_shadow WHERE fixture_id = 1"
+    ).fetchone()[0]
+    assert gap == -3590.0
+    conn.close()
