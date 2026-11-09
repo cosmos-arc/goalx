@@ -431,7 +431,7 @@ export const betsFixture = [
 	},
 ] as const satisfies readonly DeepReadonly<Bet>[];
 
-/** auto-paper 票 04：纸面账户面（合成账=本票后端测试同款口径）。 */
+/** auto-paper 票 04：纸面账户面（合成账=本票后端测试同款口径，票 13 归集计税后）。 */
 export const paperAccountFixture = {
 	initial_bankroll: 1000,
 	strategies: [
@@ -443,6 +443,7 @@ export const paperAccountFixture = {
 			stake_settled: 4,
 			profit_settled: 0,
 			realized_roi: 0,
+			realized_roi_per_match: 0, // 两场 ROI +100%/−100% 跨场平均
 			mean_decision_ev: 0.05,
 			ev_realization_gap: -0.05,
 			curve: [
@@ -459,6 +460,7 @@ export const paperAccountFixture = {
 			stake_settled: 10,
 			profit_settled: 14990,
 			realized_roi: 1499,
+			realized_roi_per_match: 1499, // 单场单注，按场=等注
 			mean_decision_ev: null,
 			ev_realization_gap: null,
 			curve: [{ date: "2026-11-09", value: 15990 }],
@@ -469,11 +471,12 @@ export const paperAccountFixture = {
 	total_profit_settled: 14990,
 	bankroll_now: 15990,
 	sample_sufficient: false,
+	independent_exposures_n: 3, // 已结算非 void 注的去重场数（open 注不算）
 	floating_stake_fixed: 5,
 	floating_stake_pool: 4,
 	per_market: [{ market: "ttg", bets_n: 3, profit: 14992 }],
-	tax_total: 3000,
-	profit_after_tax: 11992,
+	tax_total: 3001.2, // ¥6+¥15000 同期同游戏归集 15006 → 全额 20%
+	profit_after_tax: 11990.8,
 };
 
 /**
