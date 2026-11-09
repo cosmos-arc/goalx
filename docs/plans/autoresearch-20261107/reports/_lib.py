@@ -15,7 +15,8 @@ import gzip
 import json
 import math
 from collections import defaultdict
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Sequence
 
 import duckdb
 import numpy as np
@@ -389,12 +390,56 @@ def load_jc_traj(match_ids: Iterable[str], playtype: str) -> dict[str, list[tupl
 OU_BOOKS = ("srct:ou:14", "srct:ou:42", "srct:ou:8", "srct:ou:22", "srct:ou:24", "srct:ou:17", "srct:ou:12")  # pre 板覆盖 top 书（ou:3 滚后为主不入梯）
 
 
-def load_ou_ladder(sids: Iterable[str]) -> dict[str, dict[float, float]]:
-    """OU 赛前收盘梯（部分梯）：sid → {line: P(over|line) 三书去水均值}。
+@dataclass(frozen=True)
+class LadderRung:
+    """OU 梯单线档：跨书均值锚 + 覆盖/新鲜度账（edge-audit-20261109 票 12 修正）。"""
 
-    只取 status in ('pre','early') 且双侧水位在 sane 带（0.25..1.75，
-    剔除滚后/盘后垃圾板与深尾水位）的纯半线（0.5..6.5）；P_over=两侧
-    去水；各线取最晚赛前报价后跨书均值。
+    p_over: float  # 跨书均值 P(over|line)（每书末价两侧去水后均值）
+    n_books: int  # 该线有合格报价的书数（书覆盖）
+    age_h: float  # 距开球最陈旧书的报价年龄（小时；kickoff 缺失=nan）
+
+
+def aggregate_ou_ladder(
+    rows: Iterable[tuple[str, str, float, dt.datetime, dt.datetime | None, float, float]],
+) -> dict[str, dict[float, LadderRung]]:
+    """合格 OU 报价行 → 每书最晚报价 → 跨书均值梯（纯函数）。
+
+    rows=(sid, book, line, published_at, kickoff, home_water, away_water)，
+    须已按 (sid, line, book, published_at, source_order) 升序（load_ou_ladder
+    SQL 保证）且已过 pre/early+sane 过滤。每 (sid,line,book) 取最晚一条
+    （同刻以 source_order 后者为准），两侧去水得该书 P_over，再跨书均值；
+    age_h=kickoff−各书末价时刻的最大值（锚的新鲜度受最陈旧成分约束）。
+    """
+    last: dict[tuple[str, float, str], tuple[dt.datetime, dt.datetime | None, float, float]] = {}
+    for sid, book, line, t, ko, hw, aw in rows:
+        last[(sid, float(line), book)] = (t, ko, hw, aw)  # 升序输入 → 后写覆盖=该书最晚
+    per: dict[tuple[str, float], list[tuple[float, dt.datetime, dt.datetime | None]]] = defaultdict(list)
+    for (sid, line, _book), (t, ko, hw, aw) in last.items():
+        d_o, d_u = 1.0 + hw, 1.0 + aw
+        per[(sid, line)].append(((1.0 / d_o) / (1.0 / d_o + 1.0 / d_u), t, ko))
+    ladder: dict[str, dict[float, LadderRung]] = defaultdict(dict)
+    for (sid, line), books in per.items():
+        kos = {ko for _p, _t, ko in books}
+        if None in kos or len(kos) > 1:
+            age = float("nan")  # kickoff 缺失/异常不报告年龄
+        else:
+            ko = next(iter(kos))
+            age = max((ko - t).total_seconds() / 3600.0 for _p, t, _ko in books)
+        pos = [p for p, _t, _ko in books]
+        ladder[sid][line] = LadderRung(p_over=sum(pos) / len(pos), n_books=len(pos), age_h=age)
+    return dict(ladder)
+
+
+def load_ou_ladder(sids: Iterable[str]) -> dict[str, dict[float, LadderRung]]:
+    """OU 赛前梯（部分梯）：sid → {line: LadderRung}。
+
+    过滤（既有口径保留）：status in ('pre','early') 且双侧水位 sane 带
+    （0.25..1.75，剔除滚后/盘后垃圾板与深尾水位）的纯半线（0.5..6.5），
+    书集=OU_BOOKS。聚合语义（edge-audit-20261109 票 12 修正，名实对齐）：
+    **每书取其最晚合格赛前报价，两侧去水得该书 P_over，再跨书均值**——
+    修正前 SQL 按 (sid,line) arg_max(published_at) 直接取水位，拿到的是
+    最后更新一家的报价而非跨书共识。rung 附书覆盖数 n_books 与报价年龄
+    age_h（距开球最陈旧书的报价小时数，供噪声锚诊断）。
     """
     sid_list = list(sids)
     con = duckdb.connect(DUCK, read_only=True)
@@ -403,38 +448,33 @@ def load_ou_ladder(sids: Iterable[str]) -> dict[str, dict[float, float]]:
     books_sql = ",".join(f"'{b}'" for b in OU_BOOKS)
     rows = con.sql(
         f"""
-        select sid, line,
-               arg_max(home_water, published_at) as hw,
-               arg_max(away_water, published_at) as aw
+        select o.sid, o.bookmaker_id, o.line, o.published_at, o.kickoff,
+               o.home_water, o.away_water
         from odds_change_event o join sids s using (sid)
         where o.market = 'ou' and o.bookmaker_id in ({books_sql})
           and o.status in ('pre', 'early') and o.published_at is not null
           and o.line in (0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5)
           and o.home_water between 0.25 and 1.75
           and o.away_water between 0.25 and 1.75
-        group by sid, line
+        order by o.sid, o.line, o.bookmaker_id, o.published_at, o.source_order
         """
     ).fetchall()
     con.close()
-    ladder: dict[str, dict[float, float]] = defaultdict(dict)
-    for sid, line, hw, aw in rows:
-        d_o, d_u = 1.0 + hw, 1.0 + aw
-        ladder[sid][float(line)] = (1.0 / d_o) / (1.0 / d_o + 1.0 / d_u)
-    return dict(ladder)
+    return aggregate_ou_ladder(rows)
 
 
-def ladder_coherent(ladder: dict[float, float]) -> bool:
+def ladder_coherent(ladder: dict[float, LadderRung]) -> bool:
     """梯一致性门：主线 2.5 概率 sane + 全梯非增（容差 0.02 噪声）。"""
-    if 2.5 not in ladder or not 0.25 <= ladder[2.5] <= 0.8:
+    if 2.5 not in ladder or not 0.25 <= ladder[2.5].p_over <= 0.8:
         return False
     ls = sorted(ladder)
     for a, b in zip(ls, ls[1:]):
-        if ladder[b] > ladder[a] + 0.02:
+        if ladder[b].p_over > ladder[a].p_over + 0.02:
             return False
     return True
 
 
-def ladder_to_totals(ladder: dict[float, float]) -> dict[int, float]:
+def ladder_to_totals(ladder: dict[float, LadderRung]) -> dict[int, float]:
     """部分梯 → {k: P(T=k)}（k=0..7，7=7+）；只含两条所需半线齐备的 k。
 
     fair=梯差原始值（协议修订 A：不做跨线归一）。空梯→空 dict。
@@ -443,7 +483,7 @@ def ladder_to_totals(ladder: dict[float, float]) -> dict[int, float]:
     cum = {0: 1.0}
     for k in range(1, 8):
         if (k - 0.5) in ladder:
-            cum[k] = ladder[k - 0.5]
+            cum[k] = ladder[k - 0.5].p_over
     if 1 in cum and 0 in cum:
         p = cum[0] - cum[1]
         if p > 0:
@@ -456,6 +496,60 @@ def ladder_to_totals(ladder: dict[float, float]) -> dict[int, float]:
     if 7 in cum:
         out[7] = cum[7]
     return out
+
+
+# ------------------------------------------------- ttg 结算（edge-audit-20261109 票 12 修正）
+
+
+def ttg_hit(k: int, total: int) -> bool:
+    """ttg 命中判定：k=7 为「7+」档按 total≥7 计；k=0..6 维持恰好命中。
+
+    修正前 t==k 使总进球 8/9 漏掉 7+ 档回款（外部审计反例：{3..7+} 等注
+    五腿、7+ 赔 30、总进球 8 → 正确 +500%，原实现 −100%）。
+    """
+    return total >= 7 if k == 7 else total == k
+
+
+def ttg_basket_ev(odds: tuple[float, ...], total: int, ks: Sequence[int]) -> float:
+    """等注篮实现 EV：篮=ks 档等注 1，回款=命中档赔率（7+ 档按 ≥7）。
+
+    与 09 脚本 F8 口径一致：EV=mean(命中腿赔率)−1；odds=JC ttg s0..s7。
+    """
+    payoff = sum(odds[k] for k in ks if ttg_hit(k, total))
+    return payoff / len(ks) - 1.0
+
+
+# ------------------------------------------------- 多重校正（edge-audit-20261109 票 12 修正）
+
+
+def one_sided_p(z: float) -> float:
+    """单侧 p 值（正 z=正收益方向）。"""
+    return 0.5 * math.erfc(z / math.sqrt(2.0))
+
+
+def bh(pairs_pv: Sequence[tuple[str, float]], alpha: float = 0.05) -> set[str]:
+    """Benjamini–Hochberg：对传入 p 值族做校正，返回通过者 entry_id 集。"""
+    if not pairs_pv:
+        return set()
+    m = len(pairs_pv)
+    ranked = sorted(pairs_pv, key=lambda kv: kv[1])
+    k_max = 0
+    for i, (_eid, p) in enumerate(ranked, 1):
+        if p <= alpha * i / m:
+            k_max = i
+    return {eid for eid, _p in ranked[:k_max]}
+
+
+def bh_family(zs: Sequence[tuple[str, float]], alpha: float = 0.05) -> set[str]:
+    """BH 校正（家族=传入的全部候选，含全阴与不可计算者）。
+
+    票 12 修正：先筛后校废除——校正家族必须是该轮进入验证的全部候选，
+    只把过门者送进 bh() 会放大假阳性（审计反例：20 候选 1 个 p=0.02 +
+    19 个 p=0.5，全家族 BH 无一通过，先筛后校则 0.02 通过）。z 非有限
+    （样本不足等无法检定）→ p=1.0 入族，保守扩大分母。
+    """
+    pv = [(eid, one_sided_p(z) if math.isfinite(z) else 1.0) for eid, z in zs]
+    return bh(pv, alpha)
 
 
 def load_pin_ah(sids: Iterable[str]) -> dict[str, list[tuple[dt.datetime, float, float, float]]]:
