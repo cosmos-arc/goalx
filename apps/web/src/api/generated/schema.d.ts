@@ -441,9 +441,11 @@ export interface paths {
          * 纸面账户 P&L 面（只读聚合）
          * @description auto-paper 票 04：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列；
          *
-         *     EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；累计注数<200 时
-         *     sample_sufficient=false（前端挂「样本不足，不判盈亏」横幅）；
-         *     auto-v1 与人工纸面分列；税后=tax_on_prize 逐注奖金口径。
+         *     EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；ROI 双栏=等注口径与
+         *     按场口径（票 13 资金规则一致性）；独立暴露（已结算、非 void、按场
+         *     独立）<200 时 sample_sufficient=false（前端挂「样本不足，不判盈亏」
+         *     横幅）；auto-v1 与人工纸面分列；税后=同人+同期+同游戏归集计税口径
+         *     （2024 年第 12 号公告，竞彩期=票内最晚比赛编号日期）。
          */
         get: operations["paper_account_api_v1_paper_account_get"];
         put?: never;
@@ -1966,6 +1968,8 @@ export interface components {
         /**
          * EdgeSourceFaceView
          * @description 分来源账户行（edge-program 票 01）：分来源 P&L + CLV 滚动。
+         *
+         *     clv 均值/标准误按场簇并一（票 13：同场多锚并成一场，跨场统计）。
          */
         EdgeSourceFaceView: {
             /** Source */
@@ -2634,6 +2638,11 @@ export interface components {
             bankroll_now: number;
             /** Sample Sufficient */
             sample_sufficient: boolean;
+            /**
+             * Independent Exposures N
+             * @default 0
+             */
+            independent_exposures_n: number;
             /** Floating Stake Fixed */
             floating_stake_fixed: number;
             /** Floating Stake Pool */
@@ -3112,7 +3121,7 @@ export interface components {
         };
         /**
          * StrategyFaceView
-         * @description 一个策略面（auto-v1/人工）的账户行（票 04）。
+         * @description 一个策略面（auto-v1/人工）的账户行（票 04；ROI 双栏=票 13）。
          */
         StrategyFaceView: {
             /** Strategy */
@@ -3129,6 +3138,8 @@ export interface components {
             profit_settled: number;
             /** Realized Roi */
             realized_roi?: number | null;
+            /** Realized Roi Per Match */
+            realized_roi_per_match?: number | null;
             /** Mean Decision Ev */
             mean_decision_ev?: number | null;
             /** Ev Realization Gap */
