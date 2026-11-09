@@ -464,7 +464,7 @@ def check_alias_coverage(conn: sqlite3.Connection, *, business_date: str) -> Che
 
 def check_edge_scan(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
     """
-    项 17 探索轨扫描器绿（autoresearch 票 04）：s1/s4 最新留痕 26h 内。
+    项 17 探索轨扫描器绿（autoresearch 票 04/02）：s1/s2/s4 最新留痕 26h 内。
 
     观察项（degraded 不红）：wrap 夜拍断线/首跑前如实黄——发现台账与
     周报都吃这两张留痕表，断流须晨检可见。只查日频扫描器（s5 按期次
@@ -472,7 +472,7 @@ def check_edge_scan(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
     """
     parts: list[str] = []
     worst = OK
-    for scanner in ("s1", "s4"):  # 日频面（s5 期次节奏不进新鲜度）
+    for scanner in ("s1", "s2", "s4"):  # 日频面（s5 期次节奏不进新鲜度）
         latest = edge_scan.latest_observation_at(conn, scanner)
         age = _age_hours(latest, now)
         if age is None or age > _FRESH_HOURS:

@@ -584,6 +584,39 @@ def _coverage_row(conn: sqlite3.Connection, month: str) -> CoverageRow:
     return CoverageRow(month=month, **coverage_census_by_month(conn, month))
 
 
+def calibration_bins_by_market(
+    conn: sqlite3.Connection, *, date_from: str, date_to: str
+) -> dict[str, tuple[CalibBin, ...]]:
+    """
+    S2 台账化读面（autoresearch 票 02）：窗内逐玩法校准分箱（不重算）。
+
+    与报告面同一派生口径（`_calibration`：最热向置信 10 箱 vs 实际命中）；
+    窗=kickoff_utc 日期（UTC 面）；void 场剔除与累计门槛同款（ADR-0001）。
+    """
+    voided = rs_store.voided_fixture_ids(conn)
+    score_rows = [
+        row
+        for row in conn.execute(
+            """
+            SELECT fixture_id, market, forecast_id, kickoff_utc, outcome,
+                   hhad_goal_line
+            FROM forecast_scores
+            WHERE score_version = ? AND skip_reason IS NULL
+              AND substr(kickoff_utc, 1, 10) BETWEEN ? AND ?
+            """,
+            (SCORE_VERSION, date_from, date_to),
+        ).fetchall()
+        if int(row["fixture_id"]) not in voided
+    ]
+    payloads = forecast_payloads_by_ids(
+        conn, sorted({int(r["forecast_id"]) for r in score_rows})
+    )
+    by_market: dict[str, list[sqlite3.Row]] = {}
+    for row in score_rows:
+        by_market.setdefault(str(row["market"]), []).append(row)
+    return {market: _calibration(rows, payloads) for market, rows in by_market.items()}
+
+
 def build_accuracy_report(conn: sqlite3.Connection) -> AccuracyReport:
     """月块聚合：覆盖率首行 + 月×玩法（总体行在前）×联赛拆解。"""
     score_rows = [
