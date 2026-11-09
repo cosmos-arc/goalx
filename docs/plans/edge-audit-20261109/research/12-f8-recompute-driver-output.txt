@@ -1,0 +1,216 @@
+  旧锚诊断：末刻多行异价（平序暴露）2540/13922 场；hw/aw 嵌合（合成非真实报价对）0/13922 场
+配对入窗 19939；无 2.5 板 6017；F8 行（场×篮）= 27844
+
+== Phase A：臂 OO（旧锚+旧结算）vs 冻结台账 ==
+  MISMATCH 德甲×over confirmation: 冻结(n_fx=196,n_sel=1,ev=nan,gap=0.0398,z=nan) vs OO(196,1,nan,0.0398,nan)
+  MISMATCH 德甲×over search: 冻结(n_fx=870,n_sel=0,ev=nan,gap=0.0290,z=nan) vs OO(870,0,nan,0.0290,nan)
+  MISMATCH 德甲×over validation: 冻结(n_fx=125,n_sel=0,ev=nan,gap=0.0370,z=nan) vs OO(125,0,nan,0.0369,nan)
+  MISMATCH 德甲×under validation: 冻结(n_fx=125,n_sel=4,ev=0.2000,gap=-0.0370,z=0.447) vs OO(125,4,0.2000,-0.0369,0.447)
+  MISMATCH 意甲×over search: 冻结(n_fx=1300,n_sel=0,ev=nan,gap=0.0234,z=nan) vs OO(1300,0,nan,0.0234,nan)
+  MISMATCH 法甲×over confirmation: 冻结(n_fx=241,n_sel=0,ev=nan,gap=0.0378,z=nan) vs OO(241,0,nan,0.0378,nan)
+  MISMATCH 法甲×over search: 冻结(n_fx=1145,n_sel=0,ev=nan,gap=0.0167,z=nan) vs OO(1145,0,nan,0.0167,nan)
+  MISMATCH 法甲×over validation: 冻结(n_fx=192,n_sel=0,ev=nan,gap=0.0256,z=nan) vs OO(192,0,nan,0.0256,nan)
+  MISMATCH 苏超×over search: 冻结(n_fx=478,n_sel=0,ev=nan,gap=0.0158,z=nan) vs OO(478,0,nan,0.0158,nan)
+  MISMATCH 苏超×under search: 冻结(n_fx=478,n_sel=0,ev=nan,gap=-0.0158,z=nan) vs OO(478,0,nan,-0.0158,nan)
+  MISMATCH 英冠×over confirmation: 冻结(n_fx=308,n_sel=0,ev=nan,gap=0.0195,z=nan) vs OO(308,0,nan,0.0195,nan)
+  MISMATCH 英冠×over search: 冻结(n_fx=2314,n_sel=0,ev=nan,gap=0.0105,z=nan) vs OO(2314,0,nan,0.0105,nan)
+  MISMATCH 英冠×over validation: 冻结(n_fx=326,n_sel=0,ev=nan,gap=0.0142,z=nan) vs OO(326,0,nan,0.0142,nan)
+  MISMATCH 英超×over confirmation: 冻结(n_fx=386,n_sel=0,ev=nan,gap=0.0392,z=nan) vs OO(386,0,nan,0.0392,nan)
+  MISMATCH 英超×over search: 冻结(n_fx=1308,n_sel=0,ev=nan,gap=0.0257,z=nan) vs OO(1308,0,nan,0.0257,nan)
+  MISMATCH 英超×over validation: 冻结(n_fx=343,n_sel=0,ev=nan,gap=0.0285,z=nan) vs OO(343,0,nan,0.0285,nan)
+  MISMATCH 荷甲×over confirmation: 冻结(n_fx=112,n_sel=0,ev=nan,gap=0.0394,z=nan) vs OO(112,0,nan,0.0394,nan)
+  MISMATCH 荷甲×over search: 冻结(n_fx=578,n_sel=0,ev=nan,gap=0.0311,z=nan) vs OO(578,0,nan,0.0311,nan)
+  MISMATCH 荷甲×over validation: 冻结(n_fx=78,n_sel=0,ev=nan,gap=0.0326,z=nan) vs OO(78,0,nan,0.0326,nan)
+  MISMATCH 葡超×over confirmation: 冻结(n_fx=124,n_sel=1,ev=nan,gap=0.0213,z=nan) vs OO(124,1,nan,0.0213,nan)
+  MISMATCH 葡超×over search: 冻结(n_fx=796,n_sel=1,ev=nan,gap=0.0191,z=nan) vs OO(796,1,nan,0.0191,nan)
+  MISMATCH 葡超×over validation: 冻结(n_fx=134,n_sel=0,ev=nan,gap=0.0183,z=nan) vs OO(134,0,nan,0.0183,nan)
+  MISMATCH 西甲×over confirmation: 冻结(n_fx=332,n_sel=1,ev=nan,gap=0.0205,z=nan) vs OO(332,1,nan,0.0205,nan)
+  MISMATCH 西甲×over search: 冻结(n_fx=1175,n_sel=1,ev=nan,gap=0.0202,z=nan) vs OO(1175,1,nan,0.0202,nan)
+  MISMATCH 西甲×over validation: 冻结(n_fx=241,n_sel=0,ev=nan,gap=0.0220,z=nan) vs OO(241,0,nan,0.0220,nan)
+  Phase A mismatch=25/56
+
+== 四臂对照（ev/gap/z/n_sel；OO=冻结复现 ON=+7%修 NO=+锚修 NN=双修=重算） ==
+-- window=search
+      over: -1.0000/+0.0198/nan/n2 | -1.0000/+0.0198/nan/n2 | -1.0000/+0.0194/nan/n2 | -1.0000/+0.0194/nan/n2
+     under: -0.2172/-0.0198/-1.265/n62 | -0.2172/-0.0198/-1.265/n62 | -0.2410/-0.0194/-1.394/n61 | -0.2410/-0.0194/-1.394/n61
+   德甲×over: nan/+0.0290/nan/n0 | nan/+0.0290/nan/n0 | nan/+0.0283/nan/n0 | nan/+0.0283/nan/n0
+  德甲×under: +0.1958/-0.0290/+0.275/n8 | +0.1958/-0.0290/+0.275/n8 | +0.1958/-0.0283/+0.275/n8 | +0.1958/-0.0283/+0.275/n8
+   意甲×over: nan/+0.0234/nan/n0 | nan/+0.0234/nan/n0 | nan/+0.0239/nan/n0 | nan/+0.0239/nan/n0
+  意甲×under: -0.6333/-0.0234/-2.556/n12 | -0.6333/-0.0234/-2.556/n12 | -0.6292/-0.0239/-2.513/n12 | -0.6292/-0.0239/-2.513/n12
+   法甲×over: nan/+0.0167/nan/n0 | nan/+0.0167/nan/n0 | nan/+0.0174/nan/n0 | nan/+0.0174/nan/n0
+  法甲×under: -0.3071/-0.0167/-0.928/n7 | -0.3071/-0.0167/-0.928/n7 | -0.3071/-0.0174/-0.928/n7 | -0.3071/-0.0174/-0.928/n7
+   苏超×over: nan/+0.0158/nan/n0 | nan/+0.0158/nan/n0 | nan/+0.0143/nan/n0 | nan/+0.0143/nan/n0
+  苏超×under: nan/-0.0158/nan/n0 | nan/-0.0158/nan/n0 | nan/-0.0143/nan/n0 | nan/-0.0143/nan/n0
+   英冠×over: nan/+0.0105/nan/n0 | nan/+0.0105/nan/n0 | nan/+0.0092/nan/n1 | nan/+0.0092/nan/n1
+  英冠×under: +0.0083/-0.0105/+0.024/n4 | +0.0083/-0.0105/+0.024/n4 | +0.0667/-0.0092/+0.185/n4 | +0.0667/-0.0092/+0.185/n4
+   英超×over: nan/+0.0257/nan/n0 | nan/+0.0257/nan/n0 | nan/+0.0253/nan/n0 | nan/+0.0253/nan/n0
+  英超×under: -0.3444/-0.0257/-1.016/n9 | -0.3444/-0.0257/-1.016/n9 | -0.5759/-0.0253/-1.966/n9 | -0.5759/-0.0253/-1.966/n9
+   荷甲×over: nan/+0.0311/nan/n0 | nan/+0.0311/nan/n0 | nan/+0.0313/nan/n0 | nan/+0.0313/nan/n0
+  荷甲×under: +0.8521/-0.0311/+1.027/n8 | +0.8521/-0.0311/+1.027/n8 | +0.7944/-0.0313/+1.083/n9 | +0.7944/-0.0313/+1.083/n9
+   葡超×over: nan/+0.0191/nan/n1 | nan/+0.0191/nan/n1 | nan/+0.0193/nan/n1 | nan/+0.0193/nan/n1
+  葡超×under: -0.4857/-0.0191/-1.463/n7 | -0.4857/-0.0191/-1.463/n7 | -0.6333/-0.0193/-1.727/n5 | -0.6333/-0.0193/-1.727/n5
+   西甲×over: nan/+0.0202/nan/n1 | nan/+0.0202/nan/n1 | nan/+0.0194/nan/n0 | nan/+0.0194/nan/n0
+  西甲×under: -0.8048/-0.0202/-4.122/n7 | -0.8048/-0.0202/-4.122/n7 | -0.8048/-0.0194/-4.122/n7 | -0.8048/-0.0194/-4.122/n7
+-- window=validation
+      over: -1.0000/+0.0225/nan/n3 | -1.0000/+0.0225/nan/n3 | -1.0000/+0.0214/nan/n4 | -1.0000/+0.0214/nan/n4
+     under: -0.3078/-0.0225/-2.254/n43 | -0.3078/-0.0225/-2.254/n43 | -0.3418/-0.0214/-2.819/n53 | -0.3418/-0.0214/-2.819/n53
+   德甲×over: nan/+0.0369/nan/n0 | nan/+0.0369/nan/n0 | nan/+0.0350/nan/n0 | nan/+0.0350/nan/n0
+  德甲×under: +0.2000/-0.0369/+0.447/n4 | +0.2000/-0.0369/+0.447/n4 | +0.2000/-0.0350/+0.447/n4 | +0.2000/-0.0350/+0.447/n4
+   意甲×over: -1.0000/+0.0172/nan/n3 | -1.0000/+0.0172/nan/n3 | -1.0000/+0.0153/nan/n4 | -1.0000/+0.0153/nan/n4
+  意甲×under: -0.2452/-0.0172/-0.661/n7 | -0.2452/-0.0172/-0.661/n7 | -0.3396/-0.0153/-1.014/n8 | -0.3396/-0.0153/-1.014/n8
+   法甲×over: nan/+0.0256/nan/n0 | nan/+0.0256/nan/n0 | nan/+0.0258/nan/n0 | nan/+0.0258/nan/n0
+  法甲×under: -0.2933/-0.0256/-0.651/n5 | -0.2933/-0.0256/-0.651/n5 | -0.2933/-0.0258/-0.651/n5 | -0.2933/-0.0258/-0.651/n5
+   苏超×over: -- | -- | -- | --
+  苏超×under: -- | -- | -- | --
+   英冠×over: nan/+0.0142/nan/n0 | nan/+0.0142/nan/n0 | nan/+0.0122/nan/n0 | nan/+0.0122/nan/n0
+  英冠×under: -1.0000/-0.0142/nan/n5 | -1.0000/-0.0142/nan/n5 | -1.0000/-0.0122/nan/n6 | -1.0000/-0.0122/nan/n6
+   英超×over: nan/+0.0285/nan/n0 | nan/+0.0285/nan/n0 | nan/+0.0286/nan/n0 | nan/+0.0286/nan/n0
+  英超×under: -0.2409/-0.0285/-0.905/n11 | -0.2409/-0.0285/-0.905/n11 | -0.3896/-0.0286/-1.891/n16 | -0.3896/-0.0286/-1.891/n16
+   荷甲×over: nan/+0.0326/nan/n0 | nan/+0.0326/nan/n0 | nan/+0.0331/nan/n0 | nan/+0.0331/nan/n0
+  荷甲×under: -1.0000/-0.0326/nan/n3 | -1.0000/-0.0326/nan/n3 | -1.0000/-0.0331/nan/n4 | -1.0000/-0.0331/nan/n4
+   葡超×over: nan/+0.0183/nan/n0 | nan/+0.0183/nan/n0 | nan/+0.0192/nan/n0 | nan/+0.0192/nan/n0
+  葡超×under: +1.0167/-0.0183/+61.000/n2 | +1.0167/-0.0183/+61.000/n2 | +1.0167/-0.0192/+61.000/n2 | +1.0167/-0.0192/+61.000/n2
+   西甲×over: nan/+0.0220/nan/n0 | nan/+0.0220/nan/n0 | nan/+0.0195/nan/n0 | nan/+0.0195/nan/n0
+  西甲×under: -0.3722/-0.0220/-0.900/n6 | -0.3722/-0.0220/-0.900/n6 | -0.0667/-0.0195/-0.179/n8 | -0.0667/-0.0195/-0.179/n8
+-- window=confirmation
+      over: -0.2400/+0.0275/-0.316/n5 | -0.2400/+0.0275/-0.316/n5 | -0.1000/+0.0270/-0.169/n8 | -0.1000/+0.0270/-0.169/n8
+     under: -0.2442/-0.0275/-1.787/n86 | -0.2442/-0.0275/-1.787/n86 | -0.2463/-0.0270/-1.789/n86 | -0.2463/-0.0270/-1.789/n86
+   德甲×over: nan/+0.0398/nan/n1 | nan/+0.0398/nan/n1 | nan/+0.0386/nan/n1 | nan/+0.0386/nan/n1
+  德甲×under: -0.6347/-0.0398/-3.324/n12 | -0.6347/-0.0398/-3.324/n12 | -0.6628/-0.0386/-3.726/n13 | -0.6628/-0.0386/-3.726/n13
+   意甲×over: +0.9000/+0.0161/+0.474/n2 | +0.9000/+0.0161/+0.474/n2 | +0.2667/+0.0149/+0.211/n3 | +0.2667/+0.0149/+0.211/n3
+  意甲×under: -0.4524/-0.0161/-1.750/n7 | -0.4524/-0.0161/-1.750/n7 | -0.4733/-0.0149/-1.468/n5 | -0.4733/-0.0149/-1.468/n5
+   法甲×over: nan/+0.0378/nan/n0 | nan/+0.0378/nan/n0 | nan/+0.0392/nan/n0 | nan/+0.0392/nan/n0
+  法甲×under: +0.1590/-0.0378/+0.295/n13 | +0.1590/-0.0378/+0.295/n13 | +0.2643/-0.0392/+0.538/n14 | +0.2643/-0.0392/+0.538/n14
+   苏超×over: -- | -- | -- | --
+  苏超×under: -- | -- | -- | --
+   英冠×over: nan/+0.0195/nan/n0 | nan/+0.0195/nan/n0 | nan/+0.0189/nan/n0 | nan/+0.0189/nan/n0
+  英冠×under: -0.3000/-0.0195/-0.429/n2 | -0.3000/-0.0195/-0.429/n2 | nan/-0.0189/nan/n1 | nan/-0.0189/nan/n1
+   英超×over: nan/+0.0392/nan/n0 | nan/+0.0392/nan/n0 | nan/+0.0392/nan/n0 | nan/+0.0392/nan/n0
+  英超×under: -0.3247/-0.0392/-1.909/n27 | -0.3247/-0.0392/-1.909/n27 | -0.4179/-0.0392/-2.457/n27 | -0.4179/-0.0392/-2.457/n27
+   荷甲×over: nan/+0.0394/nan/n0 | nan/+0.0394/nan/n0 | nan/+0.0398/nan/n0 | nan/+0.0398/nan/n0
+  荷甲×under: -0.2583/-0.0394/-0.660/n8 | -0.2583/-0.0394/-0.660/n8 | -0.1111/-0.0398/-0.296/n9 | -0.1111/-0.0398/-0.296/n9
+   葡超×over: nan/+0.0213/nan/n1 | nan/+0.0213/nan/n1 | +0.7000/+0.0195/+0.412/n2 | +0.7000/+0.0195/+0.412/n2
+  葡超×under: -0.3042/-0.0213/-0.754/n4 | -0.3042/-0.0213/-0.754/n4 | -0.0722/-0.0195/-0.155/n3 | -0.0722/-0.0195/-0.155/n3
+   西甲×over: nan/+0.0205/nan/n1 | nan/+0.0205/nan/n1 | -1.0000/+0.0199/nan/n2 | -1.0000/+0.0199/nan/n2
+  西甲×under: +0.0282/-0.0205/+0.052/n13 | +0.0282/-0.0205/+0.052/n13 | -0.1286/-0.0199/-0.250/n14 | -0.1286/-0.0199/-0.250/n14
+
+== 主行归因（Δev = 臂−OO） ==
+         search  over: Δev(7+修)=+0.0000 Δev(锚修)=+0.0000 Δev(合计/NN)=+0.0000 | Δgap(锚修)=-0.0004 | n_sel 2→2
+         search under: Δev(7+修)=+0.0000 Δev(锚修)=-0.0238 Δev(合计/NN)=-0.0238 | Δgap(锚修)=+0.0004 | n_sel 62→61
+     validation  over: Δev(7+修)=+0.0000 Δev(锚修)=+0.0000 Δev(合计/NN)=+0.0000 | Δgap(锚修)=-0.0011 | n_sel 3→4
+     validation under: Δev(7+修)=+0.0000 Δev(锚修)=-0.0341 Δev(合计/NN)=-0.0341 | Δgap(锚修)=+0.0011 | n_sel 43→53
+   confirmation  over: Δev(7+修)=+0.0000 Δev(锚修)=+0.1400 Δev(合计/NN)=+0.1400 | Δgap(锚修)=-0.0005 | n_sel 5→8
+   confirmation under: Δev(7+修)=+0.0000 Δev(锚修)=-0.0021 Δev(合计/NN)=-0.0021 | Δgap(锚修)=+0.0005 | n_sel 86→86
+
+== 7+ 修记录级：t>=8 的场（over 篮 7+ 腿回款；under 篮两径皆 0 无差） ==
+   confirmation  over: t>=8 场数=10；每场 ev_real 增量=odds[7]/5（合计 +56.90 单位注）
+         search  over: t>=8 场数=52；每场 ev_real 增量=odds[7]/5（合计 +217.90 单位注）
+     validation  over: t>=8 场数=5；每场 ev_real 增量=odds[7]/5（合计 +27.00 单位注）
+    例: fx=424 sid=2800291 法甲 confirmation t=8 s7=23.0 Δev_real=+4.6000
+    例: fx=1475 sid=2800104 法甲 confirmation t=8 s7=18.0 Δev_real=+3.6000
+    例: fx=1801 sid=2800040 法甲 confirmation t=8 s7=26.5 Δev_real=+5.3000
+    例: fx=2028 sid=2598461 英冠 confirmation t=8 s7=35.0 Δev_real=+7.0000
+    例: fx=2559 sid=2592400 荷甲 confirmation t=8 s7=19.0 Δev_real=+3.8000
+    例: fx=2598 sid=2611807 葡超 confirmation t=8 s7=35.0 Δev_real=+7.0000
+    例: fx=2979 sid=2606949 意甲 confirmation t=8 s7=45.0 Δev_real=+9.0000
+    例: fx=3115 sid=2594935 法甲 confirmation t=8 s7=29.0 Δev_real=+5.8000
+    例: fx=3441 sid=2410782 法甲 validation t=9 s7=38.0 Δev_real=+7.6000
+    例: fx=4088 sid=2399171 英超 validation t=8 s7=20.0 Δev_real=+4.0000
+    例: fx=4261 sid=2421905 葡超 validation t=8 s7=31.0 Δev_real=+6.2000
+    例: fx=4350 sid=2402588 英冠 validation t=8 s7=27.0 Δev_real=+5.4000
+  校验：结算差只出现在 over×t>=8 行 ✔
+
+== 锚修记录级：Δp_over25（new−old）分布 ==
+  n=13922 mean=+0.00050 p50=+0.00000 p05=-0.01851 p95=+0.02029 max|Δ|=0.13575
+         search: mean=+0.00039 |Δ|>1pp 率=23.675% |Δ|>5pp 率=0.552%
+     validation: mean=+0.00110 |Δ|>1pp 率=24.722% |Δ|>5pp 率=0.501%
+   confirmation: mean=+0.00048 |Δ|>1pp 率=21.138% |Δ|>5pp 率=0.370%
+  Δp 最强 10 场（含每书末价明细见下）:
+    sid=1557848 英冠 search: Δ=+0.13575 old=0.35663 new=0.49238 books=7 age_h=nan
+    sid=1583422 西甲 search: Δ=+0.12821 old=0.38025 new=0.50845 books=7 age_h=nan
+    sid=1585290 意甲 search: Δ=+0.11631 old=0.37010 new=0.48640 books=2 age_h=nan
+    sid=2215653 德甲 validation: Δ=+0.08069 old=0.36408 new=0.44477 books=6 age_h=nan
+    sid=1399860 英冠 search: Δ=+0.07639 old=0.47804 new=0.55443 books=5 age_h=nan
+    sid=1268042 西甲 search: Δ=-0.07424 old=0.62035 new=0.54611 books=7 age_h=nan
+    sid=1160151 意甲 search: Δ=-0.07248 old=0.62454 new=0.55206 books=7 age_h=nan
+    sid=1281748 法甲 search: Δ=+0.07036 old=0.35252 new=0.42288 books=5 age_h=nan
+    sid=2800291 法甲 confirmation: Δ=-0.06779 old=0.60199 new=0.53420 books=7 age_h=nan
+    sid=1132311 法甲 search: Δ=-0.06760 old=0.63415 new=0.56655 books=5 age_h=nan
+
+== 锚修记录级：价值侧选择集变化（ev_anchor>0） ==
+   confirmation  over: +3 / −0
+   confirmation under: +9 / −9
+         search  over: +1 / −1
+         search under: +7 / −8
+     validation  over: +1 / −0
+     validation under: +11 / −1
+  新增行（新结算 ev_real）：
+    fx=1246 西甲 confirmation under: ev_real=-1.0000 gap=-0.10139
+    fx=1457 英超 confirmation under: ev_real=-1.0000 gap=-0.09689
+    fx=1469 法甲 confirmation under: ev_real=+0.3000 gap=-0.11044
+    fx=1470 法甲 confirmation under: ev_real=+0.3333 gap=-0.09575
+    fx=1541 西甲 confirmation under: ev_real=-1.0000 gap=-0.10897
+    fx=1636 英超 confirmation under: ev_real=-1.0000 gap=-0.10773
+    fx=1781 荷甲 confirmation under: ev_real=+1.0667 gap=-0.10376
+    fx=2184 意甲 confirmation over: ev_real=-1.0000 gap=-0.07977
+    fx=3151 英超 confirmation under: ev_real=-1.0000 gap=-0.09507
+    fx=3254 西甲 confirmation over: ev_real=-1.0000 gap=-0.08391
+    fx=3731 英超 validation under: ev_real=-1.0000 gap=-0.09547
+    fx=4067 西甲 validation under: ev_real=+0.4167 gap=-0.09532
+    fx=4319 英超 validation under: ev_real=+0.4167 gap=-0.09518
+    fx=4441 意甲 validation over: ev_real=-1.0000 gap=-0.08032
+    fx=5149 英超 validation under: ev_real=-1.0000 gap=-0.09905
+    fx=5765 英冠 search under: ev_real=+0.3667 gap=-0.09413
+    fx=5766 英冠 search over: ev_real=-1.0000 gap=-0.11087
+    fx=5992 英超 search under: ev_real=-1.0000 gap=-0.10369
+    fx=6734 意甲 search under: ev_real=+1.1167 gap=-0.09971
+    fx=7029 荷甲 search under: ev_real=+0.3333 gap=-0.10203
+  剔除行（新结算 ev_real，供参照）：
+    fx=1016 葡超 confirmation under: ev_real=-1.0000 gap=-0.07081
+    fx=1231 英冠 confirmation under: ev_real=-1.0000 gap=-0.09392
+    fx=1267 意甲 confirmation under: ev_real=-1.0000 gap=-0.08822
+    fx=1588 英超 confirmation under: ev_real=+0.3167 gap=-0.09651
+    fx=2565 法甲 confirmation under: ev_real=-1.0000 gap=-0.08917
+    fx=2626 意甲 confirmation under: ev_real=+0.2000 gap=-0.07662
+    fx=3011 英超 confirmation under: ev_real=+0.2000 gap=-0.08173
+    fx=3175 西甲 confirmation under: ev_real=+0.1667 gap=-0.07784
+    fx=3784 德甲 validation under: ev_real=-1.0000 gap=-0.08412
+    fx=6041 英超 search under: ev_real=+1.0833 gap=-0.09280
+    fx=6351 意甲 search under: ev_real=-1.0000 gap=-0.10032
+    fx=6721 意甲 search under: ev_real=+1.0667 gap=-0.08977
+    fx=8494 葡超 search under: ev_real=-1.0000 gap=-0.08806
+    fx=9308 英冠 search under: ev_real=+0.1333 gap=-0.05239
+    fx=9402 西甲 search under: ev_real=-1.0000 gap=-0.04905
+    fx=10886 英冠 search under: ev_real=+0.3000 gap=-0.09556
+    fx=15035 葡超 search under: ev_real=+0.7667 gap=-0.11930
+    fx=17111 英超 confirmation under: ev_real=-1.0000 gap=-0.07666
+    fx=17961 西甲 search over: ev_real=-1.0000 gap=-0.07377
+
+== 每书末价明细样例 ==
+  sid=1557848 英冠 search Δ=+0.13575 old=0.35663 new=0.49238
+    srct:ou:12: last@2019-03-09 20:04:00+08:00 hw=0.91 aw=0.99 p_over=0.51026
+    srct:ou:14: last@2019-03-09 20:04:00+08:00 hw=0.89 aw=1.00 p_over=0.51414
+    srct:ou:17: last@2019-03-09 20:13:00+08:00 hw=0.90 aw=1.00 p_over=0.51282
+    srct:ou:22: last@2019-03-09 20:08:00+08:00 hw=0.87 aw=1.03 p_over=0.52051
+    srct:ou:24: last@2019-03-09 20:12:00+08:00 hw=0.90 aw=1.00 p_over=0.51282
+    srct:ou:42: last@2019-03-09 23:12:00+08:00 hw=1.67 aw=0.48 p_over=0.35663
+    srct:ou:8: last@2019-03-09 19:10:00+08:00 hw=0.85 aw=1.00 p_over=0.51948
+  sid=1583422 西甲 search Δ=+0.12821 old=0.38025 new=0.50845
+    srct:ou:12: last@2019-02-18 01:26:00+08:00 hw=0.86 aw=1.07 p_over=0.52672
+    srct:ou:14: last@2019-02-18 01:27:00+08:00 hw=0.83 aw=1.05 p_over=0.52835
+    srct:ou:17: last@2019-02-18 01:29:00+08:00 hw=0.82 aw=1.11 p_over=0.53690
+    srct:ou:22: last@2019-02-18 00:53:00+08:00 hw=0.85 aw=1.04 p_over=0.52442
+    srct:ou:24: last@2019-02-18 01:28:00+08:00 hw=0.82 aw=1.11 p_over=0.53690
+    srct:ou:42: last@2019-02-18 03:26:00+08:00 hw=1.51 aw=0.54 p_over=0.38025
+    srct:ou:8: last@2019-02-18 00:54:00+08:00 hw=0.85 aw=1.05 p_over=0.52564
+  sid=1585290 意甲 search Δ=+0.11631 old=0.37010 new=0.48640
+    srct:ou:12: last@2019-02-19 03:21:00+08:00 hw=0.60 aw=1.36 p_over=0.59596
+    srct:ou:42: last@2019-02-19 05:23:00+08:00 hw=1.53 aw=0.53 p_over=0.37685
+
+== gap 主行核对：Δgap(锚修) vs mean(∓Δp) ==
+         search  over: Δgap=-0.00039 | 场均Δp=+0.00039 预测=-0.00039
+         search under: Δgap=+0.00039 | 场均Δp=+0.00039 预测=+0.00039
+     validation  over: Δgap=-0.00110 | 场均Δp=+0.00110 预测=-0.00110
+     validation under: Δgap=+0.00110 | 场均Δp=+0.00110 预测=+0.00110
+   confirmation  over: Δgap=-0.00048 | 场均Δp=+0.00048 预测=-0.00048
+   confirmation under: Δgap=+0.00048 | 场均Δp=+0.00048 预测=+0.00048
