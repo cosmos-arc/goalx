@@ -197,6 +197,12 @@ class BetView(BaseModel):
     # 价格来源三分类(票 04 裁决② 面板可见维度): system_paper/
     # live_backfill/manual_research;历史注 null
     price_source: str | None = None
+    # 边缘来源标签(edge-program 票 01): calibration_probe/stale_line/
+    # rollover/price_band/info_lag;auto-v2 前史注 null
+    edge_source: str | None = None
+    # 每注 CLV(概率域, Π源T Pinnacle 收盘概率 − Π入场隐含);未结算/
+    # 非 had 腿/无锚 null
+    clv: float | None = None
     # 客户端幂等键(票 06,永久保留——对账需要);未带键的历史注 null
     client_request_id: str | None = None
 
@@ -378,6 +384,8 @@ def _bet_view(row: sqlite3.Row, review: BetReviewView | None = None) -> BetView:
         review=review,
         ev_snapshot=_ev_snapshot_view(row),
         price_source=row["price_source"],
+        edge_source=row["edge_source"],
+        clv=(float(row["clv"]) if row["clv"] is not None else None),
         client_request_id=row["client_request_id"],
     )
 
@@ -922,6 +930,20 @@ class PerMarketView(BaseModel):
     profit: float
 
 
+class EdgeSourceFaceView(BaseModel):
+    """分来源账户行（edge-program 票 01）：分来源 P&L + CLV 滚动。"""
+
+    source: str
+    bets_n: int
+    settled_n: int
+    stake_settled: float
+    profit_settled: float
+    clv_n: int
+    clv_mean: float | None = None
+    clv_mean_last50: float | None = None
+    clv_se_last50: float | None = None
+
+
 class PaperAccountView(BaseModel):
     """纸面账户 P&L 面（票 04）：两策略分列，不混一个数字。"""
 
@@ -936,6 +958,9 @@ class PaperAccountView(BaseModel):
     per_market: list[PerMarketView]
     tax_total: float
     profit_after_tax: float
+    # 分来源账户行（edge-program 票 01）：auto-v2 探针注按 edge 来源分列，
+    # 正 CLV 持续=六步门第③步证据
+    per_edge_source: list[EdgeSourceFaceView] = []
 
 
 @router.get(
@@ -986,4 +1011,18 @@ def paper_account(db: DbDep) -> PaperAccountView:
         ],
         tax_total=face.tax_total,
         profit_after_tax=face.profit_after_tax,
+        per_edge_source=[
+            EdgeSourceFaceView(
+                source=f.source,
+                bets_n=f.bets_n,
+                settled_n=f.settled_n,
+                stake_settled=f.stake_settled,
+                profit_settled=f.profit_settled,
+                clv_n=f.clv_n,
+                clv_mean=f.clv_mean,
+                clv_mean_last50=f.clv_mean_last50,
+                clv_se_last50=f.clv_se_last50,
+            )
+            for f in face.per_edge_source
+        ],
     )

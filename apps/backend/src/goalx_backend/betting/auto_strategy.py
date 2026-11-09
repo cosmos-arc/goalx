@@ -21,6 +21,7 @@ import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Protocol
 
 from goalx_backend.betting import pool_strategy
 from goalx_backend.betting import store as bt_store
@@ -78,6 +79,44 @@ class AutoV1Params:
 AUTO_V1_PARAMS = AutoV1Params()
 
 
+class CandidateScope(Protocol):
+    """锚候选构建所需参数面（auto-v1/auto-v2 参数共用的结构契约）。"""
+
+    @property
+    def single_markets(self) -> tuple[str, ...]:
+        """单关候选市场集。"""
+        ...
+
+    @property
+    def parlay_markets(self) -> tuple[str, ...]:
+        """串关候选市场集。"""
+        ...
+
+    @property
+    def sale_buffer_minutes(self) -> int:
+        """停售缓冲（分钟）。"""
+        ...
+
+    @property
+    def kickoff_guard_minutes(self) -> int:
+        """开球前置（分钟）。"""
+        ...
+
+    @property
+    def top_singles(self) -> int:
+        """单关注数上限。"""
+        ...
+
+
+class PoolSlipScope(Protocol):
+    """池票落注所需参数面（v2 复用时只取每组合注额）。"""
+
+    @property
+    def stake_per_combination(self) -> float:
+        """每组合注额（元）。"""
+        ...
+
+
 @dataclass(frozen=True)
 class Pick:
     """一个可下注候选（单关原料；串关由 Pick 对组成）。"""
@@ -106,8 +145,8 @@ def quarter_kelly_stake(
     return round(max(0.0, min(params.stake_cap, sized)), 2)
 
 
-def select_singles(candidates: list[Pick], params: AutoV1Params) -> list[Pick]:
-    """修订①：每场至多一注（取该场最优 EV），再 EV 降序 top-3。"""
+def select_singles(candidates: list[Pick], params: CandidateScope) -> list[Pick]:
+    """修订①：每场至多一注（取该场最优 EV），再 EV 降序 top-N。"""
     best: dict[int, Pick] = {}
     for pick in candidates:
         held = best.get(pick.fixture_id)
@@ -158,7 +197,7 @@ def anchor_candidates(
     conn: sqlite3.Connection,
     *,
     anchor_at: datetime,
-    params: AutoV1Params,
+    params: CandidateScope,
 ) -> tuple[list[Pick], list[Pick], dict[str, int]]:
     """
     锚时点候选面：返回（单关候选, 串关候选, 排除账）。
@@ -214,7 +253,7 @@ def _fixture_picks(
     matrix: ScoreMatrix,
     odds_by_market: dict[str, dict[str, sqlite3.Row]],
     *,
-    params: AutoV1Params,
+    params: CandidateScope,
 ) -> list[Pick]:
     """一场的四玩法候选（正价可观测项）；hhad 仅整数线（prereg）。"""
     views: dict[str, dict[str, float]] = {
@@ -273,7 +312,7 @@ def _roster_exclusion_reason(
     return None
 
 
-def _place_single(
+def place_single(  # noqa: PLR0913 - 引擎内单关落注，参数即通道
     conn: sqlite3.Connection,
     pick: Pick,
     *,
@@ -281,6 +320,8 @@ def _place_single(
     request_id: str,
     run_iso: str,
     reads: QuoteReads | None,
+    strategy_version: str = AUTO_V1,
+    edge_source: str | None = None,
 ) -> str:
     """单关落注结果：placed/replayed/drift/rejected（correctness F1 零注入拒绝）。"""
     if stake <= 0:
@@ -292,7 +333,15 @@ def _place_single(
         return "drift"
     return (
         "placed"
-        if _place(conn, [leg], stake=stake, request_id=request_id, reads=reads)
+        if _place(
+            conn,
+            [leg],
+            stake=stake,
+            request_id=request_id,
+            reads=reads,
+            strategy_version=strategy_version,
+            edge_source=edge_source,
+        )
         else "rejected"
     )
 
@@ -390,13 +439,16 @@ def _place(
     stake: float,
     request_id: str,
     reads: QuoteReads | None,
+    strategy_version: str = AUTO_V1,
+    edge_source: str | None = None,
 ) -> bool:
     """经 create 闸门落一注；闸门拒绝（资格/价）返回 False 由调用方留痕。"""
     draft = BetDraft(
         mode=BetMode.PAPER,
         stake=stake,
         legs=legs,
-        strategy_version=AUTO_V1,
+        strategy_version=strategy_version,
+        edge_source=edge_source,
         client_request_id=request_id,
         intent_fingerprint=intent_fingerprint(BetMode.PAPER, stake, legs),
     )
@@ -431,7 +483,7 @@ def place_anchor_bets(
 ) -> dict[str, int]:
     """一锚的选票与落注：单关 top-3（quarter-Kelly 封顶）+ 串关前 5（各 ¥2）。"""
     singles_pool, parlay_pool, excluded = anchor_candidates(
-        conn, anchor_at=_anchor_datetime(anchor_label, run_at), params=params
+        conn, anchor_at=anchor_datetime(anchor_label, run_at), params=params
     )
     run_iso = run_at.astimezone(UTC).isoformat()
     bankroll = account_bankroll(conn, params)
@@ -444,7 +496,7 @@ def place_anchor_bets(
             f"{AUTO_V1}:{business_date}:{anchor_label}:"
             f"s:{pick.fixture_id}:{pick.market_code}"
         )
-        outcome = _place_single(
+        outcome = place_single(
             conn, pick, stake=stake, request_id=request_id, run_iso=run_iso, reads=reads
         )
         if outcome == "placed":
@@ -490,10 +542,21 @@ def place_anchor_bets(
 
 
 def place_pool_slips(
-    conn: sqlite3.Connection, *, run_at: datetime, params: AutoV1Params
+    conn: sqlite3.Connection,
+    *,
+    run_at: datetime,
+    params: PoolSlipScope,
+    source: str = AUTO_V1,
+    stake_budget: float | None = None,
 ) -> dict[str, int]:
     """
-    彩池每期次一票（待结算）：既有策略底注，source=auto-v1 幂等。
+    彩池每期次一票（待结算）：既有策略底注，source 幂等分账。
+
+    v2 复用传 auto-v2（同 source 同期不双落）。stake_budget=剩余可落
+    金额（None=无帽，v1 冻结口径；auto-v2 传 ¥20/晚测量帽余量）——
+    不足一组合注额即整票跳过。
+    shortcut: 帽按票粒度扣减（现结构每票恰 1 组合）；多组合复式票
+    到来时须按物化后总额对账帽，升级=物化后回扣。
 
     shortcut: 池面 v2 反火锅结构（修订②③）未实现——本版 ttt14=全稳
     底注、pick9=贪心 9 场、goals4=联合边际 argmax，各 1 组合 ¥2；
@@ -501,10 +564,14 @@ def place_pool_slips(
     """
     now_iso = run_at.astimezone(UTC).isoformat()
     placed = skipped = 0
+    budget = stake_budget
     for market in ("ttt14", "pick9", "goals4"):
         period = _active_period(conn, market, now_iso)
         period_id = int(period["id"]) if period is not None else None
-        if period_id is None or _period_slip_exists(conn, period_id):
+        if period_id is None or _period_slip_exists(conn, period_id, source):
+            skipped += 1
+            continue
+        if budget is not None and budget < params.stake_per_combination:
             skipped += 1
             continue
         picks = _pool_picks(conn, period_id, market, now_iso)
@@ -522,8 +589,8 @@ def place_pool_slips(
                     BetMode.PAPER,
                     pool_period_id=period_id,
                     placed_at=now_iso,
-                    note=f"{AUTO_V1} 期次一票（既有策略底注）",
-                    source=AUTO_V1,
+                    note=f"{source} 期次一票（既有策略底注）",
+                    source=source,
                 )
                 for match_seq, codes in picks.items():
                     for code in codes:
@@ -535,6 +602,8 @@ def place_pool_slips(
                     market_code=market,
                 )
             placed += 1
+            if budget is not None:
+                budget -= params.stake_per_combination
         except ValueError:
             skipped += 1
     return {"slips": placed, "slips_skipped": skipped}
@@ -555,10 +624,10 @@ def _active_period(
     return period
 
 
-def _period_slip_exists(conn: sqlite3.Connection, period_id: int) -> bool:
+def _period_slip_exists(conn: sqlite3.Connection, period_id: int, source: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM bet_slips WHERE pool_period_id = ? AND source = ? LIMIT 1",
-        (period_id, AUTO_V1),
+        (period_id, source),
     ).fetchone()
     return row is not None
 
@@ -615,8 +684,14 @@ def record_anchor_run(
     anchor_label: str,
     *,
     stats: dict[str, int],
+    strategy: str = AUTO_V1,
 ) -> None:
-    """锚台账 upsert：行存在=跑了；zero_note 可区分零注原因（票验收）。"""
+    """
+    锚台账 upsert（v46 起按 strategy 分行）。
+
+    行存在=跑了；zero_note 可区分零注原因（票验收）。同引擎同锚重跑才
+    MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。
+    """
     zero_note = None
     if stats.get("bets", 0) == 0 and stats.get("slips", 0) == 0:
         if stats.get("candidates", 0) == 0:
@@ -631,10 +706,10 @@ def record_anchor_run(
         conn.execute(
             """
             INSERT INTO auto_paper_runs
-                (business_date, anchor_label, ran_at, candidates, bets, slips,
-                 zero_note, detail_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(business_date, anchor_label) DO UPDATE SET
+                (business_date, anchor_label, strategy, ran_at, candidates,
+                 bets, slips, zero_note, detail_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(business_date, anchor_label, strategy) DO UPDATE SET
               ran_at = excluded.ran_at, candidates = excluded.candidates,
               bets = MAX(auto_paper_runs.bets, excluded.bets),
               slips = MAX(auto_paper_runs.slips, excluded.slips),
@@ -647,6 +722,7 @@ def record_anchor_run(
             (
                 business_date,
                 anchor_label,
+                strategy,
                 datetime.now(UTC).isoformat(),
                 stats.get("candidates", 0),
                 stats.get("bets", 0),
@@ -657,7 +733,8 @@ def record_anchor_run(
         )
 
 
-def _anchor_datetime(anchor_label: str, now: datetime) -> datetime:
+def anchor_datetime(anchor_label: str, now: datetime) -> datetime:
+    """锚标签（HH:MM，北京时）→ 运行时刻所在日的锚时点（UTC 感知）。"""
     hour, minute = (int(part) for part in anchor_label.split(":"))
     base = now.astimezone(BJ)
     return base.replace(hour=hour, minute=minute, second=0, microsecond=0)

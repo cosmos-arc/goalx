@@ -25,6 +25,7 @@ from prefect import flow
 
 from goalx_backend import tasks
 from goalx_backend.betting import frozen as frozen_mod
+from goalx_backend.betting import probes
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.data import price_ledger
 from goalx_backend.evaluation import clv as clv_mod
@@ -176,6 +177,14 @@ def daily_wrap_flow() -> dict[str, object]:
             clv_stats: dict[str, Any] = asdict(
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )
+            # 每注 CLV 回填（edge-program 票 01）：结算后的 auto 纸面注
+            # 按源T 收盘锚落 bets.clv（幂等只补 NULL；降级不打断 wrap 主体，
+            # 同 m3/edge_scan 兜 Exception——脏行不制造永久夜炸循环）
+            try:
+                probe_clv = probes.backfill_bet_clv(conn, anchor)
+            except Exception as exc:
+                logger.warning("probe clv backfill degraded: {}", exc)
+                probe_clv = {"degraded": str(exc)}
             # 同步报价账本 sweep（measure-07）：源T as-of 主锚回填 NULL 参考行
             # （降级不打断——语料桥/账本异常不殃及 wrap 主体，同上惯例）
             try:
@@ -218,6 +227,7 @@ def daily_wrap_flow() -> dict[str, object]:
         "m3": m3,
         "frozen_reconcile": frozen_recon,
         "clv": clv_stats,
+        "probe_clv": probe_clv,
         "audit_findings": findings,
         "price_ledger": {"backfilled": ledger_filled, **ledger_face},
         "frozen_summary": frozen_face,

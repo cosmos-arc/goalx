@@ -1379,6 +1379,10 @@ export interface components {
             ev_snapshot?: components["schemas"]["BetEvSnapshotView"] | null;
             /** Price Source */
             price_source?: string | null;
+            /** Edge Source */
+            edge_source?: string | null;
+            /** Clv */
+            clv?: number | null;
             /** Client Request Id */
             client_request_id?: string | null;
         };
@@ -1958,6 +1962,30 @@ export interface components {
              * @description 已开赛、尚无开奖的竞彩场次数
              */
             pending_results: number;
+        };
+        /**
+         * EdgeSourceFaceView
+         * @description 分来源账户行（edge-program 票 01）：分来源 P&L + CLV 滚动。
+         */
+        EdgeSourceFaceView: {
+            /** Source */
+            source: string;
+            /** Bets N */
+            bets_n: number;
+            /** Settled N */
+            settled_n: number;
+            /** Stake Settled */
+            stake_settled: number;
+            /** Profit Settled */
+            profit_settled: number;
+            /** Clv N */
+            clv_n: number;
+            /** Clv Mean */
+            clv_mean?: number | null;
+            /** Clv Mean Last50 */
+            clv_mean_last50?: number | null;
+            /** Clv Se Last50 */
+            clv_se_last50?: number | null;
         };
         /**
          * Environment
@@ -2616,6 +2644,11 @@ export interface components {
             tax_total: number;
             /** Profit After Tax */
             profit_after_tax: number;
+            /**
+             * Per Edge Source
+             * @default []
+             */
+            per_edge_source: components["schemas"]["EdgeSourceFaceView"][];
         };
         /**
          * PerMarketView

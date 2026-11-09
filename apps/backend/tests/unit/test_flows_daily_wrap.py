@@ -63,6 +63,11 @@ def _patch_all(monkeypatch: Any, business_date: str) -> list[str]:
         lambda conn, duck_con=None: step("clv", _FakeClv(n=2)),
     )
     monkeypatch.setattr(
+        flows.probes,
+        "backfill_bet_clv",
+        lambda conn, anchor: step("probe_clv", {"filled": 0}),
+    )
+    monkeypatch.setattr(
         flows.price_ledger,
         "backfill_missing_reference",
         lambda conn, anchor: step("ledger_backfill", 7),
@@ -113,6 +118,7 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "task_conn",
         "corpus_anchor",
         "clv",
+        "probe_clv",
         "ledger_backfill",
         "ledger_summary",
         "audit",
@@ -121,6 +127,7 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
     ]
     assert result["frozen_reconcile"] == {"ok": True}
     assert result["clv"] == {"n": 2}
+    assert result["probe_clv"] == {"filled": 0}
     assert result["price_ledger"]["backfilled"] == 7
     assert result["audit_findings"] == 0
     assert result["edge_scan"] == {"business_date": "2026-11-05"}

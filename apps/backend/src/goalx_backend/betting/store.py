@@ -261,6 +261,7 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     placed_at: str | None = None,
     slip_id: int | None = None,
     strategy_version: str | None = None,
+    edge_source: str | None = None,
     ev_snapshot: BetEvSnapshot | None = None,
     price_source: str | None = None,
     client_request_id: str | None = None,
@@ -270,6 +271,8 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
     Create a bet record (建议未购或已回录；含建注 EV 快照，票 41)；返回 id。
 
     price_source=价格来源三分类（票 04，v35 列）；None=不落标签（旧行为）。
+    edge_source=边缘来源五枚举标签（edge-program 票 01，v46 列）；
+    None=不落标签（旧行为/史行不回溯）。
     client_request_id=客户端幂等键（票 06，v37 列）：撞唯一索引抛
     IntegrityError——调用侧捕获后以 bet_id_for_request 取回既有注；
     None=未带键（旧行为，池票/内部调用不受约束）。
@@ -281,10 +284,10 @@ def create_bet(  # noqa: PLR0913 - 仓储原始层, 参数即列
         """
             INSERT INTO bets
             (slip_id, mode, market_kind, purchased, stake, placed_at,
-            created_at, strategy_version,
+            created_at, strategy_version, edge_source,
             snap_prob_consensus, snap_prob_model, snap_ev_consensus, snap_ev_model,
             price_source, client_request_id, intent_fingerprint)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             slip_id,
@@ -295,6 +298,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             placed_at,
             utc_now_iso(),
             strategy_version,
+            edge_source,
             snap.prob_consensus,
             snap.prob_model,
             snap.ev_consensus,
@@ -456,7 +460,7 @@ def list_bets(
     """
     sql = """
             SELECT b.id, b.slip_id, b.mode, b.market_kind, b.purchased, b.stake,
-            b.actual_stake, b.strategy_version, b.price_source,
+            b.actual_stake, b.strategy_version, b.price_source, b.edge_source, b.clv,
             b.client_request_id,
             b.placed_at, b.created_at, b.status, b.payout, b.profit, b.settled_at,
             b.snap_prob_consensus, b.snap_prob_model,

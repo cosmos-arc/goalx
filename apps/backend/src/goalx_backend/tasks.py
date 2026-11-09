@@ -28,8 +28,8 @@ import duckdb
 import httpx
 from loguru import logger
 
-from goalx_backend.betting import auto_strategy
 from goalx_backend.betting import frozen as frozen_mod
+from goalx_backend.betting import probes
 from goalx_backend.betting.funnel import (
     TRACK2_OFFSETS,
     Track2Capture,
@@ -271,13 +271,14 @@ def baseline_freeze() -> dict[str, int]:
 
 def auto_paper() -> dict[str, int]:
     """
-    auto-v1 策略落注（auto-paper 票 03）：锚后 1 分钟跑当前锚的选票+落注。
+    auto-v2 探针阵列落注（edge-program 票 01；auto-v1 冻结版自换栈起停新注）。
 
-    读 prereg B 节冻结参数（修订①-④）：单关限 crs/ttg 每场至多一注
-    top-3（quarter-Kelly 封顶 ¥2）、串关限 had/hhad 前五张各 ¥2（单场
-    ≤2 张）；官方性通道逐腿对 sporttery 快照同比对（漂价弃注留痕）；
-    彩池每期次一票（source=auto-v1 幂等）；锚台账 upsert（没跑/没得买
-    可分）。语料缺席降级 legacy reads（与 freeze 同款）。
+    锚后 1 分钟跑当前锚的探针组合+落注。校准探针（常亮）：claimed-EV
+    每场最优 top-3 全四玩法平注 ¥2（¥6/晚），edge_source=calibration_probe；
+    陈盘/滚存/价格带探针熄灯记零注留痕（点亮=扫描器晋升+人裁改参数升
+    版本）；彩池三玩法期次一票随本引擎落（source=auto-v2，¥20/晚测量帽
+    内）；官方性同比对与台账沿用 v1 通道。语料缺席降级 legacy reads
+    （与 freeze 同款）。
     """
     label = anchor_label_at()
     if label is None:
@@ -289,19 +290,19 @@ def auto_paper() -> dict[str, int]:
             duck_con = corpus_duckdb.connect(settings)
         except Exception:
             duck_con = None
-            logger.warning("corpus duckdb 缺席：auto-v1 资格校验降级 legacy reads")
+            logger.warning("corpus duckdb 缺席：auto-v2 资格校验降级 legacy reads")
         try:
             if duck_con is not None:
                 reads = bind_quote_reads(
                     conn, duck_con, lambda fid: mapping.srct_sid_for_fixture(conn, fid)
                 )
-            stats = auto_strategy.run_auto_v1(
+            stats = probes.run_auto_v2(
                 conn, run_at=datetime.now(UTC), anchor_label=label, reads=reads
             )
         finally:
             if duck_con is not None:
                 duck_con.close()
-    logger.info("auto-v1 anchor: {}", stats)
+    logger.info("auto-v2 anchor: {}", stats)
     return stats
 
 
