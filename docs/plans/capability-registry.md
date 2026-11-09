@@ -42,6 +42,7 @@
 | **能力二：auto-v1 策略落注 + 账户面** | ✓ | — | ◐ | — | 票 03+04（PR#275/#276）选票引擎（prereg 修订①-④）+auto-paper 双 deployment+锚台账 v43+`/api/v1/paper-account` 只读面+晨检第 15 项；运行验收=换栈后首锚真实落注（11-11） |
 | **队名身份机制：srct_en 英文活水 + clubelo 桥解饿** | ✓ | ✓ | ◐ | — | identity 票 01（PR#262，[8a0c115](https://github.com/cosmos-arc/goalx/commit/8a0c115)）raw 重解析零网络供给 source=srct_en（168 条零冲突）+锚源集合追加 srct_en/manual+ADR-0013/CONTEXT 词条；运行验收=换栈后 mapping_sync 常态计数（11-11） |
 | **队名覆盖守门（晨检第 16 项 + align-report 阈值）** | ✓ | — | ◐ | — | identity 票 02：最近业务日 forecast_coverage no_mapping>0 即红附队名（容忍度=0）+覆盖账无行/陈账黄+AlignmentReport.status <0.95 degraded；运行验收=换栈后首个晨检窗红绿读数（11-11） |
+| **探索轨扫描器阵列（S1/S4/S5 + 发现台账 + 周报）** | ✓ | — | ◐ | — | autoresearch 票 01+04：v45 两表（edge_findings/edge_observations）+`evaluation/edge_scan.py` 注册表+daily-wrap 尾挂步+CLI edge-scan+晨检第 17 项；真树首跑 2026-11-09（首条发现 p10-20:d、S5 历史回放 1,737 期/355 滚存标注、周报首期落 corpus reports/）；运行验收=wrap 定拍夜扫留痕（11-10 晨检第 17 项首读） |
 
 ## V1 功能冻结矩阵（2026-11-06 定版，tag v1.0.0）
 

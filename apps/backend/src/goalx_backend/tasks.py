@@ -77,7 +77,7 @@ from goalx_backend.data.quote_evidence import (
     bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
-from goalx_backend.evaluation import accuracy
+from goalx_backend.evaluation import accuracy, edge_scan
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
@@ -1227,6 +1227,35 @@ def freshness_shadow_day(business_date: str | None = None) -> dict[str, object]:
             "counts": counts,
             "summary": quote_evidence.freshness_shadow_summary(conn, bdate),
         }
+
+
+def edge_scan_day(business_date: str | None = None) -> dict[str, object]:
+    """
+    探索轨日扫（autoresearch 票 01/04）：wrap 收尾后跑全部在册扫描器。
+
+    观察日=北京业务日昨日（昨日场已结算）；S4 sharp 锚走 corpus 桥，
+    库缺席降级 None（drift 不可算→有分辨记零不冒充）。读写同 task_conn。
+    """
+    with task_conn() as conn, corpus_anchor() as duck_con:
+        return edge_scan.edge_scan_day(
+            conn,
+            business_date=business_date,
+            duck_con=duck_con,
+            resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
+        )
+
+
+def edge_digest_week() -> dict[str, object]:
+    """探索轨周报（票 04）：各扫描器窗口统计+新台账行+晋升建议。"""
+    with task_conn() as conn:
+        store = CorpusStore(get_settings().corpus_root)
+        try:
+            report = edge_scan.build_edge_digest(
+                conn, week_end=edge_scan.yesterday_business_date(), store=store
+            )
+        finally:
+            store.close()
+    return report
 
 
 def frozen_reconcile() -> dict[str, object]:

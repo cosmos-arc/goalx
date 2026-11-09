@@ -30,6 +30,7 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli srct-gate
     uv run python -m goalx_backend.cli archive-538
     uv run python -m goalx_backend.cli gold-build
+    uv run python -m goalx_backend.cli edge-scan [--scanner s1] [--face decade]
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, connect_research, migrate, table_exists
 from goalx_backend.evaluation import backtest as bt
-from goalx_backend.evaluation import baseline, market_lambda, unlock_report
+from goalx_backend.evaluation import baseline, edge_scan, market_lambda, unlock_report
 from goalx_backend.evaluation import bucket_reaudit as bkt
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import clv_decade as clvd
@@ -971,7 +972,7 @@ def _cmd_srct_gate(
 
 
 def _cmd_morning_check() -> None:
-    """09:05 晨检代码化（ingest-orchestration 票 01/05）：16 项只读红绿面。"""
+    """09:05 晨检代码化（ingest-orchestration 票 01/05）：17 项只读红绿面。"""
     items = run_morning_check(get_settings())
     for item in items:
         sys.stdout.write(f"[{item.status}] {item.name}: {item.detail}\n")
@@ -981,6 +982,94 @@ def _cmd_morning_check() -> None:
     sys.stdout.write(f"共 {len(items)} 项：fail={fails} degraded={degraded} ok={ok}\n")
     if fails:
         raise SystemExit(1)
+
+
+def _edge_scan_payload(
+    conn: sqlite3.Connection,
+    args: argparse.Namespace,
+    duck_con: duckdb.DuckDBPyConnection | None,
+    resolved: Settings,
+) -> dict[str, Any]:
+    """edge-scan 三面分派：--digest 周报 / --face decade 十年面 / 日扫。"""
+    business_date = args.window_end or edge_scan.yesterday_business_date()
+    if args.digest:
+        store = CorpusStore(resolved.corpus_root)
+        try:
+            report = edge_scan.build_edge_digest(
+                conn, week_end=business_date, store=store
+            )
+        finally:
+            store.close()
+        return {
+            **report,
+            "md_path": str(
+                resolved.corpus_root
+                / edge_scan.REPORTS_DIR
+                / f"{edge_scan.REPORT_BASENAME}.md"
+            ),
+        }
+    if args.face == "decade":
+        research = connect_research(resolved.research_db_path)
+        try:
+            return edge_scan.run_s1_decade(conn, research_conn=research)
+        finally:
+            research.close()
+    ctx = edge_scan.ScanContext(
+        business_date=business_date,
+        duck_con=duck_con,
+        resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
+    )
+    names = edge_scan.ACTIVE_SCANNERS if args.scanner == "all" else (args.scanner,)
+    return {
+        "business_date": business_date,
+        **{name: edge_scan.SCANNERS[name].run(conn, ctx) for name in names},
+    }
+
+
+def _cmd_edge_scan(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    探索轨扫描器阵列（autoresearch 票 01/04）：日扫/回填/十年面/周报。
+
+    默认=全部在册扫描器对昨日观察日跑一轮（同 wrap 夜拍）；--scanner 单
+    扫；--face decade=s1 研究库十年回放（口径验证面）；--digest=周报
+    （含 --mark 台账状态人裁）。JSON 同步 stdout。settings 注入口只服务
+    测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    if args.mark:
+        scanner, segment, status = (p.strip() for p in args.mark.split(","))
+        conn = connect(resolved.db_path)
+        try:
+            migrate(conn)
+            updated = edge_scan.mark_finding_status(
+                conn, scanner=scanner, segment_key=segment, status=status
+            )
+        finally:
+            conn.close()
+        payload: dict[str, Any] = {"mark": args.mark, "updated": updated}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        return
+    duck_con = None
+    if not args.no_corpus:
+        try:
+            duck_con = corpus_duckdb.connect(resolved)
+        except (duckdb.Error, OSError) as exc:
+            sys.stderr.write(f"corpus.duckdb 不可用（S4 drift 将记零）: {exc}\n")
+    try:
+        conn = connect(resolved.db_path)
+        try:
+            migrate(conn)  # 写台账前确保 schema 在位（task_conn 同款）
+            payload = _edge_scan_payload(conn, args, duck_con, resolved)
+        finally:
+            conn.close()
+    finally:
+        if duck_con is not None:
+            duck_con.close()
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _cmd_delay_audit(
@@ -1956,7 +2045,41 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "morning-check",
-        help="09:05晨检代码化(ingest-orchestration票01/05;16项只读红绿面,任何fail退出1)",
+        help="09:05晨检代码化(ingest-orchestration票01/05;17项只读红绿面,任何fail退出1)",
+    )
+    edge_parser = sub.add_parser(
+        "edge-scan",
+        help="探索轨扫描器阵列(autoresearch票01/04;S1校准/S4陈盘/S5滚存,发现台账+周报)",
+    )
+    edge_parser.add_argument(
+        "--scanner",
+        choices=("all", *edge_scan.SCANNERS),
+        default="all",
+        help="单扫描器重跑(默认全部在册)",
+    )
+    edge_parser.add_argument(
+        "--window-end",
+        help="观察日 YYYY-MM-DD(默认北京业务日昨日;回填用)",
+    )
+    edge_parser.add_argument(
+        "--face",
+        choices=("runtime", "decade"),
+        default="runtime",
+        help="s1 数据面:运行面滚动窗/研究库十年回放(口径验证)",
+    )
+    edge_parser.add_argument(
+        "--digest",
+        action="store_true",
+        help="出周报 digest(窗口统计+新台账行+晋升建议,两视图落语料树)",
+    )
+    edge_parser.add_argument(
+        "--mark",
+        help="台账状态人裁: scanner,segment,status(promoted|dead)",
+    )
+    edge_parser.add_argument(
+        "--no-corpus",
+        action="store_true",
+        help="不开语料duckdb(S4 drift记零;冒烟用,生产勿用)",
     )
     repair_parser = sub.add_parser(
         "repair-sale-status",
@@ -2081,6 +2204,7 @@ def main(argv: list[str] | None = None) -> int:
         "srct-gate": lambda: _cmd_srct_gate(args),
         "delay-audit": lambda: _cmd_delay_audit(args),
         "price-edge-audit": lambda: _cmd_price_edge_audit(args),
+        "edge-scan": lambda: _cmd_edge_scan(args),
         "morning-check": _cmd_morning_check,
         "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),

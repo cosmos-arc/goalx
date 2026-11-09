@@ -413,6 +413,50 @@ def pool_state_for_period(
     ).fetchone()
 
 
+def settled_state_rows(
+    conn: sqlite3.Connection,
+    *,
+    published_from: str | None = None,
+    published_to: str | None = None,
+) -> list[sqlite3.Row]:
+    """
+    已发布奖池结构期次（autoresearch 票 04 S5 回看底盘）。
+
+    pool_periods × pool_states 连表（无 state 的期次缺席——未兑付不回看），
+    按市场+期号排序输出；published_from/to（含端）按发布日过滤。
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if published_from is not None:
+        clauses.append("date(s.published_at) >= ?")
+        params.append(published_from)
+    if published_to is not None:
+        clauses.append("date(s.published_at) <= ?")
+        params.append(published_to)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"""
+        SELECT p.market_code, p.period_no, p.sales_deadline,
+               s.sales_amount, s.rollover_in, s.prize_tiers, s.published_at
+        FROM pool_states s
+        JOIN pool_periods p ON p.id = s.pool_period_id
+        {where}
+        ORDER BY p.market_code, p.period_no
+        """,  # noqa: S608 — where 子句为固定白名单片段，值全参数化
+        params,
+    ).fetchall()
+
+
+def pool_state_counts(conn: sqlite3.Connection) -> tuple[int, int]:
+    """（已发布结构期数, 其中滚存携带期数）——S5 周报存量摘要。"""
+    row = conn.execute(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(rollover_in > 0), 0) AS ri FROM pool_states"
+    ).fetchone()
+    if row is None:  # pragma: no cover - 聚合查询恒有一行
+        return (0, 0)
+    return int(row["c"]), int(row["ri"])
+
+
 def shares_captured_at(conn: sqlite3.Connection, pool_period_id: int) -> str | None:
     """一期最新份额快照的观测时点（无快照 None）。"""
     row = conn.execute(
