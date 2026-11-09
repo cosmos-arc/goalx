@@ -291,28 +291,28 @@ def _pool_list_payload(*, ttg_single: int, crs_single: int) -> dict:
     return payload
 
 
-def test_goals_single_eligible_from_pool_list() -> None:
+def test_pool_single_eligible_from_pool_list() -> None:
     match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
-    assert match.goals_single_eligible("ttg") is True
-    assert match.goals_single_eligible("crs") is False
+    assert match.pool_single_eligible("ttg") is True
+    assert match.pool_single_eligible("crs") is False
 
 
-def test_goals_single_eligible_market_block_wins_then_veto() -> None:
+def test_pool_single_eligible_market_block_wins_then_veto() -> None:
     payload = _pool_list_payload(ttg_single=0, crs_single=1)
     sub = payload["value"]["matchInfoList"][0]["subMatchList"][0]
     # 市场块 single 优先（防御路径：实测恒缺，出现时按票 35 同规则采信）
     sub["ttg"]["single"] = "1"
     match = sporttery.parse_matches(payload)[0]
-    assert match.goals_single_eligible("ttg") is True
+    assert match.pool_single_eligible("ttg") is True
     # poolList 缺该池 + 比赛级 bettingSingle=0 → False；开放 → None（未知）
     no_pool = json.loads(json.dumps(SAMPLE))
     match2 = sporttery.parse_matches(no_pool)[0]
-    assert match2.goals_single_eligible("ttg") is False
+    assert match2.pool_single_eligible("ttg") is False
     no_pool["value"]["matchInfoList"][0]["subMatchList"][0]["bettingSingle"] = 1
     match3 = sporttery.parse_matches(no_pool)[0]
-    assert match3.goals_single_eligible("crs") is None
-    with pytest.raises(ValueError, match="非进球类玩法"):
-        match3.goals_single_eligible("had")
+    assert match3.pool_single_eligible("crs") is None
+    with pytest.raises(ValueError, match="非池级单固玩法"):
+        match3.pool_single_eligible("had")
 
 
 def test_store_matches_records_goals_sale_status(db) -> None:

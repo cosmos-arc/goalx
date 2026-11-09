@@ -48,7 +48,11 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, observations, price_ledger
 from goalx_backend.data.ingest.shell import SPORTTERY_CALC_UA
 from goalx_backend.db import atomic, table_sql, trigger_sqls, utc_now_iso
-from goalx_backend.markets import GOALS_MARKETS, JC_POOL_MARKETS
+from goalx_backend.markets import (
+    GOALS_MARKETS,
+    JC_POOL_MARKETS,
+    NON_HAD_POOL_MARKETS,
+)
 from goalx_backend.models import (
     MatchCodeInput,
     ObservationInput,
@@ -163,12 +167,6 @@ class ParsedMatch:
                 return quote.single
         return None if self.is_single else False
 
-    def goals_single_eligible(self, market_code: str) -> bool | None:
-        """进球类（ttg/crs）单固资格（票 wb-04；委托池级链，名字保留历史）。"""
-        if market_code not in GOALS_MARKETS:
-            raise ValueError(f"非进球类玩法: {market_code}")
-        return self.pool_single_eligible(market_code)
-
     def pool_single_eligible(self, market_code: str) -> bool | None:
         """
         非 had 池（ttg/crs/hhad/hafu）单固资格（hhad/hafu 票 14 接入）。
@@ -178,7 +176,7 @@ class ParsedMatch:
         hhad/hafu 市场行自此落库（前向生效）：此前无行时代的单关资格按
         未知处理（消费方 fail-closed），历史不回扫补判。
         """
-        if market_code not in ("hhad", "hafu", *GOALS_MARKETS):
+        if market_code not in NON_HAD_POOL_MARKETS:
             raise ValueError(f"非池级单固玩法: {market_code}")
         for quote in self.markets:
             if quote.market_code == market_code and quote.single is not None:
@@ -496,7 +494,7 @@ def store_matches(
                     fx_store.record_had_confirmation(
                         conn, fixture, observed, observation_id
                     )
-            elif quote.market_code in ("hhad", "hafu", *GOALS_MARKETS):
+            elif quote.market_code in NON_HAD_POOL_MARKETS:
                 # 非 had 池市场行（进球类票 wb-04；hhad/hafu 票 14 接入）：
                 # 单固链 poolList 池级 → 市场块 → 比赛级否决（前向生效，
                 # 历史无行时代单关资格按未知拒，不回扫）

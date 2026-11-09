@@ -6,7 +6,7 @@ top-3 全四玩法）、熄灯探针零注留痕（stats 可见）、同锚重�
 池面 ¥20/晚测量帽、CLV 回填口径（源T 收盘三向 Shin 去水 − 入场隐含；
 非 had 腿/无锚诚实 NULL）。分来源账户面（P&L+CLV 滚动）同缝钉。
 
-had 资格闸（validate_had_selections）以真实时钟为判定时点，与固定
+had 资格闸（validate_selections）以真实时钟为判定时点，与固定
 种子时刻天然相斥——本文件按 test_gate_rejection 先例整组旁路；闸门
 本体由 v1 测试与 quote-reads seam 测试钉。
 """
@@ -48,7 +48,7 @@ SEEN_AT = "2026-11-09T12:50:00+00:00"  # 锚前有效观测
 @pytest.fixture(autouse=True)
 def _bypass_had_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """had 资格闸旁路（见模块 docstring）：本文件钉引擎行为非闸门行为。"""
-    monkeypatch.setattr(au, "validate_had_selections", lambda *args, **kwargs: None)
+    monkeypatch.setattr(au, "validate_selections", lambda *args, **kwargs: None)
 
 
 def _matrix(home_lam: float, away_lam: float) -> ScoreMatrix:

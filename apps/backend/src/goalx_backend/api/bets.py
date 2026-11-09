@@ -23,7 +23,7 @@ from goalx_backend.betting.bets import (
     record_purchase,
     replay_bet_id,
     resolve_paper_price,
-    validate_had_selections,
+    validate_selections,
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
 from goalx_backend.data import corpus_duckdb, mapping
@@ -425,7 +425,7 @@ def _persist_new_bet(
         reads = bind_quote_reads(
             db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
         )
-        validate_had_selections(db, legs, reads=reads)
+        validate_selections(db, legs, reads=reads)
         if payload.mode is BetMode.LIVE:
             # live 回录独立路径：按实际条款结算，不要求等于系统报价
             bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL

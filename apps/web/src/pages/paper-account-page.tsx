@@ -62,7 +62,7 @@ function AccountBody({ face }: { face: PaperAccount }) {
 		<div className="space-y-6" data-testid="paper-account">
 			{face.sample_sufficient ? null : (
 				<StatusToast testid="paper-account-insufficient">
-					样本不足（独立暴露 {face.independent_exposures_n ?? face.total_bets_n} 场 &lt; 200）——只报曲线，不判盈亏
+					样本不足（独立暴露 {face.independent_exposures_n} 场 &lt; 200）——只报曲线，不判盈亏
 				</StatusToast>
 			)}
 			<header className="grid gap-3 sm:grid-cols-4">

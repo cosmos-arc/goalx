@@ -2,7 +2,7 @@
 
 market_eligibility_problem 是玩法级「在售 + 单关资格」的单源谓词：预筛
 （auto_strategy.anchor_candidates）与下游建注资格链
-（bets.validate_had_selections 非 had 腿）两处引用同一判定——外部审计
+（bets.validate_selections 非 had 腿）两处引用同一判定——外部审计
 反例转正：had 在售但 ttg 停售且不允许单关 → 拒绝（此前预筛硬编码 had、
 下游非 had 腿零验证，两门都不拦）。
 
@@ -19,7 +19,7 @@ import pytest
 from goalx_backend.betting.bets import (
     BetEligibilityError,
     market_eligibility_problem,
-    validate_had_selections,
+    validate_selections,
 )
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.models import LegInput, SaleStatusInput, Tier
@@ -190,7 +190,7 @@ def test_downstream_rejects_ttg_single_when_had_only_on_sale(
         db, fixture, market_code="ttg", sale_state="stopped", single_eligible=False
     )
     with pytest.raises(BetEligibilityError, match=r"ttg.*sale_stopped"):
-        validate_had_selections(db, [_ttg_leg(fixture)], as_of=AS_OF)
+        validate_selections(db, [_ttg_leg(fixture)], as_of=AS_OF)
 
 
 def test_downstream_single_unknown_rejected_parlay_passes(
@@ -203,13 +203,13 @@ def test_downstream_single_unknown_rejected_parlay_passes(
     )
     # 单关资格未知 → 拒（fail-closed）
     with pytest.raises(BetEligibilityError, match="single_unknown"):
-        validate_had_selections(db, [_ttg_leg(fixture)], as_of=AS_OF)
+        validate_selections(db, [_ttg_leg(fixture)], as_of=AS_OF)
     # 两腿串关（不同场）无单关要求 → 通过（销售态按比赛行在售）
     fixture2 = _seed_fixture(db, "乙")
     _seed_sale(
         db, fixture2, market_code=None, sale_state="on_sale", single_eligible=None
     )
-    validate_had_selections(
+    validate_selections(
         db,
         [_ttg_leg(fixture), _ttg_leg(fixture2, odds=4.2)],
         as_of=AS_OF,

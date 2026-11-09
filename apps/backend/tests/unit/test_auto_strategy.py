@@ -301,7 +301,7 @@ def test_gate_rejection_recorded_via_place(db: sqlite3.Connection, monkeypatch) 
     def _reject(conn, legs, *, as_of=None, reads=None):
         raise au.BetEligibilityError("fixture 不可投: 测试注入拒绝")
 
-    monkeypatch.setattr(au, "validate_had_selections", _reject)
+    monkeypatch.setattr(au, "validate_selections", _reject)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["gate_rejected"] >= 1

@@ -38,7 +38,7 @@ from goalx_backend.betting.bets import (
     create_bet_with_legs,
     intent_fingerprint,
     market_eligibility_problem,
-    validate_had_selections,
+    validate_selections,
 )
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
@@ -481,7 +481,7 @@ def _place(
         # 资格闸全腿无条件过（票 14）：had 腿深链 + 非 had 腿玩法级
         # （market_eligibility_problem）——原「仅 had/hhad 在场才验」跳过
         # 了纯 ttg/crs 注。与预筛同源，前向生效（历史注不追溯改判）。
-        validate_had_selections(conn, legs, reads=reads)
+        validate_selections(conn, legs, reads=reads)
         create_bet_with_legs(
             conn, draft, reads=reads, price_source=PRICE_SOURCE_SYSTEM_PAPER
         )

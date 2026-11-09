@@ -15,7 +15,7 @@ from goalx_backend.betting.bets import (
     BetEligibilityError,
     create_bet_with_legs,
     record_purchase,
-    validate_had_selections,
+    validate_selections,
 )
 from goalx_backend.betting.settle import preview_draw_result_change, run_settlement
 from goalx_backend.data.ingest.demo import DemoSeedRefused, seed_demo
@@ -45,16 +45,16 @@ def ids(demo: dict[str, object]) -> tuple[int, int, int]:
     return int(fid[0]), int(fid[1]), int(fid[2])
 
 
-def test_validate_had_selections_rules(db: sqlite3.Connection, demo) -> None:
+def test_validate_selections_rules(db: sqlite3.Connection, demo) -> None:
     single_ok, parlay_only, stopped = ids(demo)
 
-    validate_had_selections(db, [_had_leg(single_ok)])  # 单固在售 → 通过
+    validate_selections(db, [_had_leg(single_ok)])  # 单固在售 → 通过
     with pytest.raises(BetEligibilityError, match="单固"):
-        validate_had_selections(db, [_had_leg(parlay_only)])
+        validate_selections(db, [_had_leg(parlay_only)])
     # 串关共同可购买：两腿同一 as_of 判定均非拒绝
-    validate_had_selections(db, [_had_leg(single_ok), _had_leg(parlay_only)])
+    validate_selections(db, [_had_leg(single_ok), _had_leg(parlay_only)])
     with pytest.raises(BetEligibilityError, match="sale_stopped"):
-        validate_had_selections(db, [_had_leg(single_ok), _had_leg(stopped)])
+        validate_selections(db, [_had_leg(single_ok), _had_leg(stopped)])
     # 已开赛(未来 as_of)拒绝
     kickoff = str(
         db.execute(
@@ -63,11 +63,11 @@ def test_validate_had_selections_rules(db: sqlite3.Connection, demo) -> None:
     )
     after_kickoff = datetime.fromisoformat(kickoff).isoformat(timespec="seconds")
     with pytest.raises(BetEligibilityError, match="kickoff_passed"):
-        validate_had_selections(db, [_had_leg(single_ok)], as_of=after_kickoff)
+        validate_selections(db, [_had_leg(single_ok)], as_of=after_kickoff)
     # 空 evidence 场次：单关资格未知 → 拒绝(不倒填资格)
     blank = db.execute("SELECT MAX(id) + 100 AS id FROM fixtures").fetchone()["id"]
     with pytest.raises(BetEligibilityError, match="不可投"):
-        validate_had_selections(db, [_had_leg(int(blank))])
+        validate_selections(db, [_had_leg(int(blank))])
 
 
 def test_non_had_leg_gets_market_level_validation(db: sqlite3.Connection, demo) -> None:
@@ -86,9 +86,9 @@ def test_non_had_leg_gets_market_level_validation(db: sqlite3.Connection, demo) 
     )
     # 单关：hhad 单固资格未知（demo 无 hhad 市场行）→ 拒
     with pytest.raises(BetEligibilityError, match=r"hhad.*single_unknown"):
-        validate_had_selections(db, [hhad_leg])
+        validate_selections(db, [hhad_leg])
     # 串关：不同场两腿，无单关要求 → 通过
-    validate_had_selections(db, [hhad_leg, _had_leg(parlay_only)])
+    validate_selections(db, [hhad_leg, _had_leg(parlay_only)])
 
 
 def test_record_purchase_actual_terms_flow(db: sqlite3.Connection, demo) -> None:

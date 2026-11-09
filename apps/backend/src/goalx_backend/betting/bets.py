@@ -248,7 +248,7 @@ def rebind_paper_price(
     锁定即正式赛前决策：与建注间隔内报价可能已动。价变且未确认更新 →
     raise PriceMismatchError（409 返回新价）；allow_update=True = 客户端
     已确认按服务器价落库——locked_odds 刷新为当前有效价并重绑快照身份。
-    不可绑腿维持原样（锁定时点资格校验另由 validate_had_selections 把关）。
+    不可绑腿维持原样（锁定时点资格校验另由 validate_selections 把关）。
     moment=决策时刻（票 09 五价记录传入同刻，保证 decision 阶段价与重绑
     同一 PIT 面；缺省取当下）。
     """
@@ -448,7 +448,7 @@ def market_eligibility_problem(
     had 深链一致：sale_status_unknown / sale_stopped / sale_not_on_sale /
     sale_window_closed / sale_status_unknown_value / single_ineligible /
     single_unknown）。预筛（auto_strategy.anchor_candidates）与下游建注
-    资格链（validate_had_selections 非 had 腿）两处引用、一处定义。
+    资格链（validate_selections 非 had 腿）两处引用、一处定义。
 
     语义以官方规则为准，此处为仪器可达的近似口径（docstring 随口径同步）：
     - 在售状态 = latest_sale_status_asof 共享读（市场级行优先于比赛级
@@ -487,7 +487,7 @@ def market_eligibility_problem(
     return problem
 
 
-def validate_had_selections(
+def validate_selections(
     conn: sqlite3.Connection,
     legs: list[LegInput],
     *,
@@ -740,7 +740,7 @@ def record_purchase(
                     "paper 注不接受实际条款(actuals); 手工情景走 manual_research 分类"
                 )
             for bet in bets:
-                validate_had_selections(
+                validate_selections(
                     conn,
                     _bet_legs(bet),
                     reads=reads if reads is not None else _legacy_reads(conn),
