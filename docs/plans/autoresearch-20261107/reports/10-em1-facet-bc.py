@@ -22,19 +22,20 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import math
 import os
 from collections import defaultdict
 
 import numpy as np
 
 from _lib import (
+    bh_family,
     clustered_mean,
     devig,
     load_jc,
     load_jc_traj,
     load_euro,
     load_pin_1x2,
+    one_sided_p,
     pair_fixtures,
 )
 
@@ -61,22 +62,6 @@ def window_of(season: str | None) -> str | None:
     if y0 in (2024, 2025):
         return "confirmation"
     return None
-
-
-def one_sided_p(z: float) -> float:
-    return 0.5 * math.erfc(z / math.sqrt(2.0))
-
-
-def bh(pairs_pv: list[tuple[str, float]], alpha: float = 0.05) -> set[str]:
-    if not pairs_pv:
-        return set()
-    m = len(pairs_pv)
-    ranked = sorted(pairs_pv, key=lambda kv: kv[1])
-    k_max = 0
-    for i, (_e, p) in enumerate(ranked, 1):
-        if p <= alpha * i / m:
-            k_max = i
-    return {e for e, _p in ranked[:k_max]}
 
 
 def quote_at(traj, t):
@@ -296,7 +281,6 @@ def main() -> None:
                     "note": "T=ko-2h PIT Pinnacle" ,
                 })
 
-    val_pv = []
     val_cache = {}
     for facet, family, sname in candidates:
         denom, bet = None, None
@@ -305,11 +289,11 @@ def main() -> None:
                 denom, bet = d2, b2
                 break
         if denom is None:
+            # 验证窗无行：不入账（既有行为），但入 BH 家族（z=nan，票 12 修正）
+            val_cache[(facet, family, sname)] = (None, False)
             continue
         m = metrics(denom, bet)
         ok = promo_gate(m)
-        if ok:
-            val_pv.append((f"10-{facet}-{family}-{sname}-validation", one_sided_p(m["ev_z"])))
         val_cache[(facet, family, sname)] = (m, ok)
         ledger_rows.append({
             "entry_id": f"10-{facet}-{family}-{sname}-validation", "ts": dt.datetime.now().isoformat(timespec="seconds"),
@@ -319,7 +303,12 @@ def main() -> None:
             "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
             "stage": "bh_pending" if ok else "dead", "note": "",
         })
-    bh_pass = bh(val_pv)
+    # BH 家族=当轮全部候选（含全阴与验证窗无行者；票 12 修正：先筛后校废除）
+    val_family = [
+        (f"10-{f}-{fa}-{s}-validation", (m["ev_z"] if m is not None else float("nan")))
+        for (f, fa, s), (m, _ok) in val_cache.items()
+    ]
+    bh_pass = bh_family(val_family)
     promoted = [k for k, (_m, ok) in val_cache.items() if ok and f"10-{k[0]}-{k[1]}-{k[2]}-validation" in bh_pass]
 
     survivors = []
@@ -345,8 +334,9 @@ def main() -> None:
         })
 
     append_ledger(ledger_rows)
-    print(f"\nB/C：搜索切片候选 {len(candidates)}；验证过门 {len(val_pv)}；BH 后晋升 {len(promoted)}；确认幸存 {len(survivors)}")
-    print(f"多重校正账：验证窗候选检定 m={len(val_pv)}，α=0.05 预期假阳性 {len(val_pv)*0.05:.1f}")
+    n_gate = sum(1 for _m, ok in val_cache.values() if ok)
+    print(f"\nB/C：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；BH 后晋升 {len(promoted)}；确认幸存 {len(survivors)}")
+    print(f"多重校正账：BH 家族=验证窗全部候选 m={len(val_family)}（含全阴，票 12 修正），α=0.05 预期假阳性 {len(val_family)*0.05:.1f}")
 
     print("\n[覆盖账]")
     print("  xG 面：未搜索（match_features.xg=赛后实际值，无赛前预测面=后视）")

@@ -291,28 +291,28 @@ def _pool_list_payload(*, ttg_single: int, crs_single: int) -> dict:
     return payload
 
 
-def test_goals_single_eligible_from_pool_list() -> None:
+def test_pool_single_eligible_from_pool_list() -> None:
     match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
-    assert match.goals_single_eligible("ttg") is True
-    assert match.goals_single_eligible("crs") is False
+    assert match.pool_single_eligible("ttg") is True
+    assert match.pool_single_eligible("crs") is False
 
 
-def test_goals_single_eligible_market_block_wins_then_veto() -> None:
+def test_pool_single_eligible_market_block_wins_then_veto() -> None:
     payload = _pool_list_payload(ttg_single=0, crs_single=1)
     sub = payload["value"]["matchInfoList"][0]["subMatchList"][0]
     # 市场块 single 优先（防御路径：实测恒缺，出现时按票 35 同规则采信）
     sub["ttg"]["single"] = "1"
     match = sporttery.parse_matches(payload)[0]
-    assert match.goals_single_eligible("ttg") is True
+    assert match.pool_single_eligible("ttg") is True
     # poolList 缺该池 + 比赛级 bettingSingle=0 → False；开放 → None（未知）
     no_pool = json.loads(json.dumps(SAMPLE))
     match2 = sporttery.parse_matches(no_pool)[0]
-    assert match2.goals_single_eligible("ttg") is False
+    assert match2.pool_single_eligible("ttg") is False
     no_pool["value"]["matchInfoList"][0]["subMatchList"][0]["bettingSingle"] = 1
     match3 = sporttery.parse_matches(no_pool)[0]
-    assert match3.goals_single_eligible("crs") is None
-    with pytest.raises(ValueError, match="非进球类玩法"):
-        match3.goals_single_eligible("had")
+    assert match3.pool_single_eligible("crs") is None
+    with pytest.raises(ValueError, match="非池级单固玩法"):
+        match3.pool_single_eligible("had")
 
 
 def test_store_matches_records_goals_sale_status(db) -> None:
@@ -332,8 +332,29 @@ def test_store_matches_records_goals_sale_status(db) -> None:
     assert by_market["ttg"]["single_eligible"] == 1
     assert by_market["crs"]["single_eligible"] == 0
     assert by_market["ttg"]["sale_state"] == "on_sale"
-    # hhad/hafu 不落市场级行（票据面范围之外，保持原行为）
-    assert set(by_market) == {None, "had", "ttg", "crs"}
+
+
+def test_store_matches_records_hhad_hafu_sale_status(db) -> None:
+    """票 14：hhad/hafu 市场行随快照落库——玩法资格链的前向数据面。
+
+    单固链同进球类：poolList 池级（HHAD single=0 → 0）；池缺（HAFU）
+    落比赛级否决（bettingSingle=0 → 0）。历史无行时代按未知拒单关，
+    本行开始前向可判（不回扫历史）。
+    """
+    match = sporttery.parse_matches(_pool_list_payload(ttg_single=1, crs_single=0))[0]
+    sporttery.store_matches(db, [match])
+    fixture = db.execute("SELECT id FROM fixtures").fetchone()["id"]
+    rows = db.execute(
+        "SELECT market_code, sale_state, single_eligible FROM sale_statuses"
+        " WHERE fixture_id=?",
+        (fixture,),
+    ).fetchall()
+    by_market = {row["market_code"]: row for row in rows}
+    # 五池市场行齐（had/hhad/ttg/crs/hafu）+ 比赛级行
+    assert set(by_market) == {None, "had", "hhad", "ttg", "crs", "hafu"}
+    assert by_market["hhad"]["single_eligible"] == 0  # poolList HHAD single=0
+    assert by_market["hafu"]["single_eligible"] == 0  # 池缺 + bettingSingle=0 否决
+    assert by_market["hhad"]["sale_state"] == "on_sale"
 
 
 # --- 票 38：had 单固误记修正（poolList 池级 single）---

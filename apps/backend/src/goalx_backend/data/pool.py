@@ -324,6 +324,20 @@ def pool_period_count(conn: sqlite3.Connection) -> int:
     return int(row["n"]) if row is not None else 0
 
 
+def pool_period_meta(
+    conn: sqlite3.Connection, pool_period_ids: list[int]
+) -> dict[int, tuple[str, str]]:
+    """期次 id → (market_code, period_no)（计税归集读面；缺行不返回）。"""
+    if not pool_period_ids:
+        return {}
+    marks = ",".join("?" * len(pool_period_ids))
+    rows = conn.execute(
+        f"SELECT id, market_code, period_no FROM pool_periods WHERE id IN ({marks})",  # noqa: S608 占位符拼接
+        pool_period_ids,
+    ).fetchall()
+    return {int(r["id"]): (str(r["market_code"]), str(r["period_no"])) for r in rows}
+
+
 def pool_period_deadline(conn: sqlite3.Connection, pool_period_id: int) -> str | None:
     """一期销售截止时间（无则 None）。"""
     row = conn.execute(

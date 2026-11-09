@@ -951,6 +951,32 @@ def fixture_id_for_match_code(conn: sqlite3.Connection, code: str) -> int | None
     return int(row["fixture_id"]) if row else None
 
 
+def jingcai_business_dates(
+    conn: sqlite3.Connection, fixture_ids: Sequence[int]
+) -> dict[int, str]:
+    """
+    批量竞彩编号业务日：fixture → 最晚编号业务日。
+
+    无码场缺席；多码取 MAX，同 fixtures_with_teams 口径——改期重挂以
+    末次销售日为准。计税期次归集消费（edge-audit 票 13：竞彩期=票内
+    最晚比赛编号日期）。
+    """
+    ids = sorted(set(fixture_ids))
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT fixture_id, MAX(business_date) AS business_date
+        FROM match_codes
+        WHERE kind = 'jingcai' AND fixture_id IN ({placeholders})
+        GROUP BY fixture_id
+        """,  # noqa: S608 — placeholder 拼接为定长 ? 列表
+        ids,
+    ).fetchall()
+    return {int(row["fixture_id"]): str(row["business_date"]) for row in rows}
+
+
 def fixtures_with_teams(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """
     全部场次 + 主客队 id/名称 + 联赛（票 77 映射同步的左侧面）。

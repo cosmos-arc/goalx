@@ -23,7 +23,7 @@ from goalx_backend.betting.bets import (
     record_purchase,
     replay_bet_id,
     resolve_paper_price,
-    validate_had_selections,
+    validate_selections,
 )
 from goalx_backend.betting.staking import StakeSuggestion, suggest_stake
 from goalx_backend.data import corpus_duckdb, mapping
@@ -425,7 +425,7 @@ def _persist_new_bet(
         reads = bind_quote_reads(
             db, duck_con, lambda fid: mapping.srct_sid_for_fixture(db, fid)
         )
-        validate_had_selections(db, legs, reads=reads)
+        validate_selections(db, legs, reads=reads)
         if payload.mode is BetMode.LIVE:
             # live 回录独立路径：按实际条款结算，不要求等于系统报价
             bound, price_source = legs, PRICE_SOURCE_LIVE_BACKFILL
@@ -907,7 +907,7 @@ class CurvePointView(BaseModel):
 
 
 class StrategyFaceView(BaseModel):
-    """一个策略面（auto-v1/人工）的账户行（票 04）。"""
+    """一个策略面（auto-v1/人工）的账户行（票 04；ROI 双栏=票 13）。"""
 
     strategy: str
     bets_n: int
@@ -915,7 +915,9 @@ class StrategyFaceView(BaseModel):
     open_n: int
     stake_settled: float
     profit_settled: float
-    realized_roi: float | None = None
+    realized_roi: float | None = None  # 等注口径（Σ利润/Σ注金）
+    # 按场口径（场 ROI 先并再跨场等权平均；跨场串关不入此口径）
+    realized_roi_per_match: float | None = None
     mean_decision_ev: float | None = None
     ev_realization_gap: float | None = None
     curve: list[CurvePointView] = []
@@ -931,7 +933,11 @@ class PerMarketView(BaseModel):
 
 
 class EdgeSourceFaceView(BaseModel):
-    """分来源账户行（edge-program 票 01）：分来源 P&L + CLV 滚动。"""
+    """
+    分来源账户行（edge-program 票 01）：分来源 P&L + CLV 滚动。
+
+    clv 均值/标准误按场簇并一（票 13：同场多锚并成一场，跨场统计）。
+    """
 
     source: str
     bets_n: int
@@ -953,6 +959,9 @@ class PaperAccountView(BaseModel):
     total_profit_settled: float
     bankroll_now: float
     sample_sufficient: bool
+    # 独立暴露分母（票 13）：已结算、合格（非 void）、按场独立的暴露数——
+    # sample_sufficient 的判读依据（≠total_bets_n）
+    independent_exposures_n: int = 0
     floating_stake_fixed: float
     floating_stake_pool: float
     per_market: list[PerMarketView]
@@ -972,9 +981,11 @@ def paper_account(db: DbDep) -> PaperAccountView:
     """
     auto-paper 票 04：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列；
 
-    EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；累计注数<200 时
-    sample_sufficient=false（前端挂「样本不足，不判盈亏」横幅）；
-    auto-v1 与人工纸面分列；税后=tax_on_prize 逐注奖金口径。
+    EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；ROI 双栏=等注口径与
+    按场口径（票 13 资金规则一致性）；独立暴露（已结算、非 void、按场
+    独立）<200 时 sample_sufficient=false（前端挂「样本不足，不判盈亏」
+    横幅）；auto-v1 与人工纸面分列；税后=同人+同期+同游戏归集计税口径
+    （2024 年第 12 号公告，竞彩期=票内最晚比赛编号日期）。
     """
     face = account.paper_account_face(db)
     return PaperAccountView(
@@ -988,6 +999,7 @@ def paper_account(db: DbDep) -> PaperAccountView:
                 stake_settled=f.stake_settled,
                 profit_settled=f.profit_settled,
                 realized_roi=f.realized_roi,
+                realized_roi_per_match=f.realized_roi_per_match,
                 mean_decision_ev=f.mean_decision_ev,
                 ev_realization_gap=f.ev_realization_gap,
                 curve=[CurvePointView(date=d, value=v) for d, v in f.curve],
@@ -999,6 +1011,7 @@ def paper_account(db: DbDep) -> PaperAccountView:
         total_profit_settled=face.total_profit_settled,
         bankroll_now=face.bankroll_now,
         sample_sufficient=face.sample_sufficient,
+        independent_exposures_n=face.independent_exposures_n,
         floating_stake_fixed=face.floating_stake_fixed,
         floating_stake_pool=face.floating_stake_pool,
         per_market=[

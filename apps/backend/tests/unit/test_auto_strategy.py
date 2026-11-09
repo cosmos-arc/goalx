@@ -301,7 +301,7 @@ def test_gate_rejection_recorded_via_place(db: sqlite3.Connection, monkeypatch) 
     def _reject(conn, legs, *, as_of=None, reads=None):
         raise au.BetEligibilityError("fixture 不可投: 测试注入拒绝")
 
-    monkeypatch.setattr(au, "validate_had_selections", _reject)
+    monkeypatch.setattr(au, "validate_selections", _reject)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["gate_rejected"] >= 1
@@ -453,3 +453,55 @@ def test_hhad_mixed_or_bad_line_excluded_not_crash(db: sqlite3.Connection) -> No
         " WHERE b.strategy_version='auto-v1' AND l.market_code='hhad'"
     ).fetchall()
     assert f_bad not in {int(r["fixture_id"]) for r in rows}  # 混线/坏线场被排除
+
+
+def test_prescreen_rejects_stopped_or_non_single_market(db: sqlite3.Connection) -> None:
+    """票 14 反例转正：had 在售但 ttg 停售且不允许单关 → ttg 拒（玩法级预筛）。
+
+    外部审计缺陷 5：预筛原硬编码 had 在售判定（latest_sale_status_asof
+    的 market 参数固定 "had"），非 had 票蹭 had 在售过闸；现按玩法行
+    （had/hhad/ttg/crs/hafu）分别验在售与单关资格（与下游建注闸同源，
+    market_eligibility_problem 单源两引用）。
+    """
+    stopped = _seed_fixture(db, "卯", code="周日003")
+    _seed_on_sale(db, stopped)  # 比赛级行 on_sale（had 面可投）
+    _seed_forecast(db, stopped, 1.3, 1.1)
+    fx_store.append_sale_status(
+        db,
+        SaleStatusInput(
+            fixture_id=stopped,
+            market_code="ttg",
+            sale_state="stopped",
+            single_eligible=False,
+            observed_at=SEEN_AT,
+        ),
+    )
+    _seed_positive_single(db, stopped, "2", ev=0.5)  # ttg 正 EV（否则不会入选）
+
+    not_single = _seed_fixture(db, "辰", code="周日004")
+    _seed_on_sale(db, not_single)
+    _seed_forecast(db, not_single, 1.3, 1.1)
+    fx_store.append_sale_status(
+        db,
+        SaleStatusInput(
+            fixture_id=not_single,
+            market_code="ttg",
+            sale_state="on_sale",
+            single_eligible=False,  # 在售但非单固
+            observed_at=SEEN_AT,
+        ),
+    )
+    _seed_positive_single(db, not_single, "2", ev=0.5)
+    db.commit()
+
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 0  # 两场唯一正 EV 面（ttg 单关）都被玩法闸拦下
+    assert stats["candidates"] == 0
+    assert stats["excluded_market_sale_stopped"] == 1
+    assert stats["excluded_market_single_ineligible"] == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) c FROM bets WHERE strategy_version='auto-v1'"
+        ).fetchone()["c"]
+        == 0
+    )

@@ -10,7 +10,7 @@ import duckdb
 import pytest
 
 from goalx_backend.betting import funnel as funnel_mod
-from goalx_backend.betting.bets import validate_had_selections
+from goalx_backend.betting.bets import validate_selections
 from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
@@ -146,7 +146,7 @@ def test_ev_snapshot_consensus_via_corpus(db: sqlite3.Connection) -> None:
     assert legacy_snap.prob_consensus is None
 
 
-def test_validate_had_selections_corpus_path(db: sqlite3.Connection) -> None:
+def test_validate_selections_corpus_path(db: sqlite3.Connection) -> None:
     """下注校验：corpus 行源下 EU 段原因不再是 eu_no_quote（JC 门独立）。"""
     fixture_id = seed_on_sale_fixture(db)
     duck_con = seed_corpus_duck()
@@ -159,7 +159,7 @@ def test_validate_had_selections_corpus_path(db: sqlite3.Connection) -> None:
         )
     ]
     # corpus 行源下校验通过（不抛）= EU 段可判定；JC 门（300s）独立于此
-    validate_had_selections(db, legs, as_of=AS_OF, reads=corpus_reads(db, duck_con))
+    validate_selections(db, legs, as_of=AS_OF, reads=corpus_reads(db, duck_con))
 
 
 def _haircut_rows(db: sqlite3.Connection, fixture_id: int) -> Any:
