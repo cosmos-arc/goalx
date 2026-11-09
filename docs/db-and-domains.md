@@ -1309,6 +1309,7 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | --- | --- | --- |
 | `business_date` | TEXT | PK，NOT NULL |
 | `anchor_label` | TEXT | PK，NOT NULL |
+| `strategy` | TEXT | PK，NOT NULL，DEFAULT 'auto-v1' |
 | `ran_at` | TEXT | NOT NULL |
 | `candidates` | INTEGER | NOT NULL，DEFAULT 0 |
 | `bets` | INTEGER | NOT NULL，DEFAULT 0 |
@@ -1316,7 +1317,7 @@ append-only 触发器：`settlement_revisions_no_delete`、`settlement_revisions
 | `zero_note` | TEXT | — |
 | `detail_json` | TEXT | — |
 
-唯一键 `UNIQUE(`business_date`, `anchor_label`)`
+唯一键 `UNIQUE(`business_date`, `anchor_label`, `strategy`)`
 <!-- schema-doc:END:table:auto_paper_runs -->
 <!-- schema-doc:BEGIN:table:funnel_days -->
 #### `funnel_days`

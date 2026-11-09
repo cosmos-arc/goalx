@@ -47,6 +47,7 @@ from goalx_backend.models import (
 type duckdb_con_t = duckdb.DuckDBPyConnection | None
 
 AUTO_V2 = "auto-v2"
+CLV_SCAN_LIMIT = 500  # 每夜回填扫描注数上限（新结算优先；shortcut 注记见 backfill）
 
 
 @dataclass(frozen=True)
@@ -96,22 +97,25 @@ def _with_had_slot(
     chosen: list[au.Pick], singles: list[au.Pick], params: AutoV2Params
 ) -> list[au.Pick]:
     """
-    末槽让位换入最优正 EV had 单关（修订单见 AutoV2Params.had_clv_slot）。
+    Had 保底槽（修订单见 AutoV2Params.had_clv_slot）。
 
-    末槽=保留集（前 N−1）之外让位：被让位场自身的 had 候选随之解禁，
-    修订①每场至多一注不变（换入者只取保留集外场次）。
+    不满员→从未入选项的场补一注最优正 EV had（稀疏夜不降级既有 EV 信号，
+    无可补则诚实零 had）；满员→末槽让位：被让位场解禁后取保留集外最优
+    had，修订①每场至多一注不变。
     """
     if not params.had_clv_slot or any(p.market_code == "had" for p in chosen):
         return chosen
+    had_picks = [pick for pick in singles if pick.market_code == "had"]
+    taken = {pick.fixture_id for pick in chosen}
+    if len(chosen) < params.top_singles:
+        appended = au.select_singles(
+            [pick for pick in had_picks if pick.fixture_id not in taken], params
+        )
+        return [*chosen, appended[0]] if appended else chosen
     retained = chosen[:-1]
-    taken = {p.fixture_id for p in retained}
+    freed = {pick.fixture_id for pick in retained}
     had_best = au.select_singles(
-        [
-            pick
-            for pick in singles
-            if pick.market_code == "had" and pick.fixture_id not in taken
-        ],
-        params,
+        [pick for pick in had_picks if pick.fixture_id not in freed], params
     )
     return [*retained, had_best[0]] if had_best else chosen
 
@@ -227,7 +231,9 @@ def run_auto_v2(
             stake_budget=budget,
         )
     )
-    au.record_anchor_run(conn, business_date, anchor_label, stats=stats)
+    au.record_anchor_run(
+        conn, business_date, anchor_label, stats=stats, strategy=AUTO_V2
+    )
     return stats
 
 
@@ -271,10 +277,15 @@ def backfill_bet_clv(
     已结算 auto 纸面注的 CLV 回填（幂等：只补 clv IS NULL 行）。
 
     范围=mode=paper 且 strategy_version 非空（auto-v1/auto-v2 系统决策；
-    人工纸面/回录注不属探针仪器面）。全腿 had 才可算——源T 收盘锚是 1x2
-    三向，非 had 腿与非全 had 票记 skipped_non_had（口径诚实，不硬凑）；
+    人工纸面/回录注不属探针仪器面）。全腿 had 且选择码在三向闭集内才可
+    算——源T 收盘锚是 1x2，非 had 腿/闭集外选择码记 skipped_non_had，
     无锚（语料缺席/CorpusScope 外/匹配不中）记 skipped_no_anchor，列保持
-    NULL 待下次 wrap 重试。as-of 由 data 桥保证（published_at ≤ 开球）。
+    NULL 待下次 wrap 重试（correctness F1：闭集外选择码按无锚降级不炸
+    wrap——历史脏行不制造永久夜炸循环）。as-of 由 data 桥保证
+    （published_at ≤ 开球）。
+
+    shortcut: 每夜只扫最近 CLV_SCAN_LIMIT 注（新结算优先），无锚旧行
+    不再重试；夜注量升破限或锚回补需求出现时，升级=无锚墓碑列。
     """
     stats = {"filled": 0, "skipped_non_had": 0, "skipped_no_anchor": 0}
     rows = conn.execute(
@@ -284,8 +295,10 @@ def backfill_bet_clv(
         FROM bets b JOIN bet_legs l ON l.bet_id = b.id
         WHERE b.mode = 'paper' AND b.status IN ('won', 'lost', 'void')
           AND b.clv IS NULL AND b.strategy_version IS NOT NULL
-        ORDER BY b.settled_at, b.id, l.id
-        """
+        ORDER BY b.settled_at DESC, b.id DESC, l.id
+        LIMIT ?
+        """,
+        (CLV_SCAN_LIMIT * 3,),
     ).fetchall()
     by_bet: dict[int, list[sqlite3.Row]] = {}
     for row in rows:
@@ -293,7 +306,11 @@ def backfill_bet_clv(
     triplets: dict[int, tuple[float, float, float] | None] = {}
     with atomic(conn):
         for bet_id, legs in by_bet.items():
-            if any(str(leg["market_code"]) != "had" for leg in legs):
+            if any(
+                str(leg["market_code"]) != "had"
+                or str(leg["selection_code"]) not in SELECTIONS
+                for leg in legs
+            ):
                 stats["skipped_non_had"] += 1
                 continue
             close_probs: list[float] = []

@@ -684,8 +684,14 @@ def record_anchor_run(
     anchor_label: str,
     *,
     stats: dict[str, int],
+    strategy: str = AUTO_V1,
 ) -> None:
-    """锚台账 upsert：行存在=跑了；zero_note 可区分零注原因（票验收）。"""
+    """
+    锚台账 upsert（v46 起按 strategy 分行）。
+
+    行存在=跑了；zero_note 可区分零注原因（票验收）。同引擎同锚重跑才
+    MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。
+    """
     zero_note = None
     if stats.get("bets", 0) == 0 and stats.get("slips", 0) == 0:
         if stats.get("candidates", 0) == 0:
@@ -700,10 +706,10 @@ def record_anchor_run(
         conn.execute(
             """
             INSERT INTO auto_paper_runs
-                (business_date, anchor_label, ran_at, candidates, bets, slips,
-                 zero_note, detail_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(business_date, anchor_label) DO UPDATE SET
+                (business_date, anchor_label, strategy, ran_at, candidates,
+                 bets, slips, zero_note, detail_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(business_date, anchor_label, strategy) DO UPDATE SET
               ran_at = excluded.ran_at, candidates = excluded.candidates,
               bets = MAX(auto_paper_runs.bets, excluded.bets),
               slips = MAX(auto_paper_runs.slips, excluded.slips),
@@ -716,6 +722,7 @@ def record_anchor_run(
             (
                 business_date,
                 anchor_label,
+                strategy,
                 datetime.now(UTC).isoformat(),
                 stats.get("candidates", 0),
                 stats.get("bets", 0),

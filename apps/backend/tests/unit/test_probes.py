@@ -551,3 +551,84 @@ def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
     assert migrate(db) == 46
     cols = {row["name"] for row in db.execute("PRAGMA table_info(bets)").fetchall()}
     assert {"edge_source", "clv"} <= cols
+    run_cols = {
+        row["name"]
+        for row in db.execute("PRAGMA table_info(auto_paper_runs)").fetchall()
+    }
+    assert "strategy" in run_cols  # 台账引擎分账行（correctness F2）
+
+
+def test_cutover_day_ledger_rows_per_engine(db: sqlite3.Connection) -> None:
+    """correctness F2：换栈日 v1/v2 同日同锚重跑——台账分行不混账。"""
+    import json
+
+    fixture = _seed_fixture(db, "巳", code="周一010")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture)
+    _seed_positive_ev_boards(db, fixture)
+    db.commit()
+    au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+
+    rows = db.execute(
+        "SELECT strategy, bets, detail_json FROM auto_paper_runs"
+        " WHERE business_date=? AND anchor_label=? ORDER BY strategy",
+        (BUSINESS_DATE, ANCHOR),
+    ).fetchall()
+    assert [row["strategy"] for row in rows] == ["auto-v1", "auto-v2"]  # 两行各账
+    v2_detail = json.loads(
+        next(r for r in rows if r["strategy"] == "auto-v2")["detail_json"]
+    )
+    assert "probe_stale_line" in v2_detail  # v2 统计不被 v1 行吞没
+
+
+def test_backfill_clv_bad_selection_code_degrades(
+    db: sqlite3.Connection, monkeypatch
+) -> None:
+    """correctness F1：had 市场但闭集外选择码（历史脏行）=无锚降级，不炸 wrap。"""
+    fixture = _seed_fixture(db, "午", code="周一011")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture)
+    had = _matrix(1.3, 1.1).had()
+    for sel, prob in had.items():
+        _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
+    db.commit()
+    probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    _settle_bets(db, [fixture])
+    db.execute("PRAGMA foreign_keys=OFF")  # 脏行注入绕 FK（历史库病态行模拟）
+    db.execute(
+        "UPDATE bet_legs SET selection_code='qq'"
+        " WHERE bet_id=(SELECT id FROM bets WHERE strategy_version='auto-v2')"
+    )
+    db.commit()
+    db.execute("PRAGMA foreign_keys=ON")
+    monkeypatch.setattr(
+        probes.quote_evidence,
+        "srct_pinnacle_closing_triplet",
+        lambda *args, **kwargs: (2.0, 3.4, 3.6),
+    )
+    filled = probes.backfill_bet_clv(db, duckdb.connect(":memory:"))
+    assert filled == {"filled": 0, "skipped_non_had": 1, "skipped_no_anchor": 0}
+
+
+def test_calibration_probe_sparse_night_appends_had(db: sqlite3.Connection) -> None:
+    """不满员+场外有正 EV had：补位不降级既有 EV 信号（稀疏夜规则）。"""
+    f_crs = _seed_fixture(db, "未", code="周一012")
+    f_had = _seed_fixture(db, "申", code="周一013")
+    matrix = _matrix(1.3, 1.1)
+    _seed_on_sale(db, f_crs)
+    _seed_forecast(db, f_crs)
+    crs = matrix.crs()
+    best_crs = max(crs, key=lambda sel: crs[sel])
+    _snap(db, f_crs, "crs", best_crs, round(1.5 / crs[best_crs], 2))
+    _seed_on_sale(db, f_had)
+    _seed_forecast(db, f_had)
+    had = matrix.had()
+    for sel, prob in had.items():
+        _snap(db, f_had, "had", sel, round(1.5 / prob, 2))
+    db.commit()
+
+    stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 2  # crs 保留 + had 补位（各一场，¥4 < 帽）
+    rows = _v2_rows(db)
+    assert {row["market_code"] for row in rows} == {"crs", "had"}

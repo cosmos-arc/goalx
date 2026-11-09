@@ -2172,7 +2172,7 @@ def _apply_v45(conn: sqlite3.Connection) -> None:
 
 def _apply_v46(conn: sqlite3.Connection) -> None:
     """
-    v46（edge-program-20261107 票 01）：bets 增 edge_source 与 clv。
+    v46（edge-program-20261107 票 01）：bets 两列 + auto_paper_runs 引擎分账重建。
 
     edge_source=边缘来源五枚举标签（calibration_probe/stale_line/rollover/
     price_band/info_lag，prereg 修订⑤来源声明纪律）——auto-v2 探针注建注
@@ -2181,11 +2181,44 @@ def _apply_v46(conn: sqlite3.Connection) -> None:
     clv=每注 CLV（概率域：Π源T Pinnacle 收盘概率(Shin) − Π入场隐含），
     结算后由 wrap 回填的只读派生（as-of 收盘锚），NULL=未结算/非 had 腿/
     无锚（诚实缺省，不倒填）。
+    auto_paper_runs 增 strategy 进主键（correctness F2：换栈日 v1/v2 同日
+    同锚重跑曾会 MAX 混账——bets 取大者、detail_json 留先写者，两引擎
+    统计互相吞没）。重建拷贝（史行 strategy 一律 auto-v1——v43 上线至
+    本迁移间只有 v1 在跑），列存在守卫=重入幂等（同 v31 W1 教训）。
     """
     if not _column_exists(conn, "bets", "edge_source"):
         conn.execute("ALTER TABLE bets ADD COLUMN edge_source TEXT")
     if not _column_exists(conn, "bets", "clv"):
         conn.execute("ALTER TABLE bets ADD COLUMN clv REAL")
+    if not _column_exists(conn, "auto_paper_runs", "strategy"):
+        conn.execute(
+            """
+            CREATE TABLE auto_paper_runs_v46 (
+                business_date TEXT NOT NULL,
+                anchor_label TEXT NOT NULL,
+                strategy TEXT NOT NULL DEFAULT 'auto-v1',
+                ran_at TEXT NOT NULL,
+                candidates INTEGER NOT NULL DEFAULT 0,
+                bets INTEGER NOT NULL DEFAULT 0,
+                slips INTEGER NOT NULL DEFAULT 0,
+                zero_note TEXT,
+                detail_json TEXT,
+                PRIMARY KEY (business_date, anchor_label, strategy)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO auto_paper_runs_v46
+                (business_date, anchor_label, strategy, ran_at, candidates,
+                 bets, slips, zero_note, detail_json)
+            SELECT business_date, anchor_label, 'auto-v1', ran_at, candidates,
+                   bets, slips, zero_note, detail_json
+            FROM auto_paper_runs
+            """
+        )
+        conn.execute("DROP TABLE auto_paper_runs")
+        conn.execute("ALTER TABLE auto_paper_runs_v46 RENAME TO auto_paper_runs")
 
 
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (

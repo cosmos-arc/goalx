@@ -20,7 +20,6 @@ from dataclasses import asdict
 from datetime import date
 from typing import Any
 
-import duckdb
 from loguru import logger
 from prefect import flow
 
@@ -179,10 +178,11 @@ def daily_wrap_flow() -> dict[str, object]:
                 clv_mod.reconcile_clv(conn, duck_con=anchor)
             )
             # 每注 CLV 回填（edge-program 票 01）：结算后的 auto 纸面注
-            # 按源T 收盘锚落 bets.clv（幂等只补 NULL；降级不打断 wrap 主体）
+            # 按源T 收盘锚落 bets.clv（幂等只补 NULL；降级不打断 wrap 主体，
+            # 同 m3/edge_scan 兜 Exception——脏行不制造永久夜炸循环）
             try:
                 probe_clv = probes.backfill_bet_clv(conn, anchor)
-            except (sqlite3.Error, duckdb.Error) as exc:
+            except Exception as exc:
                 logger.warning("probe clv backfill degraded: {}", exc)
                 probe_clv = {"degraded": str(exc)}
             # 同步报价账本 sweep（measure-07）：源T as-of 主锚回填 NULL 参考行
