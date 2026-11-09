@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import math
 import os
 from collections import defaultdict
 
@@ -19,6 +18,7 @@ import numpy as np
 
 from _lib import (
     COARSE_LABELS,
+    bh_family,
     coarse_idx,
     clustered_mean,
     devig,
@@ -27,7 +27,9 @@ from _lib import (
     load_jc,
     load_euro,
     load_ou_ladder,
+    one_sided_p,
     pair_fixtures,
+    ttg_basket_ev,
 )
 
 LEDGER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "09-em1-trial-ledger.csv")
@@ -71,22 +73,6 @@ def append_ledger(rows: list[dict]) -> None:
         w = csv.DictWriter(f, fieldnames=LEDGER_COLS)
         for r in new:
             w.writerow({k: r.get(k, "") for k in LEDGER_COLS})
-
-
-def one_sided_p(z: float) -> float:
-    return 0.5 * math.erfc(z / math.sqrt(2.0))
-
-
-def bh(pairs_pv: list[tuple[str, float]], alpha: float = 0.05) -> set[str]:
-    if not pairs_pv:
-        return set()
-    m = len(pairs_pv)
-    ranked = sorted(pairs_pv, key=lambda kv: kv[1])
-    k_max = 0
-    for i, (_eid, p) in enumerate(ranked, 1):
-        if p <= alpha * i / m:
-            k_max = i
-    return {eid for eid, _p in ranked[:k_max]}
 
 
 def main() -> None:
@@ -200,17 +186,16 @@ def main() -> None:
                 candidates.append((family, sname))
             ledger_rows.append(ledger_row(family, sname, "search", m, stage))
 
-    val_pv: list[tuple[str, float]] = []
     val_cache: dict[tuple[str, str], tuple[dict, bool]] = {}
     for family, sname in candidates:
         sub = dict(fam_slices(family, by_win["validation"])).get(sname, [])
         m = slice_metrics(sub)
         pass3 = promo_gate(m)
-        if pass3:
-            val_pv.append((f"09-A-{family}-{sname}-validation", one_sided_p(m["ev_z"])))
         val_cache[(family, sname)] = (m, pass3)
         ledger_rows.append(ledger_row(family, sname, "validation", m, "bh_pending" if pass3 else "dead"))
-    bh_pass = bh(val_pv)
+    # BH 家族=当轮全部候选（含全阴；票 12 修正：先筛后校废除）
+    val_family = [(f"09-A-{f}-{s}-validation", m["ev_z"]) for (f, s), (m, _ok) in val_cache.items()]
+    bh_pass = bh_family(val_family)
     promoted = [(f, s) for (f, s), (_m, ok) in val_cache.items() if ok and f"09-A-{f}-{s}-validation" in bh_pass]
 
     survivors = []
@@ -222,8 +207,9 @@ def main() -> None:
             survivors.append((family, sname, m))
         ledger_rows.append(ledger_row(family, sname, "confirmation", m, "survivor" if ok else "dead"))
 
-    print(f"\nF1-F6：搜索切片候选 {len(candidates)}；验证过门 {len(val_pv)}；BH 后晋升 {len(promoted)}；确认窗幸存 {len(survivors)}")
-    print(f"多重校正账：验证窗候选检定 m={len(val_pv)}，α=0.05 预期假阳性 {len(val_pv)*0.05:.1f}")
+    n_gate = sum(1 for _m, ok in val_cache.values() if ok)
+    print(f"\nF1-F6：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；BH 后晋升 {len(promoted)}；确认窗幸存 {len(survivors)}")
+    print(f"多重校正账：BH 家族=验证窗全部候选 m={len(val_family)}（含全阴，票 12 修正），α=0.05 预期假阳性 {len(val_family)*0.05:.1f}")
 
     # ---- hhad F7（结构面 only：push 语义无锚拆分，EV 面未搜索——协议§1）
     n_line_mismatch = 0
@@ -263,26 +249,32 @@ def main() -> None:
                     "z": f"{z:.3f}", "p": "", "stage": "structure_only", "note": "EV面未搜索(push语义)",
                 })
 
-    # ---- ttg F8（协议修订 B：over2.5 单线篮子对照；装载=修订 A 赛前板）
+    # ---- ttg F8（协议修订 B：over2.5 单线篮子对照；装载=修订 A 赛前板 + 票 12 锚修）
     ladders = load_ou_ladder([eu["sid"] for _, eu in pairs if window_of(eu["season"])])
     tt_rows = []  # 每场×篮别一行
     n_no_ladder = 0
+    rung_books: list[int] = []
+    rung_ages: list[float] = []
     for fx, (jc, eu) in enumerate(pairs):
         w = window_of(eu["season"])
         if w is None or jc["ttg"] is None:
             continue
         lad = ladders.get(eu["sid"])
-        p_over25 = lad.get(2.5) if lad else None
-        if p_over25 is None:
+        rung25 = lad.get(2.5) if lad else None
+        if rung25 is None:
             n_no_ladder += 1
             continue
+        p_over25 = rung25.p_over
+        rung_books.append(rung25.n_books)
+        rung_ages.append(rung25.age_h)
         t = eu["hg"] + eu["ag"]
         f8 = devig(jc["ttg"])
         if f8 is None:
             continue
         for basket, ks, fair_b in (("over", range(3, 8), p_over25), ("under", range(0, 3), 1.0 - p_over25)):
             ks_l = list(ks)
-            ev_real = sum(jc["ttg"][k] * (1.0 if t == k else 0.0) for k in ks_l) / len(ks_l) - 1.0
+            # 7+ 档按 t>=7 结算（edge-audit-20261109 票 12 修正；0-6 档维持恰好命中）
+            ev_real = ttg_basket_ev(jc["ttg"], t, ks_l)
             # 锚篮 EV：欧篮概率按 JC 篮内形状分摊（篮级检验——只把篮间错价当信号）
             jc_basket = sum(f8[k] for k in ks_l)
             ev_anchor = fair_b * sum(f8[k] * jc["ttg"][k] for k in ks_l) / (jc_basket * len(ks_l)) - 1.0
@@ -326,17 +318,17 @@ def main() -> None:
                     stage = "candidate"
                     f8_candidates.append((sname, ""))
             ledger_rows.append(ledger_row("F8", sname, w, m, stage))
-    f8_val_pv = []
-    f8_val = {}
+    f8_val: dict[tuple[str, str], tuple[dict | None, bool]] = {}
     for sname, _ in f8_candidates:
         m = f8_metrics.get((sname, "", "validation"))
-        if m is None:
-            continue
-        ok = promo_gate(m)
-        if ok:
-            f8_val_pv.append((f"09-A-F8-{sname}-validation", one_sided_p(m["ev_z"])))
+        ok = promo_gate(m) if m is not None else False
         f8_val[(sname, "")] = (m, ok)
-    f8_bh = bh(f8_val_pv)
+    # BH 家族=当轮全部 F8 候选（含验证窗无行的候选 z=nan 入族；票 12 修正）
+    f8_family = [
+        (f"09-A-F8-{sname}-validation", (m["ev_z"] if m is not None else float("nan")))
+        for (sname, _b), (m, _ok) in f8_val.items()
+    ]
+    f8_bh = bh_family(f8_family)
     f8_promoted = [s for s, (_m, ok) in f8_val.items() if ok and f"09-A-F8-{s[0]}-validation" in f8_bh]
     f8_survivors = []
     for sname, _ in f8_promoted:
@@ -347,7 +339,10 @@ def main() -> None:
         if ok:
             f8_survivors.append((sname, m))
         ledger_rows.append(ledger_row("F8", sname, "confirmation", m, "survivor" if ok else "dead"))
-    print(f"F8(ttg 篮子=修订B)：搜索候选 {len(f8_candidates)}；验证过门 {len(f8_val_pv)}；BH 后晋升 {len(f8_promoted)}；确认幸存 {len(f8_survivors)}")
+    print(
+        f"F8(ttg 篮子=修订B)：搜索候选 {len(f8_candidates)}；验证过门 {sum(1 for _m, ok in f8_val.values() if ok)}；"
+        f"BH 家族 m={len(f8_family)}；BH 后晋升 {len(f8_promoted)}；确认幸存 {len(f8_survivors)}"
+    )
 
     append_ledger(ledger_rows)
     print(f"\n试验账已落/更新：{LEDGER}（本票条目 {len(ledger_rows)}）")
@@ -357,6 +352,15 @@ def main() -> None:
     print("  crs/hafu：未搜索（无欧锚对照面，协议§1 固定行）")
     print(f"  hhad：线不匹配/无AH收盘 {n_line_mismatch} 场不入 F7；F7 结构行 {len(hh_rows)}（结构面 only）")
     print(f"  ttg：无 over2.5 赛前板 {n_no_ladder} 场不入 F8（修订B 篮子）；F8 分析行 {len(tt_rows)}")
+    if rung_books:
+        ages = sorted(a for a in rung_ages if np.isfinite(a))
+        age_note = (
+            f"median={np.median(ages):.1f}h p90={np.percentile(ages, 90):.1f}h" if ages else "无 kickoff 不报告"
+        )
+        print(
+            f"  OU 锚（票 12 修正=每书末价→跨书均值）：2.5 线书覆盖 median={np.median(rung_books):.1f} "
+            f"p10={np.percentile(rung_books, 10):.1f}；报价年龄（最陈旧书）{age_note}"
+        )
 
     print("\n[搜索窗 F1-F6 全切片 EV/gap 摘要（* = 候选；insufficient = n_fx<200）]")
     for family in ("F1", "F2", "F3", "F4", "F5", "F6"):
