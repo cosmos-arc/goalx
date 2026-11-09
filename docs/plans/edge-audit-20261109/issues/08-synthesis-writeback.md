@@ -1,7 +1,7 @@
 # 08 合成人裁与账本回写
 
 Type: grilling
-Status: claimed
+Status: resolved
 Blocked by: 01, 02, 07, 12, 13, 14, 15（票 09/11 已 resolved；票 10 为伞，12–15 齐后收伞）
 
 ## Question
@@ -14,3 +14,13 @@ Blocked by: 01, 02, 07, 12, 13, 14, 15（票 09/11 已 resolved；票 10 为伞�
 4. **审计报告归档** `docs/plans/edge-audit-20261109/`（保留 .scratch 相对布局以维持交叉链接）。
 
 人裁后一次性回写，回写后 §0 计数刷新。本图收官判据：回写完成 + 报告归档 + Not yet specified 清空或转出。
+
+## Answer
+
+**收官 PR #287 已合 main（55ec832，CI 全绿，docs-only 免 correctness per 惯例）。**
+
+- 99 项三轮人裁全落（裁定记录=research/08-adjudication-package.md 尾部）；核心裁定：E-12 降级「已搜索未发现（带边界）」/E-30 勘误 1454+1513 注记/前向锚 C 分段口径/E-38=supported/§3 六条全录/§4.1 重推/§5 登记 8–22/BH 轮级单家族/API-Football 先免费档。
+- 账本 append-only 回写完成（+86/−24，−24=§0/§4.1 两张获裁重写表）；§0 计数刷新（refuted 6→5、未发现 7→10、补 E-18/E-21、E-26 单列教训条、E-38 审计收官行）。
+- 报告归档 docs/plans/edge-audit-20261109/（57 文件，spec/issues/research/map 保留相对布局）。
+- 后续票开出：本板 16（E-02 FD 隔离）/17（E-07 FD 隔离）/18（E-06+E-22 轻量剔段）/19（份额替代源探查，一票定生死）/20（BH 轮级单家族合并）/21（srct×fdhist 桥接）+ 跨板 autoresearch 13（CLV 供给韧性）。
+- 判据核对：回写完成✓ 报告归档✓ Not yet specified 清空（转出后续票）✓——**图收官**。
