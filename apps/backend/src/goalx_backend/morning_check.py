@@ -299,7 +299,9 @@ def check_paper_account(conn: sqlite3.Connection) -> CheckItem:
     无行=「未开始」，不绿冒充。
     """
     face = account.paper_account_face(conn)
-    auto_face = next(f for f in face.strategies if f.strategy == "auto-v1")
+    auto_note = "/".join(
+        f"{f.strategy} {f.bets_n}" for f in face.strategies if f.strategy != "manual"
+    )
     manual_face = next(f for f in face.strategies if f.strategy == "manual")
     new_today, anchor = account.auto_v1_pulse(conn)
     if anchor is not None:
@@ -313,7 +315,7 @@ def check_paper_account(conn: sqlite3.Connection) -> CheckItem:
     return CheckItem(
         "paper_account",
         OK,
-        f"账户行 auto-v1 {auto_face.bets_n}"
+        f"账户行 {auto_note}"
         + f"/人工 {manual_face.bets_n} 注，"
         + f"现值 ¥{face.bankroll_now:.2f}，今日新 {new_today} 注；"
         + anchor_note,

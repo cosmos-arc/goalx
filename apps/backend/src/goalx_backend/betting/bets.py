@@ -14,6 +14,7 @@ from goalx_backend.betting.snapshot import build_ev_snapshot
 from goalx_backend.data import quote_evidence
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.models import (
+    EDGE_SOURCES,
     PRICE_SOURCE_MANUAL_RESEARCH,
     PRICE_SOURCE_SYSTEM_PAPER,
     PRICE_SOURCES,
@@ -106,6 +107,8 @@ class BetDraft(BaseModel):
     stake: float = Field(gt=0, allow_inf_nan=False)
     legs: list[LegInput] = Field(min_length=1)
     strategy_version: str | None = None
+    # 边缘来源标签（edge-program 票 01）：auto-v2 探针注声明；None=不落
+    edge_source: str | None = None
     # 客户端建注幂等键（票 06）：同键重复提交不落双行（撞唯一索引回带）
     client_request_id: str | None = Field(default=None, max_length=200)
     # 提交意图指纹（票 09）：键带则随行落库，重放比对防同键吞改
@@ -283,6 +286,14 @@ def rebind_paper_price(
     return rebound
 
 
+def _validate_labels(price_source: str | None, edge_source: str | None) -> None:
+    """建注标签词表守卫：price_source 三分类 + edge_source 五枚举。"""
+    if price_source is not None and price_source not in PRICE_SOURCES:
+        raise ValueError(f"未知 price_source: {price_source}")
+    if edge_source is not None and edge_source not in EDGE_SOURCES:
+        raise ValueError(f"未知 edge_source: {edge_source}")
+
+
 def create_bet_with_legs(
     conn: sqlite3.Connection,
     draft: BetDraft,
@@ -303,8 +314,7 @@ def create_bet_with_legs(
     抛 IntentConflictError——预检与撞唯一索引的并发竞态两路同比对，
     竞态窗内不静默回旧。
     """
-    if price_source is not None and price_source not in PRICE_SOURCES:
-        raise ValueError(f"未知 price_source: {price_source}")
+    _validate_labels(price_source, draft.edge_source)
     if draft.client_request_id is not None:
         existing = replay_bet_id(
             conn, draft.client_request_id, draft.intent_fingerprint
@@ -331,6 +341,7 @@ def create_bet_with_legs(
                 MarketKind.FIXED,
                 draft.stake,
                 strategy_version=draft.strategy_version,
+                edge_source=draft.edge_source,
                 ev_snapshot=snapshot,
                 price_source=price_source,
                 client_request_id=draft.client_request_id,

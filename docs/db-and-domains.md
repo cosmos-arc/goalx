@@ -1177,6 +1177,8 @@ append-only 触发器：`intel_observations_no_delete`、`intel_observations_no_
 | `price_source` | TEXT | — |
 | `client_request_id` | TEXT | — |
 | `intent_fingerprint` | TEXT | — |
+| `edge_source` | TEXT | — |
+| `clv` | REAL | — |
 
 唯一键 `UNIQUE(`client_request_id`)`（部分索引：WHERE 内才约束，NULL 行不受约束）
 <!-- schema-doc:END:table:bets -->

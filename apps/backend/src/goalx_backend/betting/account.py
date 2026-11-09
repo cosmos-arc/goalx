@@ -18,12 +18,14 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from goalx_backend.betting.auto_strategy import AUTO_V1
+from goalx_backend.betting.probes import AUTO_V2
 from goalx_backend.betting.tax import tax_on_prize
 from goalx_backend.data.fixtures import beijing_business_date
 
 INITIAL_BANKROLL = 1000.0  # prereg B：账户=初始 ¥1000+已结算 P&L
 SAMPLE_FLOOR = 200  # prereg 判读规则：累计注数<200 只报曲线不判盈亏
 MANUAL = "manual"
+CLV_ROLLING_WINDOW = 50  # CLV 滚动窗=回滚触发器 A 窗（vision 票 03 人裁）
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ class PaperAccountFace:
     per_market: list[dict[str, float | int | str]]
     tax_total: float
     profit_after_tax: float
+    # 分来源账户行（edge-program 票 01）：edge_source 非空纸面注
+    per_edge_source: list[EdgeSourceFace] = field(default_factory=list)
 
 
 def _strategy_rows(conn: sqlite3.Connection, strategy: str) -> list[sqlite3.Row]:
@@ -228,26 +232,109 @@ def paper_account_face(conn: sqlite3.Connection) -> PaperAccountFace:
         floating_stake_fixed=floating_fixed,
         floating_stake_pool=floating_pool,
         per_market=_per_market(conn),
+        per_edge_source=edge_source_faces(conn),
         tax_total=tax_total,
         profit_after_tax=after_tax,
     )
 
 
+@dataclass(frozen=True)
+class EdgeSourceFace:
+    """
+    一个边缘来源的账户行（edge-program 票 01：分来源 P&L + CLV 滚动）。
+
+    clv_* 只统计已结算且 clv 非空行；last50=按结算序最近 CLV_ROLLING_WINDOW
+    注（回滚触发器 A 窗），se 为样本标准误——持续正值=六步门第③步证据。
+    """
+
+    source: str
+    bets_n: int
+    settled_n: int
+    stake_settled: float
+    profit_settled: float
+    clv_n: int
+    clv_mean: float | None
+    clv_mean_last50: float | None
+    clv_se_last50: float | None
+
+
+@dataclass
+class _SourceAcc:
+    """来源级累计器（可变）；EdgeSourceFace 的字段由此归约。"""
+
+    bets_n: int = 0
+    settled_n: int = 0
+    stake: float = 0.0
+    profit: float = 0.0
+    clvs: list[float] = field(default_factory=list)
+
+
+def edge_source_faces(conn: sqlite3.Connection) -> list[EdgeSourceFace]:
+    """分来源聚合（只读派生）：edge_source 非空的纸面注按来源成行。"""
+    rows = conn.execute(
+        """
+        SELECT b.edge_source AS source, b.status, b.stake, b.profit, b.clv
+        FROM bets b
+        WHERE b.mode = 'paper' AND b.edge_source IS NOT NULL
+        ORDER BY b.settled_at, b.id
+        """
+    ).fetchall()
+    acc: dict[str, _SourceAcc] = {}
+    for row in rows:
+        entry = acc.setdefault(str(row["source"]), _SourceAcc())
+        entry.bets_n += 1
+        status = str(row["status"])
+        if status == "open":
+            continue
+        entry.settled_n += 1
+        if status != "void":  # void 退款非投注结果，不入 stake 分母（同账户面口径）
+            entry.stake = round(entry.stake + float(row["stake"]), 2)
+        entry.profit = round(entry.profit + float(row["profit"] or 0.0), 2)
+        if row["clv"] is not None:
+            entry.clvs.append(float(row["clv"]))
+    faces: list[EdgeSourceFace] = []
+    for source, entry in sorted(acc.items()):
+        clvs = entry.clvs
+        last50 = clvs[-CLV_ROLLING_WINDOW:]
+        mean = sum(clvs) / len(clvs) if clvs else None
+        mean50 = sum(last50) / len(last50) if last50 else None
+        if len(last50) > 1:
+            var = sum((v - (mean50 or 0.0)) ** 2 for v in last50) / (len(last50) - 1)
+            se = (var / len(last50)) ** 0.5
+        else:
+            se = None
+        faces.append(
+            EdgeSourceFace(
+                source=source,
+                bets_n=entry.bets_n,
+                settled_n=entry.settled_n,
+                stake_settled=entry.stake,
+                profit_settled=entry.profit,
+                clv_n=len(clvs),
+                clv_mean=round(mean, 6) if mean is not None else None,
+                clv_mean_last50=round(mean50, 6) if mean50 is not None else None,
+                clv_se_last50=round(se, 6) if se is not None else None,
+            )
+        )
+    return faces
+
+
 def auto_v1_pulse(conn: sqlite3.Connection) -> tuple[int, sqlite3.Row | None]:
     """
-    auto-v1 今日新注数与最近锚行（晨检第 15 项；表归 betting 故在此）。
+    Auto 引擎今日新注数与最近锚行（晨检第 15 项；表归 betting 故在此）。
 
-    shortcut: created_at 为 UTC，substr 日切与北京业务日在 00-08 点窗错归
-    （观察项口径），升级=落注行带业务日列。
+    auto-v2 接管槽位后按版本集聚合（v1 史行+v2 新注），台账行本身
+    版本无关。shortcut: created_at 为 UTC，substr 日切与北京业务日在
+    00-08 点窗错归（观察项口径），升级=落注行带业务日列。
     """
     today = beijing_business_date()
     new_today = int(
         conn.execute(
             """
             SELECT COUNT(*) FROM bets
-            WHERE strategy_version = ? AND substr(created_at, 1, 10) = ?
+            WHERE strategy_version IN (?, ?) AND substr(created_at, 1, 10) = ?
             """,
-            (AUTO_V1, today),
+            (AUTO_V1, AUTO_V2, today),
         ).fetchone()[0]
     )
     anchor = conn.execute(

@@ -2170,6 +2170,24 @@ def _apply_v45(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v46(conn: sqlite3.Connection) -> None:
+    """
+    v46（edge-program-20261107 票 01）：bets 增 edge_source 与 clv。
+
+    edge_source=边缘来源五枚举标签（calibration_probe/stale_line/rollover/
+    price_band/info_lag，prereg 修订⑤来源声明纪律）——auto-v2 探针注建注
+    即落；NULL=未声明（auto-v1 及更早史行/人工纸面，历史不回溯打标）。
+    枚举校验在代码层（models.EDGE_SOURCES），同 v35 price_source 惯例。
+    clv=每注 CLV（概率域：Π源T Pinnacle 收盘概率(Shin) − Π入场隐含），
+    结算后由 wrap 回填的只读派生（as-of 收盘锚），NULL=未结算/非 had 腿/
+    无锚（诚实缺省，不倒填）。
+    """
+    if not _column_exists(conn, "bets", "edge_source"):
+        conn.execute("ALTER TABLE bets ADD COLUMN edge_source TEXT")
+    if not _column_exists(conn, "bets", "clv"):
+        conn.execute("ALTER TABLE bets ADD COLUMN clv REAL")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2216,6 +2234,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (43, _apply_v43),
     (44, _apply_v44),
     (45, _apply_v45),
+    (46, _apply_v46),
 )
 
 

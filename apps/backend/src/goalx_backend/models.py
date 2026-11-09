@@ -333,6 +333,24 @@ PRICE_SOURCES = frozenset(
     }
 )
 
+# 边缘来源五枚举（edge-program 票 01，prereg 修订⑤来源声明纪律）：
+# 六步门第①步——strategy_version 晋升必须声明 edge 来源；auto-v2 探针
+# 注建注即落标签。NULL=未声明（史行/人工纸面，不回溯打标）。
+EDGE_SOURCE_CALIBRATION_PROBE = "calibration_probe"
+EDGE_SOURCE_STALE_LINE = "stale_line"
+EDGE_SOURCE_ROLLOVER = "rollover"
+EDGE_SOURCE_PRICE_BAND = "price_band"
+EDGE_SOURCE_INFO_LAG = "info_lag"
+EDGE_SOURCES = frozenset(
+    {
+        EDGE_SOURCE_CALIBRATION_PROBE,
+        EDGE_SOURCE_STALE_LINE,
+        EDGE_SOURCE_ROLLOVER,
+        EDGE_SOURCE_PRICE_BAND,
+        EDGE_SOURCE_INFO_LAG,
+    }
+)
+
 
 class LegInput(BaseModel):
     """add_leg 的输入。"""
