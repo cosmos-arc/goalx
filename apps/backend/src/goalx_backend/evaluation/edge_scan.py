@@ -15,14 +15,18 @@
 
 - **s1 市场校准**：滚动 90 日窗已结算场，JC had as-of 开球三向比例去水，
   按价格带×方向分桶累计实际频率 vs 均值概率，二项 SE 越门
-  （n≥门 且 |dev|>2SE）落发现。``run_s1_decade`` = 研究库
+  （n≥门 且 |dev|>2SE）落发现。票 32 起挂 Romano-Wolf stepdown
+  （21 段族 FWER α=0.05；落账口径=未校正门 ∧ RW 门，只收紧不放宽，
+  清「21 段×逐日」未校正债）。``run_s1_decade`` = 研究库
   backtest_predictions 十年回放（口径验证面；只落观测不落发现——十年
   手工版已裁决"长赔高估 3-4pp、扣 13% 抽水后无正 EV 桶"，research/60）。
 - **s2 模型校准/EV 实现**（票 02）：评分层报告面的台账化输出（不重算）。
   面 A=逐玩法最热向置信 10 箱 vs 实际命中（accuracy 报告同款派生）；
   面 B=已结算纸面注逐注实现单位损益 − 建注模型 EV 快照的配对差。两面
   同窗（90 日滚动）同门（n≥200 且 |dev|>2SE）落发现；纸面注未起量期
-  如实记零面。
+  如实记零面。面 C=log loss 第三指标（票 32；Wheatcroft 2021，RPS 之争
+  对冲+尾部概率判别）：模型分布对实现向的 −ln(p)，对均匀锚 ln(k) 报
+  skill；只留观测不进发现门，判读分层=S2_LOSS_READING_RULE。
 - **s4 陈盘观测日**（票 04）：逐场决策时点（开球−60min）陈盘信号
   confirmed/fired/命中计数留痕——"有分辨观测日"积累器（had_quote 闸 +
   ``stale_line_signal`` 既有面，B1 已关闭可交易性→纯监测不产候选）。
@@ -36,9 +40,10 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from statistics import fmean, pstdev
 from typing import Any, cast
@@ -63,8 +68,21 @@ S1_WINDOW_DAYS = 90
 S1_MIN_N = 100
 S1_GATE_SE = 2.0
 
+# ---- 票 32：S1 多重校正（RW stepdown；账本 §4.2#6/E-28⑥'/E-33 审计注记） ----
+S1_RW_ALPHA = 0.05
+S1_RW_REPLICATES = 2000
+
 # ---- S2 口径常量（票 02 冻结：门=n≥200 且 |dev|>2SE；窗与 S1 同 90 日） ----
 S2_MIN_N = 200
+#: log loss 第三指标判读分层（票 32；冻结文字随报告展示，Wheatcroft 2021）
+S2_LOSS_READING_RULE: tuple[str, ...] = (
+    "层 0 结构：LL 无上界（尾部过自信即爆）、各玩法类数不同不可比——"
+    + "跨玩法只读 skill=1−LL/ln(k)（对均匀无信息锚），LL 绝对值只在玩法内读。",
+    "层 1 读数：skill>0=优于均匀锚；≈0=无信息；<0=反向（典型形态=尾部过自信，"
+    + "RPS 对分级误差温和而 LL 爆——正是两指标分歧的判别点，Wheatcroft 2021）。",
+    "层 2 纪律：n<200 探针规模不判；LL 与校准/RPS 分歧读「尾部概率质量差」"
+    + "而非单指标定优劣；本面只留观测不进发现门（不新增多重比较面）。",
+)
 #: 价格带边界（上界, 标签）——与十年手工版/edge 板 03 同一分桶口径
 BUCKET_EDGES: tuple[tuple[float, str], ...] = (
     (0.10, "p00-10"),
@@ -179,6 +197,163 @@ def calibration_segments(rows: list[ObsRow]) -> dict[str, dict[str, Any]]:
     }
 
 
+# ---- 票 32：Romano-Wolf stepdown（S1 多重校正，只收紧不放宽） ----
+
+#: 注册族=7 价格带 × 3 方向（缺组段以 p=1 入族，E-32 修订 C 同精神）
+_S1_FAMILY_KEYS: tuple[str, ...] = tuple(
+    f"{label}:{direction}" for _, label in BUCKET_EDGES for direction in DIRECTIONS
+)
+_BUCKET_INDEX = {label: idx for idx, (_, label) in enumerate(BUCKET_EDGES)}
+
+
+def _rw_segment_stats(
+    segments: dict[str, dict[str, Any]],
+) -> dict[str, tuple[int, float, float]]:
+    """
+    族段观测统计量预备（票 32）：{段键: (n, mp̄, se)}。
+
+    段概率由赔率定，不随结果抽样变动 → n/mp̄/se 在 MC 复制间固定；
+    se 不可估的退化段（mp̄∈{0,1}）不进 MC 统计量——fail-closed 只收紧。
+    """
+    stats: dict[str, tuple[int, float, float]] = {}
+    for key in _S1_FAMILY_KEYS:
+        seg = segments.get(key)
+        if seg is None:
+            continue
+        n = int(seg["n"])
+        mp, se = float(seg["mean_prob"]), float(seg["se"])
+        if n > 0 and se > 0:
+            stats[key] = (n, mp, se)
+    return stats
+
+
+def _rw_null_counts(
+    match_probs: list[tuple[float, float, float]],
+    segments: dict[str, dict[str, Any]],
+    *,
+    order: list[str],
+    t_obs: dict[str, float],
+    replicates: int,
+    seed: str,
+) -> list[int]:
+    """
+    完全零假设 Monte Carlo（票 32）：逐步计数 #{Q_l^b ≥ T_(l)}。
+
+    每场按**自身去水三向**抽实现向（一次 random 定向，命中恰好进该向
+    所在段——同场三向互斥 → 每场只动一个段计数，h/d/a 相依结构原样
+    保留）；T_b 重算后按族序取后缀 max（剩余族 max）逐步计数。
+    """
+    counts = [0] * len(order)
+    rng = random.Random(seed)  # noqa: S311 — 统计复现用种子，非密码学
+    draw_plan = [
+        (
+            triple[0],
+            triple[0] + triple[1],
+            _BUCKET_INDEX[bucket_label(triple[0])],
+            _BUCKET_INDEX[bucket_label(triple[1])],
+            _BUCKET_INDEX[bucket_label(triple[2])],
+        )
+        for triple in match_probs
+    ]
+    # (族位置, 段平铺下标, n, mp̄, se)——T_b 计算与计数按族位置对齐
+    stats = _rw_segment_stats(segments)
+    flat_stats = [
+        (pos, _SELECTION_INDEX[key[-1]] * 7 + _BUCKET_INDEX[key[:-2]], *stats[key])
+        for pos, key in enumerate(order)
+        if key in stats
+    ]
+    for _ in range(replicates):
+        hits = [0] * 21
+        for c1, c2, b_h, b_d, b_a in draw_plan:
+            u = rng.random()
+            if u < c1:
+                hits[b_h] += 1
+            elif u < c2:
+                hits[7 + b_d] += 1
+            else:
+                hits[14 + b_a] += 1
+        t_boot = [0.0] * len(order)
+        for pos, flat, n, mp, se in flat_stats:
+            t_boot[pos] = abs(hits[flat] / n - mp) / se
+        suffix_max = 0.0  # 后缀 max=stepdown 剩余族 max
+        for pos in range(len(order) - 1, -1, -1):
+            suffix_max = max(suffix_max, t_boot[pos])
+            if suffix_max >= t_obs[order[pos]]:
+                counts[pos] += 1
+    return counts
+
+
+def romano_wolf_stepdown(
+    match_probs: list[tuple[float, float, float]],
+    segments: dict[str, dict[str, Any]],
+    *,
+    alpha: float = S1_RW_ALPHA,
+    replicates: int = S1_RW_REPLICATES,
+    seed: str = "s1",
+) -> dict[str, dict[str, Any]]:
+    """
+    Romano-Wolf stepdown 多重校正（票 32；清 S1「21 段×逐日」未校正债）。
+
+    公式（自写等价实现，cite）：
+
+    - 检验族 H_j: dev_j=0（段校准），j=1..21（7 价格带×3 方向，缺组段
+      T=0/p=1 入族不缺席）；统计量 T_j=|dev_j|/se_j（与注册未校正门同口径）。
+    - 零假设分布=完全零假设下的 Monte Carlo（``_rw_null_counts``）：
+      每场按自身去水三向抽实现向（B 次）重算全段统计量——同场 h/d/a
+      互斥相依结构被原样保留。Romano & Wolf (2005) "Stepwise Multiple
+      Testing as Formalized Data Snooping", Econometrica 73(4) 1237–1282；
+      adjusted p 的 Monte-Carlo 形式见 Romano & Wolf (2016), Statist.
+      Probab. Lett. 113:38–44；工程实现参照 Clarke (2019) rwolf（Stata SSC）。
+    - stepdown：按 T 观测值降序 j_(1)..j_(m)，第 l 步零分布统计量
+      Q_l^b = max_{k≥l} T_(k)^b（剩余族 max），p_rw(j_(l)) =
+      max_{l'≤l} (1+#{Q_{l'}^b ≥ T_(l')})/(B+1)（单调化）。
+    - **只收紧不放宽**：crossed_rw = 注册未校正门（n≥100 且 |z|>2）∧
+      p_rw ≤ α——RW 通过但未过未校正门者不越门（门叠加不替换，红线）。
+
+    固定种子（seed 串）→ 同输入逐位可复现（台账幂等/审计可复算的前提）。
+    返回全 21 段 {p_raw, p_rw, crossed_rw}；观测段才有真读数，缺组段
+    p_raw=p_rw=1.0、crossed_rw=False。
+    """
+    stats = _rw_segment_stats(segments)
+    t_obs = {
+        key: (abs(float(segments[key]["dev"])) / stats[key][2] if key in stats else 0.0)
+        for key in _S1_FAMILY_KEYS
+    }
+    # 排序族（T 降序；并列按段键稳定排序——确定性）
+    order = sorted(_S1_FAMILY_KEYS, key=lambda key: (-t_obs[key], key))
+    counts = _rw_null_counts(
+        match_probs,
+        segments,
+        order=order,
+        t_obs=t_obs,
+        replicates=replicates,
+        seed=seed,
+    )
+    # 单调化调整 p（Romano & Wolf 2016）：p_rw(j_(l)) = max_{l'≤l} 前缀 max
+    result: dict[str, dict[str, Any]] = {}
+    running = 0.0
+    for pos, key in enumerate(order):
+        p_step = (1 + counts[pos]) / (replicates + 1)
+        running = max(running, p_step)
+        observed = segments.get(key)
+        eligible = key in stats
+        p_raw = (
+            math.erfc(t_obs[key] / math.sqrt(2.0))
+            if observed is not None and eligible
+            else 1.0
+        )
+        result[key] = {
+            "p_raw": round(p_raw, 6),
+            "p_rw": round(running, 6),
+            # 只收紧红线：未过注册未校正门（或统计量不可估）者 RW 永不放行
+            "crossed_rw": bool(
+                eligible and observed is not None and observed.get("crossed")
+            )
+            and running <= alpha,
+        }
+    return result
+
+
 # ---- 台账读写（两表 SQL 归本包） ----
 
 
@@ -225,7 +400,9 @@ def insert_findings(
     }
     landed = 0
     for key, seg in segments.items():
-        if not seg["crossed"] or key in adjudicated:
+        # 票 32：带 RW 面的扫描器（s1）按校正口径落账；无 RW 面（s2 等）回退
+        # 未校正 crossing——多重校正只作用于已挂校正的族，不替别的族放宽
+        if not seg.get("crossed_rw", seg["crossed"]) or key in adjudicated:
             continue
         cur = conn.execute(
             """
@@ -295,15 +472,18 @@ def _outcome_letter(home_goals: int, away_goals: int) -> str:
 
 def _settled_jc_rows(
     conn: sqlite3.Connection, *, date_from: str, date_to: str
-) -> tuple[list[ObsRow], dict[str, int]]:
+) -> tuple[list[ObsRow], list[tuple[float, float, float]], dict[str, int]]:
     """
-    窗内已结算场 × JC had as-of 开球三向 → 方向观测行 + 覆盖账。
+    窗内已结算场 × JC had as-of 开球三向 → 方向观测行 + match 概率三元组 + 覆盖账。
 
     已结算=draw_results 非 void（settled_jingcai_fixtures 同底盘）；JC 价
     =latest_odds_evidence_asof（有效观测时刻 ≤ 开球，重放确定性）。
+    match 三元组（票 32）=RW stepdown 的重抽样单元（同场 h/d/a 互斥相依
+    结构的载体）。
     """
     coverage = {"n_settled": 0, "n_with_jc": 0, "n_incomplete_triple": 0}
     rows: list[ObsRow] = []
+    match_probs: list[tuple[float, float, float]] = []
     for fixture in rs_store.settled_jingcai_fixtures(conn):
         business_date = str(fixture["business_date"])
         if not date_from <= business_date <= date_to:
@@ -322,6 +502,7 @@ def _settled_jc_rows(
         coverage["n_with_jc"] += 1
         triple = tuple(float(price["odds"]) for price in prices if price is not None)
         probs = om.normalized_implied(triple)
+        match_probs.append((probs[0], probs[1], probs[2]))
         letter = _outcome_letter(int(fixture["home_goals"]), int(fixture["away_goals"]))
         for position, direction in enumerate(DIRECTIONS):
             rows.append(
@@ -331,7 +512,7 @@ def _settled_jc_rows(
                     hit=letter == _LETTER_BY_DIRECTION[direction],
                 )
             )
-    return rows, coverage
+    return rows, match_probs, coverage
 
 
 def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
@@ -347,13 +528,18 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
     if own_txn:
         conn.execute("BEGIN")
     try:
-        rows, coverage = _settled_jc_rows(
+        rows, match_probs, coverage = _settled_jc_rows(
             conn, date_from=window_from, date_to=window_end
         )
     finally:
         if own_txn:
             conn.execute("ROLLBACK")
     segments = calibration_segments(rows)
+    # 票 32：RW stepdown 挂日扫（21 段族 FWER 校正；seed=窗键 → 同窗重跑
+    # 逐位复现）；每段并入 p_raw/p_rw/crossed_rw，落账口径切到校正门
+    rw = romano_wolf_stepdown(match_probs, segments, seed=f"rw-s1:{window}")
+    for key, seg in segments.items():
+        seg.update(rw[key])
     landed = insert_findings(
         conn,
         scanner="s1",
@@ -369,7 +555,17 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
             "face": "runtime",
             "window": window,
             "window_days": S1_WINDOW_DAYS,
-            "gate": {"min_n": S1_MIN_N, "gate_se": S1_GATE_SE},
+            "gate": {
+                "min_n": S1_MIN_N,
+                "gate_se": S1_GATE_SE,
+                "rw_alpha": S1_RW_ALPHA,
+            },
+            "rw": {
+                "method": "romano-wolf-stepdown/1",
+                "alpha": S1_RW_ALPHA,
+                "replicates": S1_RW_REPLICATES,
+                "family_size": len(_S1_FAMILY_KEYS),
+            },
             "coverage": coverage,
             "segments": segments,
         },
@@ -381,7 +577,9 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
         "n_rows": len(rows),
         "coverage": coverage,
         "n_segments": len(segments),
+        # 双口径并列：未校正（对照读数）与 RW 后（落账门）互不吞
         "crossed": sorted(k for k, v in segments.items() if v["crossed"]),
+        "crossed_rw": sorted(k for k, v in segments.items() if v["crossed_rw"]),
         "findings_landed": landed,
     }
 
@@ -527,6 +725,9 @@ def run_s2(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
         calib_bins = accuracy.calibration_bins_by_market(
             conn, date_from=window_from, date_to=window_end
         )
+        ll_faces = accuracy.log_loss_by_market(
+            conn, date_from=window_from, date_to=window_end
+        )
         ev_rows = bet_store.paper_ev_realization_rows(
             conn, settled_from=window_from, settled_to=window_end
         )
@@ -537,6 +738,8 @@ def run_s2(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
     for market, bins in sorted(calib_bins.items()):
         calib_segments.update(_calib_bin_segments(bins, market=market))
     ev_segments = _ev_realization_segments(ev_rows)
+    # 面 C（票 32）log loss：观测面，不进发现门（判读分层 S2_LOSS_READING_RULE）
+    ll_payload = {market: asdict(face) for market, face in sorted(ll_faces.items())}
     # coverage 与段分母同源（零注额行不进段也不进 coverage——两数可对账）
     calib_binned = sum(s["n"] for s in calib_segments.values())
     ev_used = sum(s["n"] for s in ev_segments.values())
@@ -548,7 +751,7 @@ def run_s2(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
         segments=segments,
         extra_notes={
             "window_days": S1_WINDOW_DAYS,
-            "faces": "calibration+ev_realization",
+            "faces": "calibration+ev_realization+log_loss(observation)",
         },
     )
     _record_observation(
@@ -562,6 +765,7 @@ def run_s2(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
             "coverage": {"calib_binned": calib_binned, "ev_bets": ev_used},
             "calibration": calib_segments,
             "ev": ev_segments,
+            "log_loss": ll_payload,
         },
     )
     conn.commit()
@@ -992,8 +1196,12 @@ def _assemble_digest(
     """周报读相装配（调用方负责读事务壳与落盘）。"""
     latest_s1 = _latest_face(conn, "s1")
     latest_segments: dict[str, Any] = (latest_s1 or {}).get("segments") or {}
+    # 票 32：s1「仍越门」按 RW 后口径（旧 payload 无 RW 字段时回退未校正——
+    # 部署前留痕的段按当时注册口径读，不误杀也不放宽）
     crossed_now: set[str] = {
-        key for key, seg in latest_segments.items() if seg.get("crossed")
+        key
+        for key, seg in latest_segments.items()
+        if seg.get("crossed_rw", seg.get("crossed"))
     }
     latest_s2 = _latest_face(conn, "s2")
     s2_calib: dict[str, Any] = (latest_s2 or {}).get("calibration") or {}
@@ -1084,6 +1292,7 @@ def _assemble_digest(
             "coverage": latest_s2.get("coverage") if latest_s2 else None,
             "calibration": s2_calib,
             "ev": s2_ev,
+            "log_loss": (latest_s2 or {}).get("log_loss") or {},
         },
         "s4": {"days": s4_days},
         "s5": {"week_periods": len(s5_week), "week": s5_week, "all_time": s5_all_time},
@@ -1094,8 +1303,9 @@ def _assemble_digest(
         },
         "notes": [
             "晋升=人裁开验证票（六步门），不自动建；dead 同理。",
-            "S1 多重比较未校正（21 段×逐日；形式化随票 05）。",
-            "S2 面 A 置信箱（10×5 玩法）同有多重比较未校正；负 dev=模型高估。",
+            "S1 越门自票 32 起=RW stepdown 校正口径（21 段族 FWER α=0.05；"
+            + "未校正读数保留在段 crossed 字段供对照；只收紧不放宽）。",
+            "S2 面 A 置信箱（10×5 玩法）多重比较未校正注记仍在；负 dev=模型高估。",
             "S5 标注不另算 EV——池面 EV 结论已由 H7 裁决归档。",
             "S4 sharp 端点数据来源=corpus as-of（青铜重放，票 19）；纯观测"
             + "不产候选（B1 可交易性已关闭，E-09 观测≠下注）。",
@@ -1176,33 +1386,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
     )
     w(_rhythm_line(report.get("srct_rhythm")))
     w("")
-    w("## S1 分桶表（最新窗）")
-    w("")
-    w("| 段 | n | mean_prob | actual_freq | dev | se | 越门 |")
-    w("|---|---|---|---|---|---|---|")
-    render_segments: dict[str, Any] = s1["segments"] or {}
-    for key, seg in sorted(render_segments.items()):
-        w(
-            f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
-            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
-        )
-    w("")
-    w("## S2 模型分箱表（最新窗）")
-    w("")
-    w("| 段 | n | 期望 | 实测 | dev | se | 越门 |")
-    w("|---|---|---|---|---|---|---|")
-    render_calib: dict[str, Any] = s2["calibration"] or {}
-    for key, seg in sorted(render_calib.items()):
-        w(
-            f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
-            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
-        )
-    for key, seg in sorted(s2_ev.items()):
-        w(
-            f"| {key} | {seg['n']} | {seg.get('mean_ev')} | {seg.get('mean_realized')}"
-            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
-        )
-    w("")
+    w(_render_s1_table(report))
+    w(_render_s2_tables(report))
+    w(_render_s2_log_loss(report))
     w("## 本周新台账行")
     w("")
     findings = report["findings"]["week"]
@@ -1225,3 +1411,68 @@ def _render_markdown(report: dict[str, Any]) -> str:
     for note in report["notes"]:
         w(f"- 注：{note}")
     return "\n".join(lines) + "\n"
+
+
+def _render_s1_table(report: dict[str, Any]) -> str:
+    """S1 分桶表 MD（票 32 加 RW p/越门(RW) 两列；旧 payload 无 RW 字段占位 —）。"""
+    lines = ["## S1 分桶表（最新窗）", ""]
+    lines.append(
+        "| 段 | n | mean_prob | actual_freq | dev | se | 越门 | RW p | 越门(RW) |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+    render_segments: dict[str, Any] = report["s1"]["segments"] or {}
+    for key, seg in sorted(render_segments.items()):
+        rw_p = seg.get("p_rw", "—")  # 旧 payload 无 RW 字段（票 32 前）
+        lines.append(
+            f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
+            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''}"
+            + f" | {rw_p} | {'✓' if seg.get('crossed_rw') else ''} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_s2_tables(report: dict[str, Any]) -> str:
+    """S2 模型分箱表 + EV 实现差表 MD。"""
+    s2 = report["s2"]
+    lines = ["## S2 模型分箱表（最新窗）", ""]
+    lines.append("| 段 | n | 期望 | 实测 | dev | se | 越门 |")
+    lines.append("|---|---|---|---|---|---|---|")
+    render_calib: dict[str, Any] = s2["calibration"] or {}
+    for key, seg in sorted(render_calib.items()):
+        lines.append(
+            f"| {key} | {seg['n']} | {seg['mean_prob']} | {seg['actual_freq']}"
+            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
+        )
+    render_ev: dict[str, Any] = s2["ev"] or {}
+    for key, seg in sorted(render_ev.items()):
+        lines.append(
+            f"| {key} | {seg['n']} | {seg.get('mean_ev')}"
+            + f" | {seg.get('mean_realized')}"
+            + f" | {seg['dev']} | {seg['se']} | {'✓' if seg['crossed'] else ''} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_s2_log_loss(report: dict[str, Any]) -> str:
+    """S2 log loss 第三指标表 + 冻结判读分层（票 32；Wheatcroft 2021）。"""
+    lines = ["## S2 log loss 第三指标（最新窗；票 32，观测面不进发现门）", ""]
+    render_ll: dict[str, Any] = report["s2"].get("log_loss") or {}
+    if render_ll:
+        lines.append("| 玩法 | n | 类数 k | mean LL | ln(k) 锚 | skill=1−LL/ln(k) |")
+        lines.append("|---|---|---|---|---|---|")
+        for key, face in sorted(render_ll.items()):
+            lines.append(
+                f"| {key} | {face['n']} | {face['n_classes']}"
+                + f" | {face['mean_log_loss']} | {face['uniform_anchor']}"
+                + f" | {face['skill_vs_uniform']} |"
+            )
+    else:
+        lines.append("- 无评分行（未起量期如实空面）")
+    lines.append("")
+    lines.append("log loss 判读分层（Wheatcroft 2021，RPS 之争对冲）：")
+    lines.append("")
+    lines.extend(f"- {line}" for line in S2_LOSS_READING_RULE)
+    lines.append("")
+    return "\n".join(lines)

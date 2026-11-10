@@ -584,13 +584,12 @@ def _coverage_row(conn: sqlite3.Connection, month: str) -> CoverageRow:
     return CoverageRow(month=month, **coverage_census_by_month(conn, month))
 
 
-def calibration_bins_by_market(
+def _scored_rows_by_market(
     conn: sqlite3.Connection, *, date_from: str, date_to: str
-) -> dict[str, tuple[CalibBin, ...]]:
+) -> tuple[dict[str, list[sqlite3.Row]], dict[int, str]]:
     """
-    S2 台账化读面（autoresearch 票 02）：窗内逐玩法校准分箱（不重算）。
+    S2 读面共用装载（票 32 抽出）：窗内非 skip 评分行按玩法分组 + payload 表。
 
-    与报告面同一派生口径（`_calibration`：最热向置信 10 箱 vs 实际命中）；
     窗=kickoff_utc 日期（UTC 面）；void 场剔除与累计门槛同款（ADR-0001）。
     """
     voided = rs_store.voided_fixture_ids(conn)
@@ -614,7 +613,94 @@ def calibration_bins_by_market(
     by_market: dict[str, list[sqlite3.Row]] = {}
     for row in score_rows:
         by_market.setdefault(str(row["market"]), []).append(row)
+    return by_market, payloads
+
+
+def calibration_bins_by_market(
+    conn: sqlite3.Connection, *, date_from: str, date_to: str
+) -> dict[str, tuple[CalibBin, ...]]:
+    """
+    S2 台账化读面（autoresearch 票 02）：窗内逐玩法校准分箱（不重算）。
+
+    与报告面同一派生口径（`_calibration`：最热向置信 10 箱 vs 实际命中）；
+    窗=kickoff_utc 日期（UTC 面）；void 场剔除与累计门槛同款（ADR-0001）。
+    """
+    by_market, payloads = _scored_rows_by_market(
+        conn, date_from=date_from, date_to=date_to
+    )
     return {market: _calibration(rows, payloads) for market, rows in by_market.items()}
+
+
+@dataclass(frozen=True)
+class LogLossFace:
+    """一个玩法的 log loss 第三指标面（票 32；观测面不进发现门）。"""
+
+    market: str
+    n: int
+    n_classes: int  # k：玩法类数（had/hhad=3 / ttg=8 / crs=31 / hafu=9）
+    mean_log_loss: float
+    uniform_anchor: float  # ln(k)：均匀无信息锚
+    skill_vs_uniform: float  # 1 − LL/ln(k)：>0 优于均匀；<0 反向（尾部过自信典型）
+
+
+def _outcome_probs(
+    row: sqlite3.Row, payloads: dict[int, str]
+) -> dict[str, float] | None:
+    """评分行 → 玩法概率向量（payload 即时派生，ADR-0006；缺 payload None）。"""
+    payload = payloads.get(int(row["forecast_id"]))
+    if payload is None or row["outcome"] == "":
+        return None
+    matrix = forecast_matrix_from_payload(json.loads(payload))
+    market = str(row["market"])
+    if market == "had":
+        return matrix.had()
+    if market == "hhad" and row["hhad_goal_line"] is not None:
+        return matrix.hhad(float(row["hhad_goal_line"]))
+    if market == "ttg":
+        return matrix.ttg()
+    if market == "crs":
+        return matrix.crs()
+    return matrix.hafu()
+
+
+def log_loss_by_market(
+    conn: sqlite3.Connection, *, date_from: str, date_to: str
+) -> dict[str, LogLossFace]:
+    """
+    S2 面 C 数源（票 32）：窗内逐玩法 log loss（Wheatcroft 2021 第三指标）。
+
+    逐评分行 −ln(p_实现向)（payload 即时派生，与校准分箱同装载同窗）；
+    锚=均匀分布 ln(k)——log loss 无上界且各玩法类数不同，跨玩法只可经
+    skill=1−LL/ln(k) 比较（判读分层=edge_scan.S2_LOSS_READING_RULE）。
+    本面只留观测不进发现门（不新增多重比较面）。
+    """
+    by_market, payloads = _scored_rows_by_market(
+        conn, date_from=date_from, date_to=date_to
+    )
+    faces: dict[str, LogLossFace] = {}
+    for market, rows in by_market.items():
+        losses: list[float] = []
+        n_classes = 0
+        for row in rows:
+            probs = _outcome_probs(row, payloads)
+            if probs is None:
+                continue
+            p_outcome = max(float(probs[str(row["outcome"])]), 1e-15)
+            losses.append(-math.log(p_outcome))
+            n_classes = len(probs)
+        if not losses or n_classes == 0:
+            continue
+        anchor = math.log(n_classes)
+        mean_loss = fmean(losses)
+        faces[market] = LogLossFace(
+            market=market,
+            n=len(losses),
+            n_classes=n_classes,
+            mean_log_loss=round(mean_loss, 6),
+            uniform_anchor=round(anchor, 6),
+            skill_vs_uniform=round(1 - mean_loss / anchor, 6),
+        )
+    return faces
 
 
 def build_accuracy_report(conn: sqlite3.Connection) -> AccuracyReport:

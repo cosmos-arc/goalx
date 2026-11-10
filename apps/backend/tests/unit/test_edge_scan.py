@@ -205,6 +205,218 @@ def test_s1_window_scopes_by_business_date(db: sqlite3.Connection) -> None:
     assert stats["coverage"]["n_settled"] == 1
 
 
+# ---- 票 32：Romano-Wolf stepdown（S1 多重校正，21 段族；只收紧不放宽） ----
+
+
+def _rw_world(
+    matches: list[tuple[tuple[float, float, float], int]],
+) -> tuple[list[edge_scan.ObsRow], list[tuple[float, float, float]]]:
+    """[(去水三向, 实现向下标), ...] → 全向 ObsRow 行 + match 级概率三元组。"""
+    rows: list[edge_scan.ObsRow] = []
+    triples: list[tuple[float, float, float]] = []
+    for probs, outcome in matches:
+        triples.append(probs)
+        for idx, direction in enumerate(("h", "d", "a")):
+            rows.append(
+                edge_scan.ObsRow(
+                    direction=direction, prob=probs[idx], hit=(outcome == idx)
+                )
+            )
+    return rows, triples
+
+
+def _lone_borderline_world(
+    n: int = 120,
+) -> tuple[list[edge_scan.ObsRow], list[tuple[float, float, float]], int]:
+    """同质市场 (0.15, 0.15, 0.70)：d 段 z≈2.05 刚过未校正门，h/a 段安静。"""
+    n_d = 26  # af=0.2167, dev=0.0667, se=sqrt(.15·.85/120)=0.03260 → z≈2.045
+    n_h = 14  # af=0.1167 → z≈−1.02（未过门）
+    n_a = n - n_d - n_h  # af≈0.6667 → z≈−0.80（未过门）
+    matches = (
+        [
+            ((0.15, 0.15, 0.70), 1),
+        ]
+        * n_d
+        + [((0.15, 0.15, 0.70), 0)] * n_h
+        + [((0.15, 0.15, 0.70), 2)] * n_a
+    )
+    rows, triples = _rw_world(matches)
+    return rows, triples, n_d
+
+
+class TestRomanoWolfStepdown:
+    def test_lone_borderline_significant_blocked_by_rw(self):
+        """审计反例形态：单段 z≈2.05 过未校正门，但 21 段族 FWER 下不再越门。"""
+        rows, triples, n_d = _lone_borderline_world()
+        segments = edge_scan.calibration_segments(rows)
+        d_seg = segments["p10-20:d"]
+        assert d_seg["n"] == 120  # 段 n=带内方向行数（全 120 场的 d 行）
+        assert d_seg["actual_freq"] == pytest.approx(n_d / 120, abs=1e-6)
+        assert d_seg["crossed"] is True  # 未校正门（n≥100 且 |z|>2）恰过
+        rw = edge_scan.romano_wolf_stepdown(triples, segments)
+        assert rw["p10-20:d"]["p_raw"] == pytest.approx(0.0407, abs=2e-3)
+        assert rw["p10-20:d"]["p_rw"] > 0.05  # 族 max 分布下不再显著
+        assert rw["p10-20:d"]["crossed_rw"] is False  # 只收紧：uncrossed→False
+
+    def test_strong_deviation_still_passes_rw(self):
+        """强偏离不被 RW 封死：z≈10.7 → p_rw=1/(B+1) 量级，仍越门落发现。"""
+        matches = (
+            [((0.15, 0.15, 0.70), 1)] * 60
+            + [((0.15, 0.15, 0.70), 0)] * 12
+            + [((0.15, 0.15, 0.70), 2)] * 48
+        )
+        rows, triples = _rw_world(matches)
+        segments = edge_scan.calibration_segments(rows)
+        rw = edge_scan.romano_wolf_stepdown(triples, segments)
+        assert segments["p10-20:d"]["crossed"] is True
+        assert rw["p10-20:d"]["p_rw"] <= edge_scan.S1_RW_ALPHA
+        assert rw["p10-20:d"]["crossed_rw"] is True
+
+    def test_rw_never_loosens_and_p_rw_dominates_p_raw(self):
+        """结构不变量：crossed_rw ⊆ crossed；p_rw ≥ p_raw（max 统计量 ≥ 单统计量）。"""
+        rows, triples, _ = _lone_borderline_world()
+        segments = edge_scan.calibration_segments(rows)
+        rw = edge_scan.romano_wolf_stepdown(triples, segments)
+        for key, seg in segments.items():
+            entry = rw[key]
+            assert entry["p_raw"] >= 0.0
+            assert entry["p_rw"] >= entry["p_raw"] - 1e-12
+            if not seg["crossed"]:
+                assert entry["crossed_rw"] is False  # 未过未校正门者 RW 不可能放开
+
+    def test_family_is_full_21_segments_absent_as_p_one(self):
+        """族=注册全 21 段（E-32 修订 C 同精神）：缺组段以 p=1 入族不缺席。"""
+        rows, triples, _ = _lone_borderline_world()
+        segments = edge_scan.calibration_segments(rows)
+        rw = edge_scan.romano_wolf_stepdown(triples, segments)
+        assert len(rw) == 21  # 7 价格带 × 3 方向
+        absent = rw["p40-50:h"]
+        assert absent["p_raw"] == 1.0
+        assert absent["p_rw"] == 1.0
+        assert absent["crossed_rw"] is False
+
+    def test_empty_window_fail_closed(self):
+        """空窗不炸不误判：全段 p=1 不越门。"""
+        rw = edge_scan.romano_wolf_stepdown([], {})
+        assert len(rw) == 21
+        assert all(e["p_rw"] == 1.0 and not e["crossed_rw"] for e in rw.values())
+
+    def test_deterministic_given_same_inputs(self):
+        """固定种子：同输入重跑逐位一致（台账幂等/审计可复现的前提）。"""
+        rows, triples, _ = _lone_borderline_world()
+        segments = edge_scan.calibration_segments(rows)
+        first = edge_scan.romano_wolf_stepdown(triples, segments)
+        second = edge_scan.romano_wolf_stepdown(triples, segments)
+        assert first == second
+
+    def test_calibrated_world_no_rw_crossing(self):
+        """市场恰校准世界（种子固定）：RW 后无越门段（FWER 语义的合成对照）。"""
+        import random
+
+        rng = random.Random(20261110)
+        matches = []
+        triple = (0.15, 0.15, 0.70)
+        for _ in range(120):
+            u = rng.random()
+            outcome = 0 if u < 0.15 else (1 if u < 0.30 else 2)
+            matches.append((triple, outcome))
+        rows, triples = _rw_world(matches)
+        segments = edge_scan.calibration_segments(rows)
+        rw = edge_scan.romano_wolf_stepdown(triples, segments)
+        assert not any(e["crossed_rw"] for e in rw.values())
+
+
+def test_s1_rw_fields_in_payload_and_strong_landing(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 32 接线：RW 读数进观测 payload 与发现 notes；强偏离仍落发现。"""
+    monkeypatch.setattr(edge_scan, "S1_MIN_N", 3)
+    for kickoff, goals in (
+        ("2026-11-09T10:00:00+00:00", (1, 2)),
+        ("2026-11-09T11:00:00+00:00", (0, 3)),
+        ("2026-11-09T12:00:00+00:00", (2, 2)),
+    ):
+        _seed_fixture(
+            db,
+            kickoff=kickoff,
+            business_date=_BUSINESS_DATE,
+            home_goals=goals[0],
+            away_goals=goals[1],
+            jc_odds=(1.25, 6.0, 12.0),
+            jc_captured_at="2026-11-09T09:00:00+00:00",
+        )
+    stats = edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    payload = json.loads(
+        db.execute(
+            "SELECT payload FROM edge_observations WHERE scanner='s1' AND window_key=?",
+            (_BUSINESS_DATE,),
+        ).fetchone()[0]
+    )
+    assert payload["rw"] == {
+        "method": "romano-wolf-stepdown/1",
+        "alpha": edge_scan.S1_RW_ALPHA,
+        "replicates": edge_scan.S1_RW_REPLICATES,
+        "family_size": 21,
+    }
+    seg_a = payload["segments"]["p00-10:a"]
+    assert seg_a["p_raw"] == pytest.approx(0.00017, abs=5e-5)  # z≈3.76 双侧
+    assert seg_a["p_rw"] <= edge_scan.S1_RW_ALPHA
+    assert seg_a["crossed_rw"] is True
+    # 返回面双口径并列（新旧对照读数不互吞）
+    assert "p00-10:a" in stats["crossed"]
+    assert "p00-10:a" in stats["crossed_rw"]
+    # 发现行 notes 带 RW 读数（审计可复原）
+    notes = json.loads(
+        db.execute(
+            "SELECT notes FROM edge_findings WHERE segment_key='p00-10:a'"
+        ).fetchone()[0]
+    )
+    assert notes["crossed_rw"] is True
+    assert notes["p_rw"] == seg_a["p_rw"]
+
+
+def test_s1_rw_blocks_landing_when_stepdown_rejects(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """票 32 门叠加：RW 拒绝（p_rw>α）→ 未校正越门段不落发现（只收紧）。"""
+    monkeypatch.setattr(edge_scan, "S1_MIN_N", 3)
+
+    def reject_all(match_probs, segments, **_kwargs):
+        return {
+            key: {"p_raw": 1.0, "p_rw": 0.5, "crossed_rw": False}
+            for key in edge_scan._S1_FAMILY_KEYS
+        }
+
+    monkeypatch.setattr(edge_scan, "romano_wolf_stepdown", reject_all)
+    for kickoff, goals in (
+        ("2026-11-09T10:00:00+00:00", (1, 2)),
+        ("2026-11-09T11:00:00+00:00", (0, 3)),
+        ("2026-11-09T12:00:00+00:00", (2, 2)),
+    ):
+        _seed_fixture(
+            db,
+            kickoff=kickoff,
+            business_date=_BUSINESS_DATE,
+            home_goals=goals[0],
+            away_goals=goals[1],
+            jc_odds=(1.25, 6.0, 12.0),
+            jc_captured_at="2026-11-09T09:00:00+00:00",
+        )
+    stats = edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    assert stats["crossed"]  # 未校正口径仍越门（对照读数保留）
+    assert stats["crossed_rw"] == []  # RW 拒绝 → 不落发现
+    assert stats["findings_landed"] == 0
+    assert db.execute("SELECT COUNT(*) FROM edge_findings").fetchone()[0] == 0
+    payload = json.loads(
+        db.execute(
+            "SELECT payload FROM edge_observations WHERE scanner='s1' AND window_key=?",
+            (_BUSINESS_DATE,),
+        ).fetchone()[0]
+    )
+    assert payload["segments"]["p00-10:a"]["crossed"] is True  # 旧口径如实留痕
+    assert payload["segments"]["p00-10:a"]["crossed_rw"] is False
+
+
 # ---- S1 十年回放面（口径验证） ----
 
 
@@ -1013,6 +1225,46 @@ def test_s2_calibration_bins_and_gate(db: sqlite3.Connection) -> None:
     assert stats["ev_bets"] == 0
 
 
+def test_s2_log_loss_third_metric_face(db: sqlite3.Connection) -> None:
+    """
+    票 32 面 C：log loss 第三指标进 S2 报告面（观测面，不进发现门）。
+
+    同三场客胜世界：had 实现向 'a' p=.03 → LL=−ln(.03)（尾部过自信示范：
+    skill<0）；ttg 实现档 "1" p=.95 → LL=−ln(.95)（skill>0）；无 RW/越门
+    字段——log loss 不新增多重比较面。
+    """
+    for i in range(3):
+        _seed_scored_fixture(
+            db,
+            tag=f"l{i}",
+            kickoff=f"2026-11-09T1{i}:40:00+00:00",
+            business_date=_BUSINESS_DATE,
+            home_goals=0,
+            away_goals=1,
+        )
+    accuracy.score_settled_fixtures(db)
+    stats = edge_scan.run_s2(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    payload = _s2_payload(db)
+    ll = payload["log_loss"]
+    assert set(ll) == {"had", "ttg", "crs"}
+    assert ll["had"] == {
+        "market": "had",
+        "n": 3,
+        "n_classes": 3,
+        "mean_log_loss": pytest.approx(-math.log(0.03), abs=1e-6),
+        "uniform_anchor": pytest.approx(math.log(3), abs=1e-6),
+        "skill_vs_uniform": pytest.approx(1 + math.log(0.03) / math.log(3), abs=1e-6),
+    }
+    assert ll["had"]["skill_vs_uniform"] < 0  # 尾部过自信：对均匀锚反向
+    # ttg 档 "1"=P(1:0)+P(0:1)=0.95+0.03=0.98（矩阵两格并入同档）
+    assert ll["ttg"]["mean_log_loss"] == pytest.approx(-math.log(0.98), abs=1e-6)
+    assert ll["ttg"]["n_classes"] == 8
+    assert ll["ttg"]["skill_vs_uniform"] > 0
+    # log loss 不产发现、不进越门返回面
+    assert stats["findings_landed"] == 0
+    assert stats["crossed"] == []
+
+
 def test_s2_calibration_gate_crossing_idempotent(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1404,3 +1656,93 @@ def test_digest_includes_s2_sections(db: sqlite3.Connection) -> None:
     assert "## S2 模型分箱表（最新窗）" in md
     assert "| had:b9 | 250 | 0.95 | 0.9" in md
     assert "越门 had:b9" in md  # 摘要行含两面越门段（不只 EV）
+
+
+def test_digest_s1_rw_and_s2_log_loss_faces(db: sqlite3.Connection) -> None:
+    """
+    票 32 周报面：S1 段带 RW 列（晋升建议按 RW 口径）+ S2 log loss 表与判读分层。
+
+    s1 段 crossed（未校正）与 crossed_rw 分列——RW 拒绝的段不进晋升建议
+    （只收紧）；无 RW 字段的旧 payload 段回退未校正口径不误杀。s2 log_loss
+    表随最新观测进周报 + 冻结判读分层文字随报告展示。
+    """
+    db.execute(
+        """
+        INSERT INTO edge_findings (scanner, segment_key, metric_value, n, se,
+                                   window, status, found_at, notes)
+        VALUES ('s1', 'p10-20:d', -0.077, 116, 0.033, '2026-08-12..2026-11-09',
+                'new', '2026-11-09T16:00:00+00:00', '{}'),
+               ('s1', 'p00-10:a', 0.587, 120, 0.156, '2026-08-12..2026-11-09',
+                'new', '2026-11-09T16:00:00+00:00', '{}')
+        """
+    )
+    db.execute(
+        """
+        INSERT INTO edge_observations (scanner, window_key, payload, created_at)
+        VALUES ('s1', '2026-11-09', ?, '2026-11-09T16:00:00+00:00'),
+               ('s2', '2026-11-09', ?, '2026-11-09T16:00:00+00:00')
+        """,
+        (
+            json.dumps(
+                {
+                    "face": "runtime",
+                    "window": "2026-08-12..2026-11-09",
+                    "segments": {
+                        # 待晋升人裁段：未校正越门、RW 拒绝（票 32 对照读数形态）
+                        "p10-20:d": {
+                            "n": 116,
+                            "mean_prob": 0.2,
+                            "actual_freq": 0.123,
+                            "dev": -0.077,
+                            "se": 0.033,
+                            "crossed": True,
+                            "p_raw": 0.021,
+                            "p_rw": 0.063,
+                            "crossed_rw": False,
+                        },
+                        "p00-10:a": {
+                            "n": 120,
+                            "mean_prob": 0.08,
+                            "actual_freq": 0.667,
+                            "dev": 0.587,
+                            "se": 0.156,
+                            "crossed": True,
+                            "p_raw": 0.0002,
+                            "p_rw": 0.001,
+                            "crossed_rw": True,
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "window": "2026-08-12..2026-11-09",
+                    "coverage": {"calib_binned": 3, "ev_bets": 0},
+                    "calibration": {},
+                    "ev": {},
+                    "log_loss": {
+                        "had": {
+                            "market": "had",
+                            "n": 3,
+                            "n_classes": 3,
+                            "mean_log_loss": 3.506557,
+                            "uniform_anchor": 1.098612,
+                            "skill_vs_uniform": -2.191713,
+                        }
+                    },
+                }
+            ),
+        ),
+    )
+    db.commit()
+    report = edge_scan.build_edge_digest(db, week_end=_BUSINESS_DATE)
+    # 晋升建议=RW 后仍越门（p00-10:a）；p10-20:d 未校正越门但 RW 拒绝 → 不建议
+    assert report["findings"]["promotion_suggestions"] == ["s1:p00-10:a"]
+    assert report["s2"]["log_loss"]["had"]["n"] == 3
+    md = edge_scan._render_markdown(report)
+    assert "| p10-20:d | 116" in md  # S1 表段行
+    assert "| 0.063 |" in md  # S1 表 RW p 列
+    assert "## S2 log loss 第三指标（最新窗；票 32，观测面不进发现门）" in md
+    assert "| had | 3 | 3 | 3.506557 | 1.098612 | -2.191713 |" in md
+    assert "log loss 判读分层（Wheatcroft 2021，RPS 之争对冲）" in md
+    assert any("层 0 结构" in line for line in edge_scan.S2_LOSS_READING_RULE)
