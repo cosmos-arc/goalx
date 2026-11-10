@@ -315,3 +315,21 @@ def test_english_alias_census_counts_manual_english_only(db) -> None:
     assert census["jc_teams"] == 2
     assert census["english_resolvable"] == 1
     assert census["unresolved"] == ["切尔西"]
+
+
+def test_tm_club_alias_bridge_registers_unique_matches(db) -> None:
+    """TM 俱乐部英文名桥（autoresearch 票 18）：英文锚三级解析，唯一即落。"""
+    home = fx_store.upsert_team(db, "阿森纳")
+    ta.record_srct_en_aliases(db, [(home, "Arsenal")])
+    report = ta.sync_tm_club_aliases(db, ["Arsenal FC", "Nowhere Town"])
+    assert report.matched == 1
+    assert report.added == 1
+    assert report.unmatched == ["Nowhere Town"]
+    # 幂等：重跑不翻倍
+    report2 = ta.sync_tm_club_aliases(db, ["Arsenal FC", "Nowhere Town"])
+    assert report2.added == 0
+    row = db.execute(
+        "SELECT team_id FROM team_aliases WHERE source = 'transfermarkt'"
+        " AND alias = 'Arsenal FC'"
+    ).fetchone()
+    assert row["team_id"] == home

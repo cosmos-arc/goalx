@@ -43,6 +43,8 @@ from goalx_backend.betting.funnel import (
 from goalx_backend.betting.settle import run_settlement
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import (
+    coach_changes,
+    coach_crosscheck,
     corpus_duckdb,
     gold,
     mapping,
@@ -71,6 +73,7 @@ from goalx_backend.data.ingest import (
     srct_remat,
     srct_results,
     srct_shift,
+    tm_coach,
     understat,
     uniform,
     zucai_official,
@@ -106,6 +109,7 @@ from goalx_backend.modelling.team_align import (
     record_srct_en_aliases,
     srct_en_team_ids,
     sync_clubelo_aliases,
+    sync_tm_club_aliases,
 )
 from goalx_backend.modelling.team_align import (
     srct_alias_sets as team_align_srct_sets,
@@ -990,6 +994,48 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
         else:
             stats = clubelo.sync_snapshot(conn, settings, client, date.today())
     return clubelo.stats_dict(stats)
+
+
+def tm_coach_sync(
+    seasons: tuple[str, ...] | None = None,
+    *,
+    leagues: tuple[str, ...] | None = None,
+) -> dict[str, object]:
+    """
+    TM 教练任职同步（autoresearch 票 18）+ 换帅派生面重建。
+
+    周拍 = 当前季 11 联赛（保鲜在任右端）；seasons 显式传
+    tm_coach.backfill_seasons() 即十年回填（一次性运维步，不进调度）。
+    采集后接别名桥（TM 英文名 → canonical，唯一命中落 transfermarkt 别名）
+    与事件/样本派生重建——桥先于派生（派生的 team_id 解析可用新锚）。
+    """
+    settings = get_settings()
+    with (
+        task_conn() as conn,
+        httpx.Client(verify=browser_ssl_context()) as client,
+    ):
+        stats = tm_coach.sync_tm_coach(
+            conn, settings, client, leagues=leagues, seasons=seasons
+        )
+        alias_report = sync_tm_club_aliases(conn, tm_coach.distinct_clubs(conn))
+        derive_stats = coach_changes.derive_coach_changes(conn)
+    return {
+        **tm_coach.stats_dict(stats),
+        "aliases": alias_report.as_dict(),
+        "derived": derive_stats,
+    }
+
+
+def tm_coach_report() -> dict[str, object]:
+    """TM 教练层只读报告：联赛×赛季覆盖 + 派生面现计数（晨检/验收面）。"""
+    with task_conn() as conn:
+        return coach_changes.coverage_report(conn)
+
+
+def tm_coach_crosscheck(*, window_days: int = 45) -> dict[str, object]:
+    """交叉核验（只读，票 18 验收②；srct 教练名，诚实小样本）。"""
+    with task_conn() as conn:
+        return coach_crosscheck.srct_coach_agreement(conn, window_days=window_days)
 
 
 def pool_snapshot() -> dict[str, object]:

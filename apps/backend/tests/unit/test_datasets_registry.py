@@ -34,6 +34,7 @@ _RECORD_NAMES = (
     "official-reconcile",
     "understat-sync",
     "clubelo-sync",
+    "tm-coach-sync",
     "odds-anchor-dense",
     "track2-snapshots",
     "srcb-collect",
@@ -49,7 +50,7 @@ _RECORD_NAMES = (
 
 
 def test_registry_pinned_to_full_batch() -> None:
-    """全量 17 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
+    """全量 18 记录钉死：task 同一性（ADR-0005）、cron、cli 命令面。"""
     by_name = {spec.name: spec for spec in datasets.DATASETS}
     assert tuple(by_name) == _RECORD_NAMES
     # dispatch 与定拍命中同一 tasks 函数（一份实现，两个 adapter）
@@ -59,6 +60,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["official-reconcile"].task is tasks.official_results_reconcile
     assert by_name["understat-sync"].task is tasks.understat_sync
     assert by_name["clubelo-sync"].task is tasks.clubelo_sync
+    assert by_name["tm-coach-sync"].task is tasks.tm_coach_sync
     assert by_name["odds-anchor-dense"].task is tasks.odds_anchor_dense
     assert by_name["srcb-collect"].task is tasks.srcb_collect
     assert by_name["eu-odds-closing"].task is tasks.eu_odds_closing
@@ -72,6 +74,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["official-reconcile"].cron == "30 8 * * *"
     assert by_name["understat-sync"].cron == "20 9 * * *"
     assert by_name["clubelo-sync"].cron == "10 9 * * *"
+    assert by_name["tm-coach-sync"].cron == "20 3 * * 1"
     assert by_name["odds-anchor-dense"].cron == "*/5 * * * *"
     assert by_name["srcb-collect"].cron == "40 10,22 * * *"
     assert by_name["eu-odds-closing"].cron == "*/30 * * * *"
@@ -90,6 +93,7 @@ def test_registry_pinned_to_full_batch() -> None:
         "srct-night",
         "understat-sync",
         "clubelo-sync",
+        "tm-coach-sync",
         "closing-snapshot",
         "srct-shift",
         "srct-remat",
@@ -142,6 +146,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "official-reconcile": "30 8 * * *",
         "understat-sync": "20 9 * * *",
         "clubelo-sync": "10 9 * * *",
+        "tm-coach-sync": "20 3 * * 1",
         "guardian-sync": "40 9 * * *",
         "odds-anchor-dense": "*/5 * * * *",
         "track2-snapshots": "*/10 * * * *",

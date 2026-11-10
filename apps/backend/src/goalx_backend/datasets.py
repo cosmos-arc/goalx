@@ -210,6 +210,33 @@ _CLUBELO = DatasetSpec(
     ),
 )
 
+_TM_COACH = DatasetSpec(
+    name="tm-coach-sync",
+    cron="20 3 * * 1",
+    task=tasks.tm_coach_sync,
+    cli_help="TM教练任职周拍(autoresearch票18;--seasons回填2016起十年窗)",
+    flow_help=(
+        "TM 教练任职周拍（autoresearch 票 18）：当前季 11 联赛保鲜 +\n"
+        "换帅事件/样本派生面重建。十年回填 = --seasons 2016..2026（一次性\n"
+        "运维步，约 11×N 联赛页 + 逐俱乐部 2 页，2s 礼貌间距）。"
+    ),
+    cli_args=(
+        CliArg(
+            "--seasons",
+            help="回填赛季起始年(如 2016 2017 …,默认当前季)",
+            nargs="*",
+            transform=_tuple_or_none,
+        ),
+        CliArg(
+            "--leagues",
+            help="fd 联赛码(默认 CorpusScope 11 联赛)",
+            nargs="*",
+            default=[],
+            transform=_tuple_or_none,
+        ),
+    ),
+)
+
 _ODDS_ANCHOR = DatasetSpec(
     name="odds-anchor-dense",
     cron="*/5 * * * *",
@@ -376,6 +403,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _OFFICIAL_RECONCILE,
     _UNDERSTAT,
     _CLUBELO,
+    _TM_COACH,
     _ODDS_ANCHOR,
     _TRACK2,
     _SRCB,
