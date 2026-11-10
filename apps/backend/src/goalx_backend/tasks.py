@@ -1443,7 +1443,8 @@ def weekly_agent_batch() -> dict[str, object]:
         duck_con: duckdb.DuckDBPyConnection | None = None
         try:
             duck_con = rag.connect_rag(settings.db_path)
-        except duckdb.Error as exc:
+        except (duckdb.Error, OSError) as exc:
+            # corpus_duckdb.reader 同款降级面（缺席/被锁占不炸周拍）
             logger.warning("weekly 语义查重缝降级（duck attach 失败）：{}", exc)
         deduper = (
             rag.LessonDeduper(embedder=embedder, duck_con=duck_con)
