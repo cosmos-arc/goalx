@@ -547,3 +547,76 @@ def test_check_prematch_snapshots_observation(store: CorpusStore) -> None:
     item = check_prematch_snapshots(store, now=NOW)
     assert item.status == OK
     assert "累计 1 拍" in item.detail
+
+
+def test_check_srct_season_rhythm_observation(tmp_path: Path) -> None:
+    """
+    项 19 源T当季锚书入库节奏（autoresearch 票 19；观察项只报数不判红）。
+
+    桥缺席=黄（S4 as-of 面同源降级，如实不冒充）；有锚书轨迹=绿报计数；
+    视图在但季无行=绿零（空真）。
+    """
+    import duckdb
+
+    from goalx_backend.morning_check import check_srct_season_rhythm
+
+    # 桥缺席：黄不红
+    item = check_srct_season_rhythm(None, now=NOW)
+    assert item.status == DEGRADED
+    assert "桥缺席" in item.detail
+
+    # 真语料：攒 cid177 当季轨迹 → 绿 + 计数 + 最新观测
+    from goalx_backend.data import corpus_duckdb
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.data.ingest import srct, srct_odds
+
+    envelope = {
+        "provider": srct.SRCT_PROVIDER,
+        "dataset": srct.ODDS_DATASET,
+        "sid": "95019",
+        "fetched_at": "2026-10-31T02:00:00+00:00",
+        "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        "raw_sha": "0" * 64,
+        "payload": {
+            "meta": {},
+            "game": ["177|800001|TestPinnacle|2.50|3.40|2.80|"],
+            "game_detail": ["800001^2.50|3.40|2.80|10-30 20:00|0.9|0.9|0.9|2026;"],
+        },
+    }
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store.append_bronze(srct.SRCT_PROVIDER, srct.ODDS_DATASET, [envelope])
+        # NOW=2026-11-01 → 当季 2026-27（8 月界切）；kickoff 北京 10-31
+        srct_odds.build_odds_change_events(
+            store,
+            meta={
+                "95019": {
+                    "sid": "95019",
+                    "kickoff": datetime(2026, 10, 31, 20, 0),
+                    "league": "英超",
+                }
+            },
+        )
+        duck_path = corpus_duckdb.build_corpus_duckdb(store)
+        con = duckdb.connect(duck_path, read_only=True)
+        try:
+            item = check_srct_season_rhythm(con, now=NOW)
+        finally:
+            con.close()
+    finally:
+        store.close()
+    assert item.status == OK
+    assert item.name == "srct_season_rhythm"
+    assert "2026-27" in item.detail
+    assert "1 场在库" in item.detail
+    assert "2026-10-31T02:00:00+00:00" in item.detail
+
+    # 同库查无行季（now 落 2025-26 窗）=空真绿零（未开始积累不冒充也不黄）
+    con = duckdb.connect(duck_path, read_only=True)
+    try:
+        item = check_srct_season_rhythm(con, now=datetime(2026, 3, 1, 1, 5, tzinfo=UTC))
+    finally:
+        con.close()
+    assert item.status == OK
+    assert "2025-26" in item.detail
+    assert "0 场在库" in item.detail

@@ -21,6 +21,7 @@ from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -1254,23 +1255,44 @@ def edge_scan_day(business_date: str | None = None) -> dict[str, object]:
 
     观察日=北京业务日昨日（昨日场已结算）；S4 sharp 锚走 corpus 桥，
     库缺席降级 None（drift 不可算→有分辨记零不冒充）。读写同 task_conn。
+    票 19：S4 sharp 端点双端历史时点走青铜重放（srct_asof 注入缝——
+    silver 最新视图回答不了夜扫查昨日决策时点，§4.1#7 接线债）。
     """
     with task_conn() as conn, corpus_anchor() as duck_con:
-        return edge_scan.edge_scan_day(
-            conn,
-            business_date=business_date,
-            duck_con=duck_con,
-            resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
+        store = (
+            CorpusStore(get_settings().corpus_root) if duck_con is not None else None
         )
+        try:
+            return edge_scan.edge_scan_day(
+                conn,
+                business_date=business_date,
+                duck_con=duck_con,
+                resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
+                asof_resolver=(
+                    partial(srct_asof.asof_rows, store, duck_con)
+                    if store is not None and duck_con is not None
+                    else None
+                ),
+            )
+        finally:
+            if store is not None:
+                store.close()
 
 
 def edge_digest_week() -> dict[str, object]:
-    """探索轨周报（票 04）：各扫描器窗口统计+新台账行+晋升建议。"""
-    with task_conn() as conn:
+    """
+    探索轨周报（票 04）：各扫描器窗口统计+新台账行+晋升建议。
+
+    票 19：加锚书当季入库节奏节（duck 桥缺席=节 None，不冒充）。
+    """
+    with task_conn() as conn, corpus_anchor() as duck_con:
         store = CorpusStore(get_settings().corpus_root)
         try:
             report = edge_scan.build_edge_digest(
-                conn, week_end=edge_scan.yesterday_business_date(), store=store
+                conn,
+                week_end=edge_scan.yesterday_business_date(),
+                store=store,
+                duck_con=duck_con,
             )
         finally:
             store.close()

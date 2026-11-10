@@ -12,16 +12,21 @@ import math
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
 from goalx_backend.cli import _cmd_edge_scan
 from goalx_backend.config import Settings
+from goalx_backend.data import corpus_duckdb
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data import results as rs_store
+from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.ingest import srct, srct_asof, srct_odds
 from goalx_backend.db import connect, connect_research, migrate
 from goalx_backend.evaluation import accuracy, edge_scan
 from goalx_backend.models import DrawResultInput, MatchCodeInput, SnapshotInput
@@ -337,6 +342,247 @@ def test_s4_zero_signal_day_records_honest_zero(db: sqlite3.Connection) -> None:
     )
 
 
+# ---- S4 × corpus as-of（票 19：§4.1#7 接线债——0 有分辨根因=sharp 端点
+# ---- 读 silver 最新视图，历史时点"消失"；接线=青铜重放注入缝） ----
+
+_SID = "95019"
+# cid177 轨迹行（published 北京墙钟）：定格端旧价 → 决策端新价（a 赔缩）
+_PIN_ROW_OLD = "2.50|3.40|2.80|11-09 21:50|0.9|0.9|0.9|2026"  # 13:50 UTC
+_PIN_ROW_NEW = "2.90|3.40|2.40|11-09 23:50|0.9|0.9|0.9|2026"  # 15:50 UTC
+
+
+def _pin177_envelope(fetched_at: str, rows: list[str]) -> dict:
+    """一个含 cid177 轨迹的 odds_1x2d bronze 信封（票 19 测试件）。"""
+    return {
+        "provider": srct.SRCT_PROVIDER,
+        "dataset": srct.ODDS_DATASET,
+        "sid": _SID,
+        "fetched_at": fetched_at,
+        "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        "raw_sha": "0" * 64,
+        "payload": {
+            "meta": {},
+            "game": ["177|800001|TestPinnacle|2.50|3.40|2.80|"],
+            "game_detail": [f"800001^{';'.join(rows)};"],
+        },
+    }
+
+
+def _build_s4_corpus(
+    tmp_path: Path,
+) -> tuple[CorpusStore, str]:
+    """
+    攒 S4 票 19 语料：三信封（定格前/决策前/开球后夜拍）→ silver → duck。
+
+    第三信封（开球后）再物化把 silver 观测时刻整体后移——夜扫查昨日
+    决策时点在 silver 上空（§4.1#7 根因形态），青铜重放可复原。
+    """
+    store = CorpusStore(tmp_path / "corpus")
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct.ODDS_DATASET,
+        [
+            _pin177_envelope("2026-11-09T14:00:00+00:00", [_PIN_ROW_OLD]),
+            _pin177_envelope("2026-11-09T16:30:00+00:00", [_PIN_ROW_OLD, _PIN_ROW_NEW]),
+            # 夜拍（开球后 8h）：同载荷再抓再物化——silver 最新视图后移
+            _pin177_envelope("2026-11-10T02:00:00+00:00", [_PIN_ROW_OLD, _PIN_ROW_NEW]),
+        ],
+    )
+    srct_odds.build_odds_change_events(
+        store,
+        # kickoff 北京墙钟 11-10 02:00 = UTC 11-09 18:00（= _KICKOFF）
+        meta={
+            _SID: {
+                "sid": _SID,
+                "kickoff": datetime(2026, 11, 10, 2, 0),
+                "league": "英超",
+            }
+        },
+    )
+    return store, str(corpus_duckdb.build_corpus_duckdb(store))
+
+
+def _seed_s4_corpus_fixture(db: sqlite3.Connection) -> None:
+    """一场 JC 定格 15:00、决策 17:00、决策后 17:30 再调盘的已结算场。"""
+    fixture = _seed_fixture(
+        db,
+        kickoff=_KICKOFF,
+        business_date=_BUSINESS_DATE,
+        home_goals=0,
+        away_goals=1,
+        jc_odds=(2.2, 3.1, 3.5),
+        jc_captured_at="2026-11-09T15:00:00+00:00",
+    )
+    for selection, odds in (("h", 2.2), ("d", 3.1), ("a", 3.0)):
+        fx_store.insert_odds_snapshot(
+            db,
+            SnapshotInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code=selection,
+                source="sporttery",
+                odds=odds,
+                captured_at="2026-11-09T17:30:00+00:00",
+                observed_at="2026-11-09T17:30:00+00:00",
+            ),
+        )
+    db.commit()
+
+
+def test_s4_corpus_asof_resolver_reads_history(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """
+    票 19 验收主路径：夜扫（silver 已被开球后信封后移）下，resolver 在场
+    时定格/决策两端走青铜重放 → 有分辨非零；payload 口径注记=corpus as-of。
+    """
+    store, duck_path = _build_s4_corpus(tmp_path)
+    duck_con = duckdb.connect(duck_path, read_only=True)
+    try:
+        _seed_s4_corpus_fixture(db)
+        stats = edge_scan.run_s4(
+            db,
+            edge_scan.ScanContext(
+                business_date=_BUSINESS_DATE,
+                duck_con=duck_con,
+                resolve_sid=lambda fid: _SID,
+                asof_resolver=partial(srct_asof.asof_rows, store, duck_con),
+            ),
+        )
+        assert stats["n_observed"] == 1
+        assert stats["n_stale"] == 1
+        assert stats["n_confirmed"] == 1  # 修复前=0（silver 历史时点消失）
+        assert stats["n_fired"] == 1
+        assert stats["n_hit"] == 1
+        payload = json.loads(
+            db.execute(
+                "SELECT payload FROM edge_observations WHERE scanner='s4'"
+                " AND window_key=?",
+                (_BUSINESS_DATE,),
+            ).fetchone()[0]
+        )
+        assert payload["sharp_source"] == "corpus_asof"
+    finally:
+        duck_con.close()
+        store.close()
+
+
+def test_s4_without_resolver_pins_the_coverage_gap(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """
+    根因钉死（回退面）：同语料同场，无 resolver 时 silver 最新视图回答
+    不了历史时点 → 有分辨如实记零（非断线，§4.1#7 原形态）；口径注记=corpus。
+    """
+    store, duck_path = _build_s4_corpus(tmp_path)
+    duck_con = duckdb.connect(duck_path, read_only=True)
+    try:
+        _seed_s4_corpus_fixture(db)
+        stats = edge_scan.run_s4(
+            db,
+            edge_scan.ScanContext(
+                business_date=_BUSINESS_DATE,
+                duck_con=duck_con,
+                resolve_sid=lambda fid: _SID,
+            ),
+        )
+        assert stats["n_stale"] == 1
+        assert stats["n_confirmed"] == 0  # 0 有分辨（接线前形态）
+        payload = json.loads(
+            db.execute(
+                "SELECT payload FROM edge_observations WHERE scanner='s4'"
+                " AND window_key=?",
+                (_BUSINESS_DATE,),
+            ).fetchone()[0]
+        )
+        assert payload["sharp_source"] == "corpus"
+    finally:
+        duck_con.close()
+        store.close()
+
+
+def test_s4_sharp_source_annotation_legacy(db: sqlite3.Connection) -> None:
+    """无 corpus 桥（duck_con 缺席）：口径注记=legacy（不冒充 corpus 读法）。"""
+    _seed_fixture(
+        db,
+        kickoff=_KICKOFF,
+        business_date=_BUSINESS_DATE,
+        home_goals=1,
+        away_goals=1,
+        jc_odds=(2.2, 3.1, 3.5),
+        jc_captured_at="2026-11-09T15:00:00+00:00",
+    )
+    edge_scan.run_s4(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    payload = json.loads(
+        db.execute(
+            "SELECT payload FROM edge_observations WHERE scanner='s4' AND window_key=?",
+            (_BUSINESS_DATE,),
+        ).fetchone()[0]
+    )
+    assert payload["sharp_source"] == "legacy"
+
+
+def test_s4_zero_signal_day_with_resolver_records_honest_zero(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """无信号日记零纪律在 as-of 接线后不变（红线：不因数据源升级冒充信号）。"""
+    store, duck_path = _build_s4_corpus(tmp_path)
+    duck_con = duckdb.connect(duck_path, read_only=True)
+    try:
+        stats = edge_scan.run_s4(
+            db,
+            edge_scan.ScanContext(
+                business_date="2026-11-01",
+                duck_con=duck_con,
+                resolve_sid=lambda fid: _SID,
+                asof_resolver=partial(srct_asof.asof_rows, store, duck_con),
+            ),
+        )
+        assert stats == {
+            "scanner": "s4",
+            "n_fixtures": 0,
+            "n_observed": 0,
+            "n_stale": 0,
+            "n_confirmed": 0,
+            "n_fired": 0,
+            "n_hit": 0,
+        }
+    finally:
+        duck_con.close()
+        store.close()
+
+
+def test_digest_includes_srct_season_rhythm(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """
+    票 19 周报数据积累面：锚书当季（周窗末日所在季）入库节奏节——
+    cid177 场次在库 + 最新观测；duck 桥缺席时该节如实 None 不冒充。
+    """
+    store, duck_path = _build_s4_corpus(tmp_path)
+    duck_con = duckdb.connect(duck_path, read_only=True)
+    try:
+        report = edge_scan.build_edge_digest(
+            db, week_end=_BUSINESS_DATE, duck_con=duck_con
+        )
+        rhythm = report["srct_rhythm"]
+        assert rhythm is not None
+        assert rhythm["season"] == "2026-27"  # 周窗末日 2026-11-09 所在季
+        assert rhythm["n_sids"] == 1  # _build_s4_corpus 一 sid cid177 轨迹
+        assert rhythm["latest_observed"] == "2026-11-10T02:00:00+00:00"
+        md = edge_scan._render_markdown(report)
+        assert "2026-27" in md
+        assert "1 场在库" in md
+    finally:
+        duck_con.close()
+        store.close()
+    # 桥缺席：节存在但 None（不静默省节——周报读者要能看出积累面断了）
+    without_duck = edge_scan.build_edge_digest(db, week_end=_BUSINESS_DATE)
+    assert without_duck["srct_rhythm"] is None
+    assert "入库节奏" in edge_scan._render_markdown(without_duck)
+    assert "桥缺席" in edge_scan._render_markdown(without_duck)
+
+
 # ---- S5：滚存回看 ----
 
 
@@ -549,6 +795,60 @@ def test_cli_edge_scan_single_scanner(
     payload = json.loads(capsys.readouterr().out)
     assert payload["s4"]["n_observed"] == 1
     assert payload["s4"]["n_confirmed"] == 0  # 无 sharp 锚：有分辨记零
+
+
+def test_cli_edge_scan_composes_asof_resolver(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    票 19 组合根接线：CLI 日扫在 corpus 在场时注入青铜重放——留痕口径
+    注记=corpus_asof 且历史时点有分辨（--no-corpus 不建树不注入）。
+    """
+    # 语料树先建（duck 桥打开前在位）
+    _build_s4_corpus(tmp_path)  # 语料落 tmp_path/"corpus"（同根复用）
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    try:
+        migrate(conn)
+        _seed_s4_corpus_fixture(conn)
+        # CLI 的 resolve_sid 走 mapping 面：物化链在场（票 77 语义）
+        conn.execute(
+            """
+            INSERT INTO source_match_links
+                (fixture_id, source, source_match_id, method, status, meta,
+                 mapped_at)
+            SELECT id, 'srct', ?, 'primary_key', 'linked', '{}',
+                   '2026-11-09T00:00:00+00:00'
+            FROM fixtures WHERE kickoff_utc = ?
+            """,
+            (_SID, _KICKOFF),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    settings = Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    _cmd_edge_scan(
+        argparse.Namespace(
+            scanner="s4",
+            window_end=_BUSINESS_DATE,
+            face="runtime",
+            digest=False,
+            mark=None,
+            no_corpus=False,
+        ),
+        settings=settings,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["s4"]["n_confirmed"] == 1  # as-of 接线后有分辨非零
+    with sqlite3.connect(db_path) as check:
+        observation = json.loads(
+            check.execute(
+                "SELECT payload FROM edge_observations WHERE scanner='s4'"
+                " AND window_key=?",
+                (_BUSINESS_DATE,),
+            ).fetchone()[0]
+        )
+    assert observation["sharp_source"] == "corpus_asof"
 
 
 def test_morning_check_edge_scan_item(db: sqlite3.Connection) -> None:
