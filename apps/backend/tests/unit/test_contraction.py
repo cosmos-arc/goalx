@@ -75,8 +75,8 @@ def test_migration_v52_idempotent(db: sqlite3.Connection) -> None:
     """v52 幂等：两表就位、genesis L0 落账、重跑零效果（同版本重跑先例）。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 52
-    assert migrate(db) == 52  # 同版本重跑零效果
+    assert migrate(db) == 53
+    assert migrate(db) == 53  # 同版本重跑零效果
     for table in ("contraction_transitions", "contraction_clock_readings"):
         assert (
             db.execute(

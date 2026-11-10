@@ -94,6 +94,11 @@ OWNERS: dict[str, set[str]] = {
         "coach_change_events",
         "coach_change_samples",
         "tm_coach_sync_runs",
+        # vision-build 票 09：六轴 ② 阵型族条件面 + ④ 底蕴硬层四因子
+        # （data/formations.py + data/pedigree.py 派生重建）
+        "formation_family_facet",
+        "club_pedigree",
+        "face_derive_state",
     },
     "modelling": {"forecasts", "team_aliases", "forecast_coverage"},
     "evaluation": {

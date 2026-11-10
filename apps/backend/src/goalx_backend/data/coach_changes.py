@@ -24,6 +24,7 @@ identity_status=degraded（回填后门槛观测）。中文名映射只作用 J
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from goalx_backend.data.ingest.tm_coach import TM_LEAGUES
@@ -41,8 +42,8 @@ _TM_CODE_TO_FD = {code: fd for fd, code in TM_LEAGUES.items()}
 
 
 @dataclass(frozen=True)
-class _Tenure:
-    """派生用任职行（角色+教练+区间；同键行同段）。"""
+class Tenure:
+    """派生用任职行（角色+教练+区间；同键行同段；票 09 阵型族面共用）。"""
 
     role: str
     coach_name: str
@@ -62,9 +63,9 @@ class _HistMatch:
     away_team: str
 
 
-def _load_tenures(conn: sqlite3.Connection) -> dict[int, tuple[str, list[_Tenure]]]:
+def _load_tenures(conn: sqlite3.Connection) -> dict[int, tuple[str, list[Tenure]]]:
     """club_tm_id → (club_name, 按 date_from 升序的任职行)。"""
-    out: dict[int, tuple[str, list[_Tenure]]] = {}
+    out: dict[int, tuple[str, list[Tenure]]] = {}
     rows = conn.execute(
         """
         SELECT club_tm_id, club_name, role, coach_name, date_from, date_to
@@ -76,7 +77,7 @@ def _load_tenures(conn: sqlite3.Connection) -> dict[int, tuple[str, list[_Tenure
         club = int(row["club_tm_id"])
         tenures = out.setdefault(club, (str(row["club_name"]), []))[1]
         tenures.append(
-            _Tenure(
+            Tenure(
                 role=str(row["role"]),
                 coach_name=str(row["coach_name"]),
                 date_from=str(row["date_from"]),
@@ -119,7 +120,7 @@ def _load_hist(conn: sqlite3.Connection) -> list[_HistMatch]:
     ]
 
 
-def _assign(tenures: list[_Tenure], day: str) -> tuple[str, str] | None:
+def assign_manager_day(tenures: list[Tenure], day: str) -> tuple[str, str] | None:
     """当日指派：(coach_name, role) 或 None（空窗）——date_from 最晚者接管。"""
     for tenure in reversed(tenures):  # date_from 升序 → 反向首见即最晚上任
         if tenure.date_from <= day and (
@@ -130,7 +131,7 @@ def _assign(tenures: list[_Tenure], day: str) -> tuple[str, str] | None:
 
 
 def _resolve_hist_names(
-    clubs: dict[int, tuple[str, list[_Tenure]]],
+    clubs: Mapping[int, str],
     memberships: dict[int, set[str]],
     hist: list[_HistMatch],
     canonical: NameIndex,
@@ -161,7 +162,7 @@ def _resolve_hist_names(
     }
     resolved: dict[int, str] = {}
     claimed: dict[str, int] = {}
-    for club, (club_name, _tenures) in clubs.items():
+    for club, club_name in clubs.items():
         comps = sorted(memberships.get(club, ()))
         found = _lexical_matches(club_name, comps, indexes, lists_by_comp)
         if not found:  # 词法无关 → team_aliases 桥兜底（复核 F2）
@@ -216,6 +217,38 @@ def _bridge_matches(
     return found
 
 
+def resolve_club_hist_names(conn: sqlite3.Connection) -> dict[int, str]:
+    """
+    club_tm_id → hist 英文队名（票 09 复用缝：六轴④底蕴层的 TM 侧身份）。
+
+    与 ``derive_coach_changes`` 同一实现（``_resolve_hist_names``：三级直配
+    + 别名桥 + 互撞守卫），俱乐部全集取 tm_coach_tenures（换帅域口径）；
+    成员面口径见 ``resolve_season_club_hist_names``。
+    """
+    clubs = {
+        int(row["club_tm_id"]): str(row["club_name"])
+        for row in conn.execute(
+            "SELECT DISTINCT club_tm_id, club_name FROM tm_coach_tenures"
+        ).fetchall()
+    }
+    return _resolve_hist_names(
+        clubs, _load_memberships(conn), _load_hist(conn), alias_index(conn)
+    )
+
+
+def resolve_season_club_hist_names(conn: sqlite3.Connection) -> dict[int, str]:
+    """成员面口径：tm_club_seasons 俱乐部全集 → hist 队名（票 09④派生源）。"""
+    clubs = {
+        int(row["club_tm_id"]): str(row["club_name"])
+        for row in conn.execute(
+            "SELECT DISTINCT club_tm_id, club_name FROM tm_club_seasons"
+        ).fetchall()
+    }
+    return _resolve_hist_names(
+        clubs, _load_memberships(conn), _load_hist(conn), alias_index(conn)
+    )
+
+
 def derive_coach_changes(
     conn: sqlite3.Connection, *, now: str | None = None
 ) -> dict[str, object]:
@@ -229,7 +262,8 @@ def derive_coach_changes(
     memberships = _load_memberships(conn)
     hist = _load_hist(conn)
     canonical = alias_index(conn)
-    resolved = _resolve_hist_names(tenures_by_club, memberships, hist, canonical)
+    club_names = {club: name for club, (name, _rows) in tenures_by_club.items()}
+    resolved = _resolve_hist_names(club_names, memberships, hist, canonical)
     unresolved = sorted(
         name for club, (name, _rows) in tenures_by_club.items() if club not in resolved
     )
@@ -259,7 +293,7 @@ def derive_coach_changes(
             current_event: int | None = None
             games_counted = 0
             for match in streams.get(hist_name, ()):
-                cur = _assign(tenures, match.match_date)
+                cur = assign_manager_day(tenures, match.match_date)
                 if cur is not None and (prev_known is None or cur[0] != prev_known[0]):
                     if prev_known is not None:
                         cur_event = conn.execute(

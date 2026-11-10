@@ -2710,6 +2710,92 @@ def _apply_v52(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v53(conn: sqlite3.Connection) -> None:
+    """
+    v53（vision-build 票 09）：六轴数据 ② 阵型族条件面 + ④ 底蕴硬层四因子。
+
+    三表（data 域，ADR-0008；SQL 属主 data/formations.py + data/pedigree.py）：
+
+    - formation_family_facet：阵型族 × 赛季 × 教练任期条件面（派生重建面，
+      DELETE+INSERT——coach_change_events 先例）。粒度=(season, club_tm_id,
+      coach_name, family)，行=n_matches/n_known（该教练该季该队已知阵型场
+      数/分母）+ 首末日（PIT 完结判定）。教练指派=manager-of-the-day
+      （coach_changes 同语义：date_from 最晚覆盖者）。PIT 契约=读缝只取
+      查询时点前已完结格子（不含当场面）。
+    - club_pedigree：底蕴硬层四因子（club × season，同样派生重建）——顶级
+      联赛连续年限（截至上一赛季，顶级口径=逐国顶级）/ 近 5 季积分百分位
+      （前 5 季均值）/ 荣誉计数（tier1_titles=as-of-season：全史总数 − 窗内
+      后置赛季冠军数；major_honours=静态先验——窗内年份带前视增量，消费方
+      EM facet 签字可用，correctness-review F4；种子未命中/互撞两列 NULL，
+      F2/F6）/ 升降级频谱（观察窗内 tier1 出入计数，纯后视窗）。TM 未解析
+      队的年限/频谱=NULL（诚实缺，不当 0 用）。
+    - face_derive_state：两面派生现态（face 键 upsert 一行，stats JSON 存
+      覆盖报告的丢弃计数——链缺失/未指派等只存在于派发时的口径）。
+    """
+    # 受控族清单与 data/formations.FAMILIES 同源（迁移不 import data 域，
+    # 字面双写；formations 测试钉两者一致）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS formation_family_facet (
+            id INTEGER PRIMARY KEY,
+            season TEXT NOT NULL,
+            league_fd TEXT,
+            league_zh TEXT NOT NULL,
+            team_id INTEGER NOT NULL,
+            club_tm_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            coach_name TEXT NOT NULL,
+            coach_role TEXT NOT NULL CHECK (coach_role IN ('manager', 'caretaker')),
+            family TEXT NOT NULL CHECK (family IN (
+                '4-4-2', '4-2-3-1', '4-3-3', '4-5-1', '3-5-2', '3-4-3',
+                'back-five', 'other')),
+            n_matches INTEGER NOT NULL,
+            n_known INTEGER NOT NULL,
+            first_match_date TEXT NOT NULL,
+            last_match_date TEXT NOT NULL,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (season, league_zh, club_tm_id, coach_name, family)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_formation_facet_coach
+        ON formation_family_facet (coach_name, season)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS club_pedigree (
+            id INTEGER PRIMARY KEY,
+            team TEXT NOT NULL,
+            season TEXT NOT NULL,
+            top_flight_streak INTEGER,
+            points_pct_l5 REAL,
+            l5_seasons INTEGER NOT NULL,
+            -- tier1_titles=as-of-season；major_honours=静态先验（窗内前视
+            -- 增量，消费方签字可用）；种子未命中/互撞=NULL 不写假 0
+            tier1_titles INTEGER,
+            major_honours INTEGER,
+            promo_to_tier1 INTEGER,
+            releg_from_tier1 INTEGER,
+            club_tm_id INTEGER,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (team, season)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS face_derive_state (
+            face TEXT PRIMARY KEY,
+            rebuilt_at TEXT NOT NULL,
+            stats TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2763,6 +2849,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (50, _apply_v50),
     (51, _apply_v51),
     (52, _apply_v52),
+    (53, _apply_v53),
 )
 
 
