@@ -1,9 +1,10 @@
 """
-09:05 晨检代码化：19 项只读红绿面。
+09:05 晨检代码化：20 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
-autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项。）
+autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
+票 34 加第 20 项断点哨兵。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -50,7 +51,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
-from goalx_backend.evaluation import edge_scan
+from goalx_backend.evaluation import anchor_sentinel, edge_scan
 from goalx_backend.modelling import forecast
 
 OK = "ok"
@@ -75,6 +76,9 @@ _JC_WAITING_CRITICAL = timedelta(hours=2)
 _CRITICAL_NAME_CAP = 3  # 名单单列上限（多则省略号）
 # 赛前拍近窗（票 14 观察项）：与夜班/收班新鲜界同 26h 一昼夜口径
 _PREMATCH_RECENT_HOURS = 26
+# 项 20 断点哨兵（票 34）：对账面无新周行的黄线（周级定拍，8 天=错过
+# 一个周一仍无周报即黄）
+_SENTINEL_STALE_DAYS = 8
 
 
 @dataclass(frozen=True)
@@ -516,6 +520,53 @@ def check_prematch_snapshots(store: CorpusStore, *, now: datetime) -> CheckItem:
         f"累计 {total} 拍 · 近{_PREMATCH_RECENT_HOURS}h "
         + f"{int(cast('int', face['recent']))} 拍 · 最新 {face['latest_fetched_at']}",
     )
+def check_anchor_sentinel(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
+    """
+    项 20 断点哨兵（autoresearch 票 34，设计稿 13-sentinel-design §六）。
+
+    任一轴最新周 alert → FAIL（红）；任一轴 warn 或对账面 >8 天无新周行
+    → DEGRADED（黄，含未首跑——不绿冒充）；否则 OK。detail=四轴
+    `axis=值(n)` 汇总（check_edge_scan 同款字符串风格）。告警动作到此
+    为止=留痕+红面，不自动处置。
+    """
+    face = anchor_sentinel.latest_week_face(conn)
+    if not face:
+        return CheckItem("anchor_sentinel", DEGRADED, "哨兵未首跑（无周报行）")
+    parts: list[str] = []
+    worst = OK
+    for axis in anchor_sentinel.AXES:
+        row = face.get(axis)
+        if row is None:
+            worst = DEGRADED
+            parts.append(f"{axis}=missing")
+            continue
+        status = str(row["status"])
+        metrics: dict[str, Any] = row["metrics"]
+        metric = (
+            metrics.get("rate")
+            if axis
+            in (
+                anchor_sentinel.AXIS_COVERAGE_SECOND,
+                anchor_sentinel.AXIS_COVERAGE_ANCHOR,
+            )
+            else metrics.get("median")
+            if axis == anchor_sentinel.AXIS_DEV_ODDS
+            else metrics.get("mean")
+        )
+        value = "" if metric is None else f" {float(metric):.3f}"
+        parts.append(f"{axis}={status}{value}(n={row['n_fixtures']})")
+        if status == "alert":
+            worst = FAIL
+        elif status == "warn" and worst is not FAIL:
+            worst = DEGRADED
+    latest_computed = max(str(row["computed_at"]) for row in face.values())
+    age = _age_hours(latest_computed, now)
+    if age is None or age > _SENTINEL_STALE_DAYS * 24:
+        if worst is not FAIL:
+            worst = DEGRADED
+        age_note = "坏时间戳" if age is None else f"{age:.0f}h"
+        parts.append(f"对账面 {age_note} 无新周行（>8 天线）")
+    return CheckItem("anchor_sentinel", worst, "; ".join(parts))
 
 
 def check_srct_season_rhythm(
@@ -601,7 +652,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 19 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 20 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -630,6 +681,7 @@ def run_morning_check(
                 check_freshness_shadow(conn, now=resolved_now),
                 check_edge_scan(conn, now=resolved_now),
                 check_prematch_snapshots(store, now=resolved_now),
+                check_anchor_sentinel(conn, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

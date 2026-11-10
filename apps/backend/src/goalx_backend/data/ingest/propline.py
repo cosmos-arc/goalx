@@ -43,6 +43,7 @@ from goalx_backend.data.ingest.oddsapi import (
     ParsedEvent,
     day_start_utc,
 )
+from goalx_backend.data.leagues import LEAGUE_TO_FD
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling import team_align
 from goalx_backend.models import (
@@ -276,6 +277,54 @@ def discover_sport_keys(conn: sqlite3.Connection, settings: Settings) -> list[st
     return [str(row["odds_api_sport_key"]) for row in rows]
 
 
+# 哨兵采集面窗口（设计稿 13-sentinel-design §二）：已链场 36h（收盘拍距）、
+# 待链面 7d（JC FD 11 联赛，冷启动 join 余量）
+SENTINEL_LINKED_HOURS = 36
+SENTINEL_PENDING_DAYS = 7
+#: 哨兵第二源书（票 13①书单探查：pinnacle 在免费层，服务端过滤实测生效）
+SENTINEL_BOOK = "pinnacle"
+
+
+def sentinel_sport_keys(conn: sqlite3.Connection, now: datetime) -> list[str]:
+    """
+    哨兵采集的 sport 选择（零请求，票 34 设计稿 §二.1）。
+
+    并集：①库内已链（propline_event_id 非空）且 kickoff 未来 36h 内的
+    sport；②待链面（JC FD 11 联赛、kickoff 未来 7d、propline_event_id
+    IS NULL）的 sport——②先 join（join_fixtures 纪律宁缺勿错配不动）再
+    入库。典型 1-4 sport/拍 ⇒ ~50-200 请求/日，远低于 900 护栏。
+    """
+    linked_until = (now + timedelta(hours=SENTINEL_LINKED_HOURS)).isoformat()
+    pending_until = (now + timedelta(days=SENTINEL_PENDING_DAYS)).isoformat()
+    now_iso = now.isoformat()
+    placeholders = ",".join("?" for _ in LEAGUE_TO_FD)
+    linked = conn.execute(
+        """
+        SELECT DISTINCT c.odds_api_sport_key
+        FROM fixtures f
+        JOIN competitions c ON c.id = f.competition_id
+        WHERE f.propline_event_id IS NOT NULL
+          AND c.odds_api_sport_key IS NOT NULL
+          AND f.kickoff_utc >= ? AND f.kickoff_utc <= ?
+        """,
+        (now_iso, linked_until),
+    ).fetchall()
+    pending = conn.execute(
+        f"""
+        SELECT DISTINCT c.odds_api_sport_key
+        FROM fixtures f
+        JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
+        JOIN competitions c ON c.id = f.competition_id
+        WHERE f.propline_event_id IS NULL
+          AND c.odds_api_sport_key IS NOT NULL
+          AND c.name IN ({placeholders})
+          AND f.kickoff_utc >= ? AND f.kickoff_utc <= ?
+        """,  # noqa: S608 联赛名=模块常量；窗=调用方时钟推导
+        (*LEAGUE_TO_FD, now_iso, pending_until),
+    ).fetchall()
+    return sorted({str(row["odds_api_sport_key"]) for row in (*linked, *pending)})
+
+
 def _error_code(response: httpx.Response) -> str | None:
     """PropLine 结构化错误码（{"detail": {"error": ...}}）；非结构化为 None。"""
     try:
@@ -310,18 +359,23 @@ def _fetch_sport_odds(
     *,
     raw_root: Path | None,
     now: datetime,
+    books: tuple[str, ...] | None = None,
 ) -> FetchSportResult:
     """
     拉一个 sport 的 h2h 报价：预算检查 → 请求 → 记账 → 证据 → 解析。
 
     404 unknown_sport 降级为 unavailable（无对应联赛，如
     soccer_france_ligue_two）；429 daily_limit_exceeded 转为
-    ProplineBudgetExceeded fail-closed。
+    ProplineBudgetExceeded fail-closed。books=服务端 bookmakers 过滤
+    （哨兵采集面：1 请求/sport/拍只拉第二源书，票 13①实测生效）。
     """
     check_request_budget(conn, settings)
+    params: dict[str, str] = {"markets": ",".join(ALLOWED_MARKETS)}
+    if books:
+        params["bookmakers"] = ",".join(books)
     response = client.get(
         f"{settings.propline_base_url}/sports/{sport_key}/odds",
-        params={"markets": ",".join(ALLOWED_MARKETS)},
+        params=params,
         headers={"X-API-Key": settings.propline_api_key},
         timeout=25.0,
     )
@@ -546,34 +600,50 @@ class ProplineRunStats:
     unavailable_sports: list[str] = field(default_factory=list)
     unmatched: int = 0
     skipped_no_books: int = 0  # 事件零完整书被静默丢的数（票 03 缺账）
+    post_commence: int = 0  # 已开球事件只入观察不入对账的数（哨兵写侧防护）
 
 
-def fetch_and_store_odds(
+def fetch_and_store_odds(  # noqa: PLR0913 哨兵窄化旋钮+测试注入口，cli/flow 共用
     conn: sqlite3.Connection,
     settings: Settings,
     client: httpx.Client,
     *,
     raw_root: Path | None = None,
     now: datetime | None = None,
+    sport_keys: list[str] | None = None,
+    books: tuple[str, ...] | None = None,
+    skip_commenced: bool = False,
 ) -> ProplineRunStats:
     """
     完整采集：预算检查 → 逐 sport 拉取（unknown_sport 降级）→ join → 入库。
 
     X-Daily-Remaining 低于 propline_remaining_floor 即停止后续 sport
     （本sport数据已入库不回滚）；请求级 fail-closed 由
-    check_request_budget/ProplineBudgetExceeded 保证。
+    check_request_budget/ProplineBudgetExceeded 保证。哨兵窄化参数
+    （票 34）：sport_keys=显式 sport 集（缺省 discover_sport_keys）；
+    books=服务端 bookmakers 过滤；skip_commenced=事件 commence_time 已过
+    的书价只入观察（quote_observations/raw 证据层）不入对账（odds_snapshots）
+    ——滚中行天然也被读侧资格线（captured_at < kickoff）挡掉，此处写侧
+    再防一道（设计稿 §二.3）。
     """
     _assert_allowed_markets()
     moment = now or datetime.now(UTC)
     stats = ProplineRunStats()
-    for sport_key in discover_sport_keys(conn, settings):
+    selected = discover_sport_keys(conn, settings) if sport_keys is None else sport_keys
+    for sport_key in selected:
         if (
             stats.daily_remaining is not None
             and stats.daily_remaining < settings.propline_remaining_floor
         ):
             break
         result = _fetch_sport_odds(
-            conn, settings, client, sport_key, raw_root=raw_root, now=moment
+            conn,
+            settings,
+            client,
+            sport_key,
+            raw_root=raw_root,
+            now=moment,
+            books=books,
         )
         stats.requests_used += 1
         stats.daily_remaining = result.remaining
@@ -583,7 +653,13 @@ def fetch_and_store_odds(
         stats.skipped_no_books += result.raw_events - len(result.events)
         join_report = join_fixtures(conn, result.events)
         stats.unmatched += len(join_report.unmatched)
-        stored = store_events(conn, result.events)
+        storable = result.events
+        if skip_commenced:
+            storable = [
+                event for event in result.events if _event_commence_utc(event) > moment
+            ]
+            stats.post_commence += len(result.events) - len(storable)
+        stored = store_events(conn, storable)
         stats.ingest.snapshots += stored.snapshots
         stats.ingest.duplicate_snapshots += stored.duplicate_snapshots
     stats.ingest.credits_used = stats.requests_used

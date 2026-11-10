@@ -6,7 +6,7 @@ cli 子命令、Prefect flow、serve deployment、恢复/判死清单（resume_n
 dead_names）、（语料数据集的）checkpoint 表核对全部由声明推导。任务实现
 唯一住所仍是 tasks（ADR-0005）：本模块持引用不持实现。
 
-票 03 后注册面 = 全部单 cron 定拍数据集（15 条，含两个判死面 resume=False）；
+票 03 后注册面 = 全部单 cron 定拍数据集（17 条，含两个判死面 resume=False）；
 留在 flows.py 手写的非同构形状：组合面（daily-capture/weekly-refresh/
 daily-wrap 多 flow 编排）与 draw-results-sync（单 flow 双 deployment 双 cron）。
 cli=False 的记录不派生 cli（official-reconcile 的手写 handler 带 pending_manual
@@ -335,6 +335,39 @@ _GOLD_REBUILD = DatasetSpec(
     cli=False,  # 手动路径走既有 gold-build/srct-market 命令（分步可控）
 )
 
+_ANCHOR_SENTINEL_CAPTURE = DatasetSpec(
+    name="anchor-sentinel-capture",
+    cron="*/30 * * * *",
+    task=tasks.anchor_sentinel_capture,
+    cli_help="断点哨兵采集(propline:pinnacle窄化,票34;零候选零请求空转)",
+    flow_help=(
+        "断点哨兵采集面（票 34，设计稿 13-sentinel-design）：仅 pinnacle\n"
+        "（服务端 bookmakers 过滤）仅活跃 sport（已链 36h ∪ JC FD 待链\n"
+        "7d，零请求选择）——~50-200 请求/日，护栏 900 原样复用。滚中行\n"
+        "只入观察不入对账；本机睡眠漏拍按 ponytail 纪律如实记（覆盖轴\n"
+        "显形，不静默）。"
+    ),
+    cli=False,  # 纯 schedule 面；手动冒烟走 propline-capture
+)
+
+_ANCHOR_SENTINEL_WEEKLY = DatasetSpec(
+    name="anchor-sentinel-weekly",
+    cron="50 8 * * 1",
+    task=tasks.anchor_sentinel_weekly,
+    cli_command="anchor-sentinel",
+    cli_help="断点哨兵周对账重算(票34;缺省=最近完整ISO周,幂等追加留痕)",
+    flow_help=(
+        "断点哨兵对账面（票 34）：周一 08:50（gold-rebuild 08:40 后、\n"
+        "晨检 09:05 前）srct（cid177 第一锚，只读）× propline:pinnacle\n"
+        "（第二源）三轴周级对账+留痕+周报 md。alert=留痕+晨检红面，\n"
+        "不自动处置（不换轨/不补采/不触发付费兜底）。"
+    ),
+    cli_args=(
+        CliArg("--iso-year", help="目标 ISO 年(缺省=最近完整周)", type=int),
+        CliArg("--iso-week", help="目标 ISO 周(缺省=最近完整周)", type=int),
+    ),
+)
+
 #: 注册面（票 03 全量）：全部单 cron 定拍数据集；组合面/双 cron 面另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
@@ -352,6 +385,8 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _SRCT_SHIFT,
     _SRCT_REMAT,
     _GOLD_REBUILD,
+    _ANCHOR_SENTINEL_CAPTURE,
+    _ANCHOR_SENTINEL_WEEKLY,
 )
 
 
