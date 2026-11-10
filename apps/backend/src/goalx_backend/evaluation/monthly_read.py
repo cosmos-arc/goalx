@@ -57,7 +57,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
-from goalx_backend.evaluation import contraction, hypothesis_registry, lessons
+from goalx_backend.evaluation import contraction, hypothesis_registry, lessons, shadow
 from goalx_backend.evaluation.clv import BASIS_SRCT_PINNACLE
 from goalx_backend.evaluation.weekly_agent import MAX_PROPOSALS_PER_RUN
 from goalx_backend.modelling import forecast
@@ -300,24 +300,30 @@ def clv_dual_anchor(
 
 def shadow_compare(conn: sqlite3.Connection, *, report_month: str) -> dict[str, Any]:
     """
-    ③ 影子对比窗 v0：票 07 未建，「无影子数据」占位不伪造对比。
+    ③ 影子对比窗（票 07 已落地）：窗内 champion(ml)+challenger(shadow) 版本面。
 
-    消费缝=forecasts 版本标签读口（model_version_counts）：票 07 落地后
-    challenger 三元组 shadow 双写带版本标签，本节按版本对对比；现在读得
-    到的版本面如实带出（读得到就带上）。
+    读口=forecasts 版本标签（model_version_counts）：影子轨（track=
+    'shadow'）行在场=对比面就绪（status=ok，⑧预算影子开关随之 on）；
+    无影子行如实 no_shadow_data 不伪造对比。逐版本对**读数**（命中率/
+    校准对比、质量门评估）=票 11 历史回放窗面——本节只出对比窗数据面。
     """
     date_from, _, next_first = _month_bounds(report_month)
+    shadow_rows = forecast.model_version_counts(
+        conn, ts_from=date_from, ts_to=next_first, track="shadow"
+    )
     return {
-        "status": "no_shadow_data",
+        "status": "ok" if shadow_rows else "no_shadow_data",
         "forecast_versions": forecast.model_version_counts(
             conn, ts_from=date_from, ts_to=next_first
         ),
+        "shadow_versions": shadow_rows,
         "detail": (
-            "champion/challenger 影子对比窗=票 07 产物（重训触发+质量门+"
-            "shadow 双写），未建前本节占位不伪造对比；forecasts 版本标签"
-            "面（消费缝）已带出，票 07 落地后按版本对对比"
+            "champion/challenger 影子双算=票 07 面（重训触发→注册 shadow→"
+            "forecasts 影子轨双写带版本标签）；本节按版本对出对比窗数据，"
+            "逐版本质量读数与晋升门=票 11 历史回放窗（live shadow=持续"
+            "确认面非等待门，晋升不等 live 月数积累）"
         ),
-        "advice": "票 07 落地后本节出对比读数；当前无影子数据无动作",
+        "advice": "对比窗读数人裁：晋升走 version-promote（恒人审）",
     }
 
 
@@ -460,6 +466,9 @@ def forced_failure(
             "total_cny": round(sum(by_phase.values()), 6),
             "by_phase": by_phase,
         },
+        # F5 口径：按 period=报送月计数（与事件落账 period 同源，月首
+        # 北京 0-8 点拍 ts 仍在上一 UTC 日，ts 窗会错收进上一月）
+        "shadow_retrains": shadow.retrain_event_counts(conn, period=report_month),
         "advice": "失败面观察项：异常聚集（门挂/拒收/失败率）由人裁决处置",
     }
 

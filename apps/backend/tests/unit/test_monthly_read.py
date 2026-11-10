@@ -341,9 +341,39 @@ def test_shadow_compare_placeholder_with_forecast_face(
         (fid,),
     )
     section = monthly_read.shadow_compare(db, report_month="2026-11")
+    # 仅 ml 两版本（无影子轨行）仍=无影子数据：对比面要 challenger 行在
     assert section["status"] == "no_shadow_data"
     assert section["forecast_versions"] == {"dc-aaaa": 1, "dc-bbbb": 1}
     assert "票 07" in section["detail"]
+
+
+def test_shadow_compare_ok_when_shadow_track_present(
+    db: sqlite3.Connection,
+) -> None:
+    """③ 票 07 落地后：窗内 champion(ml)+challenger(shadow) 双版本在→
+    status=ok（⑧预算影子开关随之为 on）；版本读口两版本行数可数。"""
+    fid = _seed_fixture(db, tag="s", kickoff="2026-11-05T18:00:00+00:00")
+    for track, version, hash_ in (
+        ("ml", "dc-aaaa", "h1"),
+        ("shadow", "shadow-dc-bbbb", "h2"),
+    ):
+        db.execute(
+            "INSERT INTO forecasts (fixture_id, track, model_version, issued_at,"
+            f" content_hash, payload) VALUES (?, '{track}', '{version}',"
+            " '2026-11-05T10:00:00+00:00', ?, '{}')",
+            (fid, hash_),
+        )
+    section = monthly_read.shadow_compare(db, report_month="2026-11")
+    assert section["status"] == "ok"
+    assert section["forecast_versions"] == {"dc-aaaa": 1, "shadow-dc-bbbb": 1}
+    budget = monthly_read.budget_suggestion(
+        {
+            "llm_costs": {"total_cny": 10.0},
+            "rejections": {"share": 0.0},
+        },
+        shadow_available=section["status"] == "ok",
+    )
+    assert budget["shadow_retrain"] == "on"
 
 
 # ---- ④ 版本状态机事件流 ----
@@ -481,6 +511,48 @@ def test_forced_failure_view_aggregates(db: sqlite3.Connection, tmp_path: Path) 
     assert costs["n_calls"] == 3
     assert costs["total_cny"] == pytest.approx(0.0055)
     assert costs["by_phase"] == {"generate": 0.0044, "critique": 0.0011}
+    # 影子重训触发面（票 07 落账→⑤消费）：窗内按 reason×outcome 计数
+    assert section["shadow_retrains"] == {"total": 0}  # 本测试未种触发账
+
+
+def test_forced_failure_includes_shadow_retrains_face(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """⑤ 影子重训触发面：**按 period=报送月**计数（与事件落账 period 同源）。
+
+    F5 口径钉死：不按 ts 计窗——月首北京 0-8 点拍的 ts 仍在上一 UTC 日
+    （如北京 12-01 07:00=UTC 11-30 23:00），ts 窗会把该拍计进 11 月报表；
+    period=北京业务日月键，与 beat 落账同源恒对齐。"""
+    db.execute(
+        "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
+        " VALUES ('2026-11', 'drift', 'registered', 'd',"
+        " '2026-11-05T02:35:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
+        " VALUES ('2026-11', 'monthly', 'no_live_champion', 'd',"
+        " '2026-11-01T02:35:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
+        " VALUES ('2026-10', 'monthly', 'registered', 'd',"
+        " '2026-10-01T02:35:00+00:00')"
+    )
+    # F5 月界样本：period=2026-12（北京 12-01 晨拍）而 ts 落 UTC 11-30——
+    # 11 月报表不得计入（ts 窗口径会把 11-30 23:00 错收进 [11-01,12-01)）
+    db.execute(
+        "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
+        " VALUES ('2026-12', 'monthly', 'registered', 'd',"
+        " '2026-11-30T23:00:00+00:00')"
+    )
+    section = monthly_read.forced_failure(
+        db, store=_store(tmp_path), report_month="2026-11"
+    )
+    assert section["shadow_retrains"] == {
+        "drift|registered": 1,
+        "monthly|no_live_champion": 1,
+        "total": 2,
+    }
 
 
 # ---- ⑥ 双钟读数（含票 08 缝 B.3） ----

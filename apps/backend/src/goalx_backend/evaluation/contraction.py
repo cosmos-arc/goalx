@@ -109,7 +109,9 @@ class DeploymentPlan:
     一个收缩级别的 deployment 动作面（纯映射，票 03 周批落地后消费）。
 
     weekly_batch/monthly_read_cadence/ingest_scope 是「暂停/改名不删」的
-    表达：deployment 配置仍在，动作按级别改道。
+    表达：deployment 配置仍在，动作按级别改道。shadow_retrain（票 07）=
+    影子重训拍开关：L2+ 停（烧算力面收缩）——与 drift_monitoring（只读
+    漂移监测，恒开）是两面。
     """
 
     new_registrations: bool
@@ -118,6 +120,7 @@ class DeploymentPlan:
     monthly_read_cadence: str  # "monthly" | "quarterly"
     ingest_scope: str  # "full" | "monitoring_minimal" | "drift_only"
     drift_monitoring: bool
+    shadow_retrain: bool
 
 
 #: 级别→动作面（prereg E 节映射；漂移监测恒开=常设不撤）
@@ -129,6 +132,7 @@ _PLANS: dict[ContractionLevel, DeploymentPlan] = {
         monthly_read_cadence="monthly",
         ingest_scope="full",
         drift_monitoring=True,
+        shadow_retrain=True,
     ),
     ContractionLevel.L1: DeploymentPlan(
         new_registrations=False,
@@ -137,6 +141,7 @@ _PLANS: dict[ContractionLevel, DeploymentPlan] = {
         monthly_read_cadence="monthly",
         ingest_scope="full",
         drift_monitoring=True,
+        shadow_retrain=True,
     ),
     ContractionLevel.L2: DeploymentPlan(
         new_registrations=False,
@@ -145,6 +150,7 @@ _PLANS: dict[ContractionLevel, DeploymentPlan] = {
         monthly_read_cadence="quarterly",
         ingest_scope="full",
         drift_monitoring=True,
+        shadow_retrain=False,
     ),
     ContractionLevel.L3: DeploymentPlan(
         new_registrations=False,
@@ -153,6 +159,7 @@ _PLANS: dict[ContractionLevel, DeploymentPlan] = {
         monthly_read_cadence="quarterly",
         ingest_scope="monitoring_minimal",
         drift_monitoring=True,
+        shadow_retrain=False,
     ),
     ContractionLevel.L4: DeploymentPlan(
         new_registrations=False,
@@ -161,6 +168,7 @@ _PLANS: dict[ContractionLevel, DeploymentPlan] = {
         monthly_read_cadence="quarterly",
         ingest_scope="drift_only",
         drift_monitoring=True,
+        shadow_retrain=False,
     ),
 }
 

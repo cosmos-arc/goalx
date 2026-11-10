@@ -98,12 +98,19 @@ def register_version(
     calibration_version: str,
     params_version: str,
     label: str,
+    initial_state: StrategyState = StrategyState.REGISTERED,
+    actor: str = "human:cli",
 ) -> int:
     """
     注册一个策略版本（幂等：同三元组返回既有 id，不落新行）。
 
-    新注册才写 genesis 转移行（from_state NULL → registered）——现态恒有
-    定义（current_state 不必兜底「无转移=registered」分支）。
+    新注册才写 genesis 转移行（from_state NULL → initial_state）——现态恒有
+    定义（current_state 不必兜底「无转移=registered」分支）。initial_state
+    缺省 registered（人 CLI 语义）；票 07 challenger 自动注册传 shadow
+    （注册≠晋升：genesis 行非转移，不触晋升哨；后续一切梯上移动仍只能
+    人审 transition_version）。actor 落 genesis 行审计账：缺省 human:cli
+    （人注册）；自动路径传 trigger:* 前缀（票 07 beat=trigger:shadow-retrain，
+    审计账不冒充人审——correctness F1）。
     """
     with atomic(conn):
         cursor = conn.execute(
@@ -136,9 +143,15 @@ def register_version(
                 """
                 INSERT INTO version_transitions
                     (version_id, from_state, to_state, reason, actor, ts)
-                VALUES (?, NULL, ?, ?, 'human', ?)
+                VALUES (?, NULL, ?, ?, ?, ?)
                 """,
-                (int(row["id"]), StrategyState.REGISTERED.value, "注册", utc_now_iso()),
+                (
+                    int(row["id"]),
+                    initial_state.value,
+                    "注册",
+                    actor,
+                    utc_now_iso(),
+                ),
             )
     return int(row["id"])
 
@@ -155,6 +168,45 @@ def current_state(conn: sqlite3.Connection, version_id: int) -> StrategyState | 
     if row is None:
         return None
     return StrategyState(str(row["to_state"]))
+
+
+def find_version_id(
+    conn: sqlite3.Connection,
+    *,
+    estimator_version: str,
+    calibration_version: str,
+    params_version: str,
+) -> int | None:
+    """三元组已注册版本 id（无=None）——票 07 影子重训 no_change 判据。"""
+    row = conn.execute(
+        """
+        SELECT id FROM strategy_versions
+        WHERE estimator_version = ? AND calibration_version = ? AND params_version = ?
+        """,
+        (estimator_version, calibration_version, params_version),
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
+
+
+def live_version_id(conn: sqlite3.Connection) -> int | None:
+    """
+    最早注册的 live 态版本 id（无 live 态→None）。
+
+    票 07 影子重训的 champion 在场面：live-paper/live-real 任一即 champion
+    （消费端闸同 LIVE_STATES）；无 live 态=champion 未定义。
+    """
+    row = conn.execute(
+        """
+        SELECT v.id FROM strategy_versions v
+        JOIN version_transitions t ON t.version_id = v.id
+        WHERE t.to_state IN ('live-paper', 'live-real')
+          AND t.id = (SELECT MAX(t2.id) FROM version_transitions t2
+                      WHERE t2.version_id = v.id)
+        ORDER BY v.id
+        LIMIT 1
+        """
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def version_label(conn: sqlite3.Connection, version_id: int) -> str | None:

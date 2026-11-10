@@ -29,6 +29,7 @@ for _key, _sub in (
     ("GOALX_RESEARCH_DB_PATH", "research.db"),
     ("GOALX_OBSERVATIONS_DIR", "observations"),
     ("GOALX_MODELS_DIR", "models"),
+    ("GOALX_SHADOW_MODELS_DIR", "models-shadow"),
     ("GOALX_CORPUS_ROOT", "corpus"),
 ):
     # 硬赋值（同票 37 先例）：shell 已导出的同名 env 也钉死在隔离目录，

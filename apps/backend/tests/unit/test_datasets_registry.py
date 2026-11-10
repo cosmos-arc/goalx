@@ -5,8 +5,9 @@
 RESUME/DEAD 推导、checkpoint 表核对钉进字面量，任一漂移即红。新数据集
 入列（或撤采翻 resume）必须同步改本文件——这就是"改表"动作的测试面。
 
-钉死时点：vision-build 票 04 = 20 条注册（含判死面 eu-odds-closing/
-srcb-collect resume=False；票 04 monthly-read 开月定拍先例 cron 日-of-月位）
+钉死时点：vision-build 票 07 = 21 条注册（含判死面 eu-odds-closing/
+srcb-collect resume=False；票 04 monthly-read 开月定拍先例 cron 日-of-月位；
+票 07 shadow-retrain 日拍承载漂移即时+月度兜底双触发面）
 + 手写 5 面（daily-capture、draw-results 双 cron、weekly、daily-wrap）；
 serve 清单金标 = 手写 wiring 时代末态（17 deployment，名与 cron 逐一相等）。
 
@@ -48,6 +49,7 @@ _RECORD_NAMES = (
     "anchor-sentinel-weekly",
     "weekly-agent",
     "monthly-read",
+    "shadow-retrain",
 )
 
 
@@ -75,6 +77,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["anchor-sentinel-weekly"].task is tasks.anchor_sentinel_weekly
     assert by_name["weekly-agent"].task is tasks.weekly_agent_batch
     assert by_name["monthly-read"].task is tasks.monthly_read_run
+    assert by_name["shadow-retrain"].task is tasks.shadow_retrain_beat
     assert by_name["official-reconcile"].cron == "30 8 * * *"
     assert by_name["understat-sync"].cron == "20 9 * * *"
     assert by_name["clubelo-sync"].cron == "10 9 * * *"
@@ -92,6 +95,8 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["weekly-agent"].cron == "0 6 * * 1"
     # 票 04 月定拍先例：日-of-month 位（每月 1 日 09:35）
     assert by_name["monthly-read"].cron == "35 9 1 * *"
+    # 票 07：日拍 10:35（daily-capture 10:00 首拍后——champion 当日流量就位）
+    assert by_name["shadow-retrain"].cron == "35 10 * * *"
     # cli 面：命令名逐字保留（pool/closing 历史上命令名 ≠ deployment 键）；
     # cli=False 六面不派生 cli（official-reconcile 手写 handler 保留）
     assert [spec.command for spec in datasets.DATASETS if spec.cli] == [
@@ -107,6 +112,7 @@ def test_registry_pinned_to_full_batch() -> None:
         "anchor-sentinel",
         "weekly-agent",
         "monthly-read",
+        "shadow-retrain",
     ]
     assert by_name["eu-odds-closing"].cli_command == "closing-snapshot"
     assert {name for name in _RECORD_NAMES if not by_name[name].cli} == {
@@ -176,6 +182,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "anchor-sentinel-weekly": "50 8 * * 1",
         "weekly-agent": "0 6 * * 1",
         "monthly-read": "35 9 1 * *",
+        "shadow-retrain": "35 10 * * *",
     }
 
 

@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     dc_half_life_days: float = 365.0  # 时间衰减半衰期（约 1 年起步）
     bootstrap_samples: int = 50  # bootstrap CI 重采样数（0 关闭）
     bootstrap_seed: int = 20260913
+    # 票 07：challenger 影子重训工件独立目录——生产 ml 轨 latest 工件不被
+    # 重训顶替（champion 不动的工件层保证），影子双算从该目录取 challenger
+    shadow_models_dir: Path = Path("data/models-shadow")
 
     # --- 数据源（票 02/07 选型；key 与 .env 模板的无前缀名兼容） ---
     sporttery_calculator_url: str = (

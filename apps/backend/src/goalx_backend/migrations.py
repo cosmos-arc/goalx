@@ -2942,6 +2942,93 @@ def _apply_v56(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v57(conn: sqlite3.Connection) -> None:
+    """
+    v57（vision-build 票 07）：影子重训两件。
+
+    forecasts 影子轨道/版本标签 + 触发台账。
+
+    - forecasts 重建（v46 DROP+RENAME 先例，守卫=strategy_version_id 列已
+      在即跳过=重入幂等）：
+      * track CHECK 增 'shadow'——challenger 双算行专轨。消费端不变量：
+        所有既有读口按 track 取数（ml=champion 生产轨），影子行对下注/评分
+        面天然不可见（latest_forecast_asof 等 track='ml' 过滤）；
+        model_version_counts（月读③消费缝）不限 track，两版本可数。
+      * UNIQUE (fixture_id, content_hash) → (fixture_id, track, content_hash)：
+        同 payload 双轨并存（challenger 与 champion 输出一致时不被吸收，
+        双算可比性前提）；同轨同内容仍吸收（ml 幂等重跑语义不变）。
+      * 增 strategy_version_id（逻辑外键→strategy_versions，NULL=票 07 前
+        史行/生产 ml 轨，不回溯打标——champion 行不动）。
+    - shadow_retrain_events：触发台账 append-only（v49/v52 触发器先例）。
+      reason=触发因（drift|monthly）、outcome=处置（registered/no_change/
+      no_live_champion/no_traffic/skipped_contraction）。幂等吸收两键：
+      版本行 UNIQUE(period, reason, challenger_version_id)；skip 行（无
+      版本）部分唯一索引 UNIQUE(period, reason, outcome)——同月同因重跑
+      零新行。
+
+    SQL 读写归 evaluation（evaluation/shadow.py 属主）；forecasts 改动归
+    modelling（modelling/forecast.py 属主，重建只发生在迁移）。
+    """
+    if not _column_exists(conn, "forecasts", "strategy_version_id"):
+        conn.execute(
+            """
+            CREATE TABLE forecasts_v57 (
+                id INTEGER PRIMARY KEY,
+                fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+                track TEXT NOT NULL CHECK (track IN ('ml', 'llm', 'fused', 'shadow')),
+                model_version TEXT NOT NULL,
+                issued_at TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                strategy_version_id INTEGER REFERENCES strategy_versions(id),
+                UNIQUE (fixture_id, track, content_hash)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO forecasts_v57
+                (id, fixture_id, track, model_version, issued_at, content_hash,
+                 payload, strategy_version_id)
+            SELECT id, fixture_id, track, model_version, issued_at, content_hash,
+                   payload, NULL
+            FROM forecasts
+            """
+        )
+        conn.execute("DROP TABLE forecasts")
+        conn.execute("ALTER TABLE forecasts_v57 RENAME TO forecasts")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shadow_retrain_events (
+            id INTEGER PRIMARY KEY,
+            period TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK (reason IN ('drift', 'monthly')),
+            outcome TEXT NOT NULL CHECK (outcome IN (
+                'registered', 'no_change', 'no_live_champion', 'no_traffic',
+                'skipped_contraction')),
+            challenger_version_id INTEGER REFERENCES strategy_versions(id),
+            drift_detail TEXT,
+            detail TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            UNIQUE (period, reason, challenger_version_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_shadow_retrain_skip_absorb
+            ON shadow_retrain_events (period, reason, outcome)
+            WHERE challenger_version_id IS NULL
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS shadow_retrain_events_no_{operation.lower()}
+            BEFORE {operation} ON shadow_retrain_events
+            BEGIN SELECT RAISE(ABORT, 'shadow_retrain_events is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2999,6 +3086,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (54, _apply_v54),
     (55, _apply_v55),
     (56, _apply_v56),
+    (57, _apply_v57),
 )
 
 

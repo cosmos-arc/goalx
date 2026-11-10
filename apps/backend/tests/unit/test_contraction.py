@@ -75,8 +75,8 @@ def test_migration_v52_idempotent(db: sqlite3.Connection) -> None:
     """v52 幂等：两表就位、genesis L0 落账、重跑零效果（同版本重跑先例）。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 56
-    assert migrate(db) == 56  # 同版本重跑零效果
+    assert migrate(db) == 57
+    assert migrate(db) == 57  # 同版本重跑零效果
     for table in ("contraction_transitions", "contraction_clock_readings"):
         assert (
             db.execute(
@@ -869,8 +869,8 @@ def test_migration_v55_idempotent(db: sqlite3.Connection) -> None:
     """v55 幂等：rescan_signal_events 就位、append-only、重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 56
-    assert migrate(db) == 56  # 同版本重跑零效果
+    assert migrate(db) == 57
+    assert migrate(db) == 57  # 同版本重跑零效果
     assert (
         db.execute(
             "SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name=?",
