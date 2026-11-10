@@ -15,7 +15,8 @@
 set -eu
 
 mkdir -p .scratch
-log=$(mktemp .scratch/prepush-pytest.XXXXXXXX)
+# 绝对路径：从子目录 push 时诊断行可直接 cat（pre-commit 会 chdir 到仓库顶）
+log=$(mktemp "$PWD/.scratch/prepush-pytest.XXXXXXXX")
 
 rc=0
 uv run --no-sync pytest apps/backend/tests -q --no-cov -n auto -m "not slow" \
@@ -24,6 +25,8 @@ uv run --no-sync pytest apps/backend/tests -q --no-cov -n auto -m "not slow" \
 if [ "$rc" -ne 0 ]; then
   tail -c 56000 "$log"
   printf '\npre-push pytest failed (rc=%s); full output: %s\n' "$rc" "$log"
+else
+  rm -f "$log"   # 绿推不留 ~360KB spool（复核 info：成功路径无清理）
 fi
 
 exit "$rc"
