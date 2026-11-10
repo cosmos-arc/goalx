@@ -15,6 +15,8 @@ from datetime import datetime
 import pytest
 
 from goalx_backend.betting import auto_strategy as au
+from goalx_backend.betting import versioning
+from goalx_backend.betting.versioning import StrategyState
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.modelling.forecast import insert_forecast
 from goalx_backend.modelling.score_matrix import ScoreMatrix
@@ -136,6 +138,27 @@ def _seed_positive_single(
 # ---- 纯选票规则（prereg 修订①-④）----
 
 
+def _make_v1_live(db: sqlite3.Connection) -> None:
+    """注册 auto-v1 引擎三元组并人审升 live-paper（票 01 闸 fail-closed）。"""
+    estimator, calibration, fingerprint = au.engine_version_triple(au.AUTO_V1_PARAMS)
+    version_id = versioning.register_version(
+        db,
+        estimator_version=estimator,
+        calibration_version=calibration,
+        params_version=fingerprint,
+        label=au.AUTO_V1,
+    )
+    for target in (
+        StrategyState.SHADOW,
+        StrategyState.PROBE,
+        StrategyState.CANDIDATE,
+        StrategyState.LIVE_PAPER,
+    ):
+        versioning.transition_version(
+            db, version_id, target, actor="human:test", reason="测试晋升"
+        )
+
+
 def _pick(
     fid: int, market: str, prob: float, odds: float, code: str = "周六001"
 ) -> au.Pick:
@@ -214,6 +237,7 @@ def test_anchor_run_places_singles_with_kelly_and_idempotent_rerun(
             _snap(db, fixture, "had", sel, round(0.95 / prob, 2))
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 3
     assert stats["gate_rejected"] == 0
@@ -268,6 +292,7 @@ def test_hhad_parlay_places_when_positive(db: sqlite3.Connection) -> None:
         _snap(db, fixture, "ttg", "2", 1.2)
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 1  # 一张 2串1（两腿不同场）
     legs = db.execute(
@@ -302,6 +327,7 @@ def test_gate_rejection_recorded_via_place(db: sqlite3.Connection, monkeypatch) 
         raise au.BetEligibilityError("fixture 不可投: 测试注入拒绝")
 
     monkeypatch.setattr(au, "validate_selections", _reject)
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["gate_rejected"] >= 1
@@ -326,6 +352,7 @@ def test_zero_candidate_day_ledger(db: sqlite3.Connection) -> None:
     _snap(db, fixture, "ttg", "2", 1.2)
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["candidates"] == 0
@@ -349,6 +376,7 @@ def test_price_drift_skips_bet(db: sqlite3.Connection) -> None:
     _snap(db, fixture, "ttg", "2", round(1.2 / prob, 2), at="2026-11-08T13:00:30+00:00")
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["price_drift"] == 1
@@ -364,9 +392,69 @@ def test_migration_v43_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
     version = migrate(db)
-    assert version == 49
-    assert migrate(db) == 49  # 同版本重跑零效果
+    assert version == 50
+    assert migrate(db) == 50  # 同版本重跑零效果
     assert db.execute("SELECT COUNT(*) c FROM auto_paper_runs").fetchone()["c"] == 0
+
+
+def test_shadow_version_refused_and_live_paper_places(db: sqlite3.Connection) -> None:
+    """
+    vision-build 票 01 e2e：shadow 态版本被引擎拒单且留痕；人审升
+    live-paper 后放行。
+
+    下单前查状态（消费端最小接线）：非 live 态整锚跳过留痕
+    （zero_note=version_not_live），升 live 后同锚正常落注。
+    """
+    fixtures = [
+        _seed_fixture(db, tag, code=f"周六1{i}")
+        for i, tag in enumerate(("A", "B", "C"), 1)
+    ]
+    for fixture in fixtures:
+        _seed_on_sale(db, fixture)
+        _seed_forecast(db, fixture, 1.3, 1.1)
+        _seed_positive_single(db, fixture, "2", ev=0.5)
+    db.commit()
+
+    # 注册本引擎三元组（与闸同一推导）的版本并人审升到 shadow
+    estimator, calibration, fingerprint = au.engine_version_triple(au.AUTO_V1_PARAMS)
+    version_id = versioning.register_version(
+        db,
+        estimator_version=estimator,
+        calibration_version=calibration,
+        params_version=fingerprint,
+        label=au.AUTO_V1,
+    )
+    versioning.transition_version(
+        db, version_id, StrategyState.SHADOW, actor="human:test", reason="影子起跑"
+    )
+
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 0
+    assert stats["version_not_live"] == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) c FROM bets WHERE strategy_version='auto-v1'"
+        ).fetchone()["c"]
+        == 0
+    )
+    note = db.execute(
+        "SELECT zero_note FROM auto_paper_runs"
+        " WHERE business_date=? AND anchor_label=?",
+        (BUSINESS_DATE, ANCHOR),
+    ).fetchone()["zero_note"]
+    assert note == "version_not_live"
+
+    # 人审逐级升 live-paper：同锚放行（下注照常）
+    for target in (
+        StrategyState.PROBE,
+        StrategyState.CANDIDATE,
+        StrategyState.LIVE_PAPER,
+    ):
+        versioning.transition_version(
+            db, version_id, target, actor="human:test", reason="过门放量"
+        )
+    live_stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert live_stats["bets"] == 3
 
 
 def test_zero_rounded_stake_skips_not_aborts(db: sqlite3.Connection) -> None:
@@ -378,6 +466,7 @@ def test_zero_rounded_stake_skips_not_aborts(db: sqlite3.Connection) -> None:
     _snap(db, fixture, "ttg", "2", round((1 + 1e-5) / prob, 4))  # EV=1e-5 → stake≈0
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["gate_rejected"] == 1  # 零注跳过计拒绝不炸锚
@@ -403,6 +492,7 @@ def test_parlay_content_key_survives_reorder(db: sqlite3.Connection) -> None:
         _snap(db, fixture, "hhad", "h", round(1.5 / prob, 2), meta={"goal_line": "-1"})
     db.commit()
 
+    _make_v1_live(db)
     first = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert first["bets"] == 3  # 三对串关（每场恰 2 张）
     # 晚到观测（seen_at ≤ 锚）改联合 EV 排序后重跑
@@ -446,6 +536,7 @@ def test_hhad_mixed_or_bad_line_excluded_not_crash(db: sqlite3.Connection) -> No
             _snap(db, fixture, "hhad", sel, round(1.5 / prob, 2), meta=meta)
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] >= 1  # 合线场照常
     rows = db.execute(
@@ -494,6 +585,7 @@ def test_prescreen_rejects_stopped_or_non_single_market(db: sqlite3.Connection) 
     _seed_positive_single(db, not_single, "2", ev=0.5)
     db.commit()
 
+    _make_v1_live(db)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0  # 两场唯一正 EV 面（ttg 单关）都被玩法闸拦下
     assert stats["candidates"] == 0

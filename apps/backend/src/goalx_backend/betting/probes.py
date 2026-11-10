@@ -196,12 +196,18 @@ def run_auto_v2(
     reads: QuoteReads | None = None,
 ) -> dict[str, int]:
     """
-    一锚完整执行（task 入口）：逐探针落注/零注留痕 + 池票（帽内）+ 台账。
+    一锚完整执行（task 入口）：版本闸→探针落注/池票/台账。
 
     熄灯探针在 stats 记 ``probe_<name>=0``（无信号日零注留痕）；点亮后
-    该探针换自己的选票 runner 并记更细统计（升级=升版本）。
+    该探针换自己的选票 runner 并记更细统计（升级=升版本）。版本闸语义
+    见 au.refuse_if_version_not_live（vision 票 01 最小接线）。
     """
     business_date = fx_store.beijing_business_date(run_at)
+    refused = au.refuse_if_version_not_live(
+        conn, business_date, anchor_label, params=params, strategy=AUTO_V2
+    )
+    if refused is not None:
+        return refused
     stats: dict[str, int] = {}
     for spec in params.probes:
         if not spec.enabled:

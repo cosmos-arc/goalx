@@ -31,6 +31,10 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli archive-538
     uv run python -m goalx_backend.cli gold-build
     uv run python -m goalx_backend.cli edge-scan [--scanner s1] [--face decade]
+    uv run python -m goalx_backend.cli version-register --estimator E \
+        --calibration C --params P --label L
+    uv run python -m goalx_backend.cli version-promote --id 1 --to live-paper \
+        --reason "过门放量"
 """
 
 from __future__ import annotations
@@ -53,6 +57,7 @@ from loguru import logger
 
 from goalx_backend import datasets, tasks
 from goalx_backend.betting import funnel as fn
+from goalx_backend.betting import versioning
 from goalx_backend.betting.ledger_audit import audit_ledger
 from goalx_backend.config import Settings, get_settings
 from goalx_backend.data import (
@@ -132,6 +137,86 @@ def _cmd_migrate() -> None:
     version = migrate(conn)
     conn.close()
     logger.info("schema at version {}", version)
+
+
+def _cmd_version_register(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    策略版本注册（vision-build 票 01，人 CLI）：三元组幂等落账。
+
+    estimator/calibration/params 三元组=版本身份（内容寻址标识：dc 工件
+    身份 / 校准口径 / auto_strategy 参数指纹）；重复注册同三元组返回同 id。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        version_id = versioning.register_version(
+            conn,
+            estimator_version=args.estimator,
+            calibration_version=args.calibration,
+            params_version=args.params,
+            label=args.label,
+        )
+        state = versioning.current_state(conn, version_id)
+        # 幂等命中回显库内首注册 label（correctness F4：三元组=身份，
+        # 后到的 --label 不改写既有行，回显不得谎报）
+        stored_label = versioning.version_label(conn, version_id)
+    finally:
+        conn.close()
+    payload: dict[str, Any] = {
+        "id": version_id,
+        "label": stored_label,
+        "state": state.value if state is not None else None,
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info(
+        "version registered: id={} label={} state={}",
+        payload["id"],
+        payload["label"],
+        payload["state"],
+    )
+
+
+def _cmd_version_promote(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    策略版本晋升/转移（vision-build 票 01，人 CLI）：写 transitions。
+
+    晋升恒人审——agent 无该写路径；谓词拒绝（跳级/终态复出）fail-loud。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    target = versioning.StrategyState(args.to)
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        from_state = versioning.current_state(conn, args.id)
+        versioning.transition_version(
+            conn,
+            args.id,
+            target,
+            actor="human:cli",
+            reason=args.reason,
+        )
+        to_state = versioning.current_state(conn, args.id)
+    finally:
+        conn.close()
+    payload: dict[str, Any] = {
+        "id": args.id,
+        "from_state": from_state.value if from_state is not None else None,
+        "to_state": to_state.value if to_state is not None else None,
+        "actor": "human:cli",
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("version transition: {}", payload)
 
 
 def _cmd_ingest_jingcai() -> None:
@@ -2232,6 +2317,36 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "e2e-corpus",
         help="生成 corpus 主链 e2e 夹具(四场制式, 只允许隔离库; 票 06)",
     )
+    version_register_parser = sub.add_parser(
+        "version-register",
+        help="策略版本注册(vision票01;三元组幂等落账,人CLI)",
+    )
+    version_register_parser.add_argument(
+        "--estimator", required=True, help="估计器版本标识(dc 工件身份)"
+    )
+    version_register_parser.add_argument(
+        "--calibration", required=True, help="校准口径标识"
+    )
+    version_register_parser.add_argument(
+        "--params", required=True, help="参数指纹(auto_strategy 参数内容寻址)"
+    )
+    version_register_parser.add_argument(
+        "--label", required=True, help="人读标签(如 auto-v2)"
+    )
+    version_promote_parser = sub.add_parser(
+        "version-promote",
+        help="策略版本晋升/转移(vision票01;恒人审写transitions,非法转移拒)",
+    )
+    version_promote_parser.add_argument("--id", type=int, required=True)
+    version_promote_parser.add_argument(
+        "--to",
+        required=True,
+        choices=tuple(state.value for state in versioning.StrategyState),
+        help="目标状态",
+    )
+    version_promote_parser.add_argument(
+        "--reason", required=True, help="转移理由(落 transitions 审计)"
+    )
     # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
     datasets.add_cli_subparsers(sub)
     return parser
@@ -2310,6 +2425,8 @@ def main(argv: list[str] | None = None) -> int:
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
         "e2e-corpus": _cmd_e2e_corpus,
+        "version-register": lambda: _cmd_version_register(args),
+        "version-promote": lambda: _cmd_version_promote(args),
     }
     # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
     # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）

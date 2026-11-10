@@ -21,9 +21,10 @@ import duckdb
 import pytest
 
 from goalx_backend import odds_math as om
-from goalx_backend.betting import account, probes
+from goalx_backend.betting import account, probes, versioning
 from goalx_backend.betting import auto_strategy as au
 from goalx_backend.betting.settle import run_settlement
+from goalx_backend.betting.versioning import StrategyState
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.ingest.results import import_draw_results
 from goalx_backend.markets import SELECTIONS
@@ -177,6 +178,32 @@ def _v2_rows(db: sqlite3.Connection) -> list[sqlite3.Row]:
 # ---- 校准探针：标签落账 + 平注 + 全四玩法面 ----
 
 
+def _make_engine_live(db: sqlite3.Connection, *, params: object, label: str) -> None:
+    """注册引擎三元组并人审升 live-paper（票 01 闸 fail-closed，v1/v2 通用）。"""
+    estimator, calibration, fingerprint = au.engine_version_triple(params)
+    version_id = versioning.register_version(
+        db,
+        estimator_version=estimator,
+        calibration_version=calibration,
+        params_version=fingerprint,
+        label=label,
+    )
+    for target in (
+        StrategyState.SHADOW,
+        StrategyState.PROBE,
+        StrategyState.CANDIDATE,
+        StrategyState.LIVE_PAPER,
+    ):
+        versioning.transition_version(
+            db, version_id, target, actor="human:test", reason="测试晋升"
+        )
+
+
+def _make_v2_live(db: sqlite3.Connection) -> None:
+    """auto-v2 引擎注册+人审升 live-paper（_make_engine_live 便捷口）。"""
+    _make_engine_live(db, params=probes.AUTO_V2_PARAMS, label=probes.AUTO_V2)
+
+
 def test_calibration_probe_labels_and_flat_stake(db: sqlite3.Connection) -> None:
     fixtures = [
         _seed_fixture(db, tag, code=f"周日00{i}")
@@ -188,6 +215,7 @@ def test_calibration_probe_labels_and_flat_stake(db: sqlite3.Connection) -> None
         _seed_positive_ev_boards(db, fixture)
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 3  # 三场各一注（每场最优），未超 top-3
     assert stats["probe_stale_line"] == 0  # 熄灯探针零注留痕
@@ -221,6 +249,7 @@ def test_calibration_probe_had_face_reaches_clv_coverage(
         _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 1
     rows = _v2_rows(db)
@@ -251,6 +280,7 @@ def test_calibration_probe_reserves_had_clv_slot(db: sqlite3.Connection) -> None
             _snap(db, fixture, "had", sel, round(1.2 / prob, 2))
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 3
     rows = _v2_rows(db)
@@ -272,6 +302,7 @@ def test_calibration_probe_no_had_candidate_no_slot(db: sqlite3.Connection) -> N
     _snap(db, fixture, "ttg", best, round(1.5 / ttg[best], 2))
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 1
     rows = _v2_rows(db)
@@ -287,6 +318,7 @@ def test_zero_signal_day_ledger(db: sqlite3.Connection) -> None:
     _snap(db, fixture, "ttg", "2", 1.2)  # 无 forecast → no_model 排除
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 0
     assert stats["candidates"] == 0
@@ -325,6 +357,7 @@ def test_backfill_clv_single_had(db: sqlite3.Connection, monkeypatch) -> None:
     for sel, prob in had.items():
         _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
     db.commit()
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 1
     _settle_bets(db, [fixture])
@@ -364,6 +397,7 @@ def test_backfill_clv_skips_non_had_and_missing_anchor(
         _snap(db, f_had, "had", sel, round(1.5 / prob, 2))
     _snap(db, f_ttg, "ttg", "2", round(1.5 / matrix.ttg()["2"], 2))
     db.commit()
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 2
     _settle_bets(db, [f_had, f_ttg])
@@ -395,6 +429,7 @@ def test_backfill_clv_two_leg_parlay_joint(db: sqlite3.Connection, monkeypatch) 
             _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
         _snap(db, fixture, "ttg", "2", 1.2)  # 单关面负 EV
     db.commit()
+    _make_engine_live(db, params=au.AUTO_V1_PARAMS, label=au.AUTO_V1)
     stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 1  # 一张 had 2串1（v1 面）
     _settle_bets(db, fixtures)
@@ -519,6 +554,7 @@ def test_edge_source_faces_pnl_and_clv_rolling(
     for sel, prob in had.items():
         _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
     db.commit()
+    _make_v2_live(db)
     probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     _settle_bets(db, [fixture])
     monkeypatch.setattr(
@@ -586,8 +622,8 @@ def test_edge_source_clv_se_clusters_by_fixture(db: sqlite3.Connection) -> None:
 def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 49
-    assert migrate(db) == 49
+    assert migrate(db) == 50
+    assert migrate(db) == 50
     cols = {row["name"] for row in db.execute("PRAGMA table_info(bets)").fetchall()}
     assert {"edge_source", "clv"} <= cols
     run_cols = {
@@ -606,7 +642,9 @@ def test_cutover_day_ledger_rows_per_engine(db: sqlite3.Connection) -> None:
     _seed_forecast(db, fixture)
     _seed_positive_ev_boards(db, fixture)
     db.commit()
+    _make_engine_live(db, params=au.AUTO_V1_PARAMS, label=au.AUTO_V1)
     au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    _make_v2_live(db)
     probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
 
     rows = db.execute(
@@ -632,6 +670,7 @@ def test_backfill_clv_bad_selection_code_degrades(
     for sel, prob in had.items():
         _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
     db.commit()
+    _make_v2_live(db)
     probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     _settle_bets(db, [fixture])
     db.execute("PRAGMA foreign_keys=OFF")  # 脏行注入绕 FK（历史库病态行模拟）
@@ -667,6 +706,7 @@ def test_calibration_probe_sparse_night_appends_had(db: sqlite3.Connection) -> N
         _snap(db, f_had, "had", sel, round(1.5 / prob, 2))
     db.commit()
 
+    _make_v2_live(db)
     stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
     assert stats["bets"] == 2  # crs 保留 + had 补位（各一场，¥4 < 帽）
     rows = _v2_rows(db)
