@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # Understat xG（票 45）：robots.txt 全站 Disallow——个人研究低频使用
     # （默认每日 1 首页 + 5 联赛文件 = 6 请求 ≤10 上限，见 schedules）
     understat_base_url: str = "https://understat.com"
+    # Transfermarkt 教练任职层（autoresearch 票 18）：免费页直爬，周拍低频
+    # （联赛页+staff 页 ≈ 数百请求/周，2s 礼貌间距；2026-11-10 实测直通）
+    transfermarkt_base_url: str = "https://www.transfermarkt.com"
     # 竞彩官方 SP 历史（票 70，uniform 族固定奖金端点；官方域可直书）
     jc_fixed_bonus_url: str = (
         "https://webapi.sporttery.cn/gateway/uniform/football/getFixedBonusV1.qry"

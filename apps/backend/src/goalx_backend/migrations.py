@@ -2268,6 +2268,119 @@ def _apply_v48(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v49(conn: sqlite3.Connection) -> None:
+    """
+    v49（autoresearch 票 18）：TM 教练任职层（换帅轴前置，账本 §4.1#12）。
+
+    四表一面：
+    - tm_coach_tenures：TM staff-history 原始面（教练-球队-起止任职，
+      role 分 manager/caretaker；同键 upsert 现态，date_to 开区间=现任）；
+    - tm_club_seasons：联赛×赛季成员面（覆盖报告的分母，也是派生面
+      的 club→fd 联赛归属输入）；
+    - coach_change_events / coach_change_samples：换帅事件派生面——由
+      tenures × hist_matches 逐场派生重建（DELETE+INSERT，非事实面），
+      事件=同一俱乐部相邻两段任职的主帅换手边界，样本=新帅首 1-3 场；
+    - tm_coach_sync_runs：采集 run 台账（append-only，最新行即状态）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tm_coach_tenures (
+            id INTEGER PRIMARY KEY,
+            club_tm_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('manager', 'caretaker')),
+            coach_tm_id INTEGER,
+            coach_name TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT,
+            games INTEGER,
+            first_seen_at TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            UNIQUE (club_tm_id, role, coach_name, date_from)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_tm_coach_tenures_club
+        ON tm_coach_tenures (club_tm_id, date_from)
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tm_club_seasons (
+            league_tm_code TEXT NOT NULL,
+            season TEXT NOT NULL,
+            club_tm_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            UNIQUE (league_tm_code, season, club_tm_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coach_change_events (
+            id INTEGER PRIMARY KEY,
+            club_tm_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            hist_competition TEXT NOT NULL,
+            hist_season TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            outgoing_coach TEXT,
+            outgoing_is_caretaker INTEGER,
+            incoming_coach TEXT NOT NULL,
+            incoming_is_caretaker INTEGER NOT NULL,
+            team_id INTEGER,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (club_tm_id, event_date, incoming_coach)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coach_change_samples (
+            id INTEGER PRIMARY KEY,
+            event_id INTEGER NOT NULL REFERENCES coach_change_events(id),
+            hist_match_id INTEGER NOT NULL REFERENCES hist_matches(id),
+            game_no INTEGER NOT NULL CHECK (game_no IN (1, 2, 3)),
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (event_id, game_no)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_coach_change_samples_match
+        ON coach_change_samples (hist_match_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tm_coach_sync_runs (
+            id INTEGER PRIMARY KEY,
+            observed_at TEXT NOT NULL,
+            leagues TEXT NOT NULL,
+            clubs INTEGER NOT NULL,
+            tenure_rows INTEGER NOT NULL,
+            written INTEGER NOT NULL,
+            failed TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER tm_coach_sync_runs_no_{operation.lower()}
+            BEFORE {operation} ON tm_coach_sync_runs
+            BEGIN SELECT RAISE(ABORT, 'tm_coach_sync_runs is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2317,6 +2430,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (46, _apply_v46),
     (47, _apply_v47),
     (48, _apply_v48),
+    (49, _apply_v49),
 )
 
 

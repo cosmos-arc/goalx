@@ -121,6 +121,8 @@ from goalx_backend.tasks import (
     mapping_audit,
     mapping_sync,
     task_conn,
+    tm_coach_crosscheck,
+    tm_coach_report,
 )
 
 
@@ -1465,6 +1467,18 @@ def _cmd_clubelo_elo(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_tm_coach_report() -> None:
+    """TM 教练层覆盖报告（autoresearch 票 18 验收①；只读）。"""
+    report = tm_coach_report()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_tm_coach_crosscheck(args: argparse.Namespace) -> None:
+    """交叉核验报告（autoresearch 票 18 验收②；srct 教练名，只读）。"""
+    report = tm_coach_crosscheck(window_days=args.window_days)
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -1945,6 +1959,17 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     elo_query.add_argument("--team", required=True, help="canonical 中文队名")
     elo_query.add_argument("--date", required=True, help="查询日 YYYY-MM-DD")
     sub.add_parser(
+        "tm-coach-report",
+        help="TM教练层联赛×赛季覆盖报告(autoresearch票18;只读)",
+    )
+    tm_cross = sub.add_parser(
+        "tm-coach-crosscheck",
+        help="srct教练名交叉核验(autoresearch票18;只读,诚实小样本)",
+    )
+    tm_cross.add_argument(
+        "--window-days", type=int, default=45, help="边界前后观察窗(默认 45 日)"
+    )
+    sub.add_parser(
         "mapping-sync",
         help="跨源映射同步:sid 链+kickoff 校准+别名补源(含 srct_en 英文活水与普查)",
     )
@@ -2280,6 +2305,8 @@ def main(argv: list[str] | None = None) -> int:
         "mapping-sync": lambda: _cmd_mapping_sync(args),
         "mapping-audit": lambda: _cmd_mapping_audit(args),
         "clubelo-elo": lambda: _cmd_clubelo_elo(args),
+        "tm-coach-report": _cmd_tm_coach_report,
+        "tm-coach-crosscheck": lambda: _cmd_tm_coach_crosscheck(args),
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
         "e2e-corpus": _cmd_e2e_corpus,

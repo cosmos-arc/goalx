@@ -474,6 +474,47 @@ def clubelo_alias_for_team(conn: sqlite3.Connection, team_id: int) -> str | None
     return str(row["alias"]) if row else None
 
 
+def sync_tm_club_aliases(
+    conn: sqlite3.Connection, clubs: Sequence[str]
+) -> ClubeloAliasReport:
+    """
+    TM 俱乐部英文名 → 中文 canonical team 的别名桥（autoresearch 票 18）。
+
+    sync_clubelo_aliases 同型。锚=英文活水（srct_en/odds_api/propline/
+    clubelo/manual 英文条目）三级索引，唯一命中即落
+    team_aliases(source='transfermarkt')；未命中进报告人工队列，不硬配。
+    """
+    names: dict[str, int] = {}
+    rows = conn.execute(
+        """
+        SELECT team_id, alias FROM team_aliases
+        WHERE source IN ('srct_en', 'odds_api', 'propline', 'clubelo', 'manual')
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in rows:
+        names.setdefault(str(row["alias"]), int(row["team_id"]))
+    index = NameIndex.build(names)
+    report = ClubeloAliasReport(clubs_total=len(clubs))
+    for club in clubs:
+        team_id = index.resolve(club)
+        if team_id is None:
+            report.unmatched.append(club)
+            continue
+        report.matched += 1
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO team_aliases (team_id, source, alias)
+            VALUES (?, 'transfermarkt', ?)
+            """,
+            (team_id, club),
+        )
+        if cur.rowcount > 0:
+            report.added += 1
+    conn.commit()
+    return report
+
+
 def english_aliases_for_team(conn: sqlite3.Connection, team_id: int) -> set[str]:
     """该队已知英文名（odds_api + propline 并集，join 交叉核对用，票 50）。"""
     return {

@@ -162,6 +162,12 @@ erDiagram
     clv_records {
         INTEGER id PK
     }
+    coach_change_events {
+        INTEGER id PK
+    }
+    coach_change_samples {
+        INTEGER id PK
+    }
     combinations {
         INTEGER id PK
     }
@@ -302,6 +308,14 @@ erDiagram
     teams {
         INTEGER id PK
     }
+    tm_club_seasons {
+    }
+    tm_coach_sync_runs {
+        INTEGER id PK
+    }
+    tm_coach_tenures {
+        INTEGER id PK
+    }
     track2_snapshots {
         INTEGER id PK
     }
@@ -331,6 +345,8 @@ erDiagram
     blind_reviews }|--|| fixtures : fixture_id
     clv_records }|--|| fixtures : fixture_id
     clv_records }|--|| bets : bet_id
+    coach_change_samples }|--|| hist_matches : hist_match_id
+    coach_change_samples }|--|| coach_change_events : event_id
     combinations }|--|| bet_slips : slip_id
     divergences }|--|| fixtures : fixture_id
     draw_result_revisions }|--|| fixtures : fixture_id
@@ -985,6 +1001,90 @@ append-only 触发器：`admin_match_exclusions_no_delete`、`admin_match_exclus
 | `note` | TEXT | — |
 | `meta` | TEXT | — |
 <!-- schema-doc:END:table:cost_ledger -->
+<!-- schema-doc:BEGIN:table:tm_coach_tenures -->
+#### `tm_coach_tenures`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `club_tm_id` | INTEGER | NOT NULL |
+| `club_name` | TEXT | NOT NULL |
+| `role` | TEXT | NOT NULL |
+| `coach_tm_id` | INTEGER | — |
+| `coach_name` | TEXT | NOT NULL |
+| `date_from` | TEXT | NOT NULL |
+| `date_to` | TEXT | — |
+| `games` | INTEGER | — |
+| `first_seen_at` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`club_tm_id`, `role`, `coach_name`, `date_from`)`
+<!-- schema-doc:END:table:tm_coach_tenures -->
+<!-- schema-doc:BEGIN:table:tm_club_seasons -->
+#### `tm_club_seasons`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `league_tm_code` | TEXT | NOT NULL |
+| `season` | TEXT | NOT NULL |
+| `club_tm_id` | INTEGER | NOT NULL |
+| `club_name` | TEXT | NOT NULL |
+| `first_seen_at` | TEXT | NOT NULL |
+| `observed_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`league_tm_code`, `season`, `club_tm_id`)`
+<!-- schema-doc:END:table:tm_club_seasons -->
+<!-- schema-doc:BEGIN:table:coach_change_events -->
+#### `coach_change_events`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `club_tm_id` | INTEGER | NOT NULL |
+| `club_name` | TEXT | NOT NULL |
+| `hist_competition` | TEXT | NOT NULL |
+| `hist_season` | TEXT | NOT NULL |
+| `event_date` | TEXT | NOT NULL |
+| `outgoing_coach` | TEXT | — |
+| `outgoing_is_caretaker` | INTEGER | — |
+| `incoming_coach` | TEXT | NOT NULL |
+| `incoming_is_caretaker` | INTEGER | NOT NULL |
+| `team_id` | INTEGER | — |
+| `rebuilt_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`club_tm_id`, `event_date`, `incoming_coach`)`
+<!-- schema-doc:END:table:coach_change_events -->
+<!-- schema-doc:BEGIN:table:coach_change_samples -->
+#### `coach_change_samples`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `event_id` | INTEGER | NOT NULL，FK→coach_change_events.id |
+| `hist_match_id` | INTEGER | NOT NULL，FK→hist_matches.id |
+| `game_no` | INTEGER | NOT NULL |
+| `rebuilt_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`event_id`, `game_no`)`
+<!-- schema-doc:END:table:coach_change_samples -->
+<!-- schema-doc:BEGIN:table:tm_coach_sync_runs -->
+#### `tm_coach_sync_runs`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `observed_at` | TEXT | NOT NULL |
+| `leagues` | TEXT | NOT NULL |
+| `clubs` | INTEGER | NOT NULL |
+| `tenure_rows` | INTEGER | NOT NULL |
+| `written` | INTEGER | NOT NULL |
+| `failed` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_update`
+<!-- schema-doc:END:table:tm_coach_sync_runs -->
 ### modelling 域
 
 <!-- schema-doc:BEGIN:table:forecasts -->

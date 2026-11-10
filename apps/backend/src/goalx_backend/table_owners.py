@@ -63,6 +63,8 @@ OWNERS: dict[str, set[str]] = {
         "odds_change_event",
         "bookmaker",
         "srct_night_summaries",
+        # autoresearch 票 18：detail 银层视图（data/coach_crosscheck 只读消费）
+        "match_detail",
         # 票 78：自算 Elo 逐场赛前值（ingest/elo_silver.py 物化）
         "elo_self",
         # 票 79：卫报语料游标状态机 + 500/日请求账本（checkpoint 库）
@@ -85,6 +87,13 @@ OWNERS: dict[str, set[str]] = {
         "admin_match_exclusions",
         # backtest-decade B：gold 特征面（data/gold.py 物化，语料树 parquet）
         "match_features",
+        # autoresearch 票 18：TM 教练任职层 + 换帅事件派生面
+        # （ingest/tm_coach.py 采集；data/coach_changes.py 派生重建）
+        "tm_coach_tenures",
+        "tm_club_seasons",
+        "coach_change_events",
+        "coach_change_samples",
+        "tm_coach_sync_runs",
     },
     "modelling": {"forecasts", "team_aliases", "forecast_coverage"},
     "evaluation": {
