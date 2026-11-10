@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from goalx_backend.markets import CRS_EXACT_SCORES
 
@@ -2439,6 +2440,216 @@ def _apply_v50(conn: sqlite3.Connection) -> None:
             """)
 
 
+# vision-build 票 02：H1-H8 首批冻结种子（research/61 §二 L39-46 原文；
+# 台账回指=edge-ledger 判决条目）。措辞自 2026-11-07（research/61 落稿日）
+# 冻结；status=关联扫描器在日扫（s1/s4/s5 ∈ ACTIVE_SCANNERS）→ running，
+# S3/S6 未建成（H5/H6）→ registered。改措辞=改迁移=人审 PR（prereg 纪律）。
+_H1_H8_SEED: tuple[tuple[str, str, str, str, str, str, str], ...] = (
+    # (h_id, statement, data_face, 门=judgement, 预期样本量, ledger_ref, status)
+    (
+        "H1",
+        "JC 收盘价保留 FLB：JC 长赔向实现 ROI 显著低于欧收盘同向（侵蚀差>2pp）",
+        "srct 收盘轨迹×JC SP×结果",
+        "n≥500/向，差>2SE",
+        "n≥500/向",
+        "edge-ledger:E-02",
+        "running",
+    ),
+    (
+        "H2",
+        "JC 池终局份额低估热门（O-S 理论）：份额校准偏差方向=热门被低估",
+        "源B 849 行份额×结果",
+        "n≥200",
+        "n≥200",
+        "edge-ledger:E-23",
+        "running",
+    ),
+    (
+        "H3",
+        "平局低买：池人群平局份额 < 模型/市场公允，平局命中派彩超比例",
+        "同上",
+        "n≥200，偏差>2SE",
+        "n≥200",
+        "edge-ledger:E-24",
+        "running",
+    ),
+    (
+        "H4",
+        "JC 调盘滞后窗存在：欧盘动后 JC 跟随延迟>15min 的案例率稳定>10%",
+        "srct 轨迹×JC 快照",
+        "滚动 30 日",
+        "滚动 30 日",
+        "edge-ledger:E-08",
+        "running",
+    ),
+    (
+        "H5",
+        "早锁优于晚锁（我方 drift 结论形式化）：早期信号 CLV>收盘锚 CLV",
+        "纸面注×收盘锚",
+        "n≥200/组",
+        "n≥200/组",
+        "edge-ledger:E-17",
+        "registered",
+    ),
+    (
+        "H6",
+        "LLM 情报先行：情报事件时点先于 JC 调盘案例率>0 且方向一致>55%",
+        "情报层×调盘账",
+        "n≥100",
+        "n≥100",
+        "edge-ledger:E-12",
+        "registered",
+    ),
+    (
+        "H7",
+        "滚存期 EV 结构：滚存期期望返奖率高于非滚存期（死钱注入）",
+        "pool_periods×draw_results",
+        "全量回放",
+        "全量回放",
+        "edge-ledger:E-25",
+        "running",
+    ),
+    (
+        "H8",
+        "市场桶结构当代漂移：十年桶偏差（FLB）在 2026 样本仍成立",
+        "运行面积累",
+        "滚动 90 日",
+        "滚动 90 日",
+        "edge-ledger:E-01",
+        "running",
+    ),
+)
+
+
+def _apply_v51(conn: sqlite3.Connection) -> None:
+    """
+    v51（vision-build 票 02）：假设注册表两表（evaluation 域，ADR-0008）。
+
+    - hypothesis_registry：prereg 假设账。冻结字段（h_id/family/措辞/判据/
+      数据面/样本量/台账回指/两时间戳）append-only——库层触发器拒绝改写
+      （v50 strategy_versions 同款 RAISE(ABORT) 先例；refuted 留痕不删，
+      DELETE 全禁）。status/attempt_count/status_* 三组生命周期列是唯一
+      可变面：状态机由属主函数（evaluation/hypothesis_registry.py）先验
+      谓词落账，attempt_count 只许递增（monotonic 守卫进触发器 WHEN）。
+      改预测=新 h_id（新行），不 UPDATE 冻结字段。
+    - hypothesis_attempts：逐次统计评估留痕（append-only 全禁 UPDATE/
+      DELETE，v50 同款），UNIQUE(h_id, window_key) 吸收同窗重扫——
+      attempt_count 的幂等键（票 04 月读 DSR/BH 按总尝试数校正消费）。
+    - H1-H8 首批种子进迁移（markets/selections 先例）：人审过的冻结措辞
+      是库表身份的一部分，随迁移可复算。批前离线研究（research/61 判读
+      节、edge-ledger E-xx）不翻注册表状态——注册表从 registered/running
+      起步，终态自此只经人 CLI。
+
+    SQL 读写归 evaluation（evaluation/hypothesis_registry.py 属主）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hypothesis_registry (
+            id INTEGER PRIMARY KEY,
+            h_id TEXT NOT NULL UNIQUE,
+            family TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            judgement TEXT NOT NULL,
+            data_face TEXT NOT NULL,
+            expected_n TEXT NOT NULL,
+            ledger_ref TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            first_registered_at TEXT NOT NULL,
+            frozen_at TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('registered', 'running', 'supported', 'refuted')),
+            status_actor TEXT NOT NULL,
+            status_reason TEXT NOT NULL,
+            status_changed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hypothesis_attempts (
+            id INTEGER PRIMARY KEY,
+            h_id TEXT NOT NULL REFERENCES hypothesis_registry(h_id),
+            window_key TEXT NOT NULL,
+            scanner TEXT,
+            note TEXT,
+            ts TEXT NOT NULL,
+            UNIQUE (h_id, window_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_hypothesis_attempts
+            ON hypothesis_attempts (h_id, id)
+        """
+    )
+    # DELETE 全禁（refuted 留痕不删）；UPDATE 只放行生命周期列——冻结
+    # 字段一动即 ABORT，attempt_count 回退即 ABORT（WHEN 触发面=v50
+    # RAISE(ABORT) 先例的可变列扩展：status 翻转/attempt 递增是票面
+    # 交付，纯全禁表承载不了）。
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS hypothesis_registry_no_delete
+        BEFORE DELETE ON hypothesis_registry
+        BEGIN SELECT RAISE(ABORT, 'hypothesis_registry is append-only'); END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS hypothesis_registry_frozen_fields
+        BEFORE UPDATE ON hypothesis_registry
+        WHEN old.h_id != new.h_id OR old.family != new.family
+          OR old.statement != new.statement OR old.judgement != new.judgement
+          OR old.data_face != new.data_face OR old.expected_n != new.expected_n
+          OR old.ledger_ref != new.ledger_ref
+          OR old.first_registered_at != new.first_registered_at
+          OR old.frozen_at != new.frozen_at
+          OR old.attempt_count > new.attempt_count
+        BEGIN SELECT RAISE(
+            ABORT, 'hypothesis_registry prereg fields are frozen (改预测=新 h_id)'); END
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS hypothesis_attempts_no_{operation.lower()}
+            BEFORE {operation} ON hypothesis_attempts
+            BEGIN SELECT RAISE(ABORT, 'hypothesis_attempts is append-only'); END
+        """)
+    # db.utc_now_iso 不可 import（db→migrations 既有方向，不反向成环）
+    registered_at = datetime.now(UTC).isoformat(timespec="seconds")
+    for (
+        h_id,
+        statement,
+        data_face,
+        judgement,
+        expected_n,
+        ledger_ref,
+        status,
+    ) in _H1_H8_SEED:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO hypothesis_registry
+                (h_id, family, statement, judgement, data_face, expected_n,
+                 ledger_ref, attempt_count, first_registered_at, frozen_at,
+                 status, status_actor, status_reason, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '2026-11-07', ?, 'human:seed',
+                    'seed: research/61 §二 首批注册（vision-build 票 02）', ?)
+            """,
+            (
+                h_id,
+                h_id,
+                statement,
+                judgement,
+                data_face,
+                expected_n,
+                ledger_ref,
+                registered_at,
+                status,
+                registered_at,
+            ),
+        )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2490,6 +2701,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (48, _apply_v48),
     (49, _apply_v49),
     (50, _apply_v50),
+    (51, _apply_v51),
 )
 
 

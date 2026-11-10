@@ -113,6 +113,9 @@ OWNERS: dict[str, set[str]] = {
         "edge_observations",
         # autoresearch 票 34：断点哨兵周级留痕（evaluation/anchor_sentinel.py）
         "anchor_sentinel_weekly",
+        # vision-build 票 02：假设注册表两表（evaluation/hypothesis_registry.py）
+        "hypothesis_registry",
+        "hypothesis_attempts",
     },
     "betting": {
         "bets",

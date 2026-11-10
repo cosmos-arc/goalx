@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -28,7 +29,7 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_asof, srct_odds
 from goalx_backend.db import connect, connect_research, migrate
-from goalx_backend.evaluation import accuracy, edge_scan
+from goalx_backend.evaluation import accuracy, edge_scan, hypothesis_registry
 from goalx_backend.models import DrawResultInput, MatchCodeInput, SnapshotInput
 from goalx_backend.morning_check import check_edge_scan
 
@@ -203,6 +204,113 @@ def test_s1_window_scopes_by_business_date(db: sqlite3.Connection) -> None:
     )
     stats = edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
     assert stats["coverage"]["n_settled"] == 1
+
+
+def test_s1_run_links_hypothesis_registry(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """vision-build 票 02：S1→H1/H8 挂钩——扫描结果按 h_id 关联留痕。
+
+    一窗一尝试（同窗重扫幂等不重复计数）、观测 payload 带 h_id 关联、
+    终态假设停计。
+    """
+    monkeypatch.setattr(edge_scan, "S1_MIN_N", 3)
+    _seed_fixture(
+        db,
+        kickoff=_KICKOFF,
+        business_date=_BUSINESS_DATE,
+        home_goals=1,
+        away_goals=2,
+        jc_odds=(1.25, 6.0, 12.0),
+        jc_captured_at="2026-11-09T15:00:00+00:00",
+    )
+    stats = edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    assert stats["hypotheses"] == {"H1": True, "H8": True}
+    assert (
+        db.execute(
+            "SELECT attempt_count FROM hypothesis_registry WHERE h_id='H1'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        db.execute(
+            "SELECT attempt_count FROM hypothesis_registry WHERE h_id='H8'"
+        ).fetchone()[0]
+        == 1
+    )
+    payload = json.loads(
+        db.execute(
+            "SELECT payload FROM edge_observations WHERE scanner='s1'"
+        ).fetchone()[0]
+    )
+    assert payload["hypotheses"]["linked"] == ["H1", "H8"]
+    # 同窗重扫：发现/观测/尝试三面全幂等
+    rerun = edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    assert rerun["hypotheses"] == {"H1": False, "H8": False}
+    assert (
+        db.execute(
+            "SELECT attempt_count FROM hypothesis_registry WHERE h_id='H1'"
+        ).fetchone()[0]
+        == 1
+    )
+    # H8 终态后 s1 照跑：只记活假设（agent 不给死假设续账）
+    db.execute("UPDATE hypothesis_registry SET status='refuted' WHERE h_id='H8'")
+    db.commit()
+    later = edge_scan.run_s1(db, edge_scan.ScanContext(business_date="2026-11-10"))
+    assert later["hypotheses"] == {"H1": True, "H8": False}
+    assert (
+        db.execute(
+            "SELECT attempt_count FROM hypothesis_registry WHERE h_id='H1'"
+        ).fetchone()[0]
+        == 2
+    )
+    assert (
+        db.execute(
+            "SELECT attempt_count FROM hypothesis_registry WHERE h_id='H8'"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_digest_includes_hypothesis_registry_section(
+    db: sqlite3.Connection,
+) -> None:
+    """vision-build 票 02 验收 2：首个周报含注册表视图（状态+建议态+尝试计数）。"""
+    edge_scan.run_s1(db, edge_scan.ScanContext(business_date=_BUSINESS_DATE))
+    report = edge_scan.build_edge_digest(db, week_end=_BUSINESS_DATE)
+    section = report["hypothesis_registry"]
+    rows = {r["h_id"]: r for r in section["rows"]}
+    assert set(rows) == {f"H{i}" for i in range(1, 9)}
+    assert (rows["H1"]["status"], rows["H1"]["attempt_count"]) == ("running", 1)
+    assert (rows["H5"]["status"], rows["H5"]["attempt_count"]) == ("registered", 0)
+    assert section["status_counts"] == {"running": 6, "registered": 2}
+    assert any("人" in note for note in section["notes"])
+    md = edge_scan._render_markdown(report)
+    assert "## 假设注册表" in md
+    assert "| H1 |" in md
+    assert "| H5 |" in md
+
+
+def test_digest_markdown_escapes_statement_cell(db: sqlite3.Connection) -> None:
+    """I2 回归：冻结措辞含 | 与换行不劈裂周报 MD 表（渲染层转义）。"""
+    hypothesis_registry.register_hypothesis(
+        db,
+        h_id="H11",
+        statement="含管符|与\n换行的措辞",
+        judgement="n≥10",
+        data_face="自由文本面",
+        expected_n="n≥10",
+        ledger_ref="edge-ledger:E-01",
+    )
+    report = edge_scan.build_edge_digest(db, week_end=_BUSINESS_DATE)
+    md = edge_scan._render_markdown(report)
+    line = next(row for row in md.splitlines() if row.startswith("| H11 |"))
+    assert "含管符\\|" in line  # 管符转义，不劈裂单元格
+    assert "与 换行的措辞" in line  # 换行折成空格，表体行不断行
+    # 按未转义管符切分仍=5 列（首尾空段+5 单元格）：转义管符不增列
+    cells = re.split(r"(?<!\\)\|", line)
+    assert len(cells) == 7
+    assert cells[-2].strip() == "含管符\\|与 换行的措辞"
 
 
 # ---- 票 32：Romano-Wolf stepdown（S1 多重校正，21 段族；只收紧不放宽） ----

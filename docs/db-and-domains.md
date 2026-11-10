@@ -87,6 +87,8 @@
 | `edge_findings` | 探索轨发现台账（autoresearch 票 01） | 越门发现一行（scanner/segment/metric_value/n/se/window）；晋升=人裁开验证票（status new→promoted\|dead） | append+幂等 UNIQUE(scanner,segment,window)；status 人裁 UPDATE |
 | `edge_observations` | 扫描器运行/观测留痕（autoresearch 票 01/04/02） | s1 逐窗统计快照/s2 模型校准分箱+EV 实现差（票 02：分玩法置信 10 箱 + 纸面注配对差，n≥200 门）/s4 观测日（无信号日记零）/s5 期次回看（滚存标注）；派生态非证据 | 同键 REPLACE 重跑重建 |
 | `anchor_sentinel_weekly` | 断点哨兵周级留痕（autoresearch 票 34） | srct（cid177 第一锚，只读）× propline:pinnacle（第二源）周级三轴（coverage_second/coverage_anchor/dev_odds/dev_prob）；1a 分母=cid177 资格场防自反、1b 分母=fixture 侧、signed 周均值禁用（结构零）；alert=留痕+晨检红面不自动处置 | append+幂等（同周重跑追加，读取最新行胜出） |
+| `hypothesis_registry` | 假设注册表（vision-build 票 02） | prereg 冻结账：h_id/措辞/判据/数据面/样本量/台账回指（edge-ledger E-xx）+status（registered→running→supported\|refuted，终态恒人 CLI）+attempt_count（家族总尝试，票 04 DSR/BH 分母）；H1-H8 种子在 v51（research/61 §二 原文） | 冻结字段 append（改预测=新 h_id）；status/attempt_count 属主函数 UPDATE；终态留痕不删 |
+| `hypothesis_attempts` | 假设逐次评估留痕（vision-build 票 02） | UNIQUE(h_id, window_key) 吸收同窗重扫（scanner 前缀域窗键）；attempt_count 递增的唯一入口 | append-only |
 
 ### infra / 脚手架
 
@@ -236,6 +238,12 @@ erDiagram
     hist_matches {
         INTEGER id PK
     }
+    hypothesis_attempts {
+        INTEGER id PK
+    }
+    hypothesis_registry {
+        INTEGER id PK
+    }
     intel_observations {
         INTEGER id PK
     }
@@ -365,6 +373,7 @@ erDiagram
     forecasts }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| quote_observations : observation_id
+    hypothesis_attempts }|--|| hypothesis_registry : h_id
     intel_observations }|--|| fixtures : fixture_id
     market_baseline_snapshots }|--|| fixtures : fixture_id
     match_codes }|--|| fixtures : fixture_id
@@ -1738,6 +1747,56 @@ live-real；demoted 可再升（唯一回梯口=重新注册走 L2 人审）、r
 | `note` | TEXT | — |
 | `computed_at` | TEXT | NOT NULL |
 <!-- schema-doc:END:table:anchor_sentinel_weekly -->
+<!-- schema-doc:BEGIN:table:hypothesis_registry -->
+#### `hypothesis_registry`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `h_id` | TEXT | NOT NULL |
+| `family` | TEXT | NOT NULL |
+| `statement` | TEXT | NOT NULL |
+| `judgement` | TEXT | NOT NULL |
+| `data_face` | TEXT | NOT NULL |
+| `expected_n` | TEXT | NOT NULL |
+| `ledger_ref` | TEXT | NOT NULL |
+| `attempt_count` | INTEGER | NOT NULL，DEFAULT 0 |
+| `first_registered_at` | TEXT | NOT NULL |
+| `frozen_at` | TEXT | NOT NULL |
+| `status` | TEXT | NOT NULL |
+| `status_actor` | TEXT | NOT NULL |
+| `status_reason` | TEXT | NOT NULL |
+| `status_changed_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`h_id`)`
+
+append-only 触发器：`hypothesis_registry_frozen_fields`、`hypothesis_registry_no_delete`
+<!-- schema-doc:END:table:hypothesis_registry -->
+<!-- schema-doc:BEGIN:table:hypothesis_attempts -->
+#### `hypothesis_attempts`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `h_id` | TEXT | NOT NULL，FK→hypothesis_registry.h_id |
+| `window_key` | TEXT | NOT NULL |
+| `scanner` | TEXT | — |
+| `note` | TEXT | — |
+| `ts` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`h_id`, `window_key`)`
+
+append-only 触发器：`hypothesis_attempts_no_delete`、`hypothesis_attempts_no_update`
+<!-- schema-doc:END:table:hypothesis_attempts -->
+
+vision-build 票 02（v51）：假设注册表——prereg 纪律的库表表达。冻结字段
+（措辞/判据/数据面/样本量/台账回指/两时间戳）append-only，**改预测=新
+h_id**（新行继承家族 attempt 计数）；status/attempt_count 是唯一可变面
+（状态机 registered→running→supported|refuted，终态翻转恒人 CLI；
+attempt_count 只许递增，monotonic 守卫进触发器 WHEN）。H1-H8 首批种子进
+迁移（research/61 §二 冻结原文；台账回指=edge-ledger 判决条目）。
+`hypothesis_attempts` = 逐次统计评估留痕（UNIQUE(h_id, window_key) 吸收
+同窗重扫），票 04 月读 DSR/BH 按总尝试数校正消费。
 ### infra / 脚手架
 
 <!-- schema-doc:BEGIN:table:markets -->

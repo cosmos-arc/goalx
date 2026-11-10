@@ -35,6 +35,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
         --calibration C --params P --label L
     uv run python -m goalx_backend.cli version-promote --id 1 --to live-paper \
         --reason "过门放量"
+    uv run python -m goalx_backend.cli hypothesis-mark --h-id H4 --to supported \
+        --reason "滞后案例率 63.6% 远超门（人裁）"
 """
 
 from __future__ import annotations
@@ -95,7 +97,13 @@ from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.db import connect, connect_research, migrate, table_exists
 from goalx_backend.evaluation import backtest as bt
-from goalx_backend.evaluation import baseline, edge_scan, market_lambda, unlock_report
+from goalx_backend.evaluation import (
+    baseline,
+    edge_scan,
+    hypothesis_registry,
+    market_lambda,
+    unlock_report,
+)
 from goalx_backend.evaluation import bucket_reaudit as bkt
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation import clv_decade as clvd
@@ -217,6 +225,47 @@ def _cmd_version_promote(
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     logger.info("version transition: {}", payload)
+
+
+def _cmd_hypothesis_mark(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    假设注册表状态翻转（vision-build 票 02，人 CLI）：终态人审落账。
+
+    终态 supported|refuted 恒人审（agent 不自动定生死）；点亮
+    registered→running 亦可。谓词拒绝（终态翻案/非法转移）fail-loud。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    target = hypothesis_registry.HypothesisState(args.to)
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        from_state = hypothesis_registry.current_status(conn, args.h_id)
+        if from_state is None:
+            raise hypothesis_registry.UnknownHypothesis(
+                f"假设未注册: {args.h_id}"
+            ) from None
+        hypothesis_registry.transition_hypothesis(
+            conn,
+            args.h_id,
+            target,
+            actor="human:cli",
+            reason=args.reason,
+        )
+    finally:
+        conn.close()
+    payload: dict[str, Any] = {
+        "h_id": args.h_id,
+        "from_state": from_state.value,
+        "to_state": target.value,
+        "actor": "human:cli",
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("hypothesis transition: {}", payload)
 
 
 def _cmd_ingest_jingcai() -> None:
@@ -2347,6 +2396,22 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     version_promote_parser.add_argument(
         "--reason", required=True, help="转移理由(落 transitions 审计)"
     )
+    hypothesis_mark_parser = sub.add_parser(
+        "hypothesis-mark",
+        help="假设注册表状态翻转(vision票02;终态恒人审,agent不自动定生死)",
+    )
+    hypothesis_mark_parser.add_argument(
+        "--h-id", required=True, help="假设 id（如 H1）"
+    )
+    hypothesis_mark_parser.add_argument(
+        "--to",
+        required=True,
+        choices=tuple(state.value for state in hypothesis_registry.HypothesisState),
+        help="目标状态（supported|refuted=终态，仅人审）",
+    )
+    hypothesis_mark_parser.add_argument(
+        "--reason", required=True, help="翻转理由(落账审计)"
+    )
     # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
     datasets.add_cli_subparsers(sub)
     return parser
@@ -2427,6 +2492,7 @@ def main(argv: list[str] | None = None) -> int:
         "e2e-corpus": _cmd_e2e_corpus,
         "version-register": lambda: _cmd_version_register(args),
         "version-promote": lambda: _cmd_version_promote(args),
+        "hypothesis-mark": lambda: _cmd_hypothesis_mark(args),
     }
     # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
     # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）

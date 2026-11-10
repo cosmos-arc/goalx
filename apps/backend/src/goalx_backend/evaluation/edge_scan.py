@@ -58,7 +58,7 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
-from goalx_backend.evaluation import accuracy
+from goalx_backend.evaluation import accuracy, hypothesis_registry
 
 REPORTS_DIR = "reports"
 REPORT_BASENAME = "edge-scan-digest"
@@ -547,6 +547,12 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
         segments=segments,
         extra_notes={"face": "runtime", "window_days": S1_WINDOW_DAYS},
     )
+    # vision-build 票 02：S1→H1/H8 假设挂钩——本窗各活假设记一尝试
+    # （同窗幂等；H1 完整判据的双源扩展面未点亮，当前面=JC 单源校准，
+    # 关联留痕先行=票面示范挂钩）
+    hyp_landed = hypothesis_registry.link_scanner_run(
+        conn, scanner="s1", window_key=window_end, note=window
+    )
     _record_observation(
         conn,
         "s1",
@@ -568,6 +574,10 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
             },
             "coverage": coverage,
             "segments": segments,
+            "hypotheses": {
+                "linked": sorted(hypothesis_registry.SCANNER_LINKS.get("s1", ())),
+                "attempts_landed": {k: v for k, v in hyp_landed.items() if v},
+            },
         },
     )
     conn.commit()
@@ -581,6 +591,7 @@ def run_s1(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
         "crossed": sorted(k for k, v in segments.items() if v["crossed"]),
         "crossed_rw": sorted(k for k, v in segments.items() if v["crossed_rw"]),
         "findings_landed": landed,
+        "hypotheses": hyp_landed,
     }
 
 
@@ -1277,6 +1288,13 @@ def _assemble_digest(
             and f["segment_key"] in crossed_by_scanner.get(f["scanner"], set())
         }
     )
+    # vision-build 票 02：注册表节（状态+建议态+尝试计数；人读面）
+    hyp_rows = hypothesis_registry.registry_view(conn)
+    hyp_status_counts: dict[str, int] = {}
+    for hyp in hyp_rows:
+        hyp_status_counts[str(hyp["status"])] = (
+            hyp_status_counts.get(str(hyp["status"]), 0) + 1
+        )
     report: dict[str, Any] = {
         "schema": "edge-scan-digest/1",
         "generated_at": utc_now_iso(),
@@ -1300,6 +1318,18 @@ def _assemble_digest(
             "week": findings_week,
             "status_counts": status_counts,
             "promotion_suggestions": suggestions,
+        },
+        "hypothesis_registry": {
+            "rows": hyp_rows,
+            "status_counts": hyp_status_counts,
+            "notes": [
+                "终态（supported|refuted）翻转恒人 CLI 人审落账，agent 不自动定生死；"
+                + "终态不翻案，重开=改预测=新 h_id。",
+                "建议态由程序按数据面在场算（registered+已有评估留痕→running）；"
+                + "逐假设统计门求值随扫描器扩展面点亮接入。",
+                "attempt 计数=该假设族统计评估总尝试数（同窗幂等），月读 DSR/BH"
+                + " 校正按总尝试数消费（票 04）。",
+            ],
         },
         "notes": [
             "晋升=人裁开验证票（六步门），不自动建；dead 同理。",
@@ -1337,6 +1367,16 @@ def _rhythm_line(rhythm: dict[str, Any] | None) -> str:
         f"- 源T 当季锚书入库节奏（{rhythm['season']}，数据积累面）：cid177"
         + f" {rhythm['n_sids']} 场在库 · 最新观测 {latest}"
     )
+
+
+def _md_cell(text: str) -> str:
+    """
+    MD 表格单元格转义（vision-build 票 02 I2）：管符劈裂与换行错位。
+
+    冻结措辞是自由文本（含 `|`/换行即劈裂表行）——渲染层转义，JSON 面
+    保持原文不转义。
+    """
+    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def _render_markdown(report: dict[str, Any]) -> str:
@@ -1389,6 +1429,22 @@ def _render_markdown(report: dict[str, Any]) -> str:
     w(_render_s1_table(report))
     w(_render_s2_tables(report))
     w(_render_s2_log_loss(report))
+    w("## 假设注册表")
+    w("")
+    hyp = report["hypothesis_registry"]
+    w(
+        "- 状态分布 "
+        + "，".join(f"{k}={v}" for k, v in sorted(hyp["status_counts"].items()))
+        + "；建议态由程序算，终态翻转恒人 CLI"
+    )
+    w("| h_id | 状态 | 建议态 | 尝试 | 措辞（冻结） |")
+    w("|---|---|---|---|---|")
+    for row in hyp["rows"]:
+        w(
+            f"| {row['h_id']} | {row['status']} | {row['suggested'] or '—'}"
+            + f" | {row['attempt_count']} | {_md_cell(str(row['statement']))} |"
+        )
+    w("")
     w("## 本周新台账行")
     w("")
     findings = report["findings"]["week"]
