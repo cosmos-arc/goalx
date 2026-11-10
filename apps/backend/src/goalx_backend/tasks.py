@@ -46,8 +46,10 @@ from goalx_backend.data import (
     coach_changes,
     coach_crosscheck,
     corpus_duckdb,
+    formations,
     gold,
     mapping,
+    pedigree,
     quote_evidence,
     reconcile,
     today,
@@ -1036,6 +1038,36 @@ def tm_coach_crosscheck(*, window_days: int = 45) -> dict[str, object]:
     """交叉核验（只读，票 18 验收②；srct 教练名，诚实小样本）。"""
     with task_conn() as conn:
         return coach_crosscheck.srct_coach_agreement(conn, window_days=window_days)
+
+
+def six_axes_derive() -> dict[str, object]:
+    """
+    六轴 ②④ 两面重建（vision-build 票 09；运维步，不进调度）。
+
+    ② 阵型族条件面要语料桥（corpus match_detail×universe），桥缺席/被写方
+    锁占 → degraded 零动作（04:10 物化互斥先例）；④ 底蕴硬层纯主库输入，
+    桥缺席照常重建。先 ④ 后 ②（② 持 duckdb 读锁时长最小化）。
+    """
+    settings = get_settings()
+    with task_conn() as conn:
+        pedigree_stats = pedigree.derive_club_pedigree(conn)
+        with corpus_duckdb.reader(settings) as duck_con:
+            if duck_con is None:
+                formation_stats: dict[str, object] = {"degraded": "corpus unavailable"}
+            else:
+                formation_stats = formations.derive_formation_family_facet(
+                    conn, duck_con
+                )
+    return {"formations": formation_stats, "pedigree": pedigree_stats}
+
+
+def six_axes_report() -> dict[str, object]:
+    """六轴只读报告：② 覆盖（全联赛+英超/英冠切片）+ ④ 派生现态（验收面）。"""
+    with task_conn() as conn:
+        return {
+            "formations": formations.coverage_report(conn),
+            "pedigree": pedigree.derive_state(conn),
+        }
 
 
 def pool_snapshot() -> dict[str, object]:

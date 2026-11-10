@@ -163,6 +163,9 @@ erDiagram
     blind_reviews {
         INTEGER id PK
     }
+    club_pedigree {
+        INTEGER id PK
+    }
     clv_records {
         INTEGER id PK
     }
@@ -210,6 +213,9 @@ erDiagram
     }
     elo_ratings {
     }
+    face_derive_state {
+        TEXT face PK
+    }
     fixtures {
         INTEGER id PK
     }
@@ -220,6 +226,9 @@ erDiagram
         INTEGER id PK
     }
     forecasts {
+        INTEGER id PK
+    }
+    formation_family_facet {
         INTEGER id PK
     }
     freshness_shadow {
@@ -1109,6 +1118,60 @@ append-only 触发器：`admin_match_exclusions_no_delete`、`admin_match_exclus
 
 append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_update`
 <!-- schema-doc:END:table:tm_coach_sync_runs -->
+<!-- schema-doc:BEGIN:table:formation_family_facet -->
+#### `formation_family_facet`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `season` | TEXT | NOT NULL |
+| `league_fd` | TEXT | — |
+| `league_zh` | TEXT | NOT NULL |
+| `team_id` | INTEGER | NOT NULL |
+| `club_tm_id` | INTEGER | NOT NULL |
+| `club_name` | TEXT | NOT NULL |
+| `coach_name` | TEXT | NOT NULL |
+| `coach_role` | TEXT | NOT NULL |
+| `family` | TEXT | NOT NULL |
+| `n_matches` | INTEGER | NOT NULL |
+| `n_known` | INTEGER | NOT NULL |
+| `first_match_date` | TEXT | NOT NULL |
+| `last_match_date` | TEXT | NOT NULL |
+| `rebuilt_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`season`, `league_zh`, `club_tm_id`, `coach_name`, `family`)`
+<!-- schema-doc:END:table:formation_family_facet -->
+<!-- schema-doc:BEGIN:table:club_pedigree -->
+#### `club_pedigree`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `team` | TEXT | NOT NULL |
+| `season` | TEXT | NOT NULL |
+| `top_flight_streak` | INTEGER | — |
+| `points_pct_l5` | REAL | — |
+| `l5_seasons` | INTEGER | NOT NULL |
+| `tier1_titles` | INTEGER | NOT NULL |
+| `major_honours` | INTEGER | NOT NULL |
+| `promo_to_tier1` | INTEGER | — |
+| `releg_from_tier1` | INTEGER | — |
+| `club_tm_id` | INTEGER | — |
+| `rebuilt_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`team`, `season`)`
+<!-- schema-doc:END:table:club_pedigree -->
+<!-- schema-doc:BEGIN:table:face_derive_state -->
+#### `face_derive_state`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `face` | TEXT | PK |
+| `rebuilt_at` | TEXT | NOT NULL |
+| `stats` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`face`)`
+<!-- schema-doc:END:table:face_derive_state -->
 ### modelling 域
 
 <!-- schema-doc:BEGIN:table:forecasts -->

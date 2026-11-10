@@ -474,6 +474,23 @@ def clubelo_alias_for_team(conn: sqlite3.Connection, team_id: int) -> str | None
     return str(row["alias"]) if row else None
 
 
+def transfermarkt_alias_by_team(conn: sqlite3.Connection) -> dict[int, str]:
+    """
+    team_id → TM 俱乐部名（transfermarkt 别名桥读口；票 09 阵型族面消费）。
+
+    同 team 多别名取首行（sync_tm_club_aliases 唯一命中落库，常态一对一）。
+    """
+    out: dict[int, str] = {}
+    for row in conn.execute(
+        """
+        SELECT team_id, alias FROM team_aliases
+        WHERE source = 'transfermarkt' ORDER BY id
+        """
+    ).fetchall():
+        out.setdefault(int(row["team_id"]), str(row["alias"]))
+    return out
+
+
 def sync_tm_club_aliases(
     conn: sqlite3.Connection, clubs: Sequence[str]
 ) -> ClubeloAliasReport:

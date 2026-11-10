@@ -136,6 +136,8 @@ from goalx_backend.tasks import (
     corpus_anchor,
     mapping_audit,
     mapping_sync,
+    six_axes_derive,
+    six_axes_report,
     task_conn,
     tm_coach_crosscheck,
     tm_coach_report,
@@ -1686,6 +1688,18 @@ def _cmd_tm_coach_crosscheck(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_six_axes_derive() -> None:
+    """六轴 ②④ 两面重建（vision-build 票 09 运维步；幂等全量）。"""
+    report = six_axes_derive()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_six_axes_report() -> None:
+    """六轴只读报告（票 09 验收面：②覆盖切片 + ④派生现态）。"""
+    report = six_axes_report()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_archive_538(
     args: argparse.Namespace,
     *,
@@ -2177,6 +2191,14 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--window-days", type=int, default=45, help="边界前后观察窗(默认 45 日)"
     )
     sub.add_parser(
+        "six-axes-derive",
+        help="六轴②阵型族条件面+④底蕴硬层重建(vision-build票09;幂等)",
+    )
+    sub.add_parser(
+        "six-axes-report",
+        help="六轴只读报告(票09验收:②覆盖英超/英冠切片+④派生现态)",
+    )
+    sub.add_parser(
         "mapping-sync",
         help="跨源映射同步:sid 链+kickoff 校准+别名补源(含 srct_en 英文活水与普查)",
     )
@@ -2577,6 +2599,8 @@ def main(argv: list[str] | None = None) -> int:
         "clubelo-elo": lambda: _cmd_clubelo_elo(args),
         "tm-coach-report": _cmd_tm_coach_report,
         "tm-coach-crosscheck": lambda: _cmd_tm_coach_crosscheck(args),
+        "six-axes-derive": _cmd_six_axes_derive,
+        "six-axes-report": _cmd_six_axes_report,
         "archive-538": lambda: _cmd_archive_538(args),
         "seed-demo": _cmd_seed_demo,
         "e2e-corpus": _cmd_e2e_corpus,
