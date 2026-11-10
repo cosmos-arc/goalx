@@ -124,6 +124,11 @@ OWNERS: dict[str, set[str]] = {
         # vision-build 票 08：收缩双钟两账（evaluation/contraction.py）
         "contraction_transitions",
         "contraction_clock_readings",
+        # vision-build 票 03：周批 agent 三账（evaluation/weekly_agent.py；
+        # 锚账写口在 contraction.ensure_exploration_anchor）
+        "llm_proposal_costs",
+        "weekly_agent_state",
+        "exploration_clock_anchor",
     },
     "betting": {
         "bets",

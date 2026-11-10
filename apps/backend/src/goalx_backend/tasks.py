@@ -85,13 +85,14 @@ from goalx_backend.data.quote_evidence import (
     bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
-from goalx_backend.evaluation import accuracy, anchor_sentinel, edge_scan
+from goalx_backend.evaluation import accuracy, anchor_sentinel, edge_scan, weekly_agent
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
     effective_cutoff,
     freeze_anchor_baselines,
 )
+from goalx_backend.llm.client import ModelTier, Purpose, glm_chat
 from goalx_backend.llm.collect import collect_pool_intel
 from goalx_backend.llm.collect import stats_dict as intel_stats_dict
 from goalx_backend.llm.fusion import fusion_stats_dict, fusion_sweep
@@ -1408,6 +1409,49 @@ def edge_digest_week() -> dict[str, object]:
         finally:
             store.close()
     return report
+
+
+# 周批提案层 LLM 预算：提案 JSON 5 条约 1K tokens + 质疑三段，给足余量
+_WEEKLY_MAX_TOKENS = 4000
+_WEEKLY_TEMPERATURE = 0.4
+
+
+def weekly_agent_batch() -> dict[str, object]:
+    """
+    周批 agent 心跳（vision-build 票 03）：读面→提案→对抗质疑→人审交接。
+
+    evaluation 低于 llm 层（importlinter）：本适配器把 llm.client.glm_chat
+    （analyst 档、purpose=weekly、80% 熔断档不放行）适配成 ChatFn 注入
+    run_weekly_batch——每次调用独立 messages=fresh-context 新会话。
+    花费双账：cost_ledger（glm_chat 通用账）+ llm_proposal_costs（提案层
+    逐调用账，票 04 月读消费）。
+    """
+    settings = get_settings()
+    with task_conn() as conn:
+        store = CorpusStore(settings.corpus_root)
+
+        def chat(prompt: str) -> weekly_agent.ChatOutcome:
+            result = glm_chat(
+                conn,
+                settings,
+                ModelTier.ANALYST,
+                [{"role": "user", "content": prompt}],
+                purpose=Purpose.WEEKLY,
+                max_tokens=_WEEKLY_MAX_TOKENS,
+                temperature=_WEEKLY_TEMPERATURE,
+            )
+            return weekly_agent.ChatOutcome(
+                content=result.content,
+                model=result.model,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                cost_cny=result.estimated_cny,
+            )
+
+        try:
+            return weekly_agent.run_weekly_batch(conn, store=store, chat=chat)
+        finally:
+            store.close()
 
 
 def anchor_sentinel_capture(

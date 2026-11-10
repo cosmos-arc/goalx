@@ -6,7 +6,8 @@ cli 子命令、Prefect flow、serve deployment、恢复/判死清单（resume_n
 dead_names）、（语料数据集的）checkpoint 表核对全部由声明推导。任务实现
 唯一住所仍是 tasks（ADR-0005）：本模块持引用不持实现。
 
-票 03 后注册面 = 全部单 cron 定拍数据集（17 条，含两个判死面 resume=False）；
+vision-build 票 03 后注册面 = 全部单 cron 定拍数据集（19 条，含两个
+判死面 resume=False）；
 留在 flows.py 手写的非同构形状：组合面（daily-capture/weekly-refresh/
 daily-wrap 多 flow 编排）与 draw-results-sync（单 flow 双 deployment 双 cron）。
 cli=False 的记录不派生 cli（official-reconcile 的手写 handler 带 pending_manual
@@ -395,7 +396,24 @@ _ANCHOR_SENTINEL_WEEKLY = DatasetSpec(
     ),
 )
 
-#: 注册面（票 03 全量）：全部单 cron 定拍数据集；组合面/双 cron 面另见 flows/schedules
+_WEEKLY_AGENT = DatasetSpec(
+    name="weekly-agent",
+    cron="0 6 * * 1",
+    task=tasks.weekly_agent_batch,
+    cli_help="周批agent循环(vision票03;读台账/注册表/教训库→LLM提案≤5条+对抗质疑;空转守卫)",
+    flow_help=(
+        "周批 agent 循环（vision-build 票 03）：周一 06:00（TM 周拍后/\n"
+        "晨检前），agent=心跳内函数非长驻。收缩 ≥L2 只留心跳；台账/教训库\n"
+        "无新料只报心跳不烧 LLM；真跑=读面（edge_findings 全量含阴性+注册表\n"
+        "+教训注入+周报 digest）→ LLM 提案（≤5 条，引用 id 必带，管线层\n"
+        "拒收缺引用/伪新颖）→ 每条 fresh-context 对抗质疑附反驳 → 提案落\n"
+        "语料树 reports/proposals/（append-only）→ 花费落 llm_proposal_costs。\n"
+        "人审注册：goalx proposal-register <file> --proposal-id … --h-id …"
+    ),
+)
+
+#: 注册面（vision-build 票 03 全量）：单 cron 定拍数据集；
+#: 组合面/双 cron 另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
     _POOL_SNAPSHOT,
@@ -415,6 +433,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _GOLD_REBUILD,
     _ANCHOR_SENTINEL_CAPTURE,
     _ANCHOR_SENTINEL_WEEKLY,
+    _WEEKLY_AGENT,
 )
 
 

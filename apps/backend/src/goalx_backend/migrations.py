@@ -2796,6 +2796,71 @@ def _apply_v53(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v54(conn: sqlite3.Connection) -> None:
+    """
+    v54（vision-build 票 03）：周批 agent 循环三账（evaluation 域，ADR-0008）。
+
+    - llm_proposal_costs：LLM 提案层花费账 append-only（v49/v52 触发器
+      先例）——phase=generate（批次级，proposal_id=B-yyyymmdd）|
+      critique（逐条提案），票 04 月读月度复核消费。
+    - weekly_agent_state：空转守卫水位（face_derive_state 同款 upsert
+      表，face='watermark' 一行）——对比上次周拍台账/教训库水位，无新
+      发现不烧 LLM（反模式 7 的自然刹车）。
+    - exploration_clock_anchor：探索钟锚点一次性钉值账（票 08 留缝：
+      EXPLORATION_CLOCK_ANCHOR 常量 None 待周批首跑落值）——id=1 单行
+      约束 + append-only 触发器；写口=contraction.ensure_exploration_anchor
+      （一次性，幂等重跑不覆盖），周批 flow 第一次真跑时写入当天。
+
+    SQL 读写归 evaluation（evaluation/weekly_agent.py + contraction.py 属主）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_proposal_costs (
+            id INTEGER PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            phase TEXT NOT NULL CHECK (phase IN ('generate', 'critique')),
+            model TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL,
+            completion_tokens INTEGER NOT NULL,
+            cost_cny REAL NOT NULL,
+            ts TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_llm_proposal_costs_pid
+        ON llm_proposal_costs (proposal_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_agent_state (
+            face TEXT PRIMARY KEY,
+            updated_at TEXT NOT NULL,
+            stats TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS exploration_clock_anchor (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            anchor_date TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            ts TEXT NOT NULL
+        )
+        """
+    )
+    for table in ("llm_proposal_costs", "exploration_clock_anchor"):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END
+            """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2850,6 +2915,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (51, _apply_v51),
     (52, _apply_v52),
     (53, _apply_v53),
+    (54, _apply_v54),
 )
 
 
