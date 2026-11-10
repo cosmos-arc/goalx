@@ -507,6 +507,14 @@ def run_xg_comparison(
                 NO_DECAY: None,
             },
             "overall": _summarize(decay_records, baseline=NO_DECAY),
+            # 臂级缺勤显式化（independent 复核 F2）：退化语料下某臂逐周
+            # 拟合失败时 skipped 按 fit_{arm}/no_team_{arm} 记，本栏就地
+            # 透出对应信号——读栏者不必回主表对账哪些臂缺席。
+            "skipped": {
+                key: count
+                for key, count in skipped.items()
+                if any(key.endswith(arm) for arm in decay_variants)
+            },
         },
         "skipped": skipped,
     }

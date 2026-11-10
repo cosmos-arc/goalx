@@ -164,3 +164,50 @@ def test_missing_column_attributed_to_own_element(tmp_path: Path) -> None:
     verdict = assess_pbo_feasibility(load_trial_ledger(no_ts))
     assert "slice_identity" not in verdict.missing
     assert "per_period_timestamps" in verdict.missing
+
+
+def test_blank_ts_rows_fail_closed(tmp_path: Path) -> None:
+    """independent 复核 F1 回归：空/缺 ts 不进 distinct 计数（防虚增期数）
+    且直接判不可——MIN−2 真 ts + 2 空 ts 行的台账不得认证成 T=8。"""
+    rows: list[dict[str, str]] = []
+    for i in range(3):
+        for t in range(MIN_PERIODS_FOR_CSCV - 2):
+            rows.append(
+                {
+                    "entry_id": f"F1-s{i}-t{t}",
+                    "ts": f"2026-01-{t + 1:02d}T00:00:00",
+                    "ticket": "99",
+                    "facet": "A",
+                    "family": "F1",
+                    "slice": f"s{i}",
+                    "window": "search",
+                    "value": "0.0100",
+                }
+            )
+        # 每切片 2 行空 ts（一处空串、一处纯空白）
+        rows.append({**rows[-1], "entry_id": f"F1-s{i}-blank1", "ts": ""})
+        rows.append({**rows[-1], "entry_id": f"F1-s{i}-blank2", "ts": "   "})
+    # 再加一行短行（尾列缺失 → restval None：slice/value 为 None）
+    ledger = tmp_path / "blank_ts.csv"
+    _write_ledger(ledger, rows)
+    with ledger.open("a", encoding="utf-8", newline="") as fh:
+        fh.write("F1-s0-short,2026-01-01T00:00:00,99,A,F1\n")
+    verdict = assess_pbo_feasibility(load_trial_ledger(ledger))
+    assert verdict.feasible is False
+    assert "per_period_timestamps" in verdict.missing
+    assert "slice_identity" in verdict.missing  # 短行 slice=None → 畸形身份
+    # 空/缺 ts 不计数：期数仍是 MIN-2，不是 8
+    assert verdict.min_periods_per_slice == MIN_PERIODS_FOR_CSCV - 2
+    assert verdict.n_malformed_ts == 6  # 3 切片 × 2（空串 + 纯空白）
+
+
+def test_whitespace_identity_fails_closed(tmp_path: Path) -> None:
+    """independent 复核 F1 回归：切片身份列纯空白（" "）不是合法身份，
+    不进切片计数且判不可。"""
+    rows = _per_period_rows(n_slices=2, n_periods=10)
+    rows.append({**rows[-1], "entry_id": "F1-ws", "facet": " "})
+    ledger = _write_ledger(tmp_path / "ws.csv", rows)
+    verdict = assess_pbo_feasibility(load_trial_ledger(ledger))
+    assert verdict.feasible is False
+    assert "slice_identity" in verdict.missing
+    assert verdict.n_malformed_identity == 1

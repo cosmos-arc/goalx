@@ -15,6 +15,12 @@ CSCV-PBO（Bailey et al. 2017；AFML ch.7）需要 M(T×N) 矩阵：N 个试验
 任一要素缺失 → 不可（verdict.feasible=False，missing 列名机器可读），
 按 G-10 裁定记待办不动协议；三要素齐 → 可，报告层 CSCV-PBO 才有料。
 
+**畸形行契约（fail-closed 写死，independent 复核 F1）**：ts 或切片身份列
+任一行空白/缺失/纯空白（含 CSV 短行 restval=None）= 不可判证据，直接判
+不可——空白 ts **不进** distinct 计数（防虚增期数把 T 认证成真），畸形行数
+记 ``n_malformed_ts``/``n_malformed_identity`` 证据字段；对应要素
+（per_period_timestamps / slice_identity）记缺。
+
 红线：本模块对试验账**只读**（``load_trial_ledger`` 以 r 模式打开，
 无任何写路径）——账本/台账 append-only，PBO 只读复原不改写历史行。
 """
@@ -46,6 +52,13 @@ class FeasibilityVerdict:
     single_value_ratio: float  # value 可解析为单一有限数值的行占比
     min_periods_required: int
     missing: tuple[str, ...]  # 未过要素名（稳定机器可读）
+    n_malformed_ts: int = 0  # ts 空白/缺失/纯空白（含短行 None）行数
+    n_malformed_identity: int = 0  # 切片身份列空白/纯空白行数
+
+
+def _clean(raw: str | None) -> str:
+    """None/纯空白 → ""（CSV 短行 restval=None 与空串同判；strip 防空白逃逸）。"""
+    return "" if raw is None else raw.strip()
 
 
 def load_trial_ledger(path: str | Path) -> list[dict[str, str]]:
@@ -73,14 +86,24 @@ def assess_pbo_feasibility(rows: list[dict[str, str]]) -> FeasibilityVerdict:
 
     slices: dict[tuple[str, str, str], set[str]] = {}
     ts_slices: dict[str, set[tuple[str, str, str]]] = {}
+    n_malformed_ts = 0
+    n_malformed_identity = 0
     for row in rows:
-        facet, family, slice_name = (
-            str(row.get(col, "")) for col in _SLICE_KEY_COLUMNS
-        )
+        facet, family, slice_name = (_clean(row.get(col)) for col in _SLICE_KEY_COLUMNS)
         slice_key = (facet, family, slice_name)
-        ts = str(row.get("ts", ""))
-        slices.setdefault(slice_key, set()).add(ts)
-        ts_slices.setdefault(ts, set()).add(slice_key)
+        ts = _clean(row.get("ts"))
+        if not all(slice_key):
+            # 身份列空白行不进切片计数（fail-closed，F1）：计入即虚增证据
+            n_malformed_identity += 1
+            continue
+        slices.setdefault(slice_key, set())
+        if ts:
+            slices[slice_key].add(ts)
+            ts_slices.setdefault(ts, set()).add(slice_key)
+        else:
+            # 空白/缺失 ts 不进 distinct 计数（防 MIN−2 真 ts 被 2 空 ts
+            # 垫成 T=MIN 认证）——记畸形数，timestamps 要素判缺
+            n_malformed_ts += 1
     n_slices = len(slices)
     periods = [len(ts_set) for ts_set in slices.values()] or [0]
     min_periods = min(periods)
@@ -89,13 +112,14 @@ def assess_pbo_feasibility(rows: list[dict[str, str]]) -> FeasibilityVerdict:
     slice_identity_ok = (
         bool(rows)
         and all(has(col) for col in _SLICE_KEY_COLUMNS)
-        and all(all(key) for key in slices)
+        and n_malformed_identity == 0
+        and n_slices > 0
     )
     timestamps_ok = (
         bool(rows)
         and has("ts")
         and slice_identity_ok
-        and n_slices > 0
+        and n_malformed_ts == 0
         and min_periods >= MIN_PERIODS_FOR_CSCV
         and len(ts_slices) >= MIN_PERIODS_FOR_CSCV
     )
@@ -132,6 +156,8 @@ def assess_pbo_feasibility(rows: list[dict[str, str]]) -> FeasibilityVerdict:
         single_value_ratio=single_ratio,
         min_periods_required=MIN_PERIODS_FOR_CSCV,
         missing=tuple(missing),
+        n_malformed_ts=n_malformed_ts,
+        n_malformed_identity=n_malformed_identity,
     )
 
 

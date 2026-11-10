@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 
+import pytest
 from numpy import random as np_random
 
 from goalx_backend.evaluation.xg_compare import (
@@ -162,17 +163,22 @@ def test_run_xg_comparison_decay_sensitivity_section(db) -> None:
         assert "rps_delta_vs_goal_dc_nodecay" in overall[arm]
         assert "log_loss_delta_vs_goal_dc_nodecay" in overall[arm]
     assert "rps_delta_vs_goal_dc_nodecay" not in overall["goal_dc_nodecay"]
+    # 臂级缺勤显式化（independent 复核 F2）：栏内自带 skipped 信号位，
+    # 健康语料为空映射
+    assert section["skipped"] == {}
     # 衰减臂只进敏感性栏，不污染主对比 summary（那里讲 xG 融合，不讲衰减）
     assert "goal_dc_hl2s" not in report["overall"]
     assert all("goal_dc_nodecay" not in b for b in report["by_bucket"].values())
     assert report["params"]["decay_half_life_seasons"] == [2.0, 2.5, 3.0]
 
 
-def test_decay_arms_recover_known_regime_shift() -> None:
+@pytest.mark.parametrize("seed", [1, 2, 3, 7, 11])
+def test_decay_arms_recover_known_regime_shift(seed: int) -> None:
     """已知半衰期恢复（行为级）：t1/t2 攻强对换的合成语料（旧季 t1 弱 t2 强、
     新三季反向），2 季半衰期拟合的 t1−t2 强度对比显著高于无衰减，且更接近
     新 regime 真值 ±0.5——近因权重吃回已知换血，报告敏感性栏的统计前提
-    成立。对换设计保持两 regime 总进球不变（ρ/水平不吸收方向信号）。"""
+    成立。对换设计保持两 regime 总进球不变（ρ/水平不吸收方向信号）。
+    种子族钉方向稳定性（independent 复核 F3：1/2/3/11 + 原 7）。"""
     from goalx_backend.modelling.dc_model import TrainingRow, fit_dc_model
 
     teams = ("t1", "t2", "t3", "t4")
@@ -202,7 +208,7 @@ def test_decay_arms_recover_known_regime_shift() -> None:
                     )
                 )
             day += timedelta(days=7)
-    rng = np_random.default_rng(7)
+    rng = np_random.default_rng(seed)
     rows = [
         TrainingRow(d, h, a, int(rng.poisson(lh)), int(rng.poisson(la)))
         for d, h, a, lh, la in schedule
