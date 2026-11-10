@@ -214,6 +214,9 @@ tasks:
         msg: Python environment is missing; run task python-install explicitly.
     env:
       PREFECT_API_URL: http://127.0.0.1:4200/api
+      # 2026-11-10 人裁固化：goalx 独立 PREFECT_HOME——默认 ~/.prefect 与 ditto
+      # (prefect 3.9.x) 共库，其迁移 goalx 3.7.x 不认（27d8f4e1a6c9 事故实录）
+      PREFECT_HOME: "{{.ROOT_DIR}}/.scratch/prefect-home"
     cmds:
       # Prefect ≥3.7 临时 server 不跑 scheduler,serve 的 schedule 永不触发;
       # 必须连专用 server(task 内自动拉起,server 独立存活于本 serve 进程)
