@@ -14,6 +14,10 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import guardian
 
 NOW = datetime(2026, 9, 27, 10, 0, tzinfo=UTC)
+# 票 35 调度时刻（语料轨 09:40 北京 = 01:40 UTC）与当日尾部段时刻
+MORNING = datetime(2026, 9, 27, 1, 40, tzinfo=UTC)
+EVENING = datetime(2026, 9, 27, 22, 0, tzinfo=UTC)  # UTC 02:00-24:00 尾部段内
+NEXT_MORNING = datetime(2026, 9, 28, 1, 40, tzinfo=UTC)
 
 
 def make_settings(tmp_path: Path, *, budget: int = 500) -> Settings:
@@ -118,7 +122,9 @@ def test_backfill_pages_then_transitions_to_daily(tmp_path: Path) -> None:
     assert first["from-date"] == "1999-01-01"
     assert first["to-date"] == "2026-09-27"  # 首跑锚定日冻结
     state = stats.state
-    assert state["last_completed_date"] == "2026-09-27"
+    # 票 35：锚定日=首跑当日（进行中）→ 完成线只记前一日；锚定日尾部
+    # 由明日窗重含锚定日兜住
+    assert state["last_completed_date"] == "2026-09-26"
     assert stats.total_articles == 4
 
 
@@ -148,6 +154,9 @@ def test_budget_exhaustion_stops_and_resume_continues(tmp_path: Path) -> None:
     assert stats2.requests == 2
     assert stats2.completed
     assert stats2.total_articles == 3
+    # 票 35：锚定日（2026-09-27）在续跑日已是完整走完的过去日 → 完成
+    # 线=锚定日（已完成日行为不变）
+    assert stats2.state["last_completed_date"] == "2026-09-27"
 
 
 def test_daily_zero_request_after_done(tmp_path: Path) -> None:
@@ -285,18 +294,105 @@ def test_fetch_failure_counts_budget_on_404(tmp_path: Path) -> None:
     assert store.guardian_requests(NOW.date().isoformat()) >= 1
 
 
-def test_idempotent_rerun_after_completion_zero_pages(tmp_path: Path) -> None:
-    """回填完成后同日重跑：daily 已完成 → 零请求（幂等心跳）。"""
+def test_same_day_rerun_after_completion_reopens_window(tmp_path: Path) -> None:
+    """票 35：同日重跑不再零请求心跳——进行中日未标完成，重开窗再拉
+    （尾部持续入账；bronze append-only 重观测行，读侧按 sid 去重）。"""
     settings = make_settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     store.ensure_tree()
     client = FakeClient({1: page_payload(pages=1, page=1, ids=["only"])})
-    guardian.sync_guardian(store, settings, client, now=NOW)
+    first = guardian.sync_guardian(store, settings, client, now=NOW)
     again = guardian.sync_guardian(store, settings, client, now=NOW)
     store.close()
-    assert again.skipped_done_today
-    assert again.requests == 0
-    assert len(store.read_bronze(guardian.PROVIDER, guardian.DATASET)) == 1
+    assert first.completed
+    assert not again.skipped_done_today
+    assert again.requests == 1  # 重开当日窗 1 页（幂等：append 重观测，无翻案）
+    assert again.state["last_completed_date"] == "2026-09-26"
+    assert len(store.read_bronze(guardian.PROVIDER, guardian.DATASET)) == 2
+
+
+def test_in_progress_day_morning_run_not_marked_complete(tmp_path: Path) -> None:
+    """票 35：当日窗（进行中日）拉到尾也不标完成——完成线停在昨日。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    store.upsert_guardian_state(
+        {
+            "phase": "daily",
+            "from_date": "2026-09-26",
+            "to_date": "2026-09-26",
+            "page": 1,
+            "last_completed_date": "2026-09-26",
+            "total_articles": 100,
+        }
+    )
+    client = FakeClient({1: page_payload(pages=1, page=1, ids=["d1"])})
+    stats = guardian.sync_guardian(store, settings, client, now=MORNING)
+    store.close()
+    assert stats.completed  # 本跑拉完当前窗（到尾页）
+    assert stats.requests == 1
+    # 当日仍在进行：完成线不得提前标到 2026-09-27（尾部 02:00-24:00 未走完）
+    assert stats.state["last_completed_date"] == "2026-09-26"
+
+
+def test_tail_accrues_same_day_and_next_window_reincludes_today(tmp_path: Path) -> None:
+    """票 35：晨跑后同日尾部观测持续入账；次日窗重含当日（兜尾无洞）。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    store.upsert_guardian_state(
+        {
+            "phase": "daily",
+            "from_date": "2026-09-26",
+            "to_date": "2026-09-26",
+            "page": 1,
+            "last_completed_date": "2026-09-26",
+            "total_articles": 100,
+        }
+    )
+    # 晨跑（01:40 UTC）：当日窗只有晨间文 t1
+    morning = FakeClient({1: page_payload(pages=1, page=1, ids=["t1"])})
+    guardian.sync_guardian(store, settings, morning, now=MORNING)
+    # 同日晚（22:00 UTC，尾部段）：不做零请求跳过，再拉当日窗——尾部文 t2 入账
+    evening = FakeClient({1: page_payload(pages=1, page=1, ids=["t1", "t2"])})
+    stats = guardian.sync_guardian(store, settings, evening, now=EVENING)
+    sids = {
+        row["sid"] for row in store.read_bronze(guardian.PROVIDER, guardian.DATASET)
+    }
+    assert not stats.skipped_done_today
+    assert stats.requests == 1
+    assert "t2" in sids
+    assert stats.state["last_completed_date"] == "2026-09-26"
+    # 次日晨：窗起=今日（重含 09-27 兜住当日尾部），完成线推进到 09-27
+    nxt = FakeClient({1: page_payload(pages=1, page=1, ids=["t1", "t2", "t3"])})
+    stats3 = guardian.sync_guardian(store, settings, nxt, now=NEXT_MORNING)
+    store.close()
+    assert str(nxt.calls[0]["from-date"]) == "2026-09-27"
+    assert str(nxt.calls[0]["to-date"]) == "2026-09-28"
+    assert stats3.state["last_completed_date"] == "2026-09-27"
+
+
+def test_multi_day_catchup_window_marks_through_yesterday(tmp_path: Path) -> None:
+    """票 35：缺口补齐窗（多日）收敛只记到今日−1（今日进行中不虚标）。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    store.upsert_guardian_state(
+        {
+            "phase": "daily",
+            "from_date": "2026-09-24",
+            "to_date": "2026-09-24",
+            "page": 1,
+            "last_completed_date": "2026-09-24",
+            "total_articles": 100,
+        }
+    )
+    client = FakeClient({1: page_payload(pages=1, page=1, ids=["c1"])})
+    stats = guardian.sync_guardian(store, settings, client, now=MORNING)
+    store.close()
+    assert stats.completed
+    # 窗（09-25→09-27）：完整走完的只有 09-25/09-26；09-27 进行中不标
+    assert stats.state["last_completed_date"] == "2026-09-26"
 
 
 def test_date_helpers() -> None:
