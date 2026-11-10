@@ -1,0 +1,146 @@
+{
+  "params": {
+    "db": "/Users/chevy/Desktop/code/goalx/data/goalx.db",
+    "archived_report": "/Users/chevy/Desktop/code/goalx/.scratch/goalx-quant/research/54-drift-report.json",
+    "full_seasons": [
+      "1617",
+      "1718",
+      "1819",
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425",
+      "2526",
+      "2627"
+    ],
+    "clean_seasons": [
+      "1617",
+      "1718",
+      "1819",
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425"
+    ],
+    "break_seasons": [
+      "2526",
+      "2627"
+    ]
+  },
+  "tree_drift_diffs": [
+    "/coverage/no_psc: 3115 vs 2584",
+    "/coverage/rows: 38991 vs 38460"
+  ],
+  "coverage_full": {
+    "rows": 38991,
+    "out_of_scope": 0,
+    "no_psc": 3115,
+    "no_psh": 122,
+    "usable": 35754
+  },
+  "coverage_clean": {
+    "rows": 38991,
+    "out_of_scope": 4819,
+    "no_psc": 46,
+    "no_psh": 108,
+    "usable": 34018
+  },
+  "main_table_old": {
+    "h": {
+      "n": 35754,
+      "implied_pct": 44.11,
+      "actual_pct": 44.2,
+      "dev_pp": 0.09000000000000119
+    },
+    "d": {
+      "n": 35754,
+      "implied_pct": 24.93,
+      "actual_pct": 24.95,
+      "dev_pp": 0.020000000000000573
+    },
+    "a": {
+      "n": 35754,
+      "implied_pct": 30.959999999999997,
+      "actual_pct": 30.85,
+      "dev_pp": -0.10999999999999899
+    }
+  },
+  "main_table_new": {
+    "h": {
+      "n": 34018,
+      "implied_pct": 44.13,
+      "actual_pct": 44.26,
+      "dev_pp": 0.12999999999999678
+    },
+    "d": {
+      "n": 34018,
+      "implied_pct": 24.92,
+      "actual_pct": 24.86,
+      "dev_pp": -0.06000000000000172
+    },
+    "a": {
+      "n": 34018,
+      "implied_pct": 30.95,
+      "actual_pct": 30.880000000000003,
+      "dev_pp": -0.06999999999999784
+    }
+  },
+  "break_segment_profile": {
+    "h": {
+      "n": 1736,
+      "implied_pct": 43.62,
+      "actual_pct": 42.86
+    },
+    "d": {
+      "n": 1736,
+      "implied_pct": 25.19,
+      "actual_pct": 26.84
+    },
+    "a": {
+      "n": 1736,
+      "implied_pct": 31.19,
+      "actual_pct": 30.3
+    }
+  },
+  "value_cohort_5pct_old": {
+    "n": 12367,
+    "ev_early_mean": 0.1092,
+    "ev_close_mean": -0.0325,
+    "evaporation_ratio": 1.2976,
+    "steamed_rate": 1.0,
+    "mean_drift_close_over_early": -0.12441999480544097,
+    "realized_hit_rate": 0.345,
+    "mean_p_close": 0.3475,
+    "roi_early_realized": 0.0884,
+    "roi_close_realized": -0.0504
+  },
+  "value_cohort_5pct_new": {
+    "n": 12007,
+    "ev_early_mean": 0.1095,
+    "ev_close_mean": -0.0324,
+    "evaporation_ratio": 1.2957,
+    "steamed_rate": 1.0,
+    "mean_drift_close_over_early": -0.12458795026330655,
+    "realized_hit_rate": 0.3459,
+    "mean_p_close": 0.3477,
+    "roi_early_realized": 0.0919,
+    "roi_close_realized": -0.0478
+  },
+  "value_cohort_5pct_n_by_season": {
+    "1617": 1240,
+    "1718": 1472,
+    "1819": 1297,
+    "1920": 1269,
+    "2021": 1657,
+    "2122": 1528,
+    "2223": 1294,
+    "2324": 1169,
+    "2425": 1081,
+    "2526": 360
+  },
+  "value_cohort_5pct_n_in_break": 360
+}

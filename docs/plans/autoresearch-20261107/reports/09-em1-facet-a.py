@@ -2,26 +2,32 @@
 # 票 09：EM-1 facet A 定价差主面清扫（协议见 09-em1-protocol.md，先落再跑）
 #
 # 纯离线只读。gap = JC 收盘隐含 − 欧锚公允；三段切分（搜索/验证/确认各
-# 碰一次）；候选/晋升/确认三门+BH 校正；全部切片（含全阴）入试验账
-# 09-em1-trial-ledger.csv（append-only，entry_id 幂等）。
+# 碰一次）；候选/晋升/确认三门+BH 校正；全部切片（含全阴）入当前轮试验账
+# （轮=台账文件边界，一轮一文件，_lib.em1_round_ledger_path 单源；
+#   append-only，entry_id 幂等=同轮重跑）。
+# BH=轮级单家族（E-32 修订 C，票 20）：本脚本 F1-F6/F8 与票 10 B/C 的
+# 验证窗候选并成一个家族过一次 BH；族成员从试验账装载，轮不完整时
+# fail-closed 不裁（无「先跑 09 还是 10」硬序，脚本幂等可重跑收口）。
 #
 # 用法：uv run python 09-em1-facet-a.py   （stdout=报告素材，重跑不重复记账）
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
-import os
 from collections import defaultdict
 
 import numpy as np
 
 from _lib import (
     COARSE_LABELS,
-    bh_family,
+    append_trial_ledger,
     coarse_idx,
     clustered_mean,
     devig,
+    em1_pre_adjudication_rows,
+    em1_format_z,
+    em1_round_finalize,
+    em1_round_ledger_path,
     ladder_coherent,
     ladder_to_totals,
     load_jc,
@@ -32,11 +38,7 @@ from _lib import (
     ttg_basket_ev,
 )
 
-LEDGER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "09-em1-trial-ledger.csv")
-LEDGER_COLS = [
-    "entry_id", "ts", "ticket", "facet", "family", "slice", "window",
-    "n_fx", "n_sel", "metric", "value", "se", "z", "p", "stage", "note",
-]
+LEDGER = em1_round_ledger_path()
 N_FX_FLOOR = 200
 N_SEL_FLOOR = 20
 CONF_FX_FLOOR = 100
@@ -54,25 +56,6 @@ def window_of(season: str | None) -> str | None:
     if y0 in (2024, 2025):
         return "confirmation"
     return None  # 2026-27 进行中季不入窗
-
-
-def load_ledger() -> set[str]:
-    if not os.path.exists(LEDGER):
-        with open(LEDGER, "w", newline="") as f:
-            csv.writer(f).writerow(LEDGER_COLS)
-    with open(LEDGER) as f:
-        return {row["entry_id"] for row in csv.DictReader(f)}
-
-
-def append_ledger(rows: list[dict]) -> None:
-    seen = load_ledger()
-    new = [r for r in rows if r["entry_id"] not in seen]
-    if not new:
-        return
-    with open(LEDGER, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=LEDGER_COLS)
-        for r in new:
-            w.writerow({k: r.get(k, "") for k in LEDGER_COLS})
 
 
 def main() -> None:
@@ -169,7 +152,7 @@ def main() -> None:
             "entry_id": f"09-A-{family}-{sname}-{window}", "ts": dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "ticket": "09", "facet": "A", "family": family, "slice": sname, "window": window,
             "n_fx": m["n_fx"], "n_sel": m["n_sel"], "metric": "ev/gap",
-            "value": f"{m['ev']:.4f}/{m['gap']:.4f}", "se": f"{m['ev_se']:.4f}", "z": f"{z:.3f}",
+            "value": f"{m['ev']:.4f}/{m['gap']:.4f}", "se": f"{m['ev_se']:.4f}", "z": em1_format_z(z),
             "p": f"{one_sided_p(z):.5f}" if np.isfinite(z) else "",
             "stage": stage, "note": note or f"gap_se={m['gap_se']:.4f}",
         }
@@ -193,23 +176,8 @@ def main() -> None:
         pass3 = promo_gate(m)
         val_cache[(family, sname)] = (m, pass3)
         ledger_rows.append(ledger_row(family, sname, "validation", m, "bh_pending" if pass3 else "dead"))
-    # BH 家族=当轮全部候选（含全阴；票 12 修正：先筛后校废除）
-    val_family = [(f"09-A-{f}-{s}-validation", m["ev_z"]) for (f, s), (m, _ok) in val_cache.items()]
-    bh_pass = bh_family(val_family)
-    promoted = [(f, s) for (f, s), (_m, ok) in val_cache.items() if ok and f"09-A-{f}-{s}-validation" in bh_pass]
-
-    survivors = []
-    for family, sname in promoted:
-        sub = dict(fam_slices(family, by_win["confirmation"])).get(sname, [])
-        m = slice_metrics(sub)
-        ok = conf_gate(m)
-        if ok:
-            survivors.append((family, sname, m))
-        ledger_rows.append(ledger_row(family, sname, "confirmation", m, "survivor" if ok else "dead"))
-
-    n_gate = sum(1 for _m, ok in val_cache.values() if ok)
-    print(f"\nF1-F6：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；BH 后晋升 {len(promoted)}；确认窗幸存 {len(survivors)}")
-    print(f"多重校正账：BH 家族=验证窗全部候选 m={len(val_family)}（含全阴，票 12 修正），α=0.05 预期假阳性 {len(val_family)*0.05:.1f}")
+    # 轮级 BH 裁定延后：待 F7/F8 验证账落齐后与全轮 facet 并族一次校正
+    # （E-32 修订 C，票 20）
 
     # ---- hhad F7（结构面 only：push 语义无锚拆分，EV 面未搜索——协议§1）
     n_line_mismatch = 0
@@ -246,7 +214,7 @@ def main() -> None:
                     "entry_id": f"09-A-F7-{lg}×{side}-{w}", "ts": dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                     "ticket": "09", "facet": "A", "family": "F7", "slice": f"{lg}×{side}", "window": w,
                     "n_fx": n, "n_sel": 0, "metric": "gap", "value": f"{m_:.4f}", "se": f"{se:.4f}",
-                    "z": f"{z:.3f}", "p": "", "stage": "structure_only", "note": "EV面未搜索(push语义)",
+                    "z": em1_format_z(z), "p": "", "stage": "structure_only", "note": "EV面未搜索(push语义)",
                 })
 
     # ---- ttg F8（协议修订 B：over2.5 单线篮子对照；装载=修订 A 赛前板 + 票 12 锚修）
@@ -303,6 +271,8 @@ def main() -> None:
             "ev_z": (em / es if es and es > 0 and len(sel) >= 2 else float("nan")),
         }
 
+    f8_val: dict[tuple[str, str], tuple[dict | None, bool]] = {}
+    f8_cand: set[tuple[str, str]] = set()
     for w in ("search", "validation", "confirmation"):
         wsample = [r for r in tt_rows if r["window"] == w]
         for sname, sub in f8_slices(wsample):
@@ -310,26 +280,57 @@ def main() -> None:
                 continue
             m = f8_metrics_of(sub)
             f8_metrics[(sname, "", w)] = m
-            stage = "all_negative"
+            if w == "confirmation":
+                # F3（correctness 五修）：确认窗不落首批占位行——裁定后第二批
+                # 按最终 stage 写幸存者确认行，首批 all_negative 占位会同
+                # entry_id 被幂等吞掉；此处只为晋升者的确认门预留指标
+                continue
             if w == "search":
                 if m["n_fx"] < N_FX_FLOOR:
                     stage = "insufficient"
                 elif cand_gate(m):
                     stage = "candidate"
                     f8_candidates.append((sname, ""))
+                    f8_cand.add((sname, ""))
+                else:
+                    stage = "all_negative"
+            else:
+                # 验证窗：候选切片按晋升门写 bh_pending/dead（与 F1-F6 同构，
+                # BH 拒绝终态行可复原）；非候选切片照旧全阴覆盖入账
+                stage = "all_negative"
+                if (sname, "") in f8_cand:
+                    ok = promo_gate(m)
+                    f8_val[(sname, "")] = (m, ok)
+                    stage = "bh_pending" if ok else "dead"
             ledger_rows.append(ledger_row("F8", sname, w, m, stage))
-    f8_val: dict[tuple[str, str], tuple[dict | None, bool]] = {}
-    for sname, _ in f8_candidates:
-        m = f8_metrics.get((sname, "", "validation"))
-        ok = promo_gate(m) if m is not None else False
-        f8_val[(sname, "")] = (m, ok)
-    # BH 家族=当轮全部 F8 候选（含验证窗无行的候选 z=nan 入族；票 12 修正）
-    f8_family = [
-        (f"09-A-F8-{sname}-validation", (m["ev_z"] if m is not None else float("nan")))
-        for (sname, _b), (m, _ok) in f8_val.items()
-    ]
-    f8_bh = bh_family(f8_family)
-    f8_promoted = [s for s, (_m, ok) in f8_val.items() if ok and f"09-A-F8-{s[0]}-validation" in f8_bh]
+
+    # ---- 轮级单家族 BH（E-32 修订 C，票 20）：先落搜索+验证账（首批经
+    # em1_pre_adjudication_rows 过滤确认窗占位，F3），再从台账装载全轮族
+    # （本脚本 F1-F6/F8 与票 10 B/C 的候选并集，含全阴与验证窗无行者
+    # z=nan→p=1.0），一次校正统裁定+被拒终态行落账（_lib.em1_round_finalize
+    # 共用接缝，两脚本同一 fail-closed 门，F5）。脚本独立运行无硬序：轮不
+    # 完整（预注册 BH 贡献组缺 search 账）→ 不裁，候选留 bh_pending，待轮
+    # 内其余脚本落账后重跑本脚本幂等收口。
+    append_trial_ledger(em1_pre_adjudication_rows(ledger_rows))
+    bh_pass, round_family, missing_groups = em1_round_finalize(LEDGER)
+    if missing_groups:
+        print(
+            f"[轮级 BH 未裁] 轮族不完整：缺 {missing_groups} 的 search 账——缺报缩族与先筛后校"
+            "同罪（修订 C）；候选留 bh_pending，轮内其余脚本落账后重跑本脚本收口"
+        )
+
+    promoted = [(f, s) for (f, s), (_m, ok) in val_cache.items() if ok and f"09-A-{f}-{s}-validation" in bh_pass]
+    f8_promoted = [s for s, (_m, ok) in f8_val.items() if ok and f"09-A-F8-{s[0]}-validation" in bh_pass]
+
+    conf_rows: list[dict] = []
+    survivors = []
+    for family, sname in promoted:
+        sub = dict(fam_slices(family, by_win["confirmation"])).get(sname, [])
+        m = slice_metrics(sub)
+        ok = conf_gate(m)
+        if ok:
+            survivors.append((family, sname, m))
+        conf_rows.append(ledger_row(family, sname, "confirmation", m, "survivor" if ok else "dead"))
     f8_survivors = []
     for sname, _ in f8_promoted:
         m = f8_metrics.get((sname, "", "confirmation"))
@@ -338,14 +339,20 @@ def main() -> None:
         ok = conf_gate(m)
         if ok:
             f8_survivors.append((sname, m))
-        ledger_rows.append(ledger_row("F8", sname, "confirmation", m, "survivor" if ok else "dead"))
+        conf_rows.append(ledger_row("F8", sname, "confirmation", m, "survivor" if ok else "dead"))
+    append_trial_ledger(conf_rows)
+
+    n_gate = sum(1 for _m, ok in val_cache.values() if ok)
+    print(f"\nF1-F6：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；轮级 BH 后晋升 {len(promoted)}；确认窗幸存 {len(survivors)}")
     print(
         f"F8(ttg 篮子=修订B)：搜索候选 {len(f8_candidates)}；验证过门 {sum(1 for _m, ok in f8_val.values() if ok)}；"
-        f"BH 家族 m={len(f8_family)}；BH 后晋升 {len(f8_promoted)}；确认幸存 {len(f8_survivors)}"
+        f"轮级 BH 后晋升 {len(f8_promoted)}；确认幸存 {len(f8_survivors)}"
     )
-
-    append_ledger(ledger_rows)
-    print(f"\n试验账已落/更新：{LEDGER}（本票条目 {len(ledger_rows)}）")
+    print(
+        f"多重校正账（E-32 修订 C，轮级单家族）：BH 家族=本轮全 facet 候选并集 m={len(round_family)}"
+        f"（含全阴/验证窗无行者，z 不可计算 p=1.0），α=0.05 预期假阳性 {len(round_family) * 0.05:.1f}"
+    )
+    print(f"试验账已落/更新：{LEDGER}（本票条目 {len(ledger_rows) + len(conf_rows)}）")
 
     # ---- 覆盖账 + 摘要
     print("\n[覆盖账]")

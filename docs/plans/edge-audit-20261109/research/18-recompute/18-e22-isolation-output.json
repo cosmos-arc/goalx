@@ -1,0 +1,859 @@
+{
+  "params": {
+    "db": "/Users/chevy/Desktop/code/goalx/data/goalx.db",
+    "archived_report": "/Users/chevy/Desktop/code/goalx/.scratch/goalx-quant/research/51-pool-replay-report.json",
+    "full_seasons": [
+      "1617",
+      "1718",
+      "1819",
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425",
+      "2526",
+      "2627"
+    ],
+    "clean_seasons": [
+      "1617",
+      "1718",
+      "1819",
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425"
+    ],
+    "break_seasons": [
+      "2526",
+      "2627"
+    ]
+  },
+  "tree_drift_diffs": [
+    "/by_competition/B1/avgc/candidates: 262 vs 216",
+    "/by_competition/B1/avgc/fx_ev_percentiles/p50: -0.1044 vs -0.1036",
+    "/by_competition/B1/avgc/fx_ev_percentiles/p90: -0.0891 vs -0.087",
+    "/by_competition/B1/avgc/fx_ev_percentiles/p99: -0.0814 vs -0.0812",
+    "/by_competition/D1/avgc/candidates: 265 vs 205",
+    "/by_competition/D1/avgc/fx_ev_percentiles/max: -0.0697 vs -0.0711",
+    "/by_competition/D1/avgc/fx_ev_percentiles/min: -0.4735 vs -0.3344",
+    "/by_competition/D1/avgc/fx_ev_percentiles/p50: -0.0887 vs -0.0899",
+    "/by_competition/D1/avgc/fx_ev_percentiles/p90: -0.0758 vs -0.0766",
+    "/by_competition/D1/avgc/fx_ev_percentiles/p99: -0.0717 vs -0.0727",
+    "/by_competition/E0/avgc/candidates: 269 vs 222",
+    "/by_competition/E0/avgc/fx_ev_percentiles/p50: -0.082 vs -0.0816",
+    "/by_competition/E0/avgc/fx_ev_percentiles/p90: -0.07 vs -0.0697",
+    "/by_competition/E0/avgc/fx_ev_percentiles/p99: -0.066 vs -0.0659",
+    "/by_competition/E1/avgc/candidates: 327 vs 254",
+    "/by_competition/E1/avgc/fx_ev_percentiles/p50: -0.0871 vs -0.0873",
+    "/by_competition/E1/avgc/fx_ev_percentiles/p90: -0.0768 vs -0.0767",
+    "/by_competition/E1/avgc/fx_ev_percentiles/p99: -0.0727 vs -0.0725",
+    "/by_competition/F1/avgc/candidates: 249 vs 209",
+    "/by_competition/F1/avgc/fx_ev_percentiles/p50: -0.088 vs -0.0895",
+    "/by_competition/F1/avgc/fx_ev_percentiles/p90: -0.0752 vs -0.0755",
+    "/by_competition/F1/avgc/fx_ev_percentiles/p99: -0.0722 vs -0.0725",
+    "/by_competition/I1/avgc/candidates: 294 vs 230",
+    "/by_competition/I1/avgc/fx_ev_percentiles/p50: -0.0934 vs -0.0951",
+    "/by_competition/I1/avgc/fx_ev_percentiles/p90: -0.0759 vs -0.0762",
+    "/by_competition/N1/avgc/candidates: 345 vs 281",
+    "/by_competition/N1/avgc/fx_ev_percentiles/min: -0.3822 vs -0.3071",
+    "/by_competition/N1/avgc/fx_ev_percentiles/p90: -0.085 vs -0.0841",
+    "/by_competition/N1/avgc/fx_ev_percentiles/p99: -0.0792 vs -0.0789",
+    "/by_competition/P1/avgc/candidates: 272 vs 235",
+    "/by_competition/P1/avgc/fx_ev_percentiles/p50: -0.1264 vs -0.1306",
+    "/by_competition/P1/avgc/fx_ev_percentiles/p90: -0.0957 vs -0.0967",
+    "/by_competition/P1/avgc/fx_ev_percentiles/p99: -0.0881 vs -0.089",
+    "/by_competition/SC0/avgc/candidates: 255 vs 221",
+    "/by_competition/SC0/avgc/fx_ev_percentiles/p50: -0.0997 vs -0.1003",
+    "/by_competition/SC0/avgc/fx_ev_percentiles/p90: -0.0847 vs -0.085",
+    "/by_competition/SC0/avgc/fx_ev_percentiles/p99: -0.0775 vs -0.0771",
+    "/by_competition/SC0/avgc/fx_ev_positive_rate: 0.007843 vs 0.00905",
+    "/by_competition/SP1/avgc/candidates: 258 vs 205",
+    "/by_competition/SP1/avgc/fx_ev_percentiles/p50: -0.089 vs -0.0877",
+    "/by_competition/SP1/avgc/fx_ev_percentiles/p90: -0.0742 vs -0.075",
+    "/by_competition/SP1/avgc/fx_ev_percentiles/p99: -0.0694 vs -0.0689",
+    "/by_competition/T1/avgc/candidates: 257 vs 210",
+    "/by_competition/T1/avgc/fx_ev_percentiles/p50: -0.1129 vs -0.1134",
+    "/by_competition/T1/avgc/fx_ev_percentiles/p90: -0.0966 vs -0.096",
+    "/by_competition/T1/avgc/fx_ev_percentiles/p99: -0.0899 vs -0.0893",
+    "/by_season/2627/avgc/candidates: 1082 vs 517",
+    "/by_season/2627/avgc/fx_ev_percentiles/min: -0.4735 vs -0.3905",
+    "/by_season/2627/avgc/fx_ev_percentiles/p50: -0.0977 vs -0.103",
+    "/by_season/2627/avgc/fx_ev_percentiles/p90: -0.0763 vs -0.0768",
+    "/by_season/2627/avgc/fx_ev_percentiles/p99: -0.0701 vs -0.069",
+    "/coverage/rows: 38991 vs 38460",
+    "/coverage/stage_avgc: 3074 vs 2543",
+    "/overall/avgc/candidates: 3053 vs 2488",
+    "/overall/avgc/fx_ev_percentiles/min: -0.4735 vs -0.3905",
+    "/overall/avgc/fx_ev_percentiles/p50: -0.0978 vs -0.0988",
+    "/overall/avgc/fx_ev_percentiles/p90: -0.0772 vs -0.0777",
+    "/overall/avgc/fx_ev_percentiles/p99: -0.0696 vs -0.0693",
+    "/overall/avgc/fx_ev_positive_rate: 0.000655 vs 0.000804",
+    "/realized_calibration/avgc/per_selection/a/hit_rate: 0.1664 vs 0.1624",
+    "/realized_calibration/avgc/per_selection/a/mean_fair: 0.1615 vs 0.1608",
+    "/realized_calibration/avgc/per_selection/a/mean_share: 0.1615 vs 0.1608",
+    "/realized_calibration/avgc/per_selection/a/n: 1190 vs 985",
+    "/realized_calibration/avgc/per_selection/d/hit_rate: 0.2065 vs 0.2123",
+    "/realized_calibration/avgc/per_selection/d/mean_fair: 0.202 vs 0.2015",
+    "/realized_calibration/avgc/per_selection/d/mean_share: 0.202 vs 0.2015",
+    "/realized_calibration/avgc/per_selection/d/n: 1409 vs 1126",
+    "/realized_calibration/avgc/per_selection/h/hit_rate: 0.163 vs 0.1592",
+    "/realized_calibration/avgc/per_selection/h/mean_fair: 0.1709 vs 0.1701",
+    "/realized_calibration/avgc/per_selection/h/mean_share: 0.1709 vs 0.1701",
+    "/realized_calibration/avgc/per_selection/h/n: 454 vs 377",
+    "/realized_calibration/avgc/pooled/hit_rate: 0.1844 vs 0.1845",
+    "/realized_calibration/avgc/pooled/mean_fair: 0.1816 vs 0.1806",
+    "/realized_calibration/avgc/pooled/mean_share: 0.1816 vs 0.1806",
+    "/realized_calibration/avgc/pooled/n: 3053 vs 2488"
+  ],
+  "coverage_full": {
+    "rows": 38991,
+    "out_of_scope": 0,
+    "no_share_avgc": 11321,
+    "stage_psc": 24596,
+    "stage_avgc": 3074,
+    "psh_present": 24556
+  },
+  "coverage_clean": {
+    "rows": 38991,
+    "out_of_scope": 4819,
+    "no_share_avgc": 11321,
+    "stage_psc": 22846,
+    "stage_avgc": 5,
+    "psh_present": 22816
+  },
+  "psc_overall_old": {
+    "candidates": 23169,
+    "pool_ev_positive": 0,
+    "pool_ev_positive_rate": 0.0,
+    "fx_ev_positive": 109,
+    "fx_ev_positive_rate": 0.004705,
+    "pool_ev_percentiles": {
+      "p50": -0.3548,
+      "p90": -0.3302,
+      "p99": -0.2851,
+      "max": -0.0305,
+      "min": -0.8978
+    },
+    "fx_ev_percentiles": {
+      "p50": -0.0863,
+      "p90": -0.0462,
+      "p99": -0.0123,
+      "max": 0.3965,
+      "min": -0.8685
+    },
+    "fair_over_share_percentiles": {
+      "p50": 0.9926,
+      "p90": 1.0304,
+      "p99": 1.0998,
+      "max": 1.4916,
+      "min": 0.1573
+    },
+    "pool_breakeven_ratio": 1.5385,
+    "mean_fair_minus_share": -0.001277
+  },
+  "psc_overall_new": {
+    "candidates": 21583,
+    "pool_ev_positive": 0,
+    "pool_ev_positive_rate": 0.0,
+    "fx_ev_positive": 57,
+    "fx_ev_positive_rate": 0.002641,
+    "pool_ev_percentiles": {
+      "p50": -0.3549,
+      "p90": -0.3312,
+      "p99": -0.295,
+      "max": -0.0305,
+      "min": -0.8978
+    },
+    "fx_ev_percentiles": {
+      "p50": -0.0857,
+      "p90": -0.0463,
+      "p99": -0.0164,
+      "max": 0.3965,
+      "min": -0.8685
+    },
+    "fair_over_share_percentiles": {
+      "p50": 0.9924,
+      "p90": 1.0289,
+      "p99": 1.0847,
+      "max": 1.4916,
+      "min": 0.1573
+    },
+    "pool_breakeven_ratio": 1.5385,
+    "mean_fair_minus_share": -0.001331
+  },
+  "calibration_psc_old": {
+    "per_selection": {
+      "h": {
+        "n": 3871,
+        "hit_rate": 0.156,
+        "mean_fair": 0.1679,
+        "mean_share": 0.1689
+      },
+      "d": {
+        "n": 9713,
+        "hit_rate": 0.1933,
+        "mean_fair": 0.1965,
+        "mean_share": 0.1967
+      },
+      "a": {
+        "n": 9585,
+        "hit_rate": 0.151,
+        "mean_fair": 0.1565,
+        "mean_share": 0.1589
+      }
+    },
+    "pooled": {
+      "n": 23169,
+      "hit_rate": 0.1696,
+      "mean_fair": 0.1752,
+      "mean_share": 0.1764
+    }
+  },
+  "calibration_psc_new": {
+    "per_selection": {
+      "h": {
+        "n": 3614,
+        "hit_rate": 0.158,
+        "mean_fair": 0.1675,
+        "mean_share": 0.1687
+      },
+      "d": {
+        "n": 9065,
+        "hit_rate": 0.1918,
+        "mean_fair": 0.1963,
+        "mean_share": 0.1965
+      },
+      "a": {
+        "n": 8904,
+        "hit_rate": 0.1526,
+        "mean_fair": 0.156,
+        "mean_share": 0.1586
+      }
+    },
+    "pooled": {
+      "n": 21583,
+      "hit_rate": 0.17,
+      "mean_fair": 0.1749,
+      "mean_share": 0.1762
+    }
+  },
+  "early_lens_psc_old": {
+    "early_window_candidates": 23135,
+    "early_ev_positive": 134,
+    "persisted_to_close": 0,
+    "persist_rate": 0.0,
+    "mean_early_ev_of_positive": 0.1326,
+    "mean_close_ev_of_those": -0.3358,
+    "late_only_positive": 0
+  },
+  "early_lens_psc_new": {
+    "early_window_candidates": 21555,
+    "early_ev_positive": 126,
+    "persisted_to_close": 0,
+    "persist_rate": 0.0,
+    "mean_early_ev_of_positive": 0.1351,
+    "mean_close_ev_of_those": -0.3403,
+    "late_only_positive": 0
+  },
+  "by_season_psc_old": {
+    "1920": {
+      "candidates": 3368,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 9,
+      "fx_ev_positive_rate": 0.002672,
+      "pool_ev_percentiles": {
+        "p50": -0.354,
+        "p90": -0.3297,
+        "p99": -0.2917,
+        "max": -0.1688,
+        "min": -0.6071
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0877,
+        "p90": -0.0473,
+        "p99": -0.0144,
+        "max": 0.0333,
+        "min": -0.537
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9938,
+        "p90": 1.0313,
+        "p99": 1.0896,
+        "max": 1.2787,
+        "min": 0.6045
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.000945
+    },
+    "2021": {
+      "candidates": 3566,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 6,
+      "fx_ev_positive_rate": 0.001683,
+      "pool_ev_percentiles": {
+        "p50": -0.3535,
+        "p90": -0.3307,
+        "p99": -0.2967,
+        "max": -0.1939,
+        "min": -0.4982
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0855,
+        "p90": -0.0481,
+        "p99": -0.0185,
+        "max": 0.0399,
+        "min": -0.5202
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9945,
+        "p90": 1.0297,
+        "p99": 1.0821,
+        "max": 1.2402,
+        "min": 0.772
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.00089
+    },
+    "2122": {
+      "candidates": 3603,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 14,
+      "fx_ev_positive_rate": 0.003886,
+      "pool_ev_percentiles": {
+        "p50": -0.3574,
+        "p90": -0.3319,
+        "p99": -0.2958,
+        "max": -0.0514,
+        "min": -0.8978
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.088,
+        "p90": -0.0445,
+        "p99": -0.015,
+        "max": 0.1272,
+        "min": -0.8685
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9886,
+        "p90": 1.0279,
+        "p99": 1.0833,
+        "max": 1.4594,
+        "min": 0.1573
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001932
+    },
+    "2223": {
+      "candidates": 3497,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 14,
+      "fx_ev_positive_rate": 0.004003,
+      "pool_ev_percentiles": {
+        "p50": -0.3538,
+        "p90": -0.3286,
+        "p99": -0.2907,
+        "max": -0.2143,
+        "min": -0.4939
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.082,
+        "p90": -0.043,
+        "p99": -0.0118,
+        "max": 0.0304,
+        "min": -0.4819
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9942,
+        "p90": 1.0329,
+        "p99": 1.0912,
+        "max": 1.2087,
+        "min": 0.7786
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.0011
+    },
+    "2324": {
+      "candidates": 3817,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 11,
+      "fx_ev_positive_rate": 0.002882,
+      "pool_ev_percentiles": {
+        "p50": -0.3558,
+        "p90": -0.3327,
+        "p99": -0.2963,
+        "max": -0.0305,
+        "min": -0.7626
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0836,
+        "p90": -0.0455,
+        "p99": -0.0171,
+        "max": 0.3965,
+        "min": -0.6807
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.991,
+        "p90": 1.0266,
+        "p99": 1.0826,
+        "max": 1.4916,
+        "min": 0.3653
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001561
+    },
+    "2425": {
+      "candidates": 3732,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 3,
+      "fx_ev_positive_rate": 0.000804,
+      "pool_ev_percentiles": {
+        "p50": -0.355,
+        "p90": -0.3339,
+        "p99": -0.3037,
+        "max": -0.1657,
+        "min": -0.5155
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0874,
+        "p90": -0.0491,
+        "p99": -0.0236,
+        "max": 0.0402,
+        "min": -0.5533
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9923,
+        "p90": 1.0248,
+        "p99": 1.0712,
+        "max": 1.2835,
+        "min": 0.7454
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001505
+    },
+    "2526": {
+      "candidates": 1586,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 52,
+      "fx_ev_positive_rate": 0.032787,
+      "pool_ev_percentiles": {
+        "p50": -0.3525,
+        "p90": -0.3075,
+        "p99": -0.2185,
+        "max": -0.0565,
+        "min": -0.564
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.096,
+        "p90": -0.0437,
+        "p99": 0.0402,
+        "max": 0.2358,
+        "min": -0.4861
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9962,
+        "p90": 1.0654,
+        "p99": 1.2022,
+        "max": 1.4516,
+        "min": 0.6708
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.000536
+    }
+  },
+  "by_season_psc_new": {
+    "1920": {
+      "candidates": 3368,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 9,
+      "fx_ev_positive_rate": 0.002672,
+      "pool_ev_percentiles": {
+        "p50": -0.354,
+        "p90": -0.3297,
+        "p99": -0.2917,
+        "max": -0.1688,
+        "min": -0.6071
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0877,
+        "p90": -0.0473,
+        "p99": -0.0144,
+        "max": 0.0333,
+        "min": -0.537
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9938,
+        "p90": 1.0313,
+        "p99": 1.0896,
+        "max": 1.2787,
+        "min": 0.6045
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.000945
+    },
+    "2021": {
+      "candidates": 3566,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 6,
+      "fx_ev_positive_rate": 0.001683,
+      "pool_ev_percentiles": {
+        "p50": -0.3535,
+        "p90": -0.3307,
+        "p99": -0.2967,
+        "max": -0.1939,
+        "min": -0.4982
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0855,
+        "p90": -0.0481,
+        "p99": -0.0185,
+        "max": 0.0399,
+        "min": -0.5202
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9945,
+        "p90": 1.0297,
+        "p99": 1.0821,
+        "max": 1.2402,
+        "min": 0.772
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.00089
+    },
+    "2122": {
+      "candidates": 3603,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 14,
+      "fx_ev_positive_rate": 0.003886,
+      "pool_ev_percentiles": {
+        "p50": -0.3574,
+        "p90": -0.3319,
+        "p99": -0.2958,
+        "max": -0.0514,
+        "min": -0.8978
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.088,
+        "p90": -0.0445,
+        "p99": -0.015,
+        "max": 0.1272,
+        "min": -0.8685
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9886,
+        "p90": 1.0279,
+        "p99": 1.0833,
+        "max": 1.4594,
+        "min": 0.1573
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001932
+    },
+    "2223": {
+      "candidates": 3497,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 14,
+      "fx_ev_positive_rate": 0.004003,
+      "pool_ev_percentiles": {
+        "p50": -0.3538,
+        "p90": -0.3286,
+        "p99": -0.2907,
+        "max": -0.2143,
+        "min": -0.4939
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.082,
+        "p90": -0.043,
+        "p99": -0.0118,
+        "max": 0.0304,
+        "min": -0.4819
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9942,
+        "p90": 1.0329,
+        "p99": 1.0912,
+        "max": 1.2087,
+        "min": 0.7786
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.0011
+    },
+    "2324": {
+      "candidates": 3817,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 11,
+      "fx_ev_positive_rate": 0.002882,
+      "pool_ev_percentiles": {
+        "p50": -0.3558,
+        "p90": -0.3327,
+        "p99": -0.2963,
+        "max": -0.0305,
+        "min": -0.7626
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0836,
+        "p90": -0.0455,
+        "p99": -0.0171,
+        "max": 0.3965,
+        "min": -0.6807
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.991,
+        "p90": 1.0266,
+        "p99": 1.0826,
+        "max": 1.4916,
+        "min": 0.3653
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001561
+    },
+    "2425": {
+      "candidates": 3732,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 3,
+      "fx_ev_positive_rate": 0.000804,
+      "pool_ev_percentiles": {
+        "p50": -0.355,
+        "p90": -0.3339,
+        "p99": -0.3037,
+        "max": -0.1657,
+        "min": -0.5155
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0874,
+        "p90": -0.0491,
+        "p99": -0.0236,
+        "max": 0.0402,
+        "min": -0.5533
+      },
+      "fair_over_share_percentiles": {
+        "p50": 0.9923,
+        "p90": 1.0248,
+        "p99": 1.0712,
+        "max": 1.2835,
+        "min": 0.7454
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": -0.001505
+    }
+  },
+  "avgc_by_season_old": {
+    "2021": {
+      "candidates": 4,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 0,
+      "fx_ev_positive_rate": 0.0,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.108,
+        "p90": -0.0814,
+        "p99": -0.0773,
+        "max": -0.0768,
+        "min": -0.1606
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    },
+    "2122": {
+      "candidates": 2,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 0,
+      "fx_ev_positive_rate": 0.0,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.1823,
+        "p90": -0.1466,
+        "p99": -0.1385,
+        "max": -0.1376,
+        "min": -0.227
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    },
+    "2526": {
+      "candidates": 1965,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 2,
+      "fx_ev_positive_rate": 0.001018,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0978,
+        "p90": -0.078,
+        "p99": -0.0694,
+        "max": 0.117,
+        "min": -0.3887
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    },
+    "2627": {
+      "candidates": 1082,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 0,
+      "fx_ev_positive_rate": 0.0,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.0977,
+        "p90": -0.0763,
+        "p99": -0.0701,
+        "max": -0.0656,
+        "min": -0.4735
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    }
+  },
+  "avgc_by_season_new": {
+    "2021": {
+      "candidates": 4,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 0,
+      "fx_ev_positive_rate": 0.0,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.108,
+        "p90": -0.0814,
+        "p99": -0.0773,
+        "max": -0.0768,
+        "min": -0.1606
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    },
+    "2122": {
+      "candidates": 2,
+      "pool_ev_positive": 0,
+      "pool_ev_positive_rate": 0.0,
+      "fx_ev_positive": 0,
+      "fx_ev_positive_rate": 0.0,
+      "pool_ev_percentiles": {
+        "p50": -0.35,
+        "p90": -0.35,
+        "p99": -0.35,
+        "max": -0.35,
+        "min": -0.35
+      },
+      "fx_ev_percentiles": {
+        "p50": -0.1823,
+        "p90": -0.1466,
+        "p99": -0.1385,
+        "max": -0.1376,
+        "min": -0.227
+      },
+      "fair_over_share_percentiles": {
+        "p50": 1.0,
+        "p90": 1.0,
+        "p99": 1.0,
+        "max": 1.0,
+        "min": 1.0
+      },
+      "pool_breakeven_ratio": 1.5385,
+      "mean_fair_minus_share": 0.0
+    }
+  },
+  "max_row_old": {
+    "season": "2324",
+    "competition": "I1",
+    "home_team": "Udinese",
+    "selection": "h",
+    "fair": 0.2706371301794177,
+    "share": 0.18144634442583724,
+    "ratio": 1.4915546027439286,
+    "pool_ev": -0.03048950821644636
+  },
+  "max_row_new": {
+    "season": "2324",
+    "competition": "I1",
+    "home_team": "Udinese",
+    "selection": "h",
+    "fair": 0.2706371301794177,
+    "share": 0.18144634442583724,
+    "ratio": 1.4915546027439286,
+    "pool_ev": -0.03048950821644636
+  }
+}
