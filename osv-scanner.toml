@@ -15,6 +15,9 @@ ignore = true
 # 全线）packaging<26.1 上界压死——21.14.5 是当前可解析天花板。纯 dev 链
 # （pre-commit 建 venv 用），不进应用运行时。复核触发器：prefect 放开
 # packaging 上界、或 virtualenv 出兼容 packaging<26 的修复版时删除本条。
+# 2026-11-10 复核：GitHub 报 12 条 dependabot 全为本豁免面（4 high 皆
+# virtualenv）；uv lock 强升 21.14.9 实测解析不可满足（prefect→fastapi 链），
+# 天花板仍成立。
 ecosystem = "PyPI"
 name = "virtualenv"
 version = "21.14.5"
