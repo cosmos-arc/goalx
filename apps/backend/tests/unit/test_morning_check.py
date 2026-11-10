@@ -672,3 +672,69 @@ def test_check_srct_season_rhythm_season_key_beijing_wall_clock(
         store.close()
     assert item.status == OK
     assert "2026-27" in item.detail  # 北京 8/1 02:00 → 新季；UTC now 会给 2025-26
+
+
+def test_check_news_pit_beats_lifecycle(store: CorpusStore) -> None:
+    """项 21（autoresearch 票 17）：未开拍绿；新鲜 ok 绿；断夜/降级黄不红。"""
+    from goalx_backend.data.ingest import news_pit
+    from goalx_backend.morning_check import check_news_pit_beats
+
+    # 未开拍：部署前合法态，绿面如实
+    item = check_news_pit_beats(store, now=NOW)
+    assert item.status == OK
+    assert "未开拍" in item.detail
+    # 昨夜 ok 拍（observed_at 9.5h 前 < 26h 界）：绿 + 累计观测行
+    store.upsert_news_pit_state(
+        {
+            "window_from": "2026-10-31",
+            "page": 1,
+            "last_full_day": "2026-10-30",
+            "total_articles": 41,
+        }
+    )
+    store.record_news_pit_beat(
+        {
+            "beat_date": "2026-10-31",
+            "observed_at": _iso(9.5),
+            "window_from": "2026-10-30",
+            "window_to": "2026-10-31",
+            "pages": 1,
+            "requests": 1,
+            "articles": 41,
+            "status": news_pit.STATUS_OK,
+        }
+    )
+    item = check_news_pit_beats(store, now=NOW)
+    assert item.status == OK
+    assert "累计观测 41 行" in item.detail
+    # 断夜：最新 ok 拍 40h 前（>26h）——每晚不开=永久缺口，黄面可见
+    store.record_news_pit_beat(
+        {
+            "beat_date": "2026-10-30",
+            "observed_at": _iso(40),
+            "window_from": "2026-10-29",
+            "window_to": "2026-10-30",
+            "pages": 1,
+            "requests": 1,
+            "articles": 30,
+            "status": news_pit.STATUS_OK,
+        }
+    )
+    item = check_news_pit_beats(store, now=NOW)
+    assert item.status == OK  # 最新拍（10-31）仍新鲜
+    # 最新拍非 ok（失败夜降级留痕）：黄
+    store.record_news_pit_beat(
+        {
+            "beat_date": "2026-10-31",
+            "observed_at": _iso(9.5),
+            "window_from": "2026-10-30",
+            "window_to": "2026-10-31",
+            "pages": 0,
+            "requests": 1,
+            "articles": 0,
+            "status": "http_failure",
+        }
+    )
+    item = check_news_pit_beats(store, now=NOW)
+    assert item.status == DEGRADED
+    assert "http_failure" in item.detail

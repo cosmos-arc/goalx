@@ -211,6 +211,15 @@ def daily_wrap_flow() -> dict[str, object]:
         except Exception as exc:
             logger.warning("edge digest degraded: {}", exc)
             edge_digest = {"error": str(exc), "degraded": True}
+    # 新闻 PIT 夜拍（autoresearch 票 17，§4.1#11）：每晚不开=永久缺口——
+    # 挂 wrap 尾定拍（零新增 cron），当日新闻以拍纪元 observed_at 落
+    # news_article_pit 专表；拍失败只降级不炸 wrap 主链（结算/对账/日扫
+    # 照跑，失败夜由晨检缺夜面可见）。
+    try:
+        news_pit = tasks.news_pit_beat()
+    except Exception as exc:
+        logger.warning("news pit beat degraded: {}", exc)
+        news_pit = {"error": str(exc), "degraded": True}
     logger.info(
         "daily wrap: settlement={}, funnel={}, clv={}," + " audit_findings={}, m3={}",
         settlement,
@@ -233,4 +242,6 @@ def daily_wrap_flow() -> dict[str, object]:
         "frozen_summary": frozen_face,
         "edge_scan": edge_scan,
         "edge_digest": edge_digest,
+        # 票 17：夜拍面（含降级标记）进返回体——同 M3 先例，失败≠通过
+        "news_pit": news_pit,
     }

@@ -1,10 +1,10 @@
 """
-09:05 晨检代码化：20 项只读红绿面。
+09:05 晨检代码化：21 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
 autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
-票 34 加第 20 项断点哨兵。）
+票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -79,6 +79,9 @@ _PREMATCH_RECENT_HOURS = 26
 # 项 20 断点哨兵（票 34）：对账面无新周行的黄线（周级定拍，8 天=错过
 # 一个周一仍无周报即黄）
 _SENTINEL_STALE_DAYS = 8
+# 新闻 PIT 夜拍新鲜界（票 17）：26h 同口径——每晚不开=永久缺口，
+# 断夜黄（degraded）不红（ponytail 睡眠漏跑协议允许，缺夜可见即可）
+_NEWS_PIT_FRESH_HOURS = 26
 
 
 @dataclass(frozen=True)
@@ -602,6 +605,38 @@ def check_srct_season_rhythm(
     )
 
 
+def check_news_pit_beats(store: CorpusStore, *, now: datetime) -> CheckItem:
+    """
+    项 21 新闻 PIT 夜拍新鲜度（autoresearch 票 17；断夜黄不红）。
+
+    每晚不开=永久缺口（账本 §4.1#11 原话）——已开拍后最新 ok 拍超 26h
+    即黄（ponytail 睡眠漏跑协议允许、如实记；缺夜的观测由次夜窗重含兜
+    住，但拍纪元已晚——PIT 语义上属晚到，不回灌）。未开拍（无拍行）=
+    部署前合法态，绿面如实标注。数源=corpus_store.news_pit_beats。
+    """
+    beats = store.news_pit_beats(limit=1)
+    if not beats:
+        return CheckItem("news_pit_beats", OK, "未开拍（拍挂 daily-wrap 23:30，票 17）")
+    latest = beats[0]
+    if latest["status"] != "ok":
+        return CheckItem(
+            "news_pit_beats",
+            DEGRADED,
+            f"最新拍 {latest['beat_date']} 状态 {latest['status']}（降级留痕）",
+        )
+    age = _age_hours(str(latest["observed_at"]), now)
+    if age is None or age > _NEWS_PIT_FRESH_HOURS:
+        detail = f"最新 ok 拍 {latest['beat_date']} 已 {age}h（超 26h 缺夜）"
+        return CheckItem("news_pit_beats", DEGRADED, detail)
+    rows = store.news_pit_state()
+    return CheckItem(
+        "news_pit_beats",
+        OK,
+        f"最新拍 {latest['beat_date']} {age:.1f}h 前 · "
+        + f"累计观测 {int(cast('int', rows.get('total_articles') or 0))} 行",
+    )
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -657,7 +692,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 20 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 21 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -687,6 +722,7 @@ def run_morning_check(
                 check_edge_scan(conn, now=resolved_now),
                 check_prematch_snapshots(store, now=resolved_now),
                 check_anchor_sentinel(conn, now=resolved_now),
+                check_news_pit_beats(store, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

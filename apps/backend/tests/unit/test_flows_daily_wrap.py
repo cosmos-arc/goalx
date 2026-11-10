@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 from goalx_backend import flows
 
 
@@ -95,6 +97,11 @@ def _patch_all(monkeypatch: Any, business_date: str) -> list[str]:
         "edge_digest_week",
         lambda: step("edge_digest", {"week": "ok"}),
     )
+    monkeypatch.setattr(
+        flows.tasks,
+        "news_pit_beat",
+        lambda: step("news_pit", {"articles": 3}),
+    )
     return order
 
 
@@ -109,7 +116,8 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "degraded": True,
     }
     # 后续各步确实执行，且都在 M3 之后（对账审计不被拖挂）；探索轨日扫
-    # 挂 wrap 尾部（结算后才有"昨日已结算场"）
+    # 挂 wrap 尾部（结算后才有"昨日已结算场"）；新闻 PIT 夜拍（票 17）挂
+    # 日扫后——当晚新闻纪元随日终收口落库
     assert order == [
         "settlement",
         "funnel",
@@ -124,6 +132,7 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
         "audit",
         "frozen_summary",
         "edge_scan",
+        "news_pit",
     ]
     assert result["frozen_reconcile"] == {"ok": True}
     assert result["clv"] == {"n": 2}
@@ -131,15 +140,16 @@ def test_m3_failure_degrades_without_dragging_downstream(monkeypatch: Any) -> No
     assert result["price_ledger"]["backfilled"] == 7
     assert result["audit_findings"] == 0
     assert result["edge_scan"] == {"business_date": "2026-11-05"}
+    assert result["news_pit"] == {"articles": 3}
     # 非周一：周报不跑（funnel 业务日为周四）
     assert result["edge_digest"] is None
 
 
 def test_monday_runs_weekly_digest(monkeypatch: Any) -> None:
-    """周一（funnel 业务日）→ 日扫后加跑周报 digest。"""
+    """周一（funnel 业务日）→ 日扫后加跑周报 digest（夜拍殿后）。"""
     order = _patch_all(monkeypatch, "2026-11-09")  # 周一
     result = flows.daily_wrap_flow.fn()
-    assert order[-2:] == ["edge_scan", "edge_digest"]
+    assert order[-2:] == ["edge_digest", "news_pit"]
     assert result["edge_digest"] == {"week": "ok"}
 
 
@@ -155,3 +165,27 @@ def test_edge_scan_failure_degrades_without_dragging_return(monkeypatch: Any) ->
     result = flows.daily_wrap_flow.fn()
     assert result["edge_scan"] == {"error": "扫描面断线", "degraded": True}
     assert result["frozen_summary"] == {"date": "2026-11-05"}
+
+
+def test_news_pit_beat_failure_degrades_isolated(monkeypatch: Any) -> None:
+    """新闻 PIT 夜拍（票 17）异常 → 返回体含 error+degraded，不炸 wrap 本体。
+
+    红线：拍点失败不阻塞夜班主链（结算/对账/日扫全部照跑——每晚不开=
+    永久缺口，失败夜的可见性由 degraded 标记+晨检缺夜面兜住）。
+    """
+    order = _patch_all(monkeypatch, "2026-11-05")
+
+    def boom_beat() -> dict[str, object]:
+        order.append("news_pit")
+        raise httpx.ConnectError("卫报直连断线")
+
+    monkeypatch.setattr(flows.tasks, "news_pit_beat", boom_beat)
+    result = flows.daily_wrap_flow.fn()
+    assert result["news_pit"] == {
+        "error": "卫报直连断线",
+        "degraded": True,
+    }
+    # wrap 本体（结算/对账/日扫）全部执行完毕
+    assert order[-2:] == ["edge_scan", "news_pit"]
+    assert result["frozen_summary"] == {"date": "2026-11-05"}
+    assert result["edge_scan"] == {"business_date": "2026-11-05"}
