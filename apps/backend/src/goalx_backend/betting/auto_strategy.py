@@ -764,6 +764,28 @@ def record_anchor_run(
         )
 
 
+def zero_note_counts(
+    conn: sqlite3.Connection, *, date_from: str, date_to: str
+) -> dict[str, int]:
+    """
+    锚台账门挂原因分布（票 04 月读⑤节读口；只读）。
+
+    窗=[date_from, date_to]（business_date 闭端含）内 zero_note 非空行
+    计数——no_candidates/price_drift/gate_rejected/no_positive_ev 外，票 01
+    版本闸留痕（version_not_live/version_unregistered）同面入账。有注日
+    （zero_note NULL）不进失败分布。
+    """
+    rows = conn.execute(
+        """
+        SELECT zero_note, COUNT(*) AS c FROM auto_paper_runs
+        WHERE business_date >= ? AND business_date <= ? AND zero_note IS NOT NULL
+        GROUP BY zero_note ORDER BY zero_note
+        """,
+        (date_from, date_to),
+    ).fetchall()
+    return {str(row["zero_note"]): int(row["c"]) for row in rows}
+
+
 def anchor_datetime(anchor_label: str, now: datetime) -> datetime:
     """锚标签（HH:MM，北京时）→ 运行时刻所在日的锚时点（UTC 感知）。"""
     hour, minute = (int(part) for part in anchor_label.split(":"))

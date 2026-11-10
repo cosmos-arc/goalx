@@ -85,7 +85,13 @@ from goalx_backend.data.quote_evidence import (
     bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
-from goalx_backend.evaluation import accuracy, anchor_sentinel, edge_scan, weekly_agent
+from goalx_backend.evaluation import (
+    accuracy,
+    anchor_sentinel,
+    edge_scan,
+    monthly_read,
+    weekly_agent,
+)
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
@@ -1450,6 +1456,24 @@ def weekly_agent_batch() -> dict[str, object]:
 
         try:
             return weekly_agent.run_weekly_batch(conn, store=store, chat=chat)
+        finally:
+            store.close()
+
+
+def monthly_read_run() -> dict[str, object]:
+    """
+    月读报告生成器（vision-build 票 04）：八节只读报告 + 票 08 缝落账。
+
+    每月 1 日 09:35 deployment（datasets 注册面 monthly-read；首读
+    2026-12-01 部署注册后自然到点）。语料 duck 桥可用即进 ② 节副锚
+    （欧共识）读面；缺席如实降级（覆盖率 0，不伪造）。报告落语料树
+    reports/monthly/（JSON+MD），人裁定走 CLI——报告不写任何决策状态。
+    """
+    settings = get_settings()
+    with task_conn() as conn, corpus_anchor() as duck_con:
+        store = CorpusStore(settings.corpus_root)
+        try:
+            return monthly_read.run_monthly_read(conn, store=store, duck_con=duck_con)
         finally:
             store.close()
 

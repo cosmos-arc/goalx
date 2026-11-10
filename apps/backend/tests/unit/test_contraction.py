@@ -75,8 +75,8 @@ def test_migration_v52_idempotent(db: sqlite3.Connection) -> None:
     """v52 幂等：两表就位、genesis L0 落账、重跑零效果（同版本重跑先例）。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 54
-    assert migrate(db) == 54  # 同版本重跑零效果
+    assert migrate(db) == 55
+    assert migrate(db) == 55  # 同版本重跑零效果
     for table in ("contraction_transitions", "contraction_clock_readings"):
         assert (
             db.execute(
@@ -788,8 +788,8 @@ def test_psi_bin_boundaries_per_prereg() -> None:
     )
 
 
-def test_rescan_signals_l3l4_timer_face_unwired(db: sqlite3.Connection) -> None:
-    """F3：B.3 计时面如实 unwired 标注（读数随票 04 月读，不伪造绿）。"""
+def test_rescan_signals_l3l4_timer_face_wired(db: sqlite3.Connection) -> None:
+    """票 04 缝回填：B.3 计时面从 unwired 换成真读数（晨检只读消费）。"""
     from datetime import UTC, datetime
 
     faces = {
@@ -798,8 +798,9 @@ def test_rescan_signals_l3l4_timer_face_unwired(db: sqlite3.Connection) -> None:
             db, now=datetime(2026, 11, 10, tzinfo=UTC)
         )
     }
-    assert faces["l3l4_timer"].status == "unwired"
-    assert "票 04" in faces["l3l4_timer"].detail
+    # genesis L0（探针未全停）→ not_applicable；永不为 fired——B.3 建议的
+    # 是再收缩非唤醒重扫，晨检 fired（唤醒重扫）语义不被污染
+    assert faces["l3l4_timer"].status == "not_applicable"
 
 
 # ---- 票 03 接线：探索钟锚点一次性写口（周批首跑钉值） ----
@@ -848,3 +849,214 @@ def test_exploration_clock_reading_prefers_db_anchor(
     reading = contraction.exploration_clock_reading(db, now=now)
     assert reading.status == "insufficient"  # 锚后 7 日，远未满弦
     assert reading.window_start == "2026-11-09T00:00:00+00:00"
+
+
+# ---- v55（票 04 缝回填）：四信号触发史账 + B.3 到期读数 ----
+
+
+def test_migration_v55_idempotent(db: sqlite3.Connection) -> None:
+    """v55 幂等：rescan_signal_events 就位、append-only、重跑零效果。"""
+    from goalx_backend.db import migrate
+
+    assert migrate(db) == 55
+    assert migrate(db) == 55  # 同版本重跑零效果
+    assert (
+        db.execute(
+            "SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name=?",
+            ("rescan_signal_events",),
+        ).fetchone()["c"]
+        == 1
+    )
+    db.execute(
+        """
+        INSERT INTO rescan_signal_events
+            (signal, period, status, detail, evaluated_at)
+        VALUES ('league_mix', '2026-11', 'ok', 'PSI=0.0100',
+                '2026-12-01T01:35:00+00:00')
+        """
+    )
+    with pytest.raises(sqlite3.DatabaseError):
+        db.execute("UPDATE rescan_signal_events SET status = 'fired'")
+    with pytest.raises(sqlite3.DatabaseError):
+        db.execute("DELETE FROM rescan_signal_events")
+    # 非四信号名拒绝（CHECK 面）
+    with pytest.raises(sqlite3.DatabaseError):
+        db.execute(
+            """
+            INSERT INTO rescan_signal_events
+                (signal, period, status, detail, evaluated_at)
+            VALUES ('l3l4_timer', '2026-11', 'ok', 'x', 't')
+            """
+        )
+
+
+def test_record_rescan_signals_four_faces_same_period_absorbed(
+    db: sqlite3.Connection,
+) -> None:
+    """四信号评估落账：恰四行（B.3 timer 是读数不落账）；同期重跑吸收。"""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 12, 1, 1, 35, tzinfo=UTC)
+    faces = contraction.record_rescan_signals(db, now=now, period="2026-11")
+    # 五面返回（四信号 + B.3 timer 读数），落账恰四行
+    assert len(faces) == 5
+    rows = db.execute(
+        "SELECT signal, status FROM rescan_signal_events WHERE period = '2026-11'"
+        " ORDER BY signal"
+    ).fetchall()
+    assert [str(r["signal"]) for r in rows] == [
+        "jc_rules",
+        "league_mix",
+        "odds_psi",
+        "quarterly_sweep",
+    ]
+    # 同期重跑吸收（UNIQUE(signal, period)，首读留痕）
+    contraction.record_rescan_signals(db, now=now, period="2026-11")
+    assert (
+        db.execute("SELECT COUNT(*) c FROM rescan_signal_events").fetchone()["c"] == 4
+    )
+    # 异期新落
+    contraction.record_rescan_signals(
+        db, now=datetime(2027, 1, 1, 1, 35, tzinfo=UTC), period="2026-12"
+    )
+    assert (
+        db.execute("SELECT COUNT(*) c FROM rescan_signal_events").fetchone()["c"] == 8
+    )
+
+
+def _ladder_to_l2(db: sqlite3.Connection, *, l2_ts: str) -> None:
+    """手工落 L1→L2 台账（演练脚手架：set_level 会用当下时间戳，历史时点直接插）。"""
+    db.execute(
+        "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+        " VALUES ('L1', 'human:cli', '演练', ?)",
+        (l2_ts,),
+    )
+    db.execute(
+        "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+        " VALUES ('L2', 'human:cli', '演练', ?)",
+        (l2_ts,),
+    )
+
+
+def test_l3l4_timer_not_applicable_below_l2(db: sqlite3.Connection) -> None:
+    """B.3 只适用 L2+：L0（genesis）无锚无建议。"""
+    from datetime import UTC, datetime
+
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "not_applicable"
+    assert reading.l2_entered_at is None
+    assert reading.suggest_to is None
+
+
+def test_l3l4_timer_due_zero_triggers_suggests_l3(db: sqlite3.Connection) -> None:
+    """L2 满 183 日且四信号零触发→建议再降一级（L2→L3，⑥节读数）。"""
+    from datetime import UTC, datetime
+
+    _ladder_to_l2(db, l2_ts="2026-04-02T00:00:00+00:00")
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "due_suggest_downgrade"
+    assert reading.l2_entered_at == "2026-04-02T00:00:00+00:00"
+    assert reading.days == 243  # 04-02 → 12-01
+    assert reading.zero_triggers is True
+    assert reading.fired_count == 0
+    assert reading.suggest_to is ContractionLevel.L3
+
+
+def test_l3l4_timer_timing_reports_remaining_days(db: sqlite3.Connection) -> None:
+    """窗内计时：余天数如实报，不出建议。"""
+    from datetime import UTC, datetime
+
+    _ladder_to_l2(db, l2_ts="2026-08-23T00:00:00+00:00")
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "timing"
+    assert reading.days == 100
+    assert reading.suggest_to is None
+
+
+def test_l3l4_timer_fired_signal_blocks_suggestion(db: sqlite3.Connection) -> None:
+    """锚后有 fired 信号→不出降级建议（重扫唤醒路径优先，prereg C）。"""
+    from datetime import UTC, datetime
+
+    _ladder_to_l2(db, l2_ts="2026-04-02T00:00:00+00:00")
+    db.execute(
+        """
+        INSERT INTO rescan_signal_events
+            (signal, period, status, detail, evaluated_at)
+        VALUES ('league_mix', '2026-08', 'fired', 'PSI=0.3100',
+                '2026-09-01T01:35:00+00:00')
+        """
+    )
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "due_triggers_present"
+    assert reading.zero_triggers is False
+    assert reading.fired_count == 1
+    assert reading.suggest_to is None
+
+
+def test_l3l4_timer_anchor_before_window_not_counted(db: sqlite3.Connection) -> None:
+    """锚前的 fired 旧信号不计入（探针全停期才算触发史）。"""
+    from datetime import UTC, datetime
+
+    _ladder_to_l2(db, l2_ts="2026-04-02T00:00:00+00:00")
+    db.execute(
+        """
+        INSERT INTO rescan_signal_events
+            (signal, period, status, detail, evaluated_at)
+        VALUES ('league_mix', '2026-03', 'fired', 'PSI=0.3100',
+                '2026-03-01T01:35:00+00:00')
+        """
+    )
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.zero_triggers is True
+    assert reading.status == "due_suggest_downgrade"
+
+
+def test_l3l4_timer_reentry_resets_anchor(db: sqlite3.Connection) -> None:
+    """L2→L1→L2：锚=最新进入 L2（重升期探针曾恢复，计时重启）。"""
+    from datetime import UTC, datetime
+
+    _ladder_to_l2(db, l2_ts="2025-06-01T00:00:00+00:00")
+    db.execute(
+        "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+        " VALUES ('L1', 'human:cli', '重升', '2026-06-01T00:00:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+        " VALUES ('L2', 'human:cli', '再降', '2026-08-23T00:00:00+00:00')"
+    )
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.l2_entered_at == "2026-08-23T00:00:00+00:00"
+    assert reading.status == "timing"  # 新锚 100 日，窗未满
+
+
+def test_l3l4_timer_floor_l4(db: sqlite3.Connection) -> None:
+    """L4 到期零触发：已到底，无更降（due_floor）。"""
+    from datetime import UTC, datetime
+
+    for level in ("L1", "L2", "L3", "L4"):
+        db.execute(
+            "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+            " VALUES (?, 'human:cli', '演练', '2026-04-02T00:00:00+00:00')",
+            (level,),
+        )
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "due_floor"
+    assert reading.suggest_to is None
+
+
+def test_l3l4_timer_bad_anchor_ts_not_crashing(db: sqlite3.Connection) -> None:
+    """坏锚串防御：ts 非 ISO 读数标 bad_anchor 不炸（_age_hours 同哲学——
+    晨检消费本读数，账面完整性不得红掉整个晨检项）。"""
+    from datetime import UTC, datetime
+
+    db.execute(
+        "INSERT INTO contraction_transitions (level, actor, reason, ts)"
+        " VALUES ('L2', 'human:cli', '演练', 'not-a-timestamp')"
+    )
+    reading = contraction.l3l4_timer_reading(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert reading.status == "bad_anchor"
+    assert reading.suggest_to is None
+    assert "not-a-timestamp" in reading.detail
+    # 晨检信号面同走不炸
+    faces = contraction.rescan_signals(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    assert next(f for f in faces if f.name == "l3l4_timer").status == "bad_anchor"

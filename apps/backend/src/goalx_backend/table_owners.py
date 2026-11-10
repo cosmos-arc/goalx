@@ -129,6 +129,9 @@ OWNERS: dict[str, set[str]] = {
         "llm_proposal_costs",
         "weekly_agent_state",
         "exploration_clock_anchor",
+        # vision-build 票 04 缝回填：四信号触发史账（evaluation/
+        # contraction.py 属主——读口 B.3/晨检；写口=月读 record_rescan_signals）
+        "rescan_signal_events",
     },
     "betting": {
         "bets",

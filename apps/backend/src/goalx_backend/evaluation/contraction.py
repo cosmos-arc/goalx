@@ -42,6 +42,8 @@ CLV_CLOCK_THRESHOLD = 0.03  # 3%（概率域）
 CLV_CLOCK_MIN_N = 50  # 票 01 触发器 A 滚动窗同数
 CLV_CLOCK_SE_GATE = 2.0  # 单侧 2SE（票 01 同门）
 EXPLORATION_WINDOW_DAYS = 365  # 12 月窗
+#: B.3 探针全停计时窗（prereg 附录 B.3：L2+ 满窗且四信号零触发→建议再降一级）
+B3_WINDOW_DAYS = 183
 #: 探索钟锚点=周批首跑日（prereg B.2：不折算历史段，只有前向能答）。
 #: 运行面真源=exploration_clock_anchor 账行（v54，周批首跑经
 #: ensure_exploration_anchor 一次性钉值）；本常量=无账行时的 prereg 兜底
@@ -438,7 +440,9 @@ def rescan_signals(
     信号触发只告警不自动恢复（晨检黄面+月读记档；恢复走人 CLI 相邻
     步进）。已接线面=③ 联赛分布（fixtures 面，类别 PSI 当前 30 日 vs
     前 90 日）；① PSI 函数已落、统计量定义随消费票人裁后接线；②④
-    无在滚检测面，如实 unwired（不伪造绿）。
+    无在滚检测面，如实 unwired（不伪造绿）。第五面 l3l4_timer=B.3 到期
+    读数（票 04 接线）：状态词表独立于四信号（not_applicable|timing|
+    due_*，永不为 fired——B.3 建议的是再收缩，不是唤醒重扫）。
     """
     resolved = now or datetime.now(UTC)
     iso = resolved.isoformat(timespec="seconds")
@@ -468,6 +472,7 @@ def rescan_signals(
             detail=f"PSI={value:.4f}（当前窗 {sum(current.values())} 场"
             + f" · 最重 {top} {current[top]} 场；阈 0.25 严格 >）",
         )
+    timer = l3l4_timer_reading(conn, now=resolved)
     return [
         RescanSignalFace(
             name="odds_psi",
@@ -487,15 +492,173 @@ def rescan_signals(
             detail=f"下次季度轻扫 {_next_quarter_start(resolved)}"
             + "（定拍 deployment 未建，四信号静默期保底）",
         ),
-        # prereg B.3 计时面（L2+ 满 183 日且四信号零触发→建议再降一级）。
-        # 信号触发史落账+到期读数随票 04 月读实现——晨检只读红线决定了
-        # 写路径只能在月读/CLI 面；TODO(票 04)：接 B.3 到期读数与触发史。
+        # prereg B.3 计时面（票 04 接线）：L2+ 满 183 日且四信号零触发→
+        # 建议再降一级；触发史账=rescan_signal_events（v55，月读写口）。
         RescanSignalFace(
             name="l3l4_timer",
-            status="unwired",
-            detail="B.3 探针全停计时：L2+ 满 183 日且四信号零触发→建议再降"
-            + "一级；信号触发史落账与到期读数随票 04 月读实现",
+            status=timer.status,
+            detail=timer.detail,
         ),
+    ]
+
+
+# ---- B.3 探针全停计时（prereg 附录 B.3；票 04 缝回填） ----
+
+
+@dataclass(frozen=True)
+class L3L4TimerReading:
+    """
+    B.3 到期读数：锚=最新进入 L2 的 transitions ts（重升打断即重启计时）。
+
+    只建议不执行（月读⑥节读数）；建议目标=相邻一级（L4=底，无更降）。
+    """
+
+    # status: not_applicable|timing|due_suggest_downgrade|due_triggers_present|due_floor
+    status: str
+    l2_entered_at: str | None
+    days: int | None
+    fired_count: int | None
+    zero_triggers: bool | None
+    suggest_to: ContractionLevel | None
+    detail: str
+
+
+def fired_rescan_since(conn: sqlite3.Connection, *, since_iso: str) -> int:
+    """锚（ISO 闭端含）以来 fired 信号计数（B.3 触发史读口，v55 账）。"""
+    return int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM rescan_signal_events
+            WHERE status = 'fired' AND evaluated_at >= ?
+            """,
+            (since_iso,),
+        ).fetchone()[0]
+    )
+
+
+def _probe_stop_anchor(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """
+    探针全停段锚行：末段连续 ≥L2 的首行（=最新进入 L2）。
+
+    前向扫一遍：见 <L2 行即清锚（重升期探针曾恢复，计时重启），见 ≥L2
+    行且无锚即记锚——循环终了留存的即末段锚。当前级别 <L2 → None。
+    """
+    anchor: sqlite3.Row | None = None
+    for row in conn.execute(
+        "SELECT level, ts FROM contraction_transitions ORDER BY id"
+    ).fetchall():
+        rank = level_rank(ContractionLevel(str(row["level"])))
+        if rank >= level_rank(ContractionLevel.L2):
+            if anchor is None:
+                anchor = row
+        else:
+            anchor = None
+    return anchor
+
+
+def l3l4_timer_reading(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> L3L4TimerReading:
+    """
+    B.3 读数：L2+ 满 183 日且四信号零触发→建议再降一级（人 CLI 执行）。
+
+    窗起点=探针全停锚（唯一时钟——L2→L3→L4 不重启，L2→L1→L2 重启）；
+    零触发=锚以来 rescan_signal_events 无 fired 行（v55 账，月读落值——
+    账存在月读面之前的历史段如实按零计：无评估=无触发记录）。
+    """
+    resolved = now or datetime.now(UTC)
+    anchor = _probe_stop_anchor(conn)
+    if anchor is None:
+        return L3L4TimerReading(
+            status="not_applicable",
+            l2_entered_at=None,
+            days=None,
+            fired_count=None,
+            zero_triggers=None,
+            suggest_to=None,
+            detail="现级 <L2（探针未全停），B.3 计时不适用",
+        )
+    entered_at = str(anchor["ts"])
+    try:
+        days = (resolved - _parse_iso_utc(entered_at)).days
+    except ValueError:
+        # 坏锚串不炸读数面（_age_hours 同防御）：晨检消费本读数，账面
+        # 完整性问题显式上抛会红掉整个晨检项——如实标坏锚，人修账。
+        return L3L4TimerReading(
+            status="bad_anchor",
+            l2_entered_at=entered_at,
+            days=None,
+            fired_count=None,
+            zero_triggers=None,
+            suggest_to=None,
+            detail=f"锚 ts 非法 ISO 串 {entered_at!r}（contraction_transitions "
+            + "账面完整性问题，人核查修复）",
+        )
+    fired = fired_rescan_since(conn, since_iso=entered_at)
+    zero = fired == 0
+    current = current_level(conn)
+    due = days >= B3_WINDOW_DAYS
+    if due and zero and current is ContractionLevel.L4:
+        status, suggest = "due_floor", None
+    elif due and zero:
+        status = "due_suggest_downgrade"
+        suggest = _LEVEL_LADDER[level_rank(current) + 1]
+    elif due:
+        status, suggest = "due_triggers_present", None
+    else:
+        status, suggest = "timing", None
+    detail = (
+        f"探针全停自 {entered_at}（{days} 日 / 窗 {B3_WINDOW_DAYS} 日）；"
+        + f"锚后 fired 信号 {fired} 次"
+        + (
+            f"；建议再降一级 → {suggest.value}（人 CLI contraction-set）"
+            if suggest is not None
+            else "；无降级建议"
+            if due
+            else f"；窗未满（余 {B3_WINDOW_DAYS - days} 日）"
+        )
+    )
+    return L3L4TimerReading(
+        status=status,
+        l2_entered_at=entered_at,
+        days=days,
+        fired_count=fired,
+        zero_triggers=zero,
+        suggest_to=suggest,
+        detail=detail,
+    )
+
+
+def record_rescan_signals(
+    conn: sqlite3.Connection, *, period: str, now: datetime | None = None
+) -> list[RescanSignalFace]:
+    """
+    四信号评估落账（v55；月读写口——晨检只读红线，信号史只能月读补）。
+
+    月读跑时点评估一次并落账：UNIQUE(signal, period) 吸收同月重跑（账面
+    =每月首读留痕，报告拍次递增不影响账）。B.3 timer 是读数不落账；返回
+    =四信号面 + 落账后重算的 B.3 timer 面（本月 fired 已计入触发史）。
+    """
+    resolved = now or datetime.now(UTC)
+    faces = rescan_signals(conn, now=resolved)
+    evaluated_at = resolved.isoformat(timespec="seconds")
+    with atomic(conn):
+        for face in faces:
+            if face.name == "l3l4_timer":
+                continue
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO rescan_signal_events
+                    (signal, period, status, detail, evaluated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (face.name, period, face.status, face.detail, evaluated_at),
+            )
+    timer = l3l4_timer_reading(conn, now=resolved)
+    signal_faces = [face for face in faces if face.name != "l3l4_timer"]
+    return [
+        *signal_faces,
+        RescanSignalFace(name="l3l4_timer", status=timer.status, detail=timer.detail),
     ]
 
 

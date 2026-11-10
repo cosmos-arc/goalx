@@ -41,6 +41,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli contraction-read
     uv run python -m goalx_backend.cli proposal-register <提案文件>\
       [--proposal-id P-… --h-id H9]
+    uv run python -m goalx_backend.cli monthly-read  # 月读报告（vision 票 04）：
+    # 八节只读报告落语料树 reports/monthly/；裁定动作走上方人 CLI，报告只读
 """
 
 from __future__ import annotations

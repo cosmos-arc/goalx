@@ -94,6 +94,7 @@
 | `llm_proposal_costs` | 周批提案层 LLM 花费账（vision-build 票 03） | 逐调用一行：phase=generate（批次级 B-yyyymmdd）/critique（逐条提案 id）+model/tokens/cost_cny；票 04 月读月度复核消费 | append-only（触发器拒改写） |
 | `weekly_agent_state` | 周批空转守卫水位（vision-build 票 03） | face='watermark' 一行：edge_findings 最大 id + 教训库条目数（对比上次周拍，无新料只报心跳不烧 LLM） | face 键 upsert（face_derive_state 同款） |
 | `exploration_clock_anchor` | 探索钟锚点一次性钉值账（vision-build 票 03） | id=1 单行：周批首跑日（ensure_exploration_anchor 一次性写入，幂等重跑/后续周拍不覆盖）；读数 DB 行优先、缺席回退常量 | append-only（触发器拒改写）+ id=1 单行约束 |
+| `rescan_signal_events` | 四信号触发史账（vision-build 票 04 缝回填，v55） | 月读时点信号面评估落账（odds_psi/jc_rules/league_mix/quarterly_sweep 四信号名 CHECK 钉死；B.3 计时器=读数不落账）；读口=B.3 到期读数/晨检信号面，写口=月读 record_rescan_signals（晨检只读红线） | append-only；UNIQUE(signal, period) 吸收同月重跑 |
 
 ### infra / 脚手架
 
@@ -307,6 +308,9 @@ erDiagram
         INTEGER id PK
     }
     quote_observations {
+        INTEGER id PK
+    }
+    rescan_signal_events {
         INTEGER id PK
     }
     review_items {
@@ -1973,6 +1977,23 @@ append-only 触发器：`llm_proposal_costs_no_delete`、`llm_proposal_costs_no_
 
 append-only 触发器：`exploration_clock_anchor_no_delete`、`exploration_clock_anchor_no_update`
 <!-- schema-doc:END:table:exploration_clock_anchor -->
+
+<!-- schema-doc:BEGIN:table:rescan_signal_events -->
+#### `rescan_signal_events`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `signal` | TEXT | NOT NULL |
+| `period` | TEXT | NOT NULL |
+| `status` | TEXT | NOT NULL |
+| `detail` | TEXT | NOT NULL |
+| `evaluated_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`signal`, `period`)`
+
+append-only 触发器：`rescan_signal_events_no_delete`、`rescan_signal_events_no_update`
+<!-- schema-doc:END:table:rescan_signal_events -->
 
 vision-build 票 03（v54）：周批 agent 循环三账——提案层 LLM 花费
 （generate=批次/critique=逐条，票 04 月读消费）、空转守卫水位
