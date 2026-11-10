@@ -41,6 +41,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+import duckdb
+from loguru import logger
+
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import atomic, utc_now_iso
@@ -372,7 +375,13 @@ def duplicate_reason(
     if ledger_ref in batch_refs:
         return "与本批前序提案台账回指重复（同拍精确去重）"
     if lesson_deduper is not None and statement:
-        hit = lesson_deduper.nearest(statement)
+        try:
+            hit = lesson_deduper.nearest(statement)
+        except duckdb.Error as exc:
+            # correctness F6：降级只兜 ATTACH 时刻不够——查询期故障（锁占/
+            # 连接失效）同样不得炸周拍；留痕后回精确面，本条按未撞处理
+            logger.warning("语义查重降级（duck 查询失败，回精确面）：{}", exc)
+            hit = None
         if hit is not None:
             return (
                 f"lesson_similar:{hit.item_id}：近邻复现死法"

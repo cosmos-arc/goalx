@@ -438,8 +438,14 @@ def test_semantic_dedup_rejects_near_duplicate_lesson(tmp_path: Any) -> None:
     )
     duck_con = rag.connect_rag(db_path)
     # 假件向量分布≠真嵌入：阈值经缝注入（0.2 使 token 重合近邻过阈；
-    # 生产阈=rag.LESSON_SIMILAR_THRESHOLD，真嵌入分布上校准）
-    deduper = rag.LessonDeduper(embedder=embedder, duck_con=duck_con, threshold=0.2)
+    # 生产阈=rag.LESSON_SIMILAR_THRESHOLD，真分布校准见
+    # test_rag.py::test_fastembed_threshold_calibration）
+    deduper = rag.LessonDeduper(
+        embedder=embedder,
+        duck_con=duck_con,
+        active_ids=frozenset({"L-01", "L-02"}),
+        threshold=0.2,
+    )
 
     # duplicate_reason 直钉：近邻=lesson_similar:L-01；非近邻/缝缺席=v0 行为
     reason = weekly_agent.duplicate_reason(
@@ -516,6 +522,87 @@ def test_semantic_dedup_rejects_near_duplicate_lesson(tmp_path: Any) -> None:
     assert len(rejected) == 1
     assert rejected[0]["reasons"][0].startswith("lesson_similar:L-01")
     duck_con.close()
+    conn.close()
+
+
+def test_semantic_dedupe_degrades_not_crashes_on_duck_query_error(
+    tmp_path: Any,
+) -> None:
+    """correctness F6：查询期 duckdb.Error 不炸周拍——降级回精确面留痕。"""
+    from typing import Any as _Any
+    from typing import cast as _cast
+
+    import duckdb as _duckdb
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.db import connect, migrate
+    from goalx_backend.evaluation import rag, weekly_agent
+
+    class _ExplodingDuck:
+        """查询期必炸的假 duck 连接（ATTACH 成功后的查询期故障形态）。"""
+
+        def execute(self, *_args: _Any, **_kwargs: _Any) -> _Any:
+            raise _duckdb.Error("query-time boom")
+
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    exploding = rag.LessonDeduper(
+        embedder=_HashEmbedder(),
+        duck_con=_cast("_duckdb.DuckDBPyConnection", _ExplodingDuck()),
+        active_ids=frozenset({"L-01"}),
+    )
+    # 语义缝查询期炸：duplicate_reason 降级回精确面（None），不向上抛
+    assert (
+        weekly_agent.duplicate_reason(
+            "edge:9",
+            batch_refs=set(),
+            refuted_refs=set(),
+            statement="任何措辞",
+            lesson_deduper=exploding,
+        )
+        is None
+    )
+    # 周拍级：同故障缝下一拍仍 generated（不炸整拍）
+    _seed_finding(conn, finding_id=42)
+    _seed_lesson(tmp_path, "L-01")
+
+    class _OneProposalChat:
+        """一次 generate 回单条好提案（语义面本步被降级跳过）。"""
+
+        def __call__(self, prompt: str) -> weekly_agent.ChatOutcome:
+            import json as _json
+
+            return weekly_agent.ChatOutcome(
+                content=_json.dumps(
+                    [
+                        {
+                            "statement": "阵型族条件面的独立新提案",
+                            "judgement": "门",
+                            "data_face": "面",
+                            "expected_n": "n",
+                            "ledger_ref": "edge:42",
+                            "refs": ["42"],
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                model="glm-5.3",
+                prompt_tokens=100,
+                completion_tokens=50,
+                cost_cny=0.0022,
+            )
+
+    report = weekly_agent.run_weekly_batch(
+        conn,
+        store=CorpusStore(tmp_path / "corpus"),
+        chat=_OneProposalChat(),  # type: ignore[arg-type]
+        lessons_dir=Path(tmp_path),
+        run_date="2026-11-16",
+        lesson_deduper=exploding,
+    )
+    assert report["status"] == "generated"
+    assert len(report["proposals"]) == 1
     conn.close()
 
 

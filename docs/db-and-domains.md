@@ -95,7 +95,7 @@
 | `weekly_agent_state` | 周批空转守卫水位（vision-build 票 03） | face='watermark' 一行：edge_findings 最大 id + 教训库条目数（对比上次周拍，无新料只报心跳不烧 LLM） | face 键 upsert（face_derive_state 同款） |
 | `exploration_clock_anchor` | 探索钟锚点一次性钉值账（vision-build 票 03） | id=1 单行：周批首跑日（ensure_exploration_anchor 一次性写入，幂等重跑/后续周拍不覆盖）；读数 DB 行优先、缺席回退常量 | append-only（触发器拒改写）+ id=1 单行约束 |
 | `rescan_signal_events` | 四信号触发史账（vision-build 票 04 缝回填，v55） | 月读时点信号面评估落账（odds_psi/jc_rules/league_mix/quarterly_sweep 四信号名 CHECK 钉死；B.3 计时器=读数不落账）；读口=B.3 到期读数/晨检信号面，写口=月读 record_rescan_signals（晨检只读红线） | append-only；UNIQUE(signal, period) 吸收同月重跑 |
-| `rag_embeddings` | RAG 向量表两索引共载（vision-build 票 06，v56） | 通用一张：namespace 隔离 `guardian_article`（卫报篇级 chunk，item_id=文章 sid）/`lesson`（教训条目 L-NN）；vec=JSON 数组文本（FLOAT[] 是 DuckDB 检索侧物化形态）；model_id 进主键=换模型旧口径原地保留（换模型=重嵌）；写口=embed_pending 增量管线（CLI rag-embed，content_hash 同跳幂等），读口=DuckDB 暴力余弦 search + 晨检落后条数（只读红线） | upsert UNIQUE(namespace,item_id,model_id)（文本变更重嵌覆盖） |
+| `rag_embeddings` | RAG 向量表两索引共载（vision-build 票 06，v56） | 通用一张：namespace 隔离 `guardian_article`（卫报篇级 chunk，item_id=文章 sid）/`lesson`（教训条目 L-NN）；vec=JSON 数组文本（FLOAT[] 是 DuckDB 检索侧物化形态）；model_id 进主键=换模型旧口径原地保留（换模型=重嵌）；教训索引 active-only（archived/review_due 不进索引，检索按 active 快照过滤）；写口=embed_pending 增量管线（CLI rag-embed，content_hash 同跳幂等，--limit=最多嵌 N 条新条目），读口=DuckDB 暴力余弦 search + 晨检落后条数（只读红线；卫报 bronze 毒丸行/截断 gzip 逐行容错，计数进黄口） | upsert UNIQUE(namespace,item_id,model_id)（文本变更重嵌覆盖） |
 
 ### infra / 脚手架
 
@@ -2014,6 +2014,9 @@ append-only 触发器：`rescan_signal_events_no_delete`、`rescan_signal_events
 
 唯一键 `UNIQUE(`namespace`, `item_id`, `model_id`)`
 <!-- schema-doc:END:table:rag_embeddings -->
+
+运维：增量=夜拍/晨检后 `goalx rag-embed --namespace lessons|guardian [--limit N]`（幂等；--limit=最多嵌 N 条**新**条目，同参重跑可推进分段回填）。查重阈 `rag.LESSON_SIMILAR_THRESHOLD`（0.85 先验值）：真分布校准测=`tests/unit/test_rag.py::test_fastembed_threshold_calibration`（@slow，模型缓存就绪即跑；红了=阈挪进实测窗）。
+
 
 vision-build 票 03（v54）：周批 agent 循环三账——提案层 LLM 花费
 （generate=批次/critique=逐条，票 04 月读消费）、空转守卫水位

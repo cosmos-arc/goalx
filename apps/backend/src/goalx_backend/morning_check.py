@@ -719,17 +719,35 @@ def check_rag_index_lag(
         items=lesson_items,
         model_id=model_id,
     )
-    guardian_lag = rag.pending_count(
-        conn,
-        namespace=rag.NAMESPACE_GUARDIAN,
-        items=rag.guardian_article_texts(store),
-        model_id=model_id,
-    )
+    # F2：bronze 毒丸行/截断 gzip 在流层逐行容错（GuardianArticleStream），
+    # 卫报侧再兜读面异常——残数据不炸整检（黄口可见）
+    stream = rag.guardian_article_texts(store)
+    try:
+        guardian_lag = rag.pending_count(
+            conn,
+            namespace=rag.NAMESPACE_GUARDIAN,
+            items=stream,
+            model_id=model_id,
+        )
+    except (sqlite3.Error, OSError, EOFError) as exc:
+        return CheckItem(
+            "rag_index_lag", DEGRADED, f"教训 {lesson_lag} / 卫报侧不可读：{exc}"
+        )
+    poison = ""
+    if stream.bad_lines:
+        poison += f"，残行 {stream.bad_lines}"
+    if stream.truncated:
+        poison += "，gzip 截断"
     detail = (
         f"落后条数（{model_id}）：教训 {lesson_lag} / 卫报 {guardian_lag}"
-        + "（增量入口：goalx rag-embed --namespace lessons|guardian）"
+        + f"{poison}（增量入口：goalx rag-embed --namespace lessons|guardian）"
     )
-    if lesson_lag > 0 or guardian_lag > _RAG_GUARDIAN_LAG_DEGRADED:
+    if (
+        lesson_lag > 0
+        or guardian_lag > _RAG_GUARDIAN_LAG_DEGRADED
+        or stream.bad_lines
+        or stream.truncated
+    ):
         return CheckItem("rag_index_lag", DEGRADED, detail)
     return CheckItem("rag_index_lag", OK, detail)
 

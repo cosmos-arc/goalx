@@ -829,6 +829,52 @@ def test_check_rag_index_lag_states(
     assert "不可读" in item.detail
 
 
+def test_morning_check_survives_poison_guardian_bronze(tmp_path: Path) -> None:
+    """correctness F2（vision-build 票 06）：bronze 毒丸行/截断 gzip 不炸整检
+    ——run_morning_check 仍产 25 项、项 25 降黄、残行/截断计数可见。"""
+    import gzip as _gzip
+
+    from goalx_backend import morning_check as _mc
+    from goalx_backend.db import connect as _connect
+    from goalx_backend.db import migrate as _migrate
+
+    settings = Settings(db_path=tmp_path / "goalx.db", corpus_root=tmp_path / "corpus")
+    conn = _connect(settings.db_path)
+    _migrate(conn)
+    conn.close()
+    store = CorpusStore(settings.corpus_root)
+    store.append_bronze(
+        "guardian",
+        "news_article",
+        [
+            {
+                "sid": "art-1",
+                "parser_version": "guardian_v1",
+                "payload": {
+                    "id": "art-1",
+                    "webTitle": "T",
+                    "bodyText": "B",
+                    "webPublicationDate": "2026-11-01T09:00:00Z",
+                },
+            }
+        ],
+    )
+    store.close()
+    # 毒丸：半行 JSON（新 member 残文）+ 尾随垃圾字节（截断 member 形态）
+    bronze = settings.corpus_root / "bronze" / "guardian" / "news_article.ndjson.gz"
+    with bronze.open("ab") as raw_fh:
+        with _gzip.GzipFile(fileobj=raw_fh, mode="ab", mtime=0) as fh:
+            fh.write(b'{"sid": "art-2", "parser_ver\n')
+        raw_fh.write(b"\x00\x01garbage-not-gzip")
+
+    items = _mc.run_morning_check(settings, now=NOW, serve_log=tmp_path / "serve.log")
+    assert len(items) == 25  # 毒丸不废整检：25 项全产出
+    rag_item = next(item for item in items if item.name == "rag_index_lag")
+    assert rag_item.status == DEGRADED
+    assert "残行 1" in rag_item.detail
+    assert "截断" in rag_item.detail
+
+
 def test_check_lessons_review_due_states(tmp_path: Path) -> None:
     """项 22（vision-build 票 05）：到期黄不红、只报不改、缺席/破损黄不绿。"""
     from goalx_backend.morning_check import check_lessons_review_due

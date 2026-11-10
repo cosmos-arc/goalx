@@ -56,7 +56,6 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from functools import partial
-from itertools import islice
 from pathlib import Path
 from typing import Any, cast
 
@@ -1298,7 +1297,8 @@ def _cmd_rag_embed(args: argparse.Namespace) -> None:
     幂等：content_hash 相同跳过（同模型口径重跑零效果）；换模型=对新
     model_id 全量重嵌（rag_embeddings 主键吸收，旧口径原地保留）。首跑
     会拉 fastembed 模型（运行期下载，约 0.22GB，缓存后零下载）。
-    --limit 有界跑批护栏（试点/首夜分段回填；无 limit=全量）。
+    --limit=最多嵌 N 条**新**条目（correctness F5：过滤已嵌后计数——
+    同参数重跑能推进分段回填，非前缀截断；无 limit=全量）。
     """
     settings = get_settings()
     store = CorpusStore(settings.corpus_root)
@@ -1308,13 +1308,16 @@ def _cmd_rag_embed(args: argparse.Namespace) -> None:
         embedder = rag.FastembedEmbedder()
         if args.namespace == "lessons":
             namespace = rag.NAMESPACE_LESSON
-            items_iter: Iterable[tuple[str, str]] = rag.lesson_texts()
+            items: Iterable[tuple[str, str]] = rag.lesson_texts()
         else:
             namespace = rag.NAMESPACE_GUARDIAN
-            items_iter = rag.guardian_article_texts(store)
-        items = islice(items_iter, args.limit) if args.limit is not None else items_iter
+            items = rag.guardian_article_texts(store)
         stats = rag.embed_pending(
-            conn, namespace=namespace, items=items, embedder=embedder
+            conn,
+            namespace=namespace,
+            items=items,
+            embedder=embedder,
+            max_new=args.limit,
         )
     finally:
         conn.close()
@@ -2477,7 +2480,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--limit",
         type=int,
         default=None,
-        help="有界跑批护栏（分段回填；缺省全量）",
+        help="最多嵌 N 条新条目(过滤已嵌后计数,同参重跑可推进分段回填;缺省全量)",
     )
     sub.add_parser(
         "morning-check",

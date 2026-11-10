@@ -28,7 +28,11 @@ model_id 重嵌（增量管线幂等，旧口径行原地保留并行可查）�
 - 引用纪律：检索产出必带引用 id（文章 sid/条目 L-NN）——管线层缺 id
   直接拒（``citation_reasons`` 拒收断言）；
 - 增量入口=CLI（``rag-embed --namespace``）+晨检只报落后条数（只读
-  红线：晨检永不构造 embedder、零写入）。
+  红线：晨检永不构造 embedder、零写入）；
+- 教训索引 active-only（correctness F1）：archived/review_due 不进
+  索引；检索按构造时 active id 快照过滤（归档教训不拦新提案）；
+- 卫报 bronze 毒丸行/截断 gzip 逐行容错（correctness F2：残数据黄口
+  可见，不炸晨检/嵌入流）。
 
 测试不依赖真模型：embedder 全注入（假件=确定性哈希向量）；真
 fastembed 路径一条冒烟（模型缓存缺席 skip，test_bucket_face 的
@@ -41,12 +45,13 @@ import hashlib
 import importlib.metadata
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 import duckdb
+from loguru import logger
 
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import atomic, utc_now_iso
@@ -60,7 +65,10 @@ NAMESPACE_LESSON = "lesson"
 #: embed 批大小（增量管线逐批落库，中途崩溃已落批不回退）
 EMBED_BATCH = 64
 #: 教训语义近邻查重阈（周批 duplicate_reason 缝消费；高精度取向——
-#: 错拒一条提案的代价大于漏拒，0.85 为保守起点，真嵌入分布校准后再调）
+#: 错拒一条提案的代价大于漏拒）。0.85 是**先验保守值未校准**（F4）：
+#: 真分布校准测=tests/unit/test_rag.py::test_fastembed_threshold_calibration
+#: （@slow+模型缓存 skipif——回填后机器一跑即知分不分得开；红了=把本
+#: 常量挪进实测窗 (far_max, near_min]，不猜阈值）
 LESSON_SIMILAR_THRESHOLD = 0.85
 
 
@@ -187,6 +195,53 @@ def _existing_hashes(
     return {str(row["item_id"]): str(row["content_hash"]) for row in rows}
 
 
+def _flush_batch(
+    conn: sqlite3.Connection,
+    namespace: str,
+    embedder: Embedder,
+    batch: list[tuple[str, str, str]],
+    stats: dict[str, int],
+) -> None:
+    """
+    一批落库：嵌入→校验（条数/维度 fail-loud）→upsert 单事务。
+
+    upsert 覆盖文本变更行（hash 已变才进 batch）；stats["embedded"] 就地
+    累加，batch 清空（embed_pending 的批处理单元）。
+    """
+    vectors = embedder.embed_passages([text for _, text, _ in batch])
+    if len(vectors) != len(batch):
+        raise ValueError(f"embedder 返回向量数 {len(vectors)} != 输入条数 {len(batch)}")
+    with atomic(conn):
+        for (item_id, _text, digest), vec in zip(batch, vectors, strict=True):
+            if len(vec) != embedder.dim:
+                raise ValueError(
+                    f"{item_id}: 向量维度 {len(vec)} != embedder.dim {embedder.dim}"
+                )
+            conn.execute(
+                """
+                INSERT INTO rag_embeddings
+                    (namespace, item_id, model_id, dim, vec,
+                     content_hash, embedded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (namespace, item_id, model_id) DO UPDATE SET
+                    dim = excluded.dim, vec = excluded.vec,
+                    content_hash = excluded.content_hash,
+                    embedded_at = excluded.embedded_at
+                """,
+                (
+                    namespace,
+                    item_id,
+                    embedder.model_id,
+                    embedder.dim,
+                    json.dumps(vec, separators=(",", ":")),
+                    digest,
+                    utc_now_iso(),
+                ),
+            )
+    stats["embedded"] += len(batch)
+    batch.clear()
+
+
 def embed_pending(
     conn: sqlite3.Connection,
     *,
@@ -194,6 +249,7 @@ def embed_pending(
     items: Iterable[tuple[str, str]],
     embedder: Embedder,
     batch_size: int = EMBED_BATCH,
+    max_new: int | None = None,
 ) -> dict[str, int]:
     """
     增量 embed（幂等）：新条目嵌入落库，content_hash 相同跳过。
@@ -201,7 +257,9 @@ def embed_pending(
     items 流式（卫报 bronze 20 万篇不驻内存）；同 item_id 首见为准
     （bronze append-only 去重与 guardian_silver.candidate_articles 同序）；
     文本变更（hash 变）→ 重嵌 upsert 覆盖。逐批一个事务：中途崩溃已落
-    批保留，重跑按 hash 续（幂等）。返回 {seen, embedded, skipped}。
+    批保留，重跑按 hash 续（幂等）。max_new=**最多嵌 N 条新条目**
+    （correctness F5：过滤 known 后计数——同参数重跑能推进分段回填，
+    不是前缀截断；None=全量）。返回 {seen, embedded, skipped}。
     """
     stats = {"seen": 0, "embedded": 0, "skipped": 0}
     known = _existing_hashes(conn, namespace, embedder.model_id)
@@ -209,43 +267,10 @@ def embed_pending(
     batch: list[tuple[str, str, str]] = []
 
     def flush() -> None:
-        if not batch:
-            return
-        vectors = embedder.embed_passages([text for _, text, _ in batch])
-        if len(vectors) != len(batch):
-            raise ValueError(
-                f"embedder 返回向量数 {len(vectors)} != 输入条数 {len(batch)}"
-            )
-        with atomic(conn):
-            for (item_id, _text, digest), vec in zip(batch, vectors, strict=True):
-                if len(vec) != embedder.dim:
-                    raise ValueError(
-                        f"{item_id}: 向量维度 {len(vec)} != embedder.dim {embedder.dim}"
-                    )
-                conn.execute(
-                    """
-                    INSERT INTO rag_embeddings
-                        (namespace, item_id, model_id, dim, vec,
-                         content_hash, embedded_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (namespace, item_id, model_id) DO UPDATE SET
-                        dim = excluded.dim, vec = excluded.vec,
-                        content_hash = excluded.content_hash,
-                        embedded_at = excluded.embedded_at
-                    """,
-                    (
-                        namespace,
-                        item_id,
-                        embedder.model_id,
-                        embedder.dim,
-                        json.dumps(vec, separators=(",", ":")),
-                        digest,
-                        utc_now_iso(),
-                    ),
-                )
-        stats["embedded"] += len(batch)
-        batch.clear()
+        if batch:
+            _flush_batch(conn, namespace, embedder, batch, stats)
 
+    new_count = 0
     for item_id, text in items:
         if item_id in seen_ids:
             continue
@@ -255,7 +280,12 @@ def embed_pending(
         if known.get(item_id) == digest:
             stats["skipped"] += 1
             continue
+        if max_new is not None and new_count >= max_new:
+            # 新条目预算用尽即止扫（F5：下段重跑从此处续）
+            flush()
+            break
         batch.append((item_id, text, digest))
+        new_count += 1
         if len(batch) >= batch_size:
             flush()
     flush()
@@ -272,10 +302,15 @@ def connect_rag(db_path: str | Path) -> duckdb.DuckDBPyConnection:
     """
     con = duckdb.connect()
     face = Path(db_path).resolve().as_posix()
-    con.execute(
-        # 路径来自调用方 Settings/测试 tmp，非用户输入（corpus_duckdb 先例）
-        f"ATTACH '{face}' AS goalx (TYPE sqlite, READ_ONLY)"
-    )
+    try:
+        con.execute(
+            # 路径来自调用方 Settings/测试 tmp，非用户输入（corpus_duckdb 先例）
+            f"ATTACH '{face}' AS goalx (TYPE sqlite, READ_ONLY)"
+        )
+    except BaseException:
+        # ATTACH 失败不留孤儿连接（correctness F6）
+        con.close()
+        raise
     return con
 
 
@@ -286,6 +321,7 @@ def search(
     model_id: str,
     query_vec: Sequence[float],
     top_k: int,
+    only_ids: Collection[str] | None = None,
 ) -> list[RagHit]:
     """
     暴力余弦检索（人裁 3）：namespace×model_id 过滤子集内全扫打分。
@@ -294,10 +330,14 @@ def search(
     item_id ASC（平分稳定）。查询向量维度与库内 dim 不符 = DuckDB
     定长 CAST 显式报错（不静默空）；零向量行得 -1（DuckDB 口径，
     排序自然沉底）。查询侧前缀（e5 类）已由 embedder.embed_query 承担。
+    only_ids=引用/新鲜面子集过滤（correctness F1：教训检索只认
+    active 面——SQL 内过滤非事后剔除，archived 高分行不得挤占 top-k）；
+    空集=无行命中（教训库缺席降级面）。
     """
     dim = len(query_vec)
     if dim == 0:
         raise ValueError("查询向量为空（embedder 输出异常）")
+    ids_filter = "AND item_id IN (SELECT unnest(?))\n" if only_ids is not None else ""
     rows = duck_con.execute(
         # dim 经 int 校验后内插（float32 定长数组类型字面量）；表名/过滤值
         # 全字面量与参数——ADR-0008 静态审可见
@@ -306,10 +346,12 @@ def search(
             CAST(vec AS FLOAT[{dim}]), CAST(? AS FLOAT[{dim}])) AS score
         FROM goalx.rag_embeddings
         WHERE namespace = ? AND model_id = ?
-        ORDER BY score DESC, item_id ASC
+        {ids_filter}ORDER BY score DESC, item_id ASC
         LIMIT ?
         """,  # noqa: S608
-        [list(query_vec), namespace, model_id, top_k],
+        [list(query_vec), namespace, model_id]
+        + ([sorted(only_ids)] if only_ids is not None else [])
+        + [top_k],
     ).fetchall()
     return [
         RagHit(namespace=namespace, item_id=str(row[0]), score=float(row[1]))
@@ -322,10 +364,13 @@ def search(
 
 def lesson_texts(directory: Path | None = None) -> list[tuple[str, str]]:
     """
-    教训索引源：active 全量条目 → (lesson id, 合成嵌入文本)。
+    教训索引源：**active 条目** → (lesson id, 合成嵌入文本)。
 
-    嵌入文本=触发面+死因+正文（语义查重面向「复现死法」的措辞匹配：
-    提案 statement 与教训的触发/死因措辞重合→近邻）。evidence 是账本
+    active-only（correctness F1）：archived/review_due 不进索引——归档
+    教训无删除面，进了就永久拦新提案。嵌入文本=摘要行+触发面+死因+
+    正文：摘要行（triggers+cause 一行，F4）供查重匹配——周批 statement
+    是单句措辞，库侧单句摘要面对称化查询形态，降低不对称对余弦系统性
+    偏低；触发/死因/正文保留原语义面（证据检索同用）。evidence 是账本
     回指（id 串）非语义面，不进文本。目录缺席 fail-loud（lessons 同款，
     受控文档宁可红不可猜）。
     """
@@ -333,7 +378,11 @@ def lesson_texts(directory: Path | None = None) -> list[tuple[str, str]]:
     return [
         (
             lesson.id,
-            "触发："
+            "摘要："
+            + "；".join(lesson.triggers)
+            + "——"
+            + lesson.cause
+            + "\n触发："
             + "；".join(lesson.triggers)
             + "\n死因："
             + lesson.cause
@@ -341,7 +390,23 @@ def lesson_texts(directory: Path | None = None) -> list[tuple[str, str]]:
             + lesson.body,
         )
         for lesson in loaded
+        if lesson.status == "active"
     ]
+
+
+def active_lesson_ids(directory: Path | None = None) -> frozenset[str]:
+    """
+    当前 active 教训 id 集（检索面过滤判据；LessonDeduper 消费）。
+
+    旧行留在 rag_embeddings（回填可重算），检索只认本集（correctness
+    F1：归档教训不再拦新提案）。目录缺席/破损 fail-loud——调用方
+    （tasks 适配件）自行降级为空集=查重退精确面。
+    """
+    return frozenset(
+        lesson.id
+        for lesson in lessons.load_lessons(directory)
+        if lesson.status == "active"
+    )
 
 
 # ---- 索引源①：卫报语料（bronze 篇级 chunk，v0） ----
@@ -353,34 +418,78 @@ _GUARDIAN_PROVIDER = "guardian"
 _GUARDIAN_DATASET = "news_article"
 
 
+class GuardianArticleStream:
+    """
+    卫报索引源流：bronze 逐行 → (文章 sid, 篇级文本 title+body)。
+
+    毒丸容错（correctness F2）：半行 JSON/坏编码行跳过计数
+    （``bad_lines``），gzip 流损坏（截断 member）止读置 ``truncated``
+    ——bronze 崩溃半写不得炸晨检整检（消费方把两计数带进黄口 detail）；
+    嵌入侧下次修复后续跑（幂等由 content_hash 承担）。计数在 __iter__
+    消费时累加，消费完毕后可读。
+    """
+
+    def __init__(self, store: CorpusStore, *, limit: int | None = None) -> None:
+        self._store = store
+        self._limit = limit
+        self.bad_lines = 0
+        self.truncated = False
+
+    def __iter__(self) -> Iterator[tuple[str, str]]:
+        """流式迭代（计数随消费累加，消费完毕后可读）。"""
+        self.bad_lines = 0
+        self.truncated = False
+        seen: set[str] = set()
+        produced = 0
+        try:
+            for line in self._store.iter_bronze_lines(
+                _GUARDIAN_PROVIDER, _GUARDIAN_DATASET
+            ):
+                if self._limit is not None and produced >= self._limit:
+                    break
+                try:
+                    row: dict[str, Any] = json.loads(line)
+                except ValueError:  # json.JSONDecodeError/UnicodeDecodeError
+                    self.bad_lines += 1
+                    continue
+                payload = row.get("payload") or {}
+                item_id = str(row.get("sid") or payload.get("id") or "")
+                title = str(payload.get("webTitle") or "")
+                body = str(payload.get("bodyText") or "")
+                if (
+                    not item_id
+                    or item_id in seen
+                    or not title.strip()
+                    or not body.strip()
+                ):
+                    continue
+                seen.add(item_id)
+                produced += 1
+                yield item_id, f"{title}\n\n{body}"
+        except (OSError, EOFError) as exc:
+            # 截断/损坏 gzip member：止读留痕，已产行照常产出
+            self.truncated = True
+            logger.error(
+                "guardian bronze 流损坏止读（{}）：已产 {} 行 / 残行 {}",
+                exc,
+                produced,
+                self.bad_lines,
+            )
+
+
 def guardian_article_texts(
     store: CorpusStore, *, limit: int | None = None
-) -> Iterator[tuple[str, str]]:
+) -> GuardianArticleStream:
     """
-    卫报索引源：bronze 流式 → (文章 sid, 篇级文本 title+body)。
+    卫报索引源入口（流对象：``list()``/for 消费同生成器）。
 
     v0 篇级 chunk（一篇一条向量）；段级留缝（item_id 形如 ``{sid}#p{n}``，
     表结构不变）。sid 去重首见为准（append-only bronze 重採行不重嵌，
     guardian_silver.candidate_articles 同序）；无 sid/缺标题或正文残行
-    跳过。limit=有界跑批护栏（首夜/试点）；生成器逐行流式——20 万篇
-    全文不驻内存，embed_pending 同流式消费（真回填=无 limit 一次跑，
-    幂等断点续跑由 content_hash 承担）。
+    跳过。limit=有界护栏（首夜/试点）。流式——20 万篇全文不驻内存，
+    embed_pending 同流式消费；毒丸容错与计数见 GuardianArticleStream。
     """
-    seen: set[str] = set()
-    produced = 0
-    for line in store.iter_bronze_lines(_GUARDIAN_PROVIDER, _GUARDIAN_DATASET):
-        if limit is not None and produced >= limit:
-            break
-        row: dict[str, Any] = json.loads(line)
-        payload = row.get("payload") or {}
-        item_id = str(row.get("sid") or payload.get("id") or "")
-        title = str(payload.get("webTitle") or "")
-        body = str(payload.get("bodyText") or "")
-        if not item_id or item_id in seen or not title.strip() or not body.strip():
-            continue
-        seen.add(item_id)
-        produced += 1
-        yield item_id, f"{title}\n\n{body}"
+    return GuardianArticleStream(store, limit=limit)
 
 
 # ---- 周批查重缝：教训索引语义近邻（票 03 精确回指 → 票 06 升级消费口） ----
@@ -400,6 +509,10 @@ class LessonDeduper:
 
     embedder: Embedder
     duck_con: duckdb.DuckDBPyConnection
+    #: active 教训 id 集（correctness F1：检索只认当前 active 面——旧
+    #: 向量行留库可重算，归档教训不得再拦新提案）。空集=教训库缺席
+    #: 降级面（无近邻恒 None）；构造时快照（拍内一致）。
+    active_ids: frozenset[str]
     threshold: float = LESSON_SIMILAR_THRESHOLD
 
     def _index_ready(self) -> bool:
@@ -414,8 +527,8 @@ class LessonDeduper:
         return row is not None
 
     def nearest(self, statement: str) -> RagHit | None:
-        """top-1 教训近邻；余弦 ≥ 阈值才返回（否则 None=非近邻）。"""
-        if not self._index_ready():
+        """top-1 active 教训近邻；余弦 ≥ 阈值才返回（否则 None=非近邻）。"""
+        if not self.active_ids or not self._index_ready():
             return None
         hits = search(
             self.duck_con,
@@ -423,6 +536,7 @@ class LessonDeduper:
             model_id=self.embedder.model_id,
             query_vec=self.embedder.embed_query(statement),
             top_k=1,
+            only_ids=self.active_ids,
         )
         if hits and hits[0].score >= self.threshold:
             return hits[0]
@@ -437,12 +551,16 @@ def pending_count(
     model_id: str,
 ) -> int:
     """
-    只读落后计数（晨检挂项消费）：源条目在当前 model 口径下无行的条数。
+    只读落后计数（晨检挂项消费，correctness F3 判据带 hash 维）。
 
-    只数不嵌（晨检只读红线）；items 单遍消费（卫报 20 万篇流式）。
+    落后=源条目在当前 model 口径下无行**或文本变更**（content_hash
+    不符）——已嵌条目修订后晨检不得仍绿灯。只数不嵌（晨检只读
+    红线）；items 单遍消费（卫报 20 万篇流式）。
     """
-    known = set(_existing_hashes(conn, namespace, model_id))
-    return sum(1 for item_id, _text in items if item_id not in known)
+    known = _existing_hashes(conn, namespace, model_id)
+    # F3：判据带 hash 维——已嵌条目文本修订（hash 不符）也算落后，
+    # 否则晨检对「该重嵌」绿灯
+    return sum(1 for item_id, text in items if known.get(item_id) != content_hash(text))
 
 
 # ---- 引用纪律：检索产出必带引用 id（票 11 裁定延伸到检索面） ----
