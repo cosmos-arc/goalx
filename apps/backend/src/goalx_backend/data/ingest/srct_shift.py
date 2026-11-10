@@ -672,13 +672,12 @@ def run_shift(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接缝
                 sleeper=sleeper,
                 budget=budget,
             )
-        except srct.NightStop as stop:
-            stats.stopped = stop.reason
-            return stats
         except (httpx.HTTPError, sqlite3.Error, OSError, EOFError) as exc:
             stats.failed["prematch"] = f"{type(exc).__name__}: {exc}"[:120]
             logger.warning("srct shift 赛前拍相位降级（{}）", exc)
         else:
+            # 吸收恒做（触顶路径部分进度也入摘要——correctness F1）；
+            # NightStop 不上抛（collect_day 先例），stopped 在此收手整班
             stats.prematch_candidates = pre_stats.candidates
             stats.prematch_beats = pre_stats.beats
             stats.prematch_full_xi = pre_stats.full_xi
@@ -686,6 +685,9 @@ def run_shift(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接缝
             stats.raw_new += pre_stats.raw_new
             stats.parsed_ok += pre_stats.parsed_ok
             stats.failed.update(pre_stats.failed)
+            if pre_stats.stopped is not None:
+                stats.stopped = pre_stats.stopped
+                return stats
     # JC 官方拍（票 71）：同窗同预算殿后（源T 优先；发现失败只留痕）。
     # 局部导入防环（jc_shift 复用本模块的 BEIJING/slot/lead 决策件）
     from goalx_backend.data.ingest import jc_shift  # noqa: PLC0415 防环局部导入

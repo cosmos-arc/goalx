@@ -283,12 +283,27 @@ def test_pseudo_200_page_counts_failed_no_key(tmp_path: Path) -> None:
     store.close()
 
 
-def test_budget_stop_propagates_night_stop(tmp_path: Path) -> None:
-    """预算触顶抛 NightStop（进度已落库；调方 run_shift 统一接）。"""
-    with pytest.raises(srct.NightStop):
-        _run_beats(
-            tmp_path, _client(), _at(140), budget=srct.NightBudget(request_cap=1)
-        )
+def test_budget_stop_records_partial_progress(tmp_path: Path) -> None:
+    """预算触顶不上抛（collect_day 先例）：stopped 落档、已落拍计数入摘要
+    （correctness F1——部分进度丢失会让晨检/运维面对账失真）。"""
+    other = "4098888"
+    kickoff2 = KICKOFF + timedelta(minutes=5)
+    stats, store = _run_beats(
+        tmp_path,
+        _client(),
+        _at(140),
+        candidates=[(SID, KICKOFF), (other, kickoff2)],
+        budget=srct.NightBudget(
+            request_cap=2
+        ),  # 首拍 charge=1 落库，次拍 charge=2 触顶
+    )
+    assert stats.stopped == "budget"
+    assert stats.beats == 1  # 首拍已落库并计入摘要
+    assert stats.requests == 1  # 触顶那次未发出不计
+    assert store.has(
+        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, srct_prematch.prematch_key(SID, 150)
+    )
+    store.close()
 
 
 def test_final_collected_and_kicked_off_skip(tmp_path: Path) -> None:
@@ -453,7 +468,8 @@ def test_run_shift_prematch_failure_isolated(tmp_path: Path) -> None:
 
 
 def test_run_shift_prematch_budget_stop(tmp_path: Path) -> None:
-    """预算触顶在赛前拍相位：整班收手留痕（进度已落库，下轮拍键续）。"""
+    """预算触顶在赛前拍相位：整班收手留痕 + 已落拍计数并入摘要（F1）；
+    夜窗外零候选相位移交。"""
     from goalx_backend.data.ingest import srct as _srct
     from goalx_backend.data.ingest import srct_shift
 
@@ -471,10 +487,15 @@ def test_run_shift_prematch_budget_stop(tmp_path: Path) -> None:
         sleeper=lambda _s: None,
         jitter=None,
         rate_limiter=default_limiter(),
-        budget=_srct.NightBudget(request_cap=2),  # 入口 + 开售拍 = 2，赛前拍触顶
-        prematch_candidates=[(SID, KICKOFF)],
+        budget=_srct.NightBudget(request_cap=4),  # 入口+开售拍+首档拍=4，次场触顶
+        prematch_candidates=[
+            (SID, KICKOFF),
+            ("4098888", KICKOFF + timedelta(minutes=5)),
+        ],
     )
     assert stats.stopped == "budget"
+    assert stats.prematch_beats == 1  # 部分进度入摘要（correctness F1）
+    assert stats.raw_new == 2  # 开售拍 + 赛前首拍
     store.close()
 
 

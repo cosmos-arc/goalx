@@ -110,6 +110,7 @@ class PrematchStats:
     raw_new: int = 0
     parsed_ok: int = 0
     failed: dict[str, str] = field(default_factory=dict)
+    stopped: str | None = None  # budget（NightStop 不上抛——collect_day 先例）
 
 
 def run_prematch_beats(  # noqa: PLR0913 接缝集与当期班拍同构（防封/预算/统计一路传参）
@@ -127,58 +128,68 @@ def run_prematch_beats(  # noqa: PLR0913 接缝集与当期班拍同构（防封
     推进一轮赛前拍：逐候选判档 → 未拍即抓 → raw+bronze append。
 
     幂等：每档以 raw 键查 checkpoint，已拍零重抓；失败拍无键下轮自愈
-    （拍窗未过即可补）。budget 触顶抛 NightStop（进度已落库，调方统一接）。
-    observed_at=抓取时刻（PIT），不倒填名义档时刻。
+    （拍窗未过即可补）。budget 触顶不上抛——记 stats.stopped 正常返回
+    （collect_day 先例：中断点前的进度已落库且计数入摘要，调方按
+    stopped 收手）。observed_at=抓取时刻（PIT），不倒填名义档时刻。
+
+    ponytail: ingest_raw→append_bronze 两段非原子的夹缝崩溃窗会留
+    「raw 键在而 bronze 行缺」的单拍缺失（@open 的 C8 同族）——本相
+    不修：bronze_sids 索引按 sid 不按拍键，逐拍补判需全量扫描 bronze
+    （78k 行/30min 不划算）；升级路径=读数侧发现缺拍时加拍键级 bronze
+    索引（bronze_sid_backfill 同构）。
     """
     stats = PrematchStats(candidates=len(candidates))
-    for sid, kickoff in candidates:
-        if store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, sid):
-            stats.skipped_final += 1  # 夜班已收口终版页：赛前拍无增量
-            continue
-        lead = due_prematch_lead(kickoff, now)
-        if lead is None:
-            continue
-        stats.due += 1
-        key = prematch_key(sid, lead)
-        if store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key):
-            continue
-        throttle(limiter, srct.REQUEST_WINDOW, sleeper)
-        if budget is not None:
-            budget.charge(1)
-        stats.requests += 1
-        try:
-            page = srct.fetch_detail_page(client, settings, sid)
-            payload = srct.parse_detail_dispatch(page)
-        except (httpx.HTTPError, srct.SrctContentError) as exc:
-            stats.failed[key] = f"{type(exc).__name__}: {exc}"[:120]
-            logger.warning("srct prematch {} failed ({})", key, exc)
-            continue
-        observed_at = srct.utc_now_iso()
-        store.ingest_raw(
-            srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key, page, ext=".html"
-        )
-        stats.raw_new += 1
-        store.append_bronze(
-            srct.SRCT_PROVIDER,
-            srct.DETAIL_DATASET,
-            [
-                {
-                    "provider": srct.SRCT_PROVIDER,
-                    "dataset": srct.DETAIL_DATASET,
-                    "sid": sid,
-                    "fetched_at": observed_at,
-                    "parser_version": srct.BRONZE_VERSIONS[srct.DETAIL_DATASET],
-                    "raw_sha": store.raw_sha(
-                        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key
-                    ),
-                    "payload": payload,
-                }
-            ],
-        )
-        stats.parsed_ok += 1
-        stats.beats += 1
-        if lineup_complete(payload):
-            stats.full_xi += 1
+    try:
+        for sid, kickoff in candidates:
+            if store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, sid):
+                stats.skipped_final += 1  # 夜班已收口终版页：赛前拍无增量
+                continue
+            lead = due_prematch_lead(kickoff, now)
+            if lead is None:
+                continue
+            stats.due += 1
+            key = prematch_key(sid, lead)
+            if store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key):
+                continue
+            throttle(limiter, srct.REQUEST_WINDOW, sleeper)
+            if budget is not None:
+                budget.charge(1)  # 触顶时本次请求不发出（requests 不计）
+            stats.requests += 1
+            try:
+                page = srct.fetch_detail_page(client, settings, sid)
+                payload = srct.parse_detail_dispatch(page)
+            except (httpx.HTTPError, srct.SrctContentError) as exc:
+                stats.failed[key] = f"{type(exc).__name__}: {exc}"[:120]
+                logger.warning("srct prematch {} failed ({})", key, exc)
+                continue
+            observed_at = srct.utc_now_iso()
+            store.ingest_raw(
+                srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key, page, ext=".html"
+            )
+            stats.raw_new += 1
+            store.append_bronze(
+                srct.SRCT_PROVIDER,
+                srct.DETAIL_DATASET,
+                [
+                    {
+                        "provider": srct.SRCT_PROVIDER,
+                        "dataset": srct.DETAIL_DATASET,
+                        "sid": sid,
+                        "fetched_at": observed_at,
+                        "parser_version": srct.BRONZE_VERSIONS[srct.DETAIL_DATASET],
+                        "raw_sha": store.raw_sha(
+                            srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key
+                        ),
+                        "payload": payload,
+                    }
+                ],
+            )
+            stats.parsed_ok += 1
+            stats.beats += 1
+            if lineup_complete(payload):
+                stats.full_xi += 1
+    except srct.NightStop as stop:
+        stats.stopped = stop.reason  # 已落拍计数保留在摘要（correctness F1）
     return stats
 
 
