@@ -15,7 +15,9 @@ fdhist join。融合终选（收缩 vs 概率加权 vs 不用）待人裁决—�
 
 from __future__ import annotations
 
+import math
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -37,6 +39,17 @@ BUCKETS: tuple[tuple[str, int, int], ...] = (
     ("wk5_8", 5, 8),
     ("wk9p", 9, 10**6),
 )
+# 票 33 半衰期敏感性栏（账本 §4.2#8，AFML ch.4/7 + Dixon-Coles 1997）：
+# 主 goal-DC 臂（half_life_days 参数）之外随车跑 2/2.5/3 季半衰期臂 +
+# 无衰减基准，报告 diff 列对无衰减配对——衰减假设的读数依赖一眼可见。
+DAYS_PER_SEASON = 365.0
+DECAY_HALF_LIFE_SEASONS: tuple[float, ...] = (2.0, 2.5, 3.0)
+NO_DECAY = "goal_dc_nodecay"
+
+
+def _decay_arm_name(half_life_seasons: float) -> str:
+    """半衰期（季）→ 臂名：2.0→goal_dc_hl2s、2.5→goal_dc_hl2.5s。"""
+    return f"goal_dc_hl{half_life_seasons:g}s"
 
 
 @dataclass(frozen=True)
@@ -164,17 +177,23 @@ def _group_weeks(target_matches: list[CompareMatch]) -> list[list[CompareMatch]]
     return weeks
 
 
-def _fit_variants(
+def _fit_variants(  # noqa: PLR0913 周级拟合旋钮面：变体族各自独立参数（票 45/33）
     league: str,
     season: str,
     prior: list[CompareMatch],
     cutoff_day: date,
     *,
     half_life_days: float,
+    decay_half_life_seasons: tuple[float, ...],
     shrink_k: tuple[float, ...],
     skipped: dict[str, int],
 ) -> dict[str, DCArtifact | BlendModel | None]:
-    """周 cutoff 处的训练与变体构造（goal 基准 + xG 版 + 概率加权 + 收缩族）。"""
+    """
+    周 cutoff 处的训练与变体构造。
+
+    goal 基准 + xG 版 + 概率加权 + 收缩族 + 半衰期敏感性梯
+    （2-3 季衰减臂与无衰减基准，票 33）。
+    """
     goal_rows = [
         TrainingRow(
             match_date=m.datetime_utc[:10],
@@ -197,13 +216,13 @@ def _fit_variants(
         for m in prior
         if m.npxg_home is not None and m.npxg_away is not None
     ]
-    artifacts: dict[str, DCArtifact | BlendModel | None] = {}
-    for name, fit in (
+    competition = f"{league}-{season}"
+    fits: list[tuple[str, Callable[[], DCArtifact]]] = [
         (
             GOAL_DC,
             lambda: fit_dc_model(
                 goal_rows,
-                competition=f"{league}-{season}",
+                competition=competition,
                 half_life_days=half_life_days,
                 as_of=cutoff_day,
             ),
@@ -212,12 +231,38 @@ def _fit_variants(
             XG_DC,
             lambda: fit_xg_dc(
                 xg_rows,
-                competition=f"{league}-{season}",
+                competition=competition,
                 half_life_days=half_life_days,
                 as_of=cutoff_day,
             ),
         ),
-    ):
+    ]
+    # 衰减梯（闭包晚绑定陷阱：hl 经默认参绑定）
+    fits.extend(
+        (
+            _decay_arm_name(hl),
+            lambda hl=hl: fit_dc_model(
+                goal_rows,
+                competition=competition,
+                half_life_days=hl * DAYS_PER_SEASON,
+                as_of=cutoff_day,
+            ),
+        )
+        for hl in decay_half_life_seasons
+    )
+    fits.append(
+        (
+            NO_DECAY,
+            lambda: fit_dc_model(
+                goal_rows,
+                competition=competition,
+                half_life_days=math.inf,
+                as_of=cutoff_day,
+            ),
+        )
+    )
+    artifacts: dict[str, DCArtifact | BlendModel | None] = {}
+    for name, fit in fits:
         try:
             artifacts[name] = fit()
         except ValueError:
@@ -305,6 +350,7 @@ def _weekly_walk_forward(
     corpus: list[CompareMatch],
     *,
     half_life_days: float,
+    decay_half_life_seasons: tuple[float, ...],
     shrink_k: tuple[float, ...],
     skipped: dict[str, int],
 ) -> list[Record]:
@@ -326,6 +372,7 @@ def _weekly_walk_forward(
             prior,
             date.fromisoformat(cutoff[:10]),
             half_life_days=half_life_days,
+            decay_half_life_seasons=decay_half_life_seasons,
             shrink_k=shrink_k,
             skipped=skipped,
         )
@@ -338,10 +385,12 @@ def _weekly_walk_forward(
 def _summarize(
     records: list[Record], *, baseline: str = GOAL_DC
 ) -> dict[str, dict[str, Any]]:
-    """逐变体：均值指标 + 对基准的配对差（负 = 优于基准）。"""
+    """逐变体：均值指标 + 对基准的配对差（负 = 优于基准，RPS/log loss 双列）。"""
     variants = sorted({r.variant for r in records})
     summary: dict[str, dict[str, Any]] = {}
-    base_by_match = {r.match_id: r.rps for r in records if r.variant == baseline}
+    base_by_match = {
+        r.match_id: (r.rps, r.log_loss) for r in records if r.variant == baseline
+    }
     for variant in variants:
         rows = [r for r in records if r.variant == variant]
         entry: dict[str, Any] = {
@@ -351,12 +400,17 @@ def _summarize(
         }
         if variant != baseline:
             paired = [
-                r.rps - base_by_match[r.match_id]
+                (r.rps - base[0], r.log_loss - base[1])
                 for r in rows
-                if r.match_id in base_by_match
+                if (base := base_by_match.get(r.match_id)) is not None
             ]
             if paired:
-                entry["rps_delta_vs_goal_dc"] = sum(paired) / len(paired)
+                entry[f"rps_delta_vs_{baseline}"] = sum(p[0] for p in paired) / len(
+                    paired
+                )
+                entry[f"log_loss_delta_vs_{baseline}"] = sum(
+                    p[1] for p in paired
+                ) / len(paired)
                 entry["paired_n"] = len(paired)
         summary[variant] = entry
     return summary
@@ -369,13 +423,16 @@ def run_xg_comparison(
     seasons: tuple[str, ...],
     train_seasons: int = 3,
     half_life_days: float = 365.0,
+    decay_half_life_seasons: tuple[float, ...] = DECAY_HALF_LIFE_SEASONS,
     shrink_k: tuple[float, ...] = (6.0,),
 ) -> dict[str, Any]:
     """
     实证对比入口：语料在 understat_matches（先 understat-sync/backfill）。
 
     seasons 为目标赛季（评分对象）；训练窗 = 各目标赛季前 train_seasons 季
-    + 本季 walk-forward 增量。返回 overall + 周桶双层摘要与跳过计数。
+    + 本季 walk-forward 增量。返回 overall + 周桶双层摘要与跳过计数；
+    另附半衰期敏感性栏（票 33）：主 goal-DC 半衰期 + 2-3 季衰减梯 +
+    无衰减基准，diff 列对无衰减配对——衰减臂只进本栏不进主对比表。
     """
     first_target = min(int(s) for s in seasons)
     # 训练窗 = 最早目标季前 train_seasons 季 → 最晚目标季，整段载入
@@ -402,6 +459,7 @@ def run_xg_comparison(
                 target,
                 matches,
                 half_life_days=half_life_days,
+                decay_half_life_seasons=decay_half_life_seasons,
                 shrink_k=shrink_k,
                 skipped=skipped,
             )
@@ -412,9 +470,18 @@ def run_xg_comparison(
                 len(season_records),
             )
             records.extend(season_records)
+    # 敏感性栏的臂集 = 主 goal-DC（当前半衰期）+ 衰减梯 + 无衰减基准；
+    # 其余变体（xG/融合/收缩/forecast）与衰减无关，不入栏。
+    decay_variants = {GOAL_DC, NO_DECAY} | {
+        _decay_arm_name(hl) for hl in decay_half_life_seasons
+    }
+    decay_records = [r for r in records if r.variant in decay_variants]
+    main_records = [
+        r for r in records if r.variant == GOAL_DC or r.variant not in decay_variants
+    ]
     by_bucket: dict[str, dict[str, dict[str, Any]]] = {}
     for name, _, _ in BUCKETS:
-        bucket_records = [r for r in records if r.bucket == name]
+        bucket_records = [r for r in main_records if r.bucket == name]
         if bucket_records:
             by_bucket[name] = _summarize(bucket_records)
     return {
@@ -423,10 +490,31 @@ def run_xg_comparison(
             "seasons": list(seasons),
             "train_seasons": train_seasons,
             "half_life_days": half_life_days,
+            "decay_half_life_seasons": list(decay_half_life_seasons),
             "shrink_k": list(shrink_k),
             "bucket_edges": [name for name, _, _ in BUCKETS],
         },
-        "overall": _summarize(records),
+        "overall": _summarize(main_records),
         "by_bucket": by_bucket,
+        "decay_sensitivity": {
+            "baseline": NO_DECAY,
+            "variants": {
+                GOAL_DC: half_life_days,
+                **{
+                    _decay_arm_name(hl): hl * DAYS_PER_SEASON
+                    for hl in decay_half_life_seasons
+                },
+                NO_DECAY: None,
+            },
+            "overall": _summarize(decay_records, baseline=NO_DECAY),
+            # 臂级缺勤显式化（independent 复核 F2）：退化语料下某臂逐周
+            # 拟合失败时 skipped 按 fit_{arm}/no_team_{arm} 记，本栏就地
+            # 透出对应信号——读栏者不必回主表对账哪些臂缺席。
+            "skipped": {
+                key: count
+                for key, count in skipped.items()
+                if any(key.endswith(arm) for arm in decay_variants)
+            },
+        },
         "skipped": skipped,
     }

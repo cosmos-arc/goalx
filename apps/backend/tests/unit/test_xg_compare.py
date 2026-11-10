@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 
+import pytest
 from numpy import random as np_random
 
 from goalx_backend.evaluation.xg_compare import (
@@ -129,6 +130,101 @@ def test_run_xg_comparison_end_to_end(db) -> None:
     # 目标季所有场次都有 forecast（合成语料全完场）
     assert overall["understat_forecast"]["n"] == 16
     assert report["params"]["seasons"] == ["2025"]
+
+
+def test_run_xg_comparison_decay_sensitivity_section(db) -> None:
+    """票 33 半衰期敏感性栏：报告附 goal-DC 衰减梯（2/2.5/3 季 + 无衰减
+    基准），配对差对无衰减列 delta；衰减臂不漏进主对比表。"""
+    rng = np_random.default_rng(9)
+    rows = [
+        *_synthetic_season(rng, "2023", 10, date(2023, 8, 12)),  # 训练季
+        *_synthetic_season(rng, "2024", 10, date(2024, 8, 10)),  # 训练季
+        *_synthetic_season(rng, "2025", 8, date(2025, 8, 9)),  # 目标季
+    ]
+    _insert(db, rows)
+    report = run_xg_comparison(
+        db, leagues=("epl",), seasons=("2025",), train_seasons=2, shrink_k=(6.0,)
+    )
+    section = report["decay_sensitivity"]
+    assert section["baseline"] == "goal_dc_nodecay"
+    assert section["variants"] == {
+        "goal_dc": 365.0,
+        "goal_dc_hl2s": 730.0,
+        "goal_dc_hl2.5s": 912.5,
+        "goal_dc_hl3s": 1095.0,
+        "goal_dc_nodecay": None,
+    }
+    overall = section["overall"]
+    for arm in section["variants"]:
+        assert overall[arm]["n"] == 16  # 与主基准同覆盖（8 周 × 2 场）
+    for arm in ("goal_dc", "goal_dc_hl2s", "goal_dc_hl2.5s", "goal_dc_hl3s"):
+        # 配对差对无衰减基准（负 = 优于无衰减）；RPS 与 log loss 双指标
+        assert overall[arm]["paired_n"] == 16
+        assert "rps_delta_vs_goal_dc_nodecay" in overall[arm]
+        assert "log_loss_delta_vs_goal_dc_nodecay" in overall[arm]
+    assert "rps_delta_vs_goal_dc_nodecay" not in overall["goal_dc_nodecay"]
+    # 臂级缺勤显式化（independent 复核 F2）：栏内自带 skipped 信号位，
+    # 健康语料为空映射
+    assert section["skipped"] == {}
+    # 衰减臂只进敏感性栏，不污染主对比 summary（那里讲 xG 融合，不讲衰减）
+    assert "goal_dc_hl2s" not in report["overall"]
+    assert all("goal_dc_nodecay" not in b for b in report["by_bucket"].values())
+    assert report["params"]["decay_half_life_seasons"] == [2.0, 2.5, 3.0]
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 7, 11])
+def test_decay_arms_recover_known_regime_shift(seed: int) -> None:
+    """已知半衰期恢复（行为级）：t1/t2 攻强对换的合成语料（旧季 t1 弱 t2 强、
+    新三季反向），2 季半衰期拟合的 t1−t2 强度对比显著高于无衰减，且更接近
+    新 regime 真值 ±0.5——近因权重吃回已知换血，报告敏感性栏的统计前提
+    成立。对换设计保持两 regime 总进球不变（ρ/水平不吸收方向信号）。
+    种子族钉方向稳定性（independent 复核 F3：1/2/3/11 + 原 7）。"""
+    from goalx_backend.modelling.dc_model import TrainingRow, fit_dc_model
+
+    teams = ("t1", "t2", "t3", "t4")
+    defence = {"t1": -0.1, "t2": 0.0, "t3": 0.1, "t4": 0.0}
+    old_regime = {"t1": -0.5, "t2": 0.5, "t3": 0.0, "t4": 0.0}
+    new_regime = {"t1": 0.5, "t2": -0.5, "t3": 0.0, "t4": 0.0}
+    schedule: list[tuple[str, str, str, float, float]] = []
+    for year, n_weeks, attack in (
+        (2022, 15, old_regime),
+        (2023, 12, new_regime),
+        (2024, 12, new_regime),
+        (2025, 10, new_regime),
+    ):
+        day = date(year, 8, 13)  # 每季重置到 8 月（旧 regime 距 as_of 2+ 年）
+        for week in range(n_weeks):
+            for home, away in (
+                (teams[week % 4], teams[(week + 1) % 4]),
+                (teams[(week + 2) % 4], teams[(week + 3) % 4]),
+            ):
+                schedule.append(
+                    (
+                        day.isoformat(),
+                        home,
+                        away,
+                        math.exp(0.3 + attack[home] + defence[away]),
+                        math.exp(attack[away] + defence[home]),
+                    )
+                )
+            day += timedelta(days=7)
+    rng = np_random.default_rng(seed)
+    rows = [
+        TrainingRow(d, h, a, int(rng.poisson(lh)), int(rng.poisson(la)))
+        for d, h, a, lh, la in schedule
+    ]
+    decayed = fit_dc_model(rows, competition="syn", half_life_days=730.0)
+    no_decay = fit_dc_model(rows, competition="syn", half_life_days=math.inf)
+
+    def contrast(artifact: object) -> float:
+        return artifact.teams["t1"]["attack"] - artifact.teams["t2"]["attack"]  # type: ignore[attr-defined]
+
+    c_decayed, c_no_decay = contrast(decayed), contrast(no_decay)
+    # 新 regime 真值对比 = 0.5−(−0.5) = 1.0；衰减拟合显著更靠近（近因权重）
+    assert c_decayed - c_no_decay > 0.05
+    assert abs(c_decayed - 1.0) < abs(c_no_decay - 1.0)
+    assert decayed.half_life_days == 730.0
+    assert no_decay.half_life_days == math.inf
 
 
 def test_run_xg_comparison_skips_missing_league(db) -> None:
