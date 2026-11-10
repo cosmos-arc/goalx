@@ -78,6 +78,7 @@ below assumes `task`:
   artifacts (spec, research notes, audit reports) into `docs/plans/` and commit
   them — preserving the relative layout so cross-links keep resolving (see
   `docs/plans/goalx-quant/` for the pattern).
+- Prefect isolation: goalx runs its own `PREFECT_HOME` (`Taskfile.yml` serve-schedules pins it to `.scratch/prefect-home`) — the default `~/.prefect` is shared with the ditto project (prefect 3.9.x), whose DB migrations goalx 3.7.x cannot read (2026-11-10 incident: revision `27d8f4e1a6c9` unreadable → stack deadlock). Always start the stack via `task serve-schedules`; never run bare `prefect` commands against the default home.
 - Branching: `main` is protected (`no-commit-to-branch` hook + fail-closed CI);
   land changes via short-lived branches and PRs, as in ditto. **PR 一律
   base=main**（`pr-base-guard` workflow 对 base≠main 红叉）：依赖前票时
