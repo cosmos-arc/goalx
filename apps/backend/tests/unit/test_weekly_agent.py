@@ -21,8 +21,8 @@ from goalx_backend.evaluation import weekly_agent
 
 def test_migration_v54_idempotent(db: sqlite3.Connection) -> None:
     """v54 幂等：三表就位、花费/锚账 append-only、重跑零效果。"""
-    assert migrate(db) == 55
-    assert migrate(db) == 55  # 同版本重跑零效果
+    assert migrate(db) == 56
+    assert migrate(db) == 56  # 同版本重跑零效果
     for table in (
         "llm_proposal_costs",
         "weekly_agent_state",
@@ -376,6 +376,234 @@ def test_over_five_cap_truncates(db: sqlite3.Connection, tmp_path: Any) -> None:
     )
     # 7 条台账 → critique 只有前 5 条各一次 + generate 一次 = 6 次调用
     assert len(chat.prompts) == 6
+
+
+# ---- 票 06 查重升级：duplicate_reason 语义近邻（注入 embedder/duck 缝） ----
+
+
+class _HashEmbedder:
+    """确定性假 embedder（test_rag.HashEmbedder 同款）：token 哈希进桶计数。
+
+    dim=256：中文长 token 视作单桶（无分词），桶碰撞须压到零——近邻
+    0.2236（=1/√16，词重合的理论值）与对照 0.0 才对阈值 0.2 稳定分侧。
+    """
+
+    model_id = "fake-hash-v1"
+    dim = 256
+
+    def _vec(self, text: str) -> list[float]:
+        import hashlib
+        import re as _re
+
+        vec = [0.0] * self.dim
+        for tok in _re.findall(r"\w+", text.lower()):
+            digest = hashlib.sha256(tok.encode()).hexdigest()
+            vec[int(digest[:8], 16) % self.dim] += 1.0
+        return vec
+
+    def embed_passages(self, texts: Any) -> list[list[float]]:
+        """批量 passage 向量。"""
+        return [self._vec(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        """单条 query 向量。"""
+        return self._vec(text)
+
+
+_NEAR_DUP_STATEMENT = "未扣水口径数字禁止进判读 池面复现提案"
+_CONTROL_STATEMENT = "english control statement about pool drift"
+
+
+def test_semantic_dedup_rejects_near_duplicate_lesson(tmp_path: Any) -> None:
+    """票 06 接缝演示：近邻复现死法被拦（lesson_similar:L-01），非近邻放行。"""
+    import json as _json
+    from pathlib import Path
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.db import connect, migrate
+    from goalx_backend.evaluation import rag, weekly_agent
+
+    # 文件库（duck 只读 ATTACH 挂不上 :memory:）+ 教训索引先嵌入
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_lesson(tmp_path, "L-01", trigger="未扣水口径数字禁止进判读")
+    _seed_lesson(tmp_path, "L-02", trigger="无关触发面")
+    embedder = _HashEmbedder()
+    rag.embed_pending(
+        conn,
+        namespace=rag.NAMESPACE_LESSON,
+        items=rag.lesson_texts(tmp_path),
+        embedder=embedder,
+    )
+    duck_con = rag.connect_rag(db_path)
+    # 假件向量分布≠真嵌入：阈值经缝注入（0.2 使 token 重合近邻过阈；
+    # 生产阈=rag.LESSON_SIMILAR_THRESHOLD，真分布校准见
+    # test_rag.py::test_fastembed_threshold_calibration）
+    deduper = rag.LessonDeduper(
+        embedder=embedder,
+        duck_con=duck_con,
+        active_ids=frozenset({"L-01", "L-02"}),
+        threshold=0.2,
+    )
+
+    # duplicate_reason 直钉：近邻=lesson_similar:L-01；非近邻/缝缺席=v0 行为
+    reason = weekly_agent.duplicate_reason(
+        "edge:9",
+        batch_refs=set(),
+        refuted_refs=set(),
+        statement=_NEAR_DUP_STATEMENT,
+        lesson_deduper=deduper,
+    )
+    assert reason is not None
+    assert reason.startswith("lesson_similar:L-01")
+    assert (
+        weekly_agent.duplicate_reason(
+            "edge:9",
+            batch_refs=set(),
+            refuted_refs=set(),
+            statement=_CONTROL_STATEMENT,
+            lesson_deduper=deduper,
+        )
+        is None
+    )
+    assert (
+        weekly_agent.duplicate_reason("edge:9", batch_refs=set(), refuted_refs=set())
+        is None
+    )
+
+    # 管线级：近邻复现死法提案被拒收留痕，无关提案过审
+    _seed_finding(conn, finding_id=42)
+    _seed_finding(conn, finding_id=43)
+    raw = [
+        {
+            "statement": _NEAR_DUP_STATEMENT,
+            "judgement": "门",
+            "data_face": "面",
+            "expected_n": "n",
+            "ledger_ref": "edge:42",
+            "refs": ["42", "L-01"],
+        },
+        {
+            "statement": _CONTROL_STATEMENT,
+            "judgement": "门",
+            "data_face": "面",
+            "expected_n": "n",
+            "ledger_ref": "edge:43",
+            "refs": ["43"],
+        },
+    ]
+
+    class _ReplyChat:
+        """固定回复桩（本测试只有 generate 一次调用即可断言拒收面）。"""
+
+        def __call__(self, prompt: str) -> weekly_agent.ChatOutcome:
+            return weekly_agent.ChatOutcome(
+                content=f"```json\n{_json.dumps(raw, ensure_ascii=False)}\n```",
+                model="glm-5.3",
+                prompt_tokens=100,
+                completion_tokens=50,
+                cost_cny=0.0022,
+            )
+
+    report = weekly_agent.run_weekly_batch(
+        conn,
+        store=CorpusStore(tmp_path / "corpus"),
+        chat=_ReplyChat(),  # type: ignore[arg-type]
+        lessons_dir=Path(tmp_path),
+        run_date="2026-11-16",
+        lesson_deduper=deduper,
+    )
+    assert report["status"] == "generated"
+    proposals = report["proposals"]
+    rejected = report["rejected"]
+    assert len(proposals) == 1
+    assert proposals[0]["statement"] == _CONTROL_STATEMENT
+    assert len(rejected) == 1
+    assert rejected[0]["reasons"][0].startswith("lesson_similar:L-01")
+    duck_con.close()
+    conn.close()
+
+
+def test_semantic_dedupe_degrades_not_crashes_on_duck_query_error(
+    tmp_path: Any,
+) -> None:
+    """correctness F6：查询期 duckdb.Error 不炸周拍——降级回精确面留痕。"""
+    from typing import Any as _Any
+    from typing import cast as _cast
+
+    import duckdb as _duckdb
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.db import connect, migrate
+    from goalx_backend.evaluation import rag, weekly_agent
+
+    class _ExplodingDuck:
+        """查询期必炸的假 duck 连接（ATTACH 成功后的查询期故障形态）。"""
+
+        def execute(self, *_args: _Any, **_kwargs: _Any) -> _Any:
+            raise _duckdb.Error("query-time boom")
+
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    exploding = rag.LessonDeduper(
+        embedder=_HashEmbedder(),
+        duck_con=_cast("_duckdb.DuckDBPyConnection", _ExplodingDuck()),
+        active_ids=frozenset({"L-01"}),
+    )
+    # 语义缝查询期炸：duplicate_reason 降级回精确面（None），不向上抛
+    assert (
+        weekly_agent.duplicate_reason(
+            "edge:9",
+            batch_refs=set(),
+            refuted_refs=set(),
+            statement="任何措辞",
+            lesson_deduper=exploding,
+        )
+        is None
+    )
+    # 周拍级：同故障缝下一拍仍 generated（不炸整拍）
+    _seed_finding(conn, finding_id=42)
+    _seed_lesson(tmp_path, "L-01")
+
+    class _OneProposalChat:
+        """一次 generate 回单条好提案（语义面本步被降级跳过）。"""
+
+        def __call__(self, prompt: str) -> weekly_agent.ChatOutcome:
+            import json as _json
+
+            return weekly_agent.ChatOutcome(
+                content=_json.dumps(
+                    [
+                        {
+                            "statement": "阵型族条件面的独立新提案",
+                            "judgement": "门",
+                            "data_face": "面",
+                            "expected_n": "n",
+                            "ledger_ref": "edge:42",
+                            "refs": ["42"],
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                model="glm-5.3",
+                prompt_tokens=100,
+                completion_tokens=50,
+                cost_cny=0.0022,
+            )
+
+    report = weekly_agent.run_weekly_batch(
+        conn,
+        store=CorpusStore(tmp_path / "corpus"),
+        chat=_OneProposalChat(),  # type: ignore[arg-type]
+        lessons_dir=Path(tmp_path),
+        run_date="2026-11-16",
+        lesson_deduper=exploding,
+    )
+    assert report["status"] == "generated"
+    assert len(report["proposals"]) == 1
+    conn.close()
 
 
 def test_beat_files_append_only_on_same_date_rerun(

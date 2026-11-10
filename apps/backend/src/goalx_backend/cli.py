@@ -51,7 +51,7 @@ import argparse
 import json
 import sqlite3
 import sys
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, date, datetime
@@ -109,6 +109,7 @@ from goalx_backend.evaluation import (
     edge_scan,
     hypothesis_registry,
     market_lambda,
+    rag,
     unlock_report,
     weekly_agent,
 )
@@ -1289,6 +1290,47 @@ def _cmd_news_pit_beat(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_rag_embed(args: argparse.Namespace) -> None:
+    """
+    RAG 增量嵌入（vision-build 票 06）：夜拍/晨检后增量 embed 新语料/新教训。
+
+    幂等：content_hash 相同跳过（同模型口径重跑零效果）；换模型=对新
+    model_id 全量重嵌（rag_embeddings 主键吸收，旧口径原地保留）。首跑
+    会拉 fastembed 模型（运行期下载，约 0.22GB，缓存后零下载）。
+    --limit=最多嵌 N 条**新**条目（correctness F5：过滤已嵌后计数——
+    同参数重跑能推进分段回填，非前缀截断；无 limit=全量）。
+    """
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    conn = connect(settings.db_path)
+    try:
+        migrate(conn)
+        embedder = rag.FastembedEmbedder()
+        if args.namespace == "lessons":
+            namespace = rag.NAMESPACE_LESSON
+            items: Iterable[tuple[str, str]] = rag.lesson_texts()
+        else:
+            namespace = rag.NAMESPACE_GUARDIAN
+            items = rag.guardian_article_texts(store)
+        stats = rag.embed_pending(
+            conn,
+            namespace=namespace,
+            items=items,
+            embedder=embedder,
+            max_new=args.limit,
+        )
+    finally:
+        conn.close()
+        store.close()
+    payload = {
+        "namespace": namespace,
+        "model_id": embedder.model_id,
+        **stats,
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("rag-embed: {}", payload)
+
+
 def _cmd_guardian_status() -> None:
     """卫报双轨报告（autoresearch 票 17）：回填存量清单 + 增量通道夜拍面（只读）。"""
     payload = tasks.guardian_status()
@@ -2421,6 +2463,25 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         action="store_true",
         help="不开语料duckdb(参考仅legacy欧赔行可算;冒烟用,生产勿用)",
     )
+    rag_embed_parser = sub.add_parser(
+        "rag-embed",
+        help=(
+            "RAG增量嵌入(票06;幂等content_hash跳过;"
+            "--namespace lessons|guardian [--limit N];首跑拉模型约0.22GB)"
+        ),
+    )
+    rag_embed_parser.add_argument(
+        "--namespace",
+        required=True,
+        choices=("lessons", "guardian"),
+        help="索引命名空间（教训条目/卫报语料）",
+    )
+    rag_embed_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="最多嵌 N 条新条目(过滤已嵌后计数,同参重跑可推进分段回填;缺省全量)",
+    )
     sub.add_parser(
         "morning-check",
         help="09:05晨检代码化(ingest-orchestration票01/05;21项只读红绿面,任何fail退出1)",
@@ -2680,6 +2741,7 @@ def main(argv: list[str] | None = None) -> int:
         "morning-check": _cmd_morning_check,
         "news-pit-beat": lambda: _cmd_news_pit_beat(args),
         "guardian-status": _cmd_guardian_status,
+        "rag-embed": lambda: _cmd_rag_embed(args),
         "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),

@@ -89,7 +89,9 @@ from goalx_backend.evaluation import (
     accuracy,
     anchor_sentinel,
     edge_scan,
+    lessons,
     monthly_read,
+    rag,
     weekly_agent,
 )
 from goalx_backend.evaluation import clv as clv_mod
@@ -1435,6 +1437,31 @@ def weekly_agent_batch() -> dict[str, object]:
     settings = get_settings()
     with task_conn() as conn:
         store = CorpusStore(settings.corpus_root)
+        # 票 06 语义查重缝：真 embedder 注入（教训索引空=零嵌入降级，
+        # 见 rag.LessonDeduper._index_ready）；duck 只读 ATTACH 失败=回
+        # 票 03 精确面（黄口可见，不炸周拍）。active 集构造时快照
+        # （correctness F1：检索只认当前 active 教训面，归档不拦新提案；
+        # 教训库不可读=空集降级回精确面）
+        embedder = rag.FastembedEmbedder()
+        active_ids: frozenset[str]
+        try:
+            active_ids = rag.active_lesson_ids()
+        except (lessons.LessonFormatError, OSError, RuntimeError) as exc:
+            logger.warning("weekly 语义查重缝降级（教训库不可读）：{}", exc)
+            active_ids = frozenset[str]()
+        duck_con: duckdb.DuckDBPyConnection | None = None
+        try:
+            duck_con = rag.connect_rag(settings.db_path)
+        except (duckdb.Error, OSError) as exc:
+            # corpus_duckdb.reader 同款降级面（缺席/被锁占不炸周拍）
+            logger.warning("weekly 语义查重缝降级（duck attach 失败）：{}", exc)
+        deduper = (
+            rag.LessonDeduper(
+                embedder=embedder, duck_con=duck_con, active_ids=active_ids
+            )
+            if duck_con is not None
+            else None
+        )
 
         def chat(prompt: str) -> weekly_agent.ChatOutcome:
             result = glm_chat(
@@ -1455,8 +1482,12 @@ def weekly_agent_batch() -> dict[str, object]:
             )
 
         try:
-            return weekly_agent.run_weekly_batch(conn, store=store, chat=chat)
+            return weekly_agent.run_weekly_batch(
+                conn, store=store, chat=chat, lesson_deduper=deduper
+            )
         finally:
+            if duck_con is not None:
+                duck_con.close()
             store.close()
 
 

@@ -764,6 +764,117 @@ def _write_lesson_md(
     return path
 
 
+def _fixed_vec(text: str, dim: int = 4) -> list[float]:
+    """定长确定性向量（晨检测试用，与真 embedder 无关）。"""
+    return [float(len(text) % d) for d in range(1, dim + 1)]
+
+
+class _FixedEmbedder:
+    """零依赖假 embedder：model_id 可指定（晨检只数行不比向量）。"""
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+        self.dim = 4
+
+    def embed_passages(self, texts: Any) -> list[list[float]]:
+        """批量 passage 向量。"""
+        return [_fixed_vec(text, self.dim) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        """单条 query 向量。"""
+        return _fixed_vec(text, self.dim)
+
+
+def test_check_rag_index_lag_states(
+    db: sqlite3.Connection, store: CorpusStore, tmp_path: Path
+) -> None:
+    """项 25（vision-build 票 06）：落后条数只读报送（零 embed 零写入）。"""
+    from goalx_backend.evaluation import rag
+    from goalx_backend.morning_check import check_rag_index_lag
+
+    library = tmp_path / "lessons"
+    _write_lesson_md(library, 1)
+    # 空语料+教训未嵌：教训落后即黄（增量入口 CLI 该跑了）
+    item = check_rag_index_lag(db, store, lessons_dir=library)
+    assert item.status == DEGRADED
+    assert "教训 1" in item.detail
+    # 教训已嵌（当前 model 口径）：绿，语料空=零落后
+    rag.embed_pending(
+        db,
+        namespace=rag.NAMESPACE_LESSON,
+        items=rag.lesson_texts(library),
+        embedder=_FixedEmbedder(rag.current_model_id()),
+    )
+    item = check_rag_index_lag(db, store, lessons_dir=library)
+    assert item.status == OK
+    assert "教训 0 / 卫报 0" in item.detail
+    # 卫报语料来了未嵌：落后数进 detail（小量不黄——真回填前的余量阈值）
+    store.append_bronze(
+        "guardian",
+        "news_article",
+        [
+            {
+                "sid": "art-1",
+                "parser_version": "guardian_v1",
+                "payload": {"id": "art-1", "webTitle": "T", "bodyText": "B"},
+            }
+        ],
+    )
+    item = check_rag_index_lag(db, store, lessons_dir=library)
+    assert item.status == OK
+    assert "卫报 1" in item.detail
+    # 教训库不可读：黄不炸整检（项 22 同款可见性兜底）
+    item = check_rag_index_lag(db, store, lessons_dir=tmp_path / "nowhere")
+    assert item.status == DEGRADED
+    assert "不可读" in item.detail
+
+
+def test_morning_check_survives_poison_guardian_bronze(tmp_path: Path) -> None:
+    """correctness F2（vision-build 票 06）：bronze 毒丸行/截断 gzip 不炸整检
+    ——run_morning_check 仍产 25 项、项 25 降黄、残行/截断计数可见。"""
+    import gzip as _gzip
+
+    from goalx_backend import morning_check as _mc
+    from goalx_backend.db import connect as _connect
+    from goalx_backend.db import migrate as _migrate
+
+    settings = Settings(db_path=tmp_path / "goalx.db", corpus_root=tmp_path / "corpus")
+    conn = _connect(settings.db_path)
+    _migrate(conn)
+    conn.close()
+    store = CorpusStore(settings.corpus_root)
+    store.append_bronze(
+        "guardian",
+        "news_article",
+        [
+            {
+                "sid": "art-1",
+                "parser_version": "guardian_v1",
+                "payload": {
+                    "id": "art-1",
+                    "webTitle": "T",
+                    "bodyText": "B",
+                    "webPublicationDate": "2026-11-01T09:00:00Z",
+                },
+            }
+        ],
+    )
+    store.close()
+    # 毒丸：半行 JSON（新 member 残文）+ 尾随垃圾字节（截断 member 形态）
+    bronze = settings.corpus_root / "bronze" / "guardian" / "news_article.ndjson.gz"
+    with bronze.open("ab") as raw_fh:
+        with _gzip.GzipFile(fileobj=raw_fh, mode="ab", mtime=0) as fh:
+            fh.write(b'{"sid": "art-2", "parser_ver\n')
+        raw_fh.write(b"\x00\x01garbage-not-gzip")
+
+    items = _mc.run_morning_check(settings, now=NOW, serve_log=tmp_path / "serve.log")
+    assert len(items) == 25  # 毒丸不废整检：25 项全产出
+    rag_item = next(item for item in items if item.name == "rag_index_lag")
+    assert rag_item.status == DEGRADED
+    assert "残行 1" in rag_item.detail
+    assert "截断" in rag_item.detail
+
+
 def test_check_lessons_review_due_states(tmp_path: Path) -> None:
     """项 22（vision-build 票 05）：到期黄不红、只报不改、缺席/破损黄不绿。"""
     from goalx_backend.morning_check import check_lessons_review_due
