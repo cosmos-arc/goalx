@@ -520,6 +520,8 @@ def check_prematch_snapshots(store: CorpusStore, *, now: datetime) -> CheckItem:
         f"累计 {total} 拍 · 近{_PREMATCH_RECENT_HOURS}h "
         + f"{int(cast('int', face['recent']))} 拍 · 最新 {face['latest_fetched_at']}",
     )
+
+
 def check_anchor_sentinel(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
     """
     项 20 断点哨兵（autoresearch 票 34，设计稿 13-sentinel-design §六）。

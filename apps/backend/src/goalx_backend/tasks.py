@@ -1357,11 +1357,12 @@ def anchor_sentinel_weekly(
     """
     断点哨兵对账面（票 34 设计稿 §四）：周一 08:50 三轴计算+留痕+周报 md。
 
-    缺省=最近完整 ISO 周；srct 腿只读消费 srct_pinnacle_closing_triplet
-    （与生产 CLV 锚同一函数=同一语义，生产第一锚零改动）。语料桥缺席=
-    deferred 不落行（防"全覆盖塌缩"假 alert 留痕；晨检 8 天无新周行条款
-    兜底可见）。iso_year/iso_week/settings/now/srct_reader 注入口只服务
-    测试接缝。
+    缺省=最近完整 ISO 周（晚于它的周拒收——未来周行会钉死晨检面，
+    独立复核 F3）；srct 腿只读消费 srct_pinnacle_closing_triplet（与
+    生产 CLV 锚同一函数=同一语义，生产第一锚零改动）。语料桥缺席/视图
+    缺（金丝雀读）=deferred 不落行（防"全覆盖塌缩"假 alert 留痕；晨检
+    8 天无新周行条款兜底可见）。iso_year/iso_week/settings/now/srct_reader
+    注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
     if not resolved.db_path.exists():
@@ -1369,25 +1370,41 @@ def anchor_sentinel_weekly(
     if (iso_year is None) != (iso_week is None):
         msg = "--iso-year 与 --iso-week 须成对给出（缺省=最近完整周）"
         raise ValueError(msg)
+    latest_year, latest_week = anchor_sentinel.latest_complete_iso_week(now)
     if iso_year is None or iso_week is None:
-        iso_year, iso_week = anchor_sentinel.latest_complete_iso_week(now)
+        iso_year, iso_week = latest_year, latest_week
+    elif (iso_year, iso_week) > (latest_year, latest_week):
+        msg = (
+            f"拒绝未来 ISO 周 {iso_year}-W{iso_week:02d}"
+            f"（最近完整周={latest_year}-W{latest_week:02d}；未来周行会钉死晨检面）"
+        )
+        raise ValueError(msg)
     conn = connect(resolved.db_path)
     try:
         migrate(conn)
-        if srct_reader is None:
-            try:
-                duck_con = corpus_duckdb.connect(resolved)
-            except (duckdb.Error, OSError) as exc:
-                note = f"corpus_anchor_unavailable: {exc}"
-                logger.warning("anchor-sentinel-weekly {}", note)
-                return {"deferred": note, "iso_year": iso_year, "iso_week": iso_week}
-            try:
+        # 桥连接活到 compute 结束（独立复核 F1：srct 腿闭包在 compute 期逐场
+        # 查询，提前 close=逐场降级 None=整周假 1b alert）
+        duck_con = None
+        try:
+            if srct_reader is None:
+                try:
+                    duck_con = corpus_duckdb.connect(resolved)
+                    quote_evidence.assert_odds_change_event_view(duck_con)
+                except (duckdb.Error, OSError) as exc:
+                    note = f"corpus_anchor_unavailable: {exc}"
+                    logger.warning("anchor-sentinel-weekly {}", note)
+                    return {
+                        "deferred": note,
+                        "iso_year": iso_year,
+                        "iso_week": iso_week,
+                    }
                 srct_reader = anchor_sentinel.make_srct_reader(conn, duck_con)
-            finally:
+            report = anchor_sentinel.compute_week(
+                conn, iso_year, iso_week, srct_reader=srct_reader, now=now
+            )
+        finally:
+            if duck_con is not None:
                 duck_con.close()
-        report = anchor_sentinel.compute_week(
-            conn, iso_year, iso_week, srct_reader=srct_reader, now=now
-        )
         store = CorpusStore(resolved.corpus_root)
         try:
             path = anchor_sentinel.write_week_report(store, report)

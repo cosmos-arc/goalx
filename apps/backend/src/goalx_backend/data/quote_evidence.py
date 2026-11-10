@@ -1527,6 +1527,18 @@ def propline_pinnacle_closing_triplet(
     return latest["h"], latest["d"], latest["a"]
 
 
+def assert_odds_change_event_view(con: duckdb.DuckDBPyConnection) -> None:
+    """
+    金丝雀读：odds_change_event 视图须可解析（缺则抛 duckdb.Error）。
+
+    桥文件在而视图缺（gold-rebuild 崩一半等）时 CatalogException 会被
+    srct_pinnacle_asof_triplet 逐场吞成 None——整周全 None 落成假 1b
+    alert（票 34 哨兵）。对账面前置金丝雀把该形态转 deferred
+    （独立复核 F2）。odds_change_event 读侧属主查询（ADR-0008）。
+    """
+    con.execute("SELECT 1 FROM odds_change_event LIMIT 1").fetchall()
+
+
 def _resolve_sid_fallback(
     con: duckdb.DuckDBPyConnection, home: str, away: str, beijing: datetime
 ) -> str | None:

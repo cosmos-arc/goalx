@@ -710,3 +710,131 @@ def test_weekly_task_rejects_partial_iso_args(tmp_path: Path) -> None:
         tasks.anchor_sentinel_weekly(
             iso_year=2026, settings=settings, srct_reader=reader_from_map({})
         )
+
+
+# ---- 独立复核批修回归（correctness-34-independent） ----
+
+
+def _bridge_backed_db(tmp_path: Path, *, with_view: bool) -> tuple[Settings, object]:
+    """隔离库+真种子：11 场双源齐备的 2026-W45 周（生产 reader 全链路）。"""
+    import duckdb as duckdb_mod
+
+    settings = _isolated_settings(tmp_path)
+    face = connect(settings.db_path)
+    try:
+        migrate(face)
+        monday = date.fromisocalendar(2026, 45, 1)
+        for i in range(11):
+            day = monday + timedelta(days=i % 6)
+            kickoff = beijing_to_utc_iso(datetime(day.year, day.month, day.day, 19, 30))
+            fid = seed_jc_fixture(
+                face,
+                kickoff_utc=kickoff,
+                home=f"主{i}",
+                away=f"客{i}",
+                code=f"回{i:03d}",
+            )
+            seed_triplet(
+                face,
+                fid,
+                anchor_sentinel.PROPLINE_PINNACLE_SOURCE,
+                FRESH_PL,
+                captured_at=beijing_to_utc_iso(
+                    datetime(day.year, day.month, day.day, 18)
+                ),
+            )
+            face.execute(
+                "INSERT INTO source_match_links (fixture_id, source,"
+                " source_match_id, method, status, mapped_at)"
+                " VALUES (?, 'srct', ?, 'primary_key', 'linked', ?)",
+                (fid, f"s{i}", kickoff),
+            )
+        face.commit()
+    finally:
+        face.close()
+    bridge = duckdb_mod.connect(":memory:")
+    if with_view:
+        bridge.execute(
+            """
+            CREATE TABLE odds_change_event (
+                sid VARCHAR, bookmaker_id VARCHAR, published_at TIMESTAMP,
+                odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE
+            )
+            """
+        )
+        for i in range(11):
+            bridge.execute(
+                "INSERT INTO odds_change_event VALUES (?, 'srct:1x2:177',"
+                " TIMESTAMP '2026-11-02 10:00:00', 2.5, 3.3, 2.8)",
+                [f"s{i}"],
+            )
+    return settings, bridge
+
+
+# F1（阻断）：生产链路（connect→make_srct_reader→compute）连接生命周期——
+# 桥必须活到 compute 结束；关闭后再算=全 srct 腿 None=每周假 1b alert
+def test_weekly_task_production_path_resolves_srct_leg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from goalx_backend import tasks
+    from goalx_backend.data import corpus_duckdb
+
+    settings, bridge = _bridge_backed_db(tmp_path, with_view=True)
+    monkeypatch.setattr(corpus_duckdb, "connect", lambda _settings: bridge)
+    payload = tasks.anchor_sentinel_weekly(
+        iso_year=2026,
+        iso_week=45,
+        settings=settings,
+        now=datetime(2026, 11, 9, 0, 50, tzinfo=UTC),
+    )
+    assert "deferred" not in payload, payload
+    face = payload["axes"]
+    assert face[anchor_sentinel.AXIS_COVERAGE_ANCHOR]["status"] == "ok"
+    assert face[anchor_sentinel.AXIS_COVERAGE_SECOND]["status"] == "ok"
+    assert face[anchor_sentinel.AXIS_DEV_ODDS]["status"] == "ok"
+
+
+# F2（警告）：桥在而视图缺（gold-rebuild 崩一半形态）→ deferred 不落假 1b
+def test_weekly_task_defers_when_view_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from goalx_backend import tasks
+    from goalx_backend.data import corpus_duckdb
+
+    settings, bridge = _bridge_backed_db(tmp_path, with_view=False)
+    monkeypatch.setattr(corpus_duckdb, "connect", lambda _settings: bridge)
+    payload = tasks.anchor_sentinel_weekly(
+        iso_year=2026,
+        iso_week=45,
+        settings=settings,
+        now=datetime(2026, 11, 9, 0, 50, tzinfo=UTC),
+    )
+    assert "deferred" in payload
+    face = connect(settings.db_path)
+    try:
+        rows = face.execute(
+            "SELECT COUNT(*) AS n FROM anchor_sentinel_weekly"
+        ).fetchone()
+        assert rows["n"] == 0
+    finally:
+        face.close()
+
+
+# F3（info）：拒收晚于最近完整周的 iso 周（未来周行会钉死晨检面）
+def test_weekly_task_rejects_future_iso_week(tmp_path: Path) -> None:
+    from goalx_backend import tasks
+
+    settings = _isolated_settings(tmp_path)
+    face = connect(settings.db_path)
+    try:
+        migrate(face)
+    finally:
+        face.close()
+    now = datetime(2026, 11, 9, 0, 50, tzinfo=UTC)  # 最近完整周=2026-W45
+    with pytest.raises(ValueError, match="未来"):
+        tasks.anchor_sentinel_weekly(
+            iso_year=2026,
+            iso_week=46,
+            settings=settings,
+            now=now,
+        )
