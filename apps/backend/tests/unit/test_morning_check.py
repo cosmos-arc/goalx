@@ -788,3 +788,30 @@ def test_check_lessons_review_due_states(tmp_path: Path) -> None:
     item = check_lessons_review_due(library, now=NOW)
     assert item.status == DEGRADED
     assert "不可读" in item.detail
+
+
+def test_check_lessons_review_due_semantic_bad_date_degrades(tmp_path: Path) -> None:
+    """项 22 correctness F1 回归：语义坏日期（正则可过）黄面降级，不上抛炸整检。"""
+    from goalx_backend.morning_check import check_lessons_review_due
+
+    library = tmp_path / "lessons"
+    library.mkdir(parents=True)
+    (library / "L-01.md").write_text(
+        "---\n"
+        "id: L-01\n"
+        "status: active\n"
+        "confidence: 高\n"
+        "created: 2026-02-30\n"
+        "review_due: 2027-02-28\n"
+        "window: null\n"
+        "cause: 测试死因。\n"
+        "triggers:\n  - 场景甲\n"
+        "evidence:\n  - edge-ledger §3#1\n"
+        "---\n"
+        "正文。\n",
+        encoding="utf-8",
+    )
+    item = check_lessons_review_due(library, now=NOW)
+    assert item.status == DEGRADED
+    assert "不可读" in item.detail
+    assert "created 非法日期" in item.detail

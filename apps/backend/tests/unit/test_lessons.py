@@ -177,6 +177,53 @@ class TestFormatValidation:
         with pytest.raises(lesson_mod.LessonFormatError, match="id 非法"):
             lesson_mod.load_lessons(tmp_path)
 
+    def test_semantically_bad_date_raises_format_error(self, tmp_path: Path) -> None:
+        """correctness F1：正则可过但日历不存在的日期不得裸 ValueError 穿透。"""
+        # created: 2026-02-30 —— 过 _DATE_RE，date.fromisoformat 拒绝
+        write_lesson(tmp_path, 1, created="2026-02-30")
+        with pytest.raises(lesson_mod.LessonFormatError, match=r"created 非法日期"):
+            lesson_mod.load_lessons(tmp_path)
+
+        # review_due: 2027-11-31 —— 同形态
+        write_lesson(tmp_path, 1, review_due="2027-11-31")
+        with pytest.raises(lesson_mod.LessonFormatError, match=r"review_due 非法日期"):
+            lesson_mod.load_lessons(tmp_path)
+
+    def test_window_list_form_rejected(self, tmp_path: Path) -> None:
+        """correctness F2：window 列表形态不得 str() 静默字符串化。"""
+        (tmp_path / "L-01.md").write_text(
+            "---\n"
+            "id: L-01\n"
+            "status: active\n"
+            "confidence: 高\n"
+            "created: 2026-11-09\n"
+            "review_due: 2027-11-09\n"
+            "window:\n"
+            "  - 2016-2026\n"
+            "cause: 测试死因。\n"
+            "triggers:\n"
+            "  - 场景甲\n"
+            "evidence:\n"
+            "  - edge-ledger §3#1\n"
+            "---\n"
+            "正文。\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(lesson_mod.LessonFormatError, match="window"):
+            lesson_mod.load_lessons(tmp_path)
+
+    def test_duplicate_frontmatter_key_rejected(self, tmp_path: Path) -> None:
+        """correctness F3：重复键不得静默取后值。"""
+        write_lesson(tmp_path, 1)
+        duplicated = (
+            (tmp_path / "L-01.md")
+            .read_text(encoding="utf-8")
+            .replace("cause: 测试死因：口径未扣水。", "cause: 先值。\ncause: 后值。")
+        )
+        (tmp_path / "L-01.md").write_text(duplicated, encoding="utf-8")
+        with pytest.raises(lesson_mod.LessonFormatError, match="重复键"):
+            lesson_mod.load_lessons(tmp_path)
+
 
 class TestReadInterfaces:
     def test_weekly_injection_active_only_and_render(self, tmp_path: Path) -> None:

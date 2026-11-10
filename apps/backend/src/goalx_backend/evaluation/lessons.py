@@ -128,15 +128,32 @@ def _parse_date(value: str, key: str, source: str) -> date:
     """YYYY-MM-DD 严格解析（坏串显式报错，不静默 None 冒充）。"""
     if not _DATE_RE.match(value):
         raise LessonFormatError(f"{source}: {key} 非法日期 {value!r}")
-    return date.fromisoformat(value)
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        # 语义坏日期（2026-02-30）：正则可过但日历拒绝——correctness F1，
+        # 裸 ValueError 会穿透晨检降级面（except 只收 LessonFormatError）
+        raise LessonFormatError(f"{source}: {key} 非法日期 {value!r}") from exc
+
+
+def _accept_list_item(
+    result: dict[str, str | list[str]], list_key: str | None, raw: str, *, source: str
+) -> None:
+    """列表项入宿主键（无宿主键/宿主已转标量=格式破损，显式报错）。"""
+    if list_key is None:
+        raise LessonFormatError(f"{source}: 列表项无宿主键：{raw!r}")
+    values = result[list_key]
+    if not isinstance(values, list):
+        raise LessonFormatError(f"{source}: {list_key} 标量后又见列表项")
+    values.append(raw)
 
 
 def parse_frontmatter(text: str, *, source: str) -> dict[str, str | list[str]]:
     """
     极简 frontmatter 解析（key: value 标量 + 缩进 `- 项` 列表，一级嵌套）。
 
-    只认教训库 schema 用到的子集；越界形态（无起始/未闭合/裸行/注释）
-    显式报错——受控文档宁可红不可猜。
+    只认教训库 schema 用到的子集；越界形态（无起始/未闭合/裸行/注释/
+    重复键）显式报错——受控文档宁可红不可猜。
     """
     lines = text.splitlines()
     if not lines or lines[0] != "---":
@@ -152,17 +169,15 @@ def parse_frontmatter(text: str, *, source: str) -> dict[str, str | list[str]]:
             continue
         item = _LIST_ITEM_RE.match(line)
         if item is not None:
-            if list_key is None:
-                raise LessonFormatError(f"{source}: 列表项无宿主键：{line.strip()!r}")
-            cast_list = result[list_key]
-            if not isinstance(cast_list, list):
-                raise LessonFormatError(f"{source}: {list_key} 标量后又见列表项")
-            cast_list.append(item.group(1).strip())
+            _accept_list_item(result, list_key, item.group(1).strip(), source=source)
             continue
         match = re.match(r"^([a-z_]+):\s*(.*)$", line)
         if match is None or not _KEY_RE.match(match.group(1)):
             raise LessonFormatError(f"{source}: 无法解析行 {line!r}")
         key, rest = match.group(1), match.group(2).strip()
+        if key in result:
+            # 重复键静默取后值=受控文档改写通道——correctness F3，宁可红
+            raise LessonFormatError(f"{source}: 重复键 {key!r}")
         if rest:
             result[key] = rest
             list_key = None
@@ -170,6 +185,26 @@ def parse_frontmatter(text: str, *, source: str) -> dict[str, str | list[str]]:
             result[key] = []
             list_key = key
     return result
+
+
+def _validated_header(
+    fields: dict[str, str | list[str]], path_stem: str, *, source: str
+) -> tuple[str, str, str]:
+    """校验 id/status/confidence 三个枚举位（id 兼查文件名一致）。"""
+    lesson_id = fields["id"]
+    if not isinstance(lesson_id, str) or not _ID_RE.match(lesson_id):
+        raise LessonFormatError(f"{source}: id 非法 {lesson_id!r}")
+    if path_stem != lesson_id:
+        raise LessonFormatError(
+            f"{source}: 文件名与 id 不一致（frontmatter id={lesson_id!r}）"
+        )
+    status = fields["status"]
+    if status not in LESSON_STATUSES:
+        raise LessonFormatError(f"{source}: status 非法 {status!r}")
+    confidence = fields["confidence"]
+    if confidence not in LESSON_CONFIDENCES:
+        raise LessonFormatError(f"{source}: confidence 非法 {confidence!r}")
+    return lesson_id, str(status), str(confidence)
 
 
 def parse_lesson_file(path: Path) -> Lesson:
@@ -194,20 +229,7 @@ def parse_lesson_file(path: Path) -> Lesson:
     unknown = fields.keys() - expected
     if unknown:
         raise LessonFormatError(f"{source}: 未知字段 {sorted(unknown)}")
-
-    lesson_id = fields["id"]
-    if not isinstance(lesson_id, str) or not _ID_RE.match(lesson_id):
-        raise LessonFormatError(f"{source}: id 非法 {lesson_id!r}")
-    if path.stem != lesson_id:
-        raise LessonFormatError(
-            f"{source}: 文件名与 id 不一致（frontmatter id={lesson_id!r}）"
-        )
-    status = fields["status"]
-    if status not in LESSON_STATUSES:
-        raise LessonFormatError(f"{source}: status 非法 {status!r}")
-    confidence = fields["confidence"]
-    if confidence not in LESSON_CONFIDENCES:
-        raise LessonFormatError(f"{source}: confidence 非法 {confidence!r}")
+    lesson_id, status, confidence = _validated_header(fields, path.stem, source=source)
 
     review_due_raw = fields["review_due"]
     review_due = (
@@ -215,6 +237,9 @@ def parse_lesson_file(path: Path) -> Lesson:
         if review_due_raw == "null"
         else _parse_date(str(review_due_raw), "review_due", source)
     )
+    if isinstance(fields["window"], list):
+        # 列表形态被 str() 成 "['…']" 冒充标量——correctness F2，宁可红不可猜
+        raise LessonFormatError(f"{source}: window 须为标量或 null")
     window = None if fields["window"] == "null" else str(fields["window"])
     cause = fields["cause"]
     if not isinstance(cause, str) or not cause.strip():
@@ -230,8 +255,8 @@ def parse_lesson_file(path: Path) -> Lesson:
     body = "\n".join(text.splitlines()[body_start:]).strip("\n")
     return Lesson(
         id=lesson_id,
-        status=str(status),
-        confidence=str(confidence),
+        status=status,
+        confidence=confidence,
         created=_parse_date(str(fields["created"]), "created", source),
         review_due=review_due,
         window=window,
