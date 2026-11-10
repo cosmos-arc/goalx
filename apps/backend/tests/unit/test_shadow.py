@@ -786,3 +786,42 @@ def test_tasks_wrapper_wires_challenger_dir_from_settings(
     report = tasks_mod.shadow_retrain_beat(settings=settings)
     assert report == {"status": "no_trigger"}
     assert captured["challenger_models_dir"] == settings.shadow_models_dir
+
+
+def test_v57_upgrade_rehearsal_preserves_forecast_rows() -> None:
+    """v56 存量库升级演练（test_db MIGRATIONS[:N] 先例）：既有 forecasts
+    行经 v57 重建保行；影子轨道/标签列随后就位；重入幂等。"""
+    from unittest.mock import patch
+
+    from goalx_backend import db as db_mod
+
+    with patch.object(db_mod, "MIGRATIONS", db_mod.MIGRATIONS[:56]):
+        conn = db_mod.connect(":memory:")
+        assert db_mod.migrate(conn) == 56
+        fid = _seed_fixture(conn)
+        conn.execute(
+            """
+            INSERT INTO forecasts
+                (fixture_id, track, model_version, issued_at, content_hash, payload)
+            VALUES (?, 'ml', 'dc-old', '2026-10-01T00:00:00+00:00', 'h-old', '{}')
+            """,
+            (fid,),
+        )
+        conn.commit()
+    assert db_mod.migrate(conn) == 57  # v57 施行：重建 forecasts（全链恢复后）
+    rows = conn.execute(
+        "SELECT track, model_version, strategy_version_id FROM forecasts"
+    ).fetchall()
+    assert [
+        (r["track"], r["model_version"], r["strategy_version_id"]) for r in rows
+    ] == [("ml", "dc-old", None)]  # 史行保住、不回溯打标
+    conn.execute(
+        "INSERT OR IGNORE INTO forecasts"
+        " (fixture_id, track, model_version, issued_at, content_hash, payload)"
+        " VALUES (?, 'shadow', 'shadow-dc-new', '2026-11-01T00:00:00+00:00',"
+        " 'h-new', '{}')",
+        (fid,),
+    )
+    assert db_mod.migrate(conn) == 57  # 重入幂等
+    assert conn.execute("SELECT COUNT(*) c FROM forecasts").fetchone()["c"] == 2
+    conn.close()

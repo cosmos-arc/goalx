@@ -131,7 +131,7 @@ def forecast_output_drift(
         window_end=window_end,
         n_reference=len(reference),
         n_current=len(current),
-        psi={key: round(value, 6) for key, value in psi_values.items()},
+        psi=dict(psi_values),
         status="ok",
         detail=(
             "had PSI h/d/a="
