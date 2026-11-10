@@ -3,7 +3,8 @@
 #
 # 决策时刻 T=开球−2h（固定规则，无前视）：JC 报价@T × PIT 欧锚（Pinnacle
 # @T）公允 >1 → 价值侧下注，实现 EV=odds@T×hit−1；特征只用 T 之前信息。
-# 三窗+门+BH 全按票 09 协议；切片入同一试验账（facet=B/C）。
+# 三窗+门+BH 全按票 09 协议；切片入同一轮试验账（facet=B/C；轮=台账文件
+# 边界，一轮一文件，_lib.em1_round_ledger_path 单源）。
 # BH=轮级单家族（E-32 修订 C，票 20）：本脚本 B/C 与票 09 A(F1-F8) 的
 # 验证窗候选并成一个家族过一次 BH；族成员从试验账装载，轮不完整时
 # fail-closed 不裁（无「先跑 09 还是 10」硬序，脚本幂等可重跑收口）。
@@ -23,17 +24,19 @@
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
-import os
 from collections import defaultdict
 
 import numpy as np
 
 from _lib import (
+    append_trial_ledger,
     clustered_mean,
     devig,
-    em1_round_adjudicate,
+    em1_pre_adjudication_rows,
+    em1_format_z,
+    em1_round_finalize,
+    em1_round_ledger_path,
     load_jc,
     load_jc_traj,
     load_euro,
@@ -42,11 +45,7 @@ from _lib import (
     pair_fixtures,
 )
 
-LEDGER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "09-em1-trial-ledger.csv")
-LEDGER_COLS = [
-    "entry_id", "ts", "ticket", "facet", "family", "slice", "window",
-    "n_fx", "n_sel", "metric", "value", "se", "z", "p", "stage", "note",
-]
+LEDGER = em1_round_ledger_path()
 N_FX_FLOOR = 200
 N_SEL_FLOOR = 20
 CONF_FX_FLOOR = 100
@@ -79,21 +78,6 @@ def quote_at(traj, t):
         else:
             hi = mid - 1
     return res
-
-
-def append_ledger(rows: list[dict]) -> None:
-    if not os.path.exists(LEDGER):
-        with open(LEDGER, "w", newline="") as f:
-            csv.writer(f).writerow(LEDGER_COLS)
-    with open(LEDGER) as f:
-        seen = {row["entry_id"] for row in csv.DictReader(f)}
-    new = [r for r in rows if r["entry_id"] not in seen]
-    if not new:
-        return
-    with open(LEDGER, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=LEDGER_COLS)
-        for r in new:
-            w.writerow({k: r.get(k, "") for k in LEDGER_COLS})
 
 
 def main() -> None:
@@ -278,7 +262,7 @@ def main() -> None:
                     "entry_id": f"10-{facet}-{family}-{sname}-search", "ts": dt.datetime.now().isoformat(timespec="seconds"),
                     "ticket": "10", "facet": facet, "family": family, "slice": sname, "window": "search",
                     "n_fx": m["n_fx"], "n_sel": m["n_sel"], "metric": "ev", "value": f"{m['ev']:.4f}",
-                    "se": f"{m['ev_se']:.4f}", "z": f"{m['ev_z']:.3f}",
+                    "se": f"{m['ev_se']:.4f}", "z": em1_format_z(m["ev_z"]),
                     "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
                     "stage": stage,
                     "note": "T=ko-2h PIT Pinnacle" ,
@@ -303,18 +287,20 @@ def main() -> None:
             "entry_id": f"10-{facet}-{family}-{sname}-validation", "ts": dt.datetime.now().isoformat(timespec="seconds"),
             "ticket": "10", "facet": facet, "family": family, "slice": sname, "window": "validation",
             "n_fx": m["n_fx"], "n_sel": m["n_sel"], "metric": "ev", "value": f"{m['ev']:.4f}",
-            "se": f"{m['ev_se']:.4f}", "z": f"{m['ev_z']:.3f}",
+            "se": f"{m['ev_se']:.4f}", "z": em1_format_z(m["ev_z"]),
             "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
             "stage": "bh_pending" if ok else "dead", "note": "",
         })
-    # ---- 轮级单家族 BH（E-32 修订 C，票 20）：先落搜索+验证账，再从台账
-    # 装载全轮族（本脚本 B/C 与票 09 A 的候选并集，含全阴与验证窗无行者
-    # z=nan→p=1.0），一次校正统裁定（_lib.em1_round_adjudicate 共用接口，
-    # 两脚本同一 fail-closed 门）。脚本独立运行无硬序：轮不完整（预注册
-    # BH 贡献组缺 search 账）→ 不裁，候选留 bh_pending，待轮内其余脚本
+    # ---- 轮级单家族 BH（E-32 修订 C，票 20）：先落搜索+验证账（首批经
+    # em1_pre_adjudication_rows 过滤确认窗占位，F3——本脚本首批本就无
+    # 确认行，统一接缝防御），再从台账装载全轮族（本脚本 B/C 与票 09 A
+    # 的候选并集，含全阴与验证窗无行者 z=nan→p=1.0），一次校正统裁定+
+    # 被拒终态行落账（_lib.em1_round_finalize 共用接缝，两脚本同一
+    # fail-closed 门，F5）。脚本独立运行无硬序：轮不完整（预注册 BH
+    # 贡献组缺 search 账）→ 不裁，候选留 bh_pending，待轮内其余脚本
     # 落账后重跑本脚本幂等收口。
-    append_ledger(ledger_rows)
-    bh_pass, round_family, missing_groups = em1_round_adjudicate(LEDGER)
+    append_trial_ledger(em1_pre_adjudication_rows(ledger_rows))
+    bh_pass, round_family, missing_groups = em1_round_finalize(LEDGER)
     if missing_groups:
         print(
             f"[轮级 BH 未裁] 轮族不完整：缺 {missing_groups} 的 search 账——缺报缩族与先筛后校"
@@ -340,11 +326,11 @@ def main() -> None:
             "entry_id": f"10-{facet}-{family}-{sname}-confirmation", "ts": dt.datetime.now().isoformat(timespec="seconds"),
             "ticket": "10", "facet": facet, "family": family, "slice": sname, "window": "confirmation",
             "n_fx": m["n_fx"], "n_sel": m["n_sel"], "metric": "ev", "value": f"{m['ev']:.4f}",
-            "se": f"{m['ev_se']:.4f}", "z": f"{m['ev_z']:.3f}",
+            "se": f"{m['ev_se']:.4f}", "z": em1_format_z(m["ev_z"]),
             "p": f"{one_sided_p(m['ev_z']):.5f}" if np.isfinite(m["ev_z"]) else "",
             "stage": "survivor" if ok else "dead", "note": "",
         })
-    append_ledger(conf_rows)
+    append_trial_ledger(conf_rows)
 
     n_gate = sum(1 for _m, ok in val_cache.values() if ok)
     print(f"\nB/C：搜索切片候选 {len(candidates)}；验证过 promo 门 {n_gate}；轮级 BH 后晋升 {len(promoted)}；确认幸存 {len(survivors)}")

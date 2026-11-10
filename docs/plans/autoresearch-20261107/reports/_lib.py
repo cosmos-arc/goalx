@@ -562,6 +562,31 @@ EM1_ROUND_BH_GROUPS: tuple[tuple[str, str], ...] = (("09", "A"), ("10", "B"), ("
 refuted 关闭、无候选路径，不入组；未来 facet 开候选路径时在此扩组（粒度
 跑数前预注册，跑数后不得更换）。"""
 
+EM1_ROUND = 2
+"""当前轮号（correctness 五修 F1+F2：轮=台账文件边界，一轮一文件）。
+轮 1=09-em1-trial-ledger.csv（196 行冻结历史档，字节不变）；开新轮 EM
+跑数时只改本常量——新轮落新文件，缺组 fail-closed 对空/不完整的新轮
+文件自然成立，entry_id 幂等只作用于同轮重跑。"""
+
+EM1_LEDGER_COLS = [
+    "entry_id", "ts", "ticket", "facet", "family", "slice", "window",
+    "n_fx", "n_sel", "metric", "value", "se", "z", "p", "stage", "note",
+]
+
+
+def em1_round_ledger_path(round_no: int = EM1_ROUND) -> str:
+    """当前轮台账文件路径单源（09/10 脚本与装载/裁定接缝共用）。
+
+    轮 1=09-em1-trial-ledger.csv（无后缀，冻结历史档）；轮 N≥2=
+    09-em1-trial-ledger-rN.csv。read_trial_ledger / append_trial_ledger /
+    em1_round_adjudicate 默认全走本函数返回的当前轮文件——轮=文件边界，
+    历史轮的 search 行无法解除新轮缺组防护，跨轮同名 entry_id 落在各自
+    轮文件里互不吞。
+    """
+    d = os.path.dirname(os.path.abspath(__file__))
+    suffix = "" if round_no <= 1 else f"-r{round_no}"
+    return os.path.join(d, f"09-em1-trial-ledger{suffix}.csv")
+
 
 def read_trial_ledger(path: str) -> list[dict]:
     """读 EM-1 试验账全部行（文件不存在→空表，视作该账尚未落任何条目）。"""
@@ -571,12 +596,60 @@ def read_trial_ledger(path: str) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def append_trial_ledger(rows: Sequence[dict], path: str | None = None) -> None:
+    """当前轮台账追加（entry_id 幂等=同轮重跑不重复落账；文件按需建头）。
+
+    path 缺省=em1_round_ledger_path()（当前轮文件）。幂等只按本文件内已见
+    entry_id 判定——轮=台账文件边界后，新轮同名切片行落在新轮文件里，
+    不再被旧轮同名行静默吞掉（correctness 五修 F2）。
+    """
+    ledger = em1_round_ledger_path() if path is None else path
+    seen = {r["entry_id"] for r in read_trial_ledger(ledger)}
+    new = [r for r in rows if r["entry_id"] not in seen]
+    if not new:
+        return
+    need_header = not os.path.exists(ledger) or os.path.getsize(ledger) == 0
+    with open(ledger, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=EM1_LEDGER_COLS)
+        if need_header:
+            w.writeheader()
+        for r in new:
+            w.writerow({k: r.get(k, "") for k in EM1_LEDGER_COLS})
+
+
 def _parse_z(s: str) -> float:
     """试验账 z 列 → float；空串/不可解析 → nan（bh_family 按 p=1.0 入族）。"""
     try:
         return float(s)
     except (TypeError, ValueError):
         return float("nan")
+
+
+def em1_format_z(z: float) -> str:
+    """落账 z 列格式（correctness 五修 F4）：6dp。
+
+    裁定取台账 z 装载值，3dp 截断在 BH 刃缘可反向翻转裁定（真 z=1.64451
+    →p=0.050035 应拒；3dp 落账读回 1.645→p=0.049985 通过），且与台账
+    p 列（全精度算出）自相矛盾。新落账行一律 6dp；轮 1 既有 3dp 行=历史
+    冻结不动，装载侧（_parse_z）解析不变。
+    """
+    return f"{z:.6f}"
+
+
+def em1_pre_adjudication_rows(rows: Sequence[dict]) -> list[dict]:
+    """裁定前首批落账行（correctness 五修 F3）。
+
+    候选追踪族（F1-F6/F8、B/C）的确认窗行不得在裁定前以占位 stage 落账：
+    裁定后第二批按最终 stage（survivor/dead）写入时同 entry_id 会被
+    append 幂等吞掉，幸存者确认行无声丢失（票 20 diff 曾把旧「同批双写
+    重复」换成「两批丢失」）。首批经本函数过滤：确认窗行只保留 F7 类
+    structure_only 结构行（无晋升路径、无二批重写，三窗覆盖账照常首批落）。
+    """
+    return [
+        r
+        for r in rows
+        if r.get("window") != "confirmation" or r.get("stage") == "structure_only"
+    ]
 
 
 def em1_round_family(rows: Sequence[dict]) -> list[tuple[str, float]]:
@@ -613,19 +686,66 @@ def em1_round_missing_groups(rows: Sequence[dict]) -> list[tuple[str, str]]:
     return [g for g in EM1_ROUND_BH_GROUPS if g not in seen]
 
 
-def em1_round_adjudicate(ledger_path: str) -> tuple[set[str], list[tuple[str, float]], list[tuple[str, str]]]:
+def em1_round_adjudicate(
+    ledger_path: str | None = None,
+) -> tuple[set[str], list[tuple[str, float]], list[tuple[str, str]]]:
     """轮级单家族 BH 裁定（09/10 共用接缝；须在调用方落完搜索+验证账后调）。
 
     装载全轮族→完整性 fail-closed→一次 BH：missing_groups 非空时返回
     bh_pass=空集（不裁，候选留 bh_pending，调用方打印收口指引），否则
-    返回 bh_family(round_family)。返回 (bh_pass, round_family, missing_groups)。
+    返回 bh_family(round_family)。ledger_path 缺省=当前轮台账文件
+    （em1_round_ledger_path，轮=台账文件边界）。返回
+    (bh_pass, round_family, missing_groups)。
     """
-    ledger_all = read_trial_ledger(ledger_path)
+    path = em1_round_ledger_path() if ledger_path is None else ledger_path
+    ledger_all = read_trial_ledger(path)
     round_family = em1_round_family(ledger_all)
     missing = em1_round_missing_groups(ledger_all)
     if missing:
         return set(), round_family, missing
     return bh_family(round_family), round_family, missing
+
+
+def em1_round_rejected_rows(rows: Sequence[dict], bh_pass: set[str]) -> list[dict]:
+    """完整轮裁定后被拒候选的终态行（correctness 五修 F5）。
+
+    验证窗 stage=bh_pending（过晋升门待裁）而 BH 未通过的候选 → 追加
+    stage=bh_rejected 行：entry_id=验证条目的窗段换为 bh（新条目不违
+    append-only，幂等重跑只落一次），行内容复制自该验证行（z/p 等检定量
+    随之可复原）。门死者（dead）与通过者不生成——被拒候选的台账终态不再
+    永留 bh_pending、裁定结果不再只存在于 stdout。
+    """
+    out: list[dict] = []
+    for r in rows:
+        if r.get("window") != "validation" or r.get("stage") != "bh_pending":
+            continue
+        if r["entry_id"] in bh_pass:
+            continue
+        row = dict(r)
+        base, _sep, _w = r["entry_id"].rpartition("-")
+        note = r.get("note", "")
+        row["entry_id"] = f"{base}-bh"
+        row["stage"] = "bh_rejected"
+        row["note"] = f"轮级BH拒绝(α=0.05);{note}" if note else "轮级BH拒绝(α=0.05)"
+        out.append(row)
+    return out
+
+
+def em1_round_finalize(
+    ledger_path: str | None = None,
+) -> tuple[set[str], list[tuple[str, float]], list[tuple[str, str]]]:
+    """轮级裁定+被拒终态落账（09/10 共用接缝，correctness 五修 F5）。
+
+    em1_round_adjudicate 之后再进一步：轮完整裁定完成时，对被拒候选追加
+    bh_rejected 终态行（台账终态可区分「轮未齐 bh_pending」与「裁毕被拒
+    bh_rejected」）；轮不完整时不动台账（fail-closed，候选留 bh_pending）。
+    返回值与 em1_round_adjudicate 一致：(bh_pass, round_family, missing)。
+    """
+    path = em1_round_ledger_path() if ledger_path is None else ledger_path
+    bh_pass, round_family, missing = em1_round_adjudicate(path)
+    if not missing:
+        append_trial_ledger(em1_round_rejected_rows(read_trial_ledger(path), bh_pass), path)
+    return bh_pass, round_family, missing
 
 
 def load_pin_ah(sids: Iterable[str]) -> dict[str, list[tuple[dt.datetime, float, float, float]]]:

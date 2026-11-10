@@ -123,3 +123,8 @@ refuted-by-prerequisite 关闭无候选路径不入组，未来 facet 开候选�
 与先筛后校同罪——候选留 bh_pending，待轮内其余脚本落账后重跑收口
 （脚本幂等，确认窗只对实际晋升者触碰）。历史各轮并族 m=1（10-C-C3-荷甲，
 验证窗 z 不可计算 p=1.0、dead），BH 无一通过、无晋升翻案，已落账数字不变。
+**轮=台账文件边界**（票 20 correctness 修）：一轮一文件，旧轮文件冻结为
+历史档——轮 1=`09-em1-trial-ledger.csv` 字节不变，新轮落
+`09-em1-trial-ledger-rN.csv`（`_lib.EM1_ROUND`/`em1_round_ledger_path` 单源，
+read/append/adjudicate 全走当前轮文件）；缺组 fail-closed 与 entry_id 幂等
+均按当前轮文件计，跨轮同名切片行互不吞。
