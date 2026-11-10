@@ -220,7 +220,7 @@ def build_forecast_payload(
     }
 
 
-def insert_forecast(
+def insert_forecast(  # noqa: PLR0913 - 仓储原始层, 参数即列（store.py 同例）
     conn: sqlite3.Connection,
     *,
     fixture_id: int,
@@ -229,19 +229,23 @@ def insert_forecast(
     content_hash: str,
     payload: dict[str, object],
     issued_at: str | None = None,
+    strategy_version_id: int | None = None,
 ) -> int | None:
     """
     Append 一条 Forecast（forecasts 表归本模块）。
 
-    同 (fixture_id, content_hash) 重复插入被吸收；返回新行 id，已存在返回
-    None（幂等重跑）。issued_at 缺省取当前 UTC——测试/回放可显式冻结发出
-    时点（票 41 as-of 快照的用例需要）。
+    同 (fixture_id, track, content_hash) 重复插入被吸收（v57 起 UNIQUE 含
+    track——影子轨与 ml 轨同内容并存，同轨幂等不变）；返回新行 id，已存在
+    返回 None（幂等重跑）。issued_at 缺省取当前 UTC——测试/回放可显式冻结
+    发出时点（票 41 as-of 快照的用例需要）。strategy_version_id=票 07
+    影子行版本标签（NULL=ml 生产史行，不回溯打标）。
     """
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO forecasts
-        (fixture_id, track, model_version, issued_at, content_hash, payload)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (fixture_id, track, model_version, issued_at, content_hash, payload,
+         strategy_version_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             fixture_id,
@@ -250,6 +254,7 @@ def insert_forecast(
             issued_at or utc_now_iso(),
             content_hash,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            strategy_version_id,
         ),
     )
     if cur.rowcount > 0 and cur.lastrowid:
@@ -291,25 +296,87 @@ def forecasts_for_track(conn: sqlite3.Connection, track: str) -> list[sqlite3.Ro
 
 
 def model_version_counts(
-    conn: sqlite3.Connection, *, ts_from: str, ts_to: str
+    conn: sqlite3.Connection,
+    *,
+    ts_from: str,
+    ts_to: str,
+    track: str | None = None,
 ) -> dict[str, int]:
     """
     窗内各 model_version 的 Forecast 行数（票 04/票 07 读缝）。
 
     月读③节占位读口=票 07 champion/challenger 影子对比的消费缝（版本
     标签面在库即读得到）。窗=[ts_from, ts_to)（issued_at 半开）；
-    track 不限（ml/fused/llm 同面
-    分列由版本前缀自表）。
+    track 缺省不限（ml/fused/llm/shadow 同面分列由版本前缀自表），
+    传值则限轨（③节影子行在场判定用 track='shadow'）。
+    """
+    sql = """
+        SELECT model_version, COUNT(*) AS c FROM forecasts
+        WHERE issued_at >= ? AND issued_at < ?
+    """
+    params: list[str] = [ts_from, ts_to]
+    if track is not None:
+        sql += " AND track = ?"
+        params.append(track)
+    sql += " GROUP BY model_version ORDER BY model_version"
+    rows = conn.execute(sql, params).fetchall()
+    return {str(row["model_version"]): int(row["c"]) for row in rows}
+
+
+def champion_traffic_fixture_ids(
+    conn: sqlite3.Connection, *, business_date: str
+) -> list[int]:
+    """
+    Champion 当日流量面（票 07）。
+
+    业务日场次中已有 track='ml' 前瞻的
+    fixture id 列表（升序）——影子双算的目标集=champion 已覆盖的同一批
+    场次（同流量由构造保证：challenger 只写 champion 写过的 fixture）。
+
+    影子行不计入（champion 轨=ml 生产轨，v57 轨道分离）。
+    """
+    ids = [
+        int(row["id"])
+        for row in fx_store.fixtures_for_business_date(conn, business_date)
+    ]
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    covered = {
+        int(row["fixture_id"])
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT fixture_id FROM forecasts
+            WHERE track = 'ml' AND fixture_id IN ({placeholders})
+            """,  # noqa: S608 — 占位符拼接，值全参数化
+            ids,
+        )
+    }
+    return sorted(covered)
+
+
+def ml_had_probabilities(
+    conn: sqlite3.Connection, *, ts_from: str, ts_to: str
+) -> list[dict[str, float]]:
+    """
+    窗内 ml 轨逐行 had 三概率（票 07 漂移读数取数口）。
+
+    payload → 矩阵重建 → had 视图（与消费端同口径）；窗=[ts_from, ts_to)
+    （issued_at 半开）。行级面（同场多次发出=多行——内容哈希吸收下同
+    内容只一行，不同内容本就是不同预测）。
     """
     rows = conn.execute(
         """
-        SELECT model_version, COUNT(*) AS c FROM forecasts
-        WHERE issued_at >= ? AND issued_at < ?
-        GROUP BY model_version ORDER BY model_version
+        SELECT payload FROM forecasts
+        WHERE track = 'ml' AND issued_at >= ? AND issued_at < ?
+        ORDER BY issued_at, id
         """,
         (ts_from, ts_to),
     ).fetchall()
-    return {str(row["model_version"]): int(row["c"]) for row in rows}
+    return [
+        forecast_matrix_from_payload(json.loads(str(row["payload"]))).had()
+        for row in rows
+    ]
 
 
 def latest_forecast(
@@ -382,6 +449,9 @@ def generate_forecasts(
     *,
     business_date: str,
     models_dir: str,
+    track: str = "ml",
+    fixture_ids: tuple[int, ...] | None = None,
+    strategy_version_id: int | None = None,
 ) -> ForecastStats:
     """
     对一个业务日的全部竞彩场次生成 ML Forecast（幂等）。
@@ -390,11 +460,19 @@ def generate_forecasts(
     no_mapping（队名对不上训练域）、no_odds（无模型可用赔率以外的输入缺失
     不在此列）。五大联赛（understat 覆盖域）附 xG blend（票 47）；xG 侧
     不可得时纯 goal-DC 落库（xg_blend=None，model_version 无 xgblend 前缀）。
+
+    票 07 影子面参数（缺省=生产行为不变）：track='shadow' 写 challenger
+    轨（model_version 加 shadow- 前缀，与 champion 同工件也分版本可数）；
+    fixture_ids=目标场次集（champion 流量面——集外场次静默跳过，不记
+    skip：不是模型失败，是双算范围）；strategy_version_id=版本标签。
     """
     stats = ForecastStats()
     run_cache: dict[str, TrainingRun | None] = {}
     xg_cache: dict[str, tuple[DCArtifact, NameIndex, list[str]] | None] = {}
     now_iso = datetime.now(UTC).isoformat(timespec="seconds")
+    scope: frozenset[int] | None = (
+        frozenset(fixture_ids) if fixture_ids is not None else None
+    )
 
     def skip(fixture: sqlite3.Row, reason: str, detail: str | None = None) -> None:
         entry: dict[str, str] = {
@@ -409,6 +487,8 @@ def generate_forecasts(
 
     for fixture in fx_store.fixtures_for_business_date(conn, business_date):
         fixture_id = int(fixture["id"])
+        if scope is not None and fixture_id not in scope:
+            continue  # 双算范围外（非模型失败，不进跳过清单）
         fd_competition = FD_LEAGUE_MAP.get(str(fixture["competition_name"]))
         if fd_competition is None:
             skip(fixture, "not_fd_league")
@@ -447,36 +527,50 @@ def generate_forecasts(
             away_model_team=away_model,
             xg_side=xg_side,
         )
-        _record_forecast(conn, fixture_id, run, xg_side, payload, stats)
+        _record_forecast(
+            conn,
+            fixture_id,
+            run,
+            xg_side,
+            payload,
+            stats,
+            track=track,
+            strategy_version_id=strategy_version_id,
+        )
     conn.commit()
     return stats
 
 
-def _record_forecast(
+def _record_forecast(  # noqa: PLR0913 - 落库通道参数即列（insert_forecast 转发面）
     conn: sqlite3.Connection,
     fixture_id: int,
     run: TrainingRun,
     xg_side: XGSide | None,
     payload: dict[str, Any],
     stats: ForecastStats,
+    *,
+    track: str = "ml",
+    strategy_version_id: int | None = None,
 ) -> None:
     """落库一条 Forecast 并计数（model_version 带 blend 溯源前缀）。"""
+    # 工件身份（数据+配置+seed+版本）而非裸数据指纹：不同配置的
+    # 预测分组可见，旧 Forecast 不被覆盖（票 34 验收 6）；影子轨再加
+    # shadow- 前缀（票 07：与 champion 同工件行在版本读数面也分列）
+    version = (
+        f"dc-xgblend-{run.artifact_id()[:10]}+{xg_side.artifact.data_fingerprint[:8]}"
+        if xg_side is not None
+        else f"dc-{run.artifact_id()[:12]}"
+    )
+    if track == "shadow":
+        version = f"shadow-{version}"
     inserted = insert_forecast(
         conn,
         fixture_id=fixture_id,
-        track="ml",
-        # 工件身份（数据+配置+seed+版本）而非裸数据指纹：不同配置的
-        # 预测分组可见，旧 Forecast 不被覆盖（票 34 验收 6）
-        model_version=(
-            (
-                "dc-xgblend-"
-                f"{run.artifact_id()[:10]}+{xg_side.artifact.data_fingerprint[:8]}"
-            )
-            if xg_side is not None
-            else f"dc-{run.artifact_id()[:12]}"
-        ),
+        track=track,
+        model_version=version,
         content_hash=content_hash(payload),
         payload=payload,
+        strategy_version_id=strategy_version_id,
     )
     if inserted is None:
         stats.duplicates += 1

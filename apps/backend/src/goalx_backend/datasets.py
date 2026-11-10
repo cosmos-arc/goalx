@@ -8,7 +8,8 @@ dead_names）、（语料数据集的）checkpoint 表核对全部由声明推�
 
 vision-build 票 03 后注册面 = 全部单 cron 定拍数据集（19 条，含两个
 判死面 resume=False）；票 04 加 monthly-read（月定拍先例：cron 日-of-
-月位 1，每月 1 日 09:35）成 20 条；
+月位 1，每月 1 日 09:35）；票 07 加 shadow-retrain（日拍承载漂移即时+
+月度兜底双触发面）成 21 条；
 留在 flows.py 手写的非同构形状：组合面（daily-capture/weekly-refresh/
 daily-wrap 多 flow 编排）与 draw-results-sync（单 flow 双 deployment 双 cron）。
 cli=False 的记录不派生 cli（official-reconcile 的手写 handler 带 pending_manual
@@ -434,7 +435,28 @@ _MONTHLY_READ = DatasetSpec(
     ),
 )
 
-#: 注册面（vision-build 票 04 起 20 条）：单 cron 定拍数据集；
+_SHADOW_RETRAIN = DatasetSpec(
+    name="shadow-retrain",
+    cron="35 10 * * *",
+    task=tasks.shadow_retrain_beat,
+    cli_help=(
+        "影子重训拍(vision票07;漂移PSI即时+月度兜底→重训独立目录→注册"
+        "shadow→同流量双写;永无自动晋升)"
+    ),
+    flow_help=(
+        "影子重训拍（vision-build 票 07）：每日 10:35（daily-capture\n"
+        "10:00 首拍后——champion 当日 ml 流量就位，双算有同流量可对）。\n"
+        "漂移=模型输出分布 PSI（had 三选向，当前 30 日 vs 前 90 日，接\n"
+        "票 08 contraction.psi）越阈即时触发（日粒度；同月已响应节流）+\n"
+        "月度兜底（本期无真重训落账则补拍）；L2+ 收缩停拍留痕。重训走\n"
+        "既有 fit 管线写独立 challenger 模型目录（生产 ml 轨工件不动）；\n"
+        "challenger 三元组注册 shadow 态（genesis 行，永无自动晋升）；\n"
+        "champion/challenger 同 fixture 集双写 forecasts（影子轨带版本\n"
+        "标签，月读③对比窗消费）；触发落账 shadow_retrain_events（月读⑤）。"
+    ),
+)
+
+#: 注册面（vision-build 票 07 起 21 条）：单 cron 定拍数据集；
 #: 组合面/双 cron 另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
@@ -457,6 +479,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _ANCHOR_SENTINEL_WEEKLY,
     _WEEKLY_AGENT,
     _MONTHLY_READ,
+    _SHADOW_RETRAIN,
 )
 
 

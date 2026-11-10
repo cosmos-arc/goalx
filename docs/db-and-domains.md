@@ -52,7 +52,7 @@
 
 | 表 | 用途 | 关键口径 | 生命周期 |
 | --- | --- | --- | --- |
-| `forecasts` | 三轨预测 | track=ml/llm/fused；ml 轨含 xG blend（票 47，model_version dc-xgblend- 前缀溯源）；**ml 轨是真钱资格唯一口径（票 04 冻结），任何轨不可覆写** | append+幂等 (fixture,content_hash) |
+| `forecasts` | 四轨预测 | track=ml/llm/fused/shadow（票 07 影子轨：challenger 双算行带 strategy_version_id 标签，model_version 加 shadow- 前缀，ml 生产轨不回溯打标）；ml 轨含 xG blend（票 47，model_version dc-xgblend- 前缀溯源）；**ml 轨是真钱资格唯一口径（票 04 冻结），任何轨不可覆写** | append+幂等 (fixture,track,content_hash)（同 payload 双轨并存——票 07 双算可比性） |
 | `team_aliases` | 队名别名对齐 | 竞彩名↔训练域↔odds_api 名；source=odds_api/manual | append+幂等 |
 | `forecast_coverage` | ML 覆盖普查（auto-paper 票 01） | covered=该场有 track=ml Forecast；skip 三因 reason 取 generate_forecasts 清单；日重跑 REPLACE（派生态非证据） | 普查 REPLACE |
 
@@ -96,6 +96,7 @@
 | `exploration_clock_anchor` | 探索钟锚点一次性钉值账（vision-build 票 03） | id=1 单行：周批首跑日（ensure_exploration_anchor 一次性写入，幂等重跑/后续周拍不覆盖）；读数 DB 行优先、缺席回退常量 | append-only（触发器拒改写）+ id=1 单行约束 |
 | `rescan_signal_events` | 四信号触发史账（vision-build 票 04 缝回填，v55） | 月读时点信号面评估落账（odds_psi/jc_rules/league_mix/quarterly_sweep 四信号名 CHECK 钉死；B.3 计时器=读数不落账）；读口=B.3 到期读数/晨检信号面，写口=月读 record_rescan_signals（晨检只读红线） | append-only；UNIQUE(signal, period) 吸收同月重跑 |
 | `rag_embeddings` | RAG 向量表两索引共载（vision-build 票 06，v56） | 通用一张：namespace 隔离 `guardian_article`（卫报篇级 chunk，item_id=文章 sid）/`lesson`（教训条目 L-NN）；vec=JSON 数组文本（FLOAT[] 是 DuckDB 检索侧物化形态）；model_id 进主键=换模型旧口径原地保留（换模型=重嵌）；教训索引 active-only（archived/review_due 不进索引，检索按 active 快照过滤）；写口=embed_pending 增量管线（CLI rag-embed，content_hash 同跳幂等，--limit=最多嵌 N 条新条目），读口=DuckDB 暴力余弦 search + 晨检落后条数（只读红线；卫报 bronze 毒丸行/截断 gzip 逐行容错，计数进黄口） | upsert UNIQUE(namespace,item_id,model_id)（文本变更重嵌覆盖） |
+| `shadow_retrain_events` | 影子重训触发台账（vision-build 票 07，v57） | reason=drift\|monthly、outcome=registered/no_change/no_live_champion/no_traffic/skipped_contraction；写口=evaluation/shadow.run_shadow_retrain_beat（漂移即时+月度兜底双触发），读口=月读⑤ retrain_event_counts；幂等吸收两键：版本行 UNIQUE(period, reason, challenger_version_id)、skip 行部分唯一索引 UNIQUE(period, reason, outcome)（WHERE challenger_version_id IS NULL） | append-only；skip 行部分唯一索引吸收同月同因重拍 |
 
 ### infra / 脚手架
 
@@ -332,6 +333,9 @@ erDiagram
     settlements {
         INTEGER id PK
     }
+    shadow_retrain_events {
+        INTEGER id PK
+    }
     source_coverage {
         INTEGER id PK
     }
@@ -407,6 +411,7 @@ erDiagram
     fixtures }|--|| competitions : competition_id
     forecast_coverage }|--|| fixtures : fixture_id
     forecast_scores }|--|| fixtures : fixture_id
+    forecasts }o--|| strategy_versions : strategy_version_id
     forecasts }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| fixtures : fixture_id
     had_quote_confirmations }|--|| quote_observations : observation_id
@@ -431,6 +436,7 @@ erDiagram
     settlement_revisions }|--|| settlements : settlement_id
     settlements }o--|| bet_slips : slip_id
     settlements }o--|| bets : bet_id
+    shadow_retrain_events }o--|| strategy_versions : challenger_version_id
     source_match_links }|--|| fixtures : fixture_id
     team_aliases }|--|| teams : team_id
     understat_matches }o--|| fixtures : fixture_id
@@ -1222,10 +1228,9 @@ EM facet 签字可用）、升降级频谱=纯后视窗 tier1 出入计数。TM 
 | `issued_at` | TEXT | NOT NULL |
 | `content_hash` | TEXT | NOT NULL |
 | `payload` | TEXT | NOT NULL |
+| `strategy_version_id` | INTEGER | FK→strategy_versions.id |
 
-唯一键 `UNIQUE(`fixture_id`, `content_hash`)`
-
-append-only 触发器：`forecasts_no_delete`、`forecasts_no_update`
+唯一键 `UNIQUE(`fixture_id`, `track`, `content_hash`)`
 <!-- schema-doc:END:table:forecasts -->
 <!-- schema-doc:BEGIN:table:team_aliases -->
 #### `team_aliases`
@@ -2014,6 +2019,27 @@ append-only 触发器：`rescan_signal_events_no_delete`、`rescan_signal_events
 
 唯一键 `UNIQUE(`namespace`, `item_id`, `model_id`)`
 <!-- schema-doc:END:table:rag_embeddings -->
+
+<!-- schema-doc:BEGIN:table:shadow_retrain_events -->
+#### `shadow_retrain_events`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `period` | TEXT | NOT NULL |
+| `reason` | TEXT | NOT NULL |
+| `outcome` | TEXT | NOT NULL |
+| `challenger_version_id` | INTEGER | FK→strategy_versions.id |
+| `drift_detail` | TEXT | — |
+| `detail` | TEXT | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`period`, `reason`, `challenger_version_id`)`
+
+唯一键 `UNIQUE(`period`, `reason`, `outcome`)`（部分索引：WHERE 内才约束，NULL 行不受约束）
+
+append-only 触发器：`shadow_retrain_events_no_delete`、`shadow_retrain_events_no_update`
+<!-- schema-doc:END:table:shadow_retrain_events -->
 
 运维：增量=夜拍/晨检后 `goalx rag-embed --namespace lessons|guardian [--limit N]`（幂等；--limit=最多嵌 N 条**新**条目，同参重跑可推进分段回填）。查重阈 `rag.LESSON_SIMILAR_THRESHOLD`（0.85 先验值）：真分布校准测=`tests/unit/test_rag.py::test_fastembed_threshold_calibration`（@slow，模型缓存就绪即跑；红了=阈挪进实测窗）。
 

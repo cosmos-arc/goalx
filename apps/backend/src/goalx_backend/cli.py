@@ -43,6 +43,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
       [--proposal-id P-… --h-id H9]
     uv run python -m goalx_backend.cli monthly-read  # 月读报告（vision 票 04）：
     # 八节只读报告落语料树 reports/monthly/；裁定动作走上方人 CLI，报告只读
+    uv run python -m goalx_backend.cli shadow-retrain  # 影子重训拍（vision 票 07）：
+    # 漂移 PSI/月度兜底→重训独立目录→注册 shadow→同流量双写；永无自动晋升
 """
 
 from __future__ import annotations

@@ -92,6 +92,7 @@ from goalx_backend.evaluation import (
     lessons,
     monthly_read,
     rag,
+    shadow,
     weekly_agent,
 )
 from goalx_backend.evaluation import clv as clv_mod
@@ -1507,6 +1508,24 @@ def monthly_read_run() -> dict[str, object]:
             return monthly_read.run_monthly_read(conn, store=store, duck_con=duck_con)
         finally:
             store.close()
+
+
+def shadow_retrain_beat(*, settings: Settings | None = None) -> dict[str, object]:
+    """
+    影子重训拍（vision-build 票 07）。
+
+    漂移即时+月度兜底→重训→注册 shadow→同流量双写→触发落账。
+
+    每日 10:35 deployment（datasets 注册面 shadow-retrain；daily-capture
+    10:00 首拍后——champion 当日 ml 流量就位，双算有同流量可对）。重训写
+    独立 challenger 模型目录（settings.shadow_models_dir），生产 ml 轨
+    工件不动。settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    with task_conn() as conn:
+        return shadow.run_shadow_retrain_beat(
+            conn, challenger_models_dir=resolved.shadow_models_dir
+        )
 
 
 def anchor_sentinel_capture(

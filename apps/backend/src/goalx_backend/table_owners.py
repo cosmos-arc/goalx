@@ -135,6 +135,9 @@ OWNERS: dict[str, set[str]] = {
         # vision-build 票 06：RAG 向量表两索引共载（evaluation/rag.py 属主：
         # 写口=embed_pending 增量管线 CLI；读口=DuckDB 余弦 search+晨检落后数）
         "rag_embeddings",
+        # vision-build 票 07：影子重训触发台账（evaluation/shadow.py 属主：
+        # 写口=run_shadow_retrain_beat；读口=月读⑤ retrain_event_counts）
+        "shadow_retrain_events",
     },
     "betting": {
         "bets",
