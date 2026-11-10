@@ -588,7 +588,9 @@ def check_srct_season_rhythm(
         return CheckItem(
             "srct_season_rhythm", DEGRADED, "corpus 桥缺席（S4 as-of 面同源降级）"
         )
-    season = silver.season_of(now)
+    # 季键按北京墙钟（#298 复核 info）：UTC now 在 8 月界切窗（北京
+    # 8/1 00:00-07:59 = UTC 7/31）会取到上季；定拍 09:05 免疫，手动跑受影响
+    season = silver.season_of(now.astimezone(fx_store.CST))
     face = quote_evidence.srct_anchor_season_face(duck_con, season=season)
     if face is None:
         return CheckItem("srct_season_rhythm", DEGRADED, f"{season} 视图缺席/查询降级")

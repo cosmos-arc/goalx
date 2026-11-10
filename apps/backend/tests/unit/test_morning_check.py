@@ -620,3 +620,55 @@ def test_check_srct_season_rhythm_observation(tmp_path: Path) -> None:
     assert item.status == OK
     assert "2025-26" in item.detail
     assert "0 场在库" in item.detail
+
+
+def test_check_srct_season_rhythm_season_key_beijing_wall_clock(
+    tmp_path: Path,
+) -> None:
+    """#298 复核 info 回归：季键按北京墙钟——8 月界切窗（北京 8/1 02:00 =
+    UTC 7/31 18:00）不得取到上季（UTC now 会给 2025-26）。"""
+    import duckdb
+
+    from goalx_backend.data import corpus_duckdb
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.data.ingest import srct, srct_odds
+    from goalx_backend.morning_check import check_srct_season_rhythm
+
+    envelope = {
+        "provider": srct.SRCT_PROVIDER,
+        "dataset": srct.ODDS_DATASET,
+        "sid": "95020",
+        "fetched_at": "2026-10-31T02:00:00+00:00",
+        "parser_version": srct.BRONZE_VERSIONS[srct.ODDS_DATASET],
+        "raw_sha": "0" * 64,
+        "payload": {
+            "meta": {},
+            "game": ["177|800002|TestPinnacle|2.50|3.40|2.80|"],
+            "game_detail": ["800002^2.50|3.40|2.80|10-30 20:00|0.9|0.9|0.9|2026;"],
+        },
+    }
+    store = CorpusStore(tmp_path / "corpus")
+    try:
+        store.append_bronze(srct.SRCT_PROVIDER, srct.ODDS_DATASET, [envelope])
+        srct_odds.build_odds_change_events(
+            store,
+            meta={
+                "95020": {
+                    "sid": "95020",
+                    "kickoff": datetime(2026, 10, 31, 20, 0),
+                    "league": "英超",
+                }
+            },
+        )
+        duck_path = corpus_duckdb.build_corpus_duckdb(store)
+        con = duckdb.connect(duck_path, read_only=True)
+        try:
+            item = check_srct_season_rhythm(
+                con, now=datetime(2026, 7, 31, 18, 0, tzinfo=UTC)
+            )
+        finally:
+            con.close()
+    finally:
+        store.close()
+    assert item.status == OK
+    assert "2026-27" in item.detail  # 北京 8/1 02:00 → 新季；UTC now 会给 2025-26
