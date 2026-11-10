@@ -1,12 +1,13 @@
 """
-09:05 晨检代码化：24 项只读红绿面。
+09:05 晨检代码化：25 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
 autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
 票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项；
 vision-build 票 05 加第 22 项教训库复审到期；vision-build 票 08 加第
-23 项收缩双钟与第 24 项四信号重扫唤醒。）
+23 项收缩双钟与第 24 项四信号重扫唤醒；vision-build 票 06 加第 25 项
+RAG 两索引落后条数。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -53,7 +54,13 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
-from goalx_backend.evaluation import anchor_sentinel, contraction, edge_scan, lessons
+from goalx_backend.evaluation import (
+    anchor_sentinel,
+    contraction,
+    edge_scan,
+    lessons,
+    rag,
+)
 from goalx_backend.modelling import forecast
 
 OK = "ok"
@@ -84,6 +91,10 @@ _SENTINEL_STALE_DAYS = 8
 # 新闻 PIT 夜拍新鲜界（票 17）：26h 同口径——每晚不开=永久缺口，
 # 断夜黄（degraded）不红（ponytail 睡眠漏跑协议允许，缺夜可见即可）
 _NEWS_PIT_FRESH_HOURS = 26
+# 项 25 RAG 卫报索引落后黄线（vision-build 票 06）：教训库小（>0 即黄）；
+# 卫报大库留真回填余量（>500 篇落后=增量入口 CLI 该跑了；全量回填
+# 前常态黄=待办可见，非故障）
+_RAG_GUARDIAN_LAG_DEGRADED = 500
 
 
 @dataclass(frozen=True)
@@ -679,6 +690,47 @@ def check_lessons_review_due(
     )
 
 
+def check_rag_index_lag(
+    conn: sqlite3.Connection,
+    store: CorpusStore,
+    *,
+    lessons_dir: Path | None = None,
+) -> CheckItem:
+    """
+    项 25 RAG 两索引落后条数（vision-build 票 06；只读红线：零 embed 零写入）。
+
+    教训库（docs/plans/lessons/）与卫报语料（bronze）在当前模型口径下
+    未嵌条数=增量入口（CLI rag-embed）该跑的量。教训库小（>0 即黄）；
+    卫报大库 >500 黄（真回填前的常态黄=待办可见）。教训库不可读=黄
+    （项 22 同款兜底）。晨检只报不嵌（rag.pending_count 只数行；
+    模型身份串经 rag.current_model_id() 零成本取用，不构造模型）。
+    """
+    model_id = rag.current_model_id()
+    try:
+        lesson_items = rag.lesson_texts(lessons_dir)
+    except (lessons.LessonFormatError, OSError, RuntimeError) as exc:
+        return CheckItem("rag_index_lag", DEGRADED, f"教训库不可读：{exc}")
+    lesson_lag = rag.pending_count(
+        conn,
+        namespace=rag.NAMESPACE_LESSON,
+        items=lesson_items,
+        model_id=model_id,
+    )
+    guardian_lag = rag.pending_count(
+        conn,
+        namespace=rag.NAMESPACE_GUARDIAN,
+        items=rag.guardian_article_texts(store),
+        model_id=model_id,
+    )
+    detail = (
+        f"落后条数（{model_id}）：教训 {lesson_lag} / 卫报 {guardian_lag}"
+        + "（增量入口：goalx rag-embed --namespace lessons|guardian）"
+    )
+    if lesson_lag > 0 or guardian_lag > _RAG_GUARDIAN_LAG_DEGRADED:
+        return CheckItem("rag_index_lag", DEGRADED, detail)
+    return CheckItem("rag_index_lag", OK, detail)
+
+
 def check_contraction_clocks(
     conn: sqlite3.Connection, *, now: datetime | None = None
 ) -> CheckItem:
@@ -792,7 +844,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 24 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 25 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -826,6 +878,7 @@ def run_morning_check(
                 check_lessons_review_due(now=resolved_now),
                 check_contraction_clocks(conn, now=resolved_now),
                 check_rescan_signals(conn, now=resolved_now),
+                check_rag_index_lag(conn, store, lessons_dir=lessons.lessons_dir()),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

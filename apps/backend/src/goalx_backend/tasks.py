@@ -90,6 +90,7 @@ from goalx_backend.evaluation import (
     anchor_sentinel,
     edge_scan,
     monthly_read,
+    rag,
     weekly_agent,
 )
 from goalx_backend.evaluation import clv as clv_mod
@@ -1435,6 +1436,20 @@ def weekly_agent_batch() -> dict[str, object]:
     settings = get_settings()
     with task_conn() as conn:
         store = CorpusStore(settings.corpus_root)
+        # 票 06 语义查重缝：真 embedder 注入（教训索引空=零嵌入降级，
+        # 见 rag.LessonDeduper._index_ready）；duck 只读 ATTACH 失败=回
+        # 票 03 精确面（黄口可见，不炸周拍）
+        embedder = rag.FastembedEmbedder()
+        duck_con: duckdb.DuckDBPyConnection | None = None
+        try:
+            duck_con = rag.connect_rag(settings.db_path)
+        except duckdb.Error as exc:
+            logger.warning("weekly 语义查重缝降级（duck attach 失败）：{}", exc)
+        deduper = (
+            rag.LessonDeduper(embedder=embedder, duck_con=duck_con)
+            if duck_con is not None
+            else None
+        )
 
         def chat(prompt: str) -> weekly_agent.ChatOutcome:
             result = glm_chat(
@@ -1455,8 +1470,12 @@ def weekly_agent_batch() -> dict[str, object]:
             )
 
         try:
-            return weekly_agent.run_weekly_batch(conn, store=store, chat=chat)
+            return weekly_agent.run_weekly_batch(
+                conn, store=store, chat=chat, lesson_deduper=deduper
+            )
         finally:
+            if duck_con is not None:
+                duck_con.close()
             store.close()
 
 

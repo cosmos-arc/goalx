@@ -49,6 +49,7 @@ from goalx_backend.evaluation import (
     edge_scan,
     hypothesis_registry,
     lessons,
+    rag,
 )
 
 #: 每次周拍提案上限（票面：≤5 条/次，不收裸想法）
@@ -351,18 +352,32 @@ def _refs_resolve(
 
 
 def duplicate_reason(
-    ledger_ref: str, *, batch_refs: set[str], refuted_refs: set[str]
+    ledger_ref: str,
+    *,
+    batch_refs: set[str],
+    refuted_refs: set[str],
+    statement: str = "",
+    lesson_deduper: rag.LessonDeduper | None = None,
 ) -> str | None:
     """
-    查重 v0：台账精确回指去伪新颖（refuted 库 + 本批重复）。
+    查重（票 03 精确面 + 票 06 语义近邻升级，接口向后兼容）。
 
-    票 06 RAG 落地后本函数升语义近邻（接口不变，调用方不动）：
-    TODO(票 06)：semantic_duplicate(statement) 近邻查重替换精确回指面。
+    三层序（廉价在前）：①台账精确回指撞 refuted 库（伪新颖）；②本批
+    精确重复；③教训索引语义近邻——statement 嵌入对教训命名空间 top-1
+    余弦超阈（lesson_deduper 注入；缺席=票 03 v0 行为不动，教训索引
+    未回填时亦如实退回精确面）。
     """
     if ledger_ref in refuted_refs:
         return "撞 refuted 库：该台账回指已有 refuted 假设（伪新颖，重开=人裁新 h_id）"
     if ledger_ref in batch_refs:
         return "与本批前序提案台账回指重复（同拍精确去重）"
+    if lesson_deduper is not None and statement:
+        hit = lesson_deduper.nearest(statement)
+        if hit is not None:
+            return (
+                f"lesson_similar:{hit.item_id}：近邻复现死法"
+                + f"（cos={hit.score:.3f}≥{lesson_deduper.threshold}，票 06 语义查重）"
+            )
     return None
 
 
@@ -439,8 +454,9 @@ def _proposal_reasons(
     faces: _RefFaces,
     *,
     batch_refs: set[str],
+    lesson_deduper: rag.LessonDeduper | None = None,
 ) -> list[str]:
-    """单条提案的拒收理由（字段/引用/台账回指/查重）。"""
+    """单条提案的拒收理由（字段/引用/台账回指/查重含语义近邻）。"""
     reasons: list[str] = []
     for field in _REQUIRED_FIELDS:
         value = raw.get(field)
@@ -454,8 +470,13 @@ def _proposal_reasons(
                 f"台账回指不可解析（须 edge:<id> 或在册账本引用）：{ledger_ref}"
             )
         else:
+            statement = raw.get("statement")
             dup = duplicate_reason(
-                ledger_ref, batch_refs=batch_refs, refuted_refs=faces.refuted_refs
+                ledger_ref,
+                batch_refs=batch_refs,
+                refuted_refs=faces.refuted_refs,
+                statement=statement if isinstance(statement, str) else "",
+                lesson_deduper=lesson_deduper,
             )
             if dup is not None:
                 reasons.append(dup)
@@ -469,12 +490,14 @@ def validate_batch(
     *,
     id_prefix: str,
     lessons_dir: Path | None = None,
+    lesson_deduper: rag.LessonDeduper | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     管线层校验整批 LLM 产出，返回 (过审提案（已编 id）, 拒收清单)。
 
     校验面：字段齐（标量先经 _coerce_scalars 归一）、引用 id 必带且可
-    解析、台账回指精确可解析、查重 v0、≤5 条/次。拒收只剔除不中断
+    解析、台账回指精确可解析、查重（票 03 精确面 + 票 06 语义近邻，
+    lesson_deduper 注入缺席=v0 行为）、≤5 条/次。拒收只剔除不中断
     （一条坏产出不废整批）；拒收理由进报告留痕。id_prefix 含拍次位
     （同日第二拍起 P-yyyymmdd-<拍>-NN，correctness F4）。
     """
@@ -493,7 +516,9 @@ def validate_batch(
             )
             continue
         coerced = _coerce_scalars(raw)
-        reasons = _proposal_reasons(conn, coerced, faces, batch_refs=batch_refs)
+        reasons = _proposal_reasons(
+            conn, coerced, faces, batch_refs=batch_refs, lesson_deduper=lesson_deduper
+        )
         if reasons:
             rejected.append({"raw": raw, "reasons": reasons})
             continue
@@ -514,6 +539,7 @@ def run_weekly_batch(
     chat: ChatFn,
     run_date: str | None = None,
     lessons_dir: Path | None = None,
+    lesson_deduper: rag.LessonDeduper | None = None,
 ) -> dict[str, Any]:
     """
     一次周拍（幂等语义=水位守卫：同料不重烧；收缩 ≥L2 只留心跳）。
@@ -521,6 +547,8 @@ def run_weekly_batch(
     返回心跳/生成报告（status: paused_heartbeat | idle_heartbeat |
     generated）；真跑产提案文件（JSON+MD 双视图，受控目录 append-only）
     并逐调用落 LLM 花费。首跑钉探索钟锚点（当天，一次性）。
+    lesson_deduper=票 06 语义查重缝（生产=tasks 适配件注入
+    FastembedEmbedder+connect_rag；缺席/教训索引空=票 03 精确面）。
     """
     resolved_date = run_date or fx_store.beijing_business_date()
     level = contraction.current_level(conn)
@@ -575,7 +603,11 @@ def run_weekly_batch(
     )
     raw_proposals, parse_note = parse_proposals(generate_outcome.content)
     validated, rejected = validate_batch(
-        conn, raw_proposals, id_prefix=id_prefix, lessons_dir=lessons_dir
+        conn,
+        raw_proposals,
+        id_prefix=id_prefix,
+        lessons_dir=lessons_dir,
+        lesson_deduper=lesson_deduper,
     )
     critique_cost = 0.0
     for proposal in validated:

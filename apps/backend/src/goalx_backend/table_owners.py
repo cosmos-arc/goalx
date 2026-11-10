@@ -132,6 +132,9 @@ OWNERS: dict[str, set[str]] = {
         # vision-build 票 04 缝回填：四信号触发史账（evaluation/
         # contraction.py 属主——读口 B.3/晨检；写口=月读 record_rescan_signals）
         "rescan_signal_events",
+        # vision-build 票 06：RAG 向量表两索引共载（evaluation/rag.py 属主：
+        # 写口=embed_pending 增量管线 CLI；读口=DuckDB 余弦 search+晨检落后数）
+        "rag_embeddings",
     },
     "betting": {
         "bets",

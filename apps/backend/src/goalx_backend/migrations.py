@@ -2899,6 +2899,49 @@ def _apply_v55(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v56(conn: sqlite3.Connection) -> None:
+    """
+    v56（vision-build 票 06）：RAG 向量表 rag_embeddings（evaluation 域）。
+
+    通用一张表承载两索引（人裁 3 最小裁：namespace 隔离卫报语料/教训
+    条目，不建两表）：embeddings 落**主库**（sqlite），vec 列存 JSON 数组
+    文本——FLOAT[] 是 DuckDB 检索侧的物化形态（查询时 CAST vec AS
+    FLOAT[N] 再算余弦，人裁 3「DuckDB 纯 SQL list 函数暴力扫」），sqlite
+    无原生数组类型，存 JSON 即存 FLOAT[] 的忠实序列化。
+
+    - 主键 (namespace, item_id, model_id)：item_id=卫报文章 sid / 教训
+      L-NN；model_id 进主键=**换模型旧向量原地保留**，新旧口径并行可查，
+      换模型=重嵌即对新 model_id 重新落行（增量管线幂等）；
+    - content_hash=嵌入文本 sha256：增量幂等判据（同 hash 跳过重嵌），
+      连同 model_id 落账=**回填可复算**（不变量：模型版本+输入 hash）；
+    - dim 冗余落列：检索侧定长 CAST（FLOAT[N]）前的一致性自证。
+
+    SQL 读写归 evaluation（evaluation/rag.py 属主：写口=embed_pending
+      增量管线（CLI rag-embed）；读口=DuckDB 余弦检索 search + 晨检
+      落后条数（只读红线））。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rag_embeddings (
+            namespace TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            dim INTEGER NOT NULL,
+            vec TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            embedded_at TEXT NOT NULL,
+            PRIMARY KEY (namespace, item_id, model_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_rag_embeddings_ns_model
+            ON rag_embeddings (namespace, model_id)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2955,6 +2998,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (53, _apply_v53),
     (54, _apply_v54),
     (55, _apply_v55),
+    (56, _apply_v56),
 )
 
 
