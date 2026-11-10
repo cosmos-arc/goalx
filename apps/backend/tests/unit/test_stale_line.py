@@ -162,3 +162,127 @@ def test_signal_method_mismatch_no_drift(db) -> None:
     signal = qe.stale_line_signal(db, fixture_id, as_of="2026-09-21T18:00:00+00:00")
     assert signal is not None
     assert signal.drift is None
+
+
+# ---- 票 19：corpus as-of 注入缝（S4 陈盘观测接线） ----
+
+
+def _replay_rows(
+    book: str, observed_at: str, odds: tuple[float, float, float]
+) -> list[dict[str, object]]:
+    """一个时点的青铜重放伪行组（ingest.srct_asof 产出行同形）。"""
+    return [
+        {
+            "id": seq,
+            "source": book,
+            "selection_code": sel,
+            "odds": price,
+            "captured_at": observed_at,
+            "observed_at": observed_at,
+            "source_updated_at": observed_at,
+        }
+        for seq, (sel, price) in enumerate(zip(("h", "d", "a"), odds, strict=True))
+    ]
+
+
+def test_signal_asof_resolver_feeds_both_endpoints(db) -> None:
+    """
+    票 19：resolver 在场时定格端与决策端都走重放行（silver 最新视图上
+    历史时点会"消失"——账本 §4.1#7 的 0 有分辨根因）；两端同书同法，
+    漂移可算且身份=重放行书 id。
+    """
+    fixture_id = _seed_fixture(db)
+    _snap(db, fixture_id, "sporttery", "2026-09-21T15:00:00+00:00", (2.2, 3.1, 3.5))
+    anchor = "srct:1x2:177"
+    by_endpoint = {
+        "2026-09-21T15:00:00+00:00": _replay_rows(
+            anchor, "2026-09-21T14:00:00+00:00", (2.5, 3.4, 2.8)
+        ),
+        "2026-09-21T18:00:00+00:00": _replay_rows(
+            anchor, "2026-09-21T17:30:00+00:00", (2.9, 3.4, 2.4)
+        ),
+    }
+    calls: list[tuple[str, str]] = []
+
+    def resolver(sid: str, as_of: str) -> list[dict[str, object]] | None:
+        calls.append((sid, as_of))
+        return by_endpoint.get(as_of)
+
+    signal = qe.stale_line_signal(
+        db,
+        fixture_id,
+        as_of="2026-09-21T18:00:00+00:00",
+        sid="95001",
+        asof_resolver=resolver,
+    )
+    assert signal is not None
+    # 定格端（jc_last_move）与决策端（as_of）都经 resolver
+    assert calls == [
+        ("95001", "2026-09-21T15:00:00+00:00"),
+        ("95001", "2026-09-21T18:00:00+00:00"),
+    ]
+    assert signal.sharp_ref == anchor
+    assert signal.drift_selection == "a"
+    assert signal.drift is not None
+    assert signal.drift > 0
+
+
+def test_signal_asof_resolver_none_falls_back_untouched(db) -> None:
+    """resolver 判不适用（None）→ 该端走既有行源；整体行为与无 resolver 一致。"""
+    fixture_id = _seed_fixture(db)
+    _snap(db, fixture_id, "sporttery", "2026-09-21T15:00:00+00:00", (2.2, 3.1, 3.5))
+    _snap(
+        db,
+        fixture_id,
+        "odds_api:pinnacle",
+        "2026-09-21T14:00:00+00:00",
+        (2.5, 3.4, 2.8),
+    )
+    _snap(
+        db,
+        fixture_id,
+        "odds_api:pinnacle",
+        "2026-09-21T17:30:00+00:00",
+        (2.9, 3.4, 2.4),
+    )
+
+    def always_none(sid: str, as_of: str) -> list[dict[str, object]] | None:
+        return None
+
+    with_resolver = qe.stale_line_signal(
+        db,
+        fixture_id,
+        as_of="2026-09-21T18:00:00+00:00",
+        sid="95001",
+        asof_resolver=always_none,
+    )
+    without = qe.stale_line_signal(db, fixture_id, as_of="2026-09-21T18:00:00+00:00")
+    assert with_resolver is not None
+    assert with_resolver == without  # None=不适用：回退既有路径，读数不因缝在场而变
+
+
+def test_signal_asof_resolver_frozen_age_gate_applies(db) -> None:
+    """
+    定格端 12h 新鲜度闸对重放行同样生效：定格参考过旧（observed 早于
+    jc_last_move 超 12h）→ 定格端空 → 只报时长不冒充漂移。
+    """
+    fixture_id = _seed_fixture(db)
+    _snap(db, fixture_id, "sporttery", "2026-09-21T15:00:00+00:00", (2.2, 3.1, 3.5))
+    anchor = "srct:1x2:177"
+
+    def resolver(sid: str, as_of: str) -> list[dict[str, object]] | None:
+        if as_of == "2026-09-21T15:00:00+00:00":
+            return _replay_rows(anchor, "2026-09-20T01:00:00+00:00", (2.5, 3.4, 2.8))
+        return _replay_rows(anchor, "2026-09-21T17:30:00+00:00", (2.9, 3.4, 2.4))
+
+    signal = qe.stale_line_signal(
+        db,
+        fixture_id,
+        as_of="2026-09-21T18:00:00+00:00",
+        sid="95001",
+        asof_resolver=resolver,
+    )
+    assert signal is not None
+    assert signal.minutes_since_move == 180
+    assert signal.drift is None  # 冻结端参考被 12h 闸剔掉：漂移不可比
+    assert signal.sharp_ref is None

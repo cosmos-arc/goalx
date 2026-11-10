@@ -1,9 +1,9 @@
 """
-09:05 晨检代码化：18 项只读红绿面。
+09:05 晨检代码化：19 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
-autoresearch 票 14 加第 18 项。）
+autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -28,21 +28,24 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import duckdb
 import httpx
 
 from goalx_backend import db as db_mod
 from goalx_backend.betting import account, funnel, summary
 from goalx_backend.betting import store as bets_store
 from goalx_backend.config import Settings
-from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import (
+    corpus_duckdb,
     gold_reader,
     mapping,
     pool,
     price_ledger,
     quote_evidence,
+    silver,
     today,
 )
+from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
@@ -515,6 +518,34 @@ def check_prematch_snapshots(store: CorpusStore, *, now: datetime) -> CheckItem:
     )
 
 
+def check_srct_season_rhythm(
+    duck_con: duckdb.DuckDBPyConnection | None, *, now: datetime
+) -> CheckItem:
+    """
+    项 19 源T 当季锚书入库节奏（autoresearch 票 19；观察项只报数不判红）。
+
+    账本 §4.1#7 放宽注记的积累面：cid177（SRCT_PINNACLE_BOOK）轨迹当季
+    在库场次 + 最新观测——S4 有分辨面（corpus as-of 接线后）的数据前提
+    可见性。计数不设阈值（赛季进行态，节奏靠逐日对比）；断供探测归语料
+    新鲜度项。duck 桥缺席/视图降级=黄（与 S4 as-of 读数同源降级，不
+    冒充）；季无行=绿零（空真：未开始积累）。
+    """
+    if duck_con is None:
+        return CheckItem(
+            "srct_season_rhythm", DEGRADED, "corpus 桥缺席（S4 as-of 面同源降级）"
+        )
+    season = silver.season_of(now)
+    face = quote_evidence.srct_anchor_season_face(duck_con, season=season)
+    if face is None:
+        return CheckItem("srct_season_rhythm", DEGRADED, f"{season} 视图缺席/查询降级")
+    latest = face["latest_observed"] or "无"
+    return CheckItem(
+        "srct_season_rhythm",
+        OK,
+        f"{season} cid177 {face['n_sids']} 场在库 · 最新观测 {latest}",
+    )
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -570,7 +601,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 18 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 19 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -617,6 +648,10 @@ def run_morning_check(
         )
         with httpx.Client(verify=browser_ssl_context()) as client:
             items.append(check_pool_drift(conn, settings, client))
+        # 项 19 源T 当季锚书入库节奏（票 19）：短命只读 duck 桥（reader 缺席/
+        # 被写方锁占降级 None → 黄）；放队尾——duck 连接不与 sqlite 项交叠。
+        with corpus_duckdb.reader(settings) as duck_con:
+            items.append(check_srct_season_rhythm(duck_con, now=resolved_now))
     finally:
         conn.close()
         store.close()

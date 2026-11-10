@@ -990,13 +990,19 @@ def _edge_scan_payload(
     duck_con: duckdb.DuckDBPyConnection | None,
     resolved: Settings,
 ) -> dict[str, Any]:
-    """edge-scan 三面分派：--digest 周报 / --face decade 十年面 / 日扫。"""
+    """
+    edge-scan 三面分派：--digest 周报 / --face decade 十年面 / 日扫。
+
+    票 19：日扫 S4 与周报都接 corpus as-of 面——duck 桥在场时青铜重放
+    注入（srct_asof 组合根注入，同 price-edge 先例）；缺席回退 silver
+    最新视图口径（sharp_source 注记随读法）。
+    """
     business_date = args.window_end or edge_scan.yesterday_business_date()
     if args.digest:
         store = CorpusStore(resolved.corpus_root)
         try:
             report = edge_scan.build_edge_digest(
-                conn, week_end=business_date, store=store
+                conn, week_end=business_date, store=store, duck_con=duck_con
             )
         finally:
             store.close()
@@ -1014,16 +1020,27 @@ def _edge_scan_payload(
             return edge_scan.run_s1_decade(conn, research_conn=research)
         finally:
             research.close()
-    ctx = edge_scan.ScanContext(
-        business_date=business_date,
-        duck_con=duck_con,
-        resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
-    )
-    names = edge_scan.ACTIVE_SCANNERS if args.scanner == "all" else (args.scanner,)
-    return {
-        "business_date": business_date,
-        **{name: edge_scan.SCANNERS[name].run(conn, ctx) for name in names},
-    }
+    # corpus 在场才开语料树（青铜重放行源）；缺席不冷启建树
+    store = CorpusStore(resolved.corpus_root) if duck_con is not None else None
+    try:
+        ctx = edge_scan.ScanContext(
+            business_date=business_date,
+            duck_con=duck_con,
+            resolve_sid=lambda fid: mapping.srct_sid_for_fixture(conn, fid),
+            asof_resolver=(
+                partial(srct_asof.asof_rows, store, duck_con)
+                if store is not None and duck_con is not None
+                else None
+            ),
+        )
+        names = edge_scan.ACTIVE_SCANNERS if args.scanner == "all" else (args.scanner,)
+        return {
+            "business_date": business_date,
+            **{name: edge_scan.SCANNERS[name].run(conn, ctx) for name in names},
+        }
+    finally:
+        if store is not None:
+            store.close()
 
 
 def _cmd_edge_scan(

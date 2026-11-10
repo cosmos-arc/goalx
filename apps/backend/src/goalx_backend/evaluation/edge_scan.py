@@ -26,6 +26,8 @@
 - **s4 陈盘观测日**（票 04）：逐场决策时点（开球−60min）陈盘信号
   confirmed/fired/命中计数留痕——"有分辨观测日"积累器（had_quote 闸 +
   ``stale_line_signal`` 既有面，B1 已关闭可交易性→纯监测不产候选）。
+  票 19：sharp 端点读法从 as-of 覆盖缺（silver 最新视图）切 corpus
+  as-of 视图（青铜重放注入缝，payload 口径注记 sharp_source）。
 - **s5 滚存回看**（票 04）：池期次兑付后回看奖池结构（滚存标记/池规模/
   派彩分布）；按缺席自补（近 7 日发布期次夜刷保鲜），首跑即历史回放。
 """
@@ -48,6 +50,7 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data import quote_evidence as qe
 from goalx_backend.data import results as rs_store
+from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
 from goalx_backend.evaluation import accuracy
@@ -90,11 +93,20 @@ _SELECTION_INDEX = {"h": 0, "d": 1, "a": 2}
 
 @dataclass(frozen=True)
 class ScanContext:
-    """一次扫描的运行上下文（注册表统一签名；各扫描器按需取用）。"""
+    """
+    一次扫描的运行上下文（注册表统一签名；各扫描器按需取用）。
+
+    asof_resolver（票 19）：(sid, as_of) → 青铜重放行 | None（不适用）。
+    实现在 ingest.srct_asof（分层位于本包之上）——组合根（tasks/cli）
+    注入；S4 sharp 端点双端历史时点先走重放（silver 最新视图回答不了
+    夜扫查昨日决策时点，账本 §4.1#7 的 0 有分辨根因）。缺省 None=回退
+    corpus silver 最新视图口径（修复前行为）。
+    """
 
     business_date: str
     duck_con: qe.DuckCon | None = None
     resolve_sid: Callable[[int], str | None] | None = None
+    asof_resolver: Callable[[str, str], list[qe.SnapshotRow] | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -598,6 +610,11 @@ def run_s4(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
 
     confirmed=陈盘（≥15min 未调）且 sharp 漂移≥1.5pp；fired=决策后到
     开球前 JC 再调盘（分母=confirmed）；命中=再调方向与漂移同号。
+
+    票 19：sharp 端点读法=corpus as-of（asof_resolver 在场时双端历史
+    时点青铜重放，口径注记 sharp_source=corpus_asof）；无信号日如实记
+    零的纪律不因数据源升级而变（B1 已关闭可交易性→纯监测不产候选，
+    E-09 观测≠下注）。
     """
     counts = {
         "n_fixtures": 0,
@@ -635,6 +652,14 @@ def run_s4(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
                 "stale_minutes": S4_STALE_MINUTES,
                 "drift_threshold": S4_DRIFT_THRESHOLD,
             },
+            # 口径注记（票 19 验收）：sharp 端点数据来源——corpus_asof=
+            # 青铜重放注入缝在场；corpus=只走 silver 最新视图（历史时点
+            # 会缺）；legacy=无 corpus 桥。计数读法随注记解读。
+            "sharp_source": (
+                "corpus_asof"
+                if ctx.asof_resolver is not None
+                else ("corpus" if ctx.duck_con is not None else "legacy")
+            ),
         },
     )
     conn.commit()
@@ -666,12 +691,17 @@ def _s4_read_phase(
         if not visible:
             continue  # had_quote 闸：决策时点无可见完整三向不可观测
         counts["n_observed"] += 1
+        # ponytail: 重放逐 (sid, as_of) 调用（定格端 as_of 在 stale_line_signal
+        # 内部才知，无法预取批扫）；夜扫 JC 板量级（数十 sid）在 srct_asof
+        # shortcut 声明的"检查点够用"面内。板量级上百后换 batch_asof_resolver
+        # 预取（票 05 先例：需把定格端 JC 查询上提预收集）。
         signal = qe.stale_line_signal(
             conn,
             fixture["id"],
             as_of=decision,
             duck_con=ctx.duck_con,
             sid=ctx.resolve_sid(fixture["id"]) if ctx.resolve_sid else None,
+            asof_resolver=ctx.asof_resolver,
         )
         if signal is None:
             continue
@@ -870,6 +900,7 @@ def edge_scan_day(
     business_date: str | None = None,
     duck_con: qe.DuckCon | None = None,
     resolve_sid: Callable[[int], str | None] | None = None,
+    asof_resolver: Callable[[str, str], list[qe.SnapshotRow] | None] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """
@@ -877,12 +908,14 @@ def edge_scan_day(
 
     扫描器间独立异常边界（m3/freshness_shadow 先例）：单扫描器炸只降级
     自身（未提交事务随之回滚，半套写入不落库），其余照常留痕——
-    "无信号日如实记零"的保证不因部分失败丢失。
+    "无信号日如实记零"的保证不因部分失败丢失。asof_resolver（票 19）
+    只服务 S4 sharp 端点；其余扫描器不取用。
     """
     ctx = ScanContext(
         business_date=business_date or yesterday_business_date(now),
         duck_con=duck_con,
         resolve_sid=resolve_sid,
+        asof_resolver=asof_resolver,
     )
     stats: dict[str, Any] = {"business_date": ctx.business_date}
     for name in ACTIVE_SCANNERS:
@@ -918,6 +951,7 @@ def build_edge_digest(
     *,
     week_end: str,
     store: CorpusStore | None = None,
+    duck_con: qe.DuckCon | None = None,
 ) -> dict[str, Any]:
     """
     周报：各扫描器窗口统计 + 本周新台账行 + 晋升建议（只读，两视图落盘）。
@@ -926,6 +960,7 @@ def build_edge_digest(
     不自动晋升）。窗口过滤按台账 window 末日（s1 约定 "from..end"）。
     全读一个 deferred 读事务（price_edge 同款）：期次面/留痕/台账同
     快照——并发 pool-sync 落新期不让周报永久漏期（correctness F3）。
+    duck_con（票 19）：锚书当季入库节奏节（数据积累面）；缺席=节 None。
     """
     week_end = _validated_business_date(week_end)
     week_start = (date.fromisoformat(week_end) - timedelta(days=6)).isoformat()
@@ -937,6 +972,14 @@ def build_edge_digest(
     finally:
         if own_txn:
             conn.execute("ROLLBACK")
+    # duck 面在读事务外查（corpus 只读桥不参与运行面事务；缺席/降级 None）
+    report["srct_rhythm"] = (
+        qe.srct_anchor_season_face(
+            duck_con, season=silver.season_of(datetime.fromisoformat(week_end))
+        )
+        if duck_con is not None
+        else None
+    )
     if store is not None:
         report["run_fingerprint"] = rfp.build_run_fingerprint(conn=conn, store=store)
         _write_two_views(store, report)
@@ -1054,6 +1097,8 @@ def _assemble_digest(
             "S1 多重比较未校正（21 段×逐日；形式化随票 05）。",
             "S2 面 A 置信箱（10×5 玩法）同有多重比较未校正；负 dev=模型高估。",
             "S5 标注不另算 EV——池面 EV 结论已由 H7 裁决归档。",
+            "S4 sharp 端点数据来源=corpus as-of（青铜重放，票 19）；纯观测"
+            + "不产候选（B1 可交易性已关闭，E-09 观测≠下注）。",
         ],
     }
     return report
@@ -1071,6 +1116,17 @@ def _write_two_views(store: CorpusStore, report: dict[str, Any]) -> None:
     md_tmp.write_text(_render_markdown(report), encoding="utf-8")
     json_tmp.replace(reports / f"{REPORT_BASENAME}.json")
     md_tmp.replace(reports / f"{REPORT_BASENAME}.md")
+
+
+def _rhythm_line(rhythm: dict[str, Any] | None) -> str:
+    """周报数据积累面一行（票 19）：锚书当季入库节奏；缺席如实降级。"""
+    if rhythm is None:
+        return "- 源T 当季锚书入库节奏：duck 桥缺席/降级（积累面断线，如实不冒充）"
+    latest = rhythm.get("latest_observed") or "无"
+    return (
+        f"- 源T 当季锚书入库节奏（{rhythm['season']}，数据积累面）：cid177"
+        + f" {rhythm['n_sids']} 场在库 · 最新观测 {latest}"
+    )
 
 
 def _render_markdown(report: dict[str, Any]) -> str:
@@ -1118,6 +1174,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- S5 本周兑付 {s5['week_periods']} 期（存量 {s5['all_time'].get('n_states')}"
         + f" 期，滚存携带 {s5['all_time'].get('n_rollover_in')} 期）"
     )
+    w(_rhythm_line(report.get("srct_rhythm")))
     w("")
     w("## S1 分桶表（最新窗）")
     w("")

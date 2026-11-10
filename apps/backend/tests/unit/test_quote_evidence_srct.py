@@ -391,6 +391,73 @@ def _reset_dim_cache() -> None:
     _dim_cache.at = 0.0
 
 
+# ---- 票 19：锚书分季入库节奏观察面（晨检/周报数源） ----
+
+
+def _seed_season_corpus() -> duckdb.DuckDBPyConnection:
+    """内存 corpus（含 hive 分区列 season）：锚书轨迹 × 两 sid + 干扰行。"""
+    con = duckdb.connect(":memory:")
+    con.execute(
+        """
+        CREATE TABLE odds_change_event (
+            sid VARCHAR, bookmaker_id VARCHAR, market VARCHAR, season VARCHAR,
+            published_at TIMESTAMPTZ, observed_at TIMESTAMPTZ,
+            odds_home DOUBLE, odds_draw DOUBLE, odds_away DOUBLE,
+            source_order INTEGER
+        )
+        """
+    )
+    rows = [
+        # 锚书 2627 季两场（最新观测 10:00Z）
+        ("3001", ANCHOR, "1x2", "2026-27", OBSERVED, OBSERVED, 2.0, 3.5, 3.2),
+        ("3002", ANCHOR, "1x2", "2026-27", OBSERVED, OBSERVED, 2.2, 3.4, 3.1),
+        (
+            "3002",
+            ANCHOR,
+            "1x2",
+            "2026-27",
+            OBSERVED,
+            datetime(2026, 10, 31, 18, 0, tzinfo=BEIJING),  # 10:00Z 最新
+            2.1,
+            3.45,
+            3.15,
+        ),
+        # 干扰：他书/他季不进锚书面
+        ("3003", "srct:1x2:281", "1x2", "2026-27", OBSERVED, OBSERVED, 2.0, 3.5, 3.2),
+        ("3004", ANCHOR, "1x2", "2025-26", OBSERVED, OBSERVED, 2.0, 3.5, 3.2),
+    ]
+    for sid, book, market, season, published, observed, h, d, a in rows:
+        con.execute(
+            "INSERT INTO odds_change_event VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            [sid, book, market, season, published, observed, h, d, a],
+        )
+    return con
+
+
+def test_srct_anchor_season_face_counts_distinct_sids() -> None:
+    """票 19 观察面：锚书分季 DISTINCT sid 计数 + 最新观测；他书/他季不进。"""
+    con = _seed_season_corpus()
+    face = quote_evidence.srct_anchor_season_face(con, season="2026-27")
+    assert face == {
+        "season": "2026-27",
+        "book": ANCHOR,
+        "n_sids": 2,
+        "latest_observed": "2026-10-31T10:00:00+00:00",
+    }
+
+
+def test_srct_anchor_season_face_empty_season_is_zero_truth() -> None:
+    """无行季=空真（n_sids=0、latest=None 不冒充），缺席视图=None 降级。"""
+    con = _seed_season_corpus()
+    face = quote_evidence.srct_anchor_season_face(con, season="2020-21")
+    assert face is not None
+    assert face["n_sids"] == 0
+    assert face["latest_observed"] is None
+    # 视图缺席（库无该表）→ None（晨检黄面），不炸不冒充
+    bare = duckdb.connect(":memory:")
+    assert quote_evidence.srct_anchor_season_face(bare, season="2026-27") is None
+
+
 def test_book_display_names_join_and_fallbacks() -> None:
     """研究页书商直名（票 13）：字典有名→返回；空名/legacy 源不返回（前端回退 cid）。"""
     duck_con = seed_corpus(

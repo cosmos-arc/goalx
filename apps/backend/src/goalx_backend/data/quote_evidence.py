@@ -279,6 +279,43 @@ def srct_snapshot_rows_asof(
     return pseudo_rows_capped(duck_con, by_book)
 
 
+def srct_anchor_season_face(duck_con: DuckCon, *, season: str) -> dict[str, Any] | None:
+    """
+    锚书（cid177）分季入库节奏观察面（票 19 晨检/周报数源；只读只报数）。
+
+    账本 §4.1#7 放宽注记的积累读数：某季锚书轨迹在库场次（DISTINCT sid）
+    + 最新观测时刻——S4 有分辨面（corpus as-of 接线后）的数据积累可见性。
+    season=语料树 hive 分区键（``silver.season_of``，形 "2026-27"）。
+    无行季=空真（n_sids=0、latest=None 不冒充）；视图缺席/查询异常
+    None 降级（调用方黄面，不炸晨检/周报）。
+    """
+    try:
+        row = duck_con.execute(
+            """
+            SELECT COUNT(DISTINCT sid), MAX(observed_at)
+            FROM odds_change_event
+            WHERE season = ? AND bookmaker_id = ?
+            """,
+            [season, SRCT_PINNACLE_BOOK],
+        ).fetchone()
+    except duckdb.Error as exc:
+        logger.warning("srct anchor season face degraded: {}", exc)
+        return None
+    if row is None or row[0] is None:
+        return None
+    latest = row[1]
+    return {
+        "season": season,
+        "book": SRCT_PINNACLE_BOOK,
+        "n_sids": int(row[0]),
+        "latest_observed": (
+            latest.astimezone(UTC).isoformat(timespec="seconds")
+            if latest is not None
+            else None
+        ),
+    }
+
+
 def srct_anchor_triplets_at_cutoffs(
     duck_con: DuckCon,
     requests: list[tuple[str, tuple[datetime, ...]]],
@@ -1302,6 +1339,7 @@ def stale_line_signal(
     duck_con: DuckCon | None = None,
     sid: str | None = None,
     rows: list[SnapshotRow] | None = None,
+    asof_resolver: Callable[[str, str], list[SnapshotRow] | None] | None = None,
 ) -> StaleLineSignal | None:
     """
     陈盘信号（票 48）：距竞彩上次调盘的时长 + sharp 参考自定格起的漂移。
@@ -1309,6 +1347,13 @@ def stale_line_signal(
     无竞彩 had 快照 → None（无信号可言）。纯读 odds_snapshots（SQL 归
     本包），同 as_of 重算恒同值（重放确定性，验收项）。sharp 端行源随
     ``duck_con`` 切 corpus（票 02）；双端同源同法，漂移可比性不破。
+
+    票 19 asof_resolver 注入缝：历史时点青铜重放（实现在
+    ingest.srct_asof，分层位于本模块之上——组合根注入，本模块不依赖
+    ingest）。两 sharp 端（定格 ``jc_last_move`` 与决策 ``as_of``）都先问
+    resolver；None=不适用（as_of 不早于 silver 最新观测——silver 快路径
+    即真相）则该端走既有行源。[]（当时本机零可见）为空真，不回退。
+    决策端显式 ``rows=`` 优先于 resolver（批量预取用户契约不变）。
     """
     # observed_at 门槛（评审修正）：本机未看到的调盘不进 as-of 决策（重放
     # 语义）；旧行无 observed_at 时按 captured_at 解释（源调盘时间，票 35 口径）
@@ -1329,6 +1374,12 @@ def stale_line_signal(
         jc_last_move=jc_last_move,
         minutes_since_move=max(0, int(seconds_between(as_of, jc_last_move) // 60)),
     )
+
+    def replay_rows(endpoint_as_of: str) -> list[SnapshotRow] | None:
+        if asof_resolver is None or sid is None:
+            return None
+        return asof_resolver(sid, endpoint_as_of)
+
     frozen = sharp_probs_asof(
         conn,
         fixture_id,
@@ -1336,9 +1387,15 @@ def stale_line_signal(
         max_age_seconds=SHARP_FREEZE_MAX_AGE_SECONDS,
         duck_con=duck_con,
         sid=sid,
+        rows=replay_rows(jc_last_move),
     )
     current = sharp_probs_asof(
-        conn, fixture_id, as_of, duck_con=duck_con, sid=sid, rows=rows
+        conn,
+        fixture_id,
+        as_of,
+        duck_con=duck_con,
+        sid=sid,
+        rows=rows if rows is not None else replay_rows(as_of),
     )
     if frozen is None or current is None or frozen[1] != current[1]:
         # 双端取法不一致（主锚中途出现/消失）→ 漂移不可比，只报时长
