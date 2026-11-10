@@ -10,16 +10,25 @@ silver 同款舞步）。输入全经 duckdb 只读桥（silver 视图 + goalx.*
 起点 2023/24（实测 2023-24 起步 115 场/2024-25 全季 4,491 场）。
 - ``psc_proxy``（2023-24 前）：欧赔收盘正典 = fdhist PSC（收盘代理）/
   PSH（开盘）/AvgC，经 corpus_gate.match_fixtures v3 名字身份配对。
-- ``trajectory``（2023-24 起）：正典 = 语料轨迹派生收盘（cid177 锚
-  赛前末价 + 多书中位数共识归一）。两族配对可得时并存，era 字段声明
-  哪族是正典（era 对照量化留给 D 相，PSC≠轨迹末价的已知局限不在 gold
-  逐场调和）。
+- ``trajectory``（2023-24 起）：正典 = 语料轨迹派生收盘。两族配对可得
+  时并存，era 字段声明哪族是正典（era 对照量化留给 D 相，PSC≠轨迹末价
+  的已知局限不在 gold 逐场调和）。
+
+**轨迹收盘族全时代物化（票 15，autoresearch §4.1#1）**：``close1x2_*``
+六列不再按 era 门控——1x2 轨迹在场（2016-17 起）的场次一律物化，早季
+行（era1）获得共识三列作为稳健锚消费面（EM-1 复算/H8 重扫），era 正典
+声明不变。共识口径 = 桥接票（edge-audit 21）语义：逐书 ``published_at
+≤ kickoff`` 末笔（并列按 ``(published_at, source_order)`` 决胜）→ 逐书
+Shin 去水（``odds_math.shin_implied`` 单一真相源）→ 跨书均值；零资格
+书整组留空（绝不为 0）。
 
 **PIT 纪律（无前视断言，违规即构建失败）**：逐行 ``pit_max_ms`` = 所用
-PIT 类输入（轨迹收盘与 1h/24h 切片的 published_at）最大值，断言严格
-早于开球。非 PIT 类输入的防前视面：market_quote 初/终盘组=页面定义的
-盘前价（latest 组不进特征）；fdhist PSC 族=定义在收盘时点；xG/比分/
-半场技统=赛后观测（标签侧，列名自明，决策面禁用）。
+PIT 类输入（轨迹收盘与 1h/24h 切片的 published_at）最大值，断言晚于
+开球即失败——恰开球行放行（源侧收盘快照惯例，资格线与生产
+``clv.srct_closing_prob`` 同为 ≤ kickoff，票 15 对齐）。非 PIT 类输入
+的防前视面：market_quote 初/终盘组=页面定义的盘前价（latest 组不进
+特征）；fdhist PSC 族=定义在收盘时点；xG/比分/半场技统=赛后观测
+（标签侧，列名自明，决策面禁用）。
 
 **卫生接线（A4/A5 单一取数口，不散写第二份语义）**：行政判赛命中 →
 ``admin_excluded=true`` 且不消费该 hist 行任何特征；fdhist 全族 odds 列
@@ -39,6 +48,7 @@ pyarrow 无官方 stub（同 silver 先例）。
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -74,9 +84,12 @@ from goalx_backend.data.silver import (
     write_partition,
 )
 from goalx_backend.db import utc_now_iso
+from goalx_backend.odds_math import shin_implied
 
 # 数据集身份 GOLD_PROVIDER/GOLD_DATASET 唯一落点=corpus_store（防环，见其注释）
-GOLD_VERSION = "gold_features_v1"
+# v2（票 15）：close1x2_cons_* 三列改桥接口径（逐书 Shin→跨书均值，≤ 开球
+# 资格线）且全时代物化——era2 行数值相对 v1（中位数 1/odds 归一）有语义变更
+GOLD_VERSION = "gold_features_v2"
 
 # ---- 时代分层常量（spec 实现决策：集中一处，下游只读 era 字段）----
 # 定义落零依赖叶子 data/leagues.py（票 13：evaluation 下层经叶子引，本模块
@@ -165,7 +178,8 @@ _SCHEMA = pa.schema(
         pa.field("fd_yellow_away", pa.int16()),
         pa.field("fd_red_home", pa.int16()),
         pa.field("fd_red_away", pa.int16()),
-        # 轨迹派生欧赔收盘（era2 正典；cid177 锚 + 多书共识）
+        # 轨迹派生欧赔收盘（全时代轨迹在场即物化，票 15；era2 正典/era1
+        # 稳健锚面；cid177 锚原值 + 逐书 Shin→跨书均值共识）
         _i32("close1x2_books"),
         _f64("close1x2_h"),
         _f64("close1x2_d"),
@@ -234,6 +248,9 @@ class GoldBuildReport:
     xg_srct: int = 0
     elo_rows: int = 0
     close1x2_rows: int = 0
+    # 逐季覆盖率（票 15 验收）：season → fixtures=共识在场场次 /
+    # books=贡献书数（去重）/ quotes=贡献（sid, 书）对数
+    close1x2_coverage: dict[str, dict[str, int]] = field(default_factory=dict)
     market_ah_rows: int = 0
     market_ou_rows: int = 0
     pit_rows: int = 0  # pit_max_ms 非空行（断言覆盖面）
@@ -241,17 +258,6 @@ class GoldBuildReport:
     input_digests: dict[str, str] = field(default_factory=dict)
     face_inputs: dict[str, int] = field(default_factory=dict)
     degraded: str | None = None
-
-
-def _era2_cte() -> str:
-    """era2 场次 CTE（season ≥ 断点；kickoff 北京墙钟 → UTC epoch 毫秒）。"""
-    return f"""
-        era2 AS (
-            SELECT sid, epoch_ms(kickoff AT TIME ZONE 'Asia/Shanghai') AS kickoff_ms
-            FROM fixture_universe
-            WHERE season >= '{ERA_TRAJECTORY_SEASON}' AND kickoff IS NOT NULL
-        )
-    """  # noqa: S608 era 界=模块常量
 
 
 def _fetch_fixtures(con: DuckCon) -> list[dict[str, Any]]:
@@ -281,16 +287,91 @@ def _fetch_fixtures(con: DuckCon) -> list[dict[str, Any]]:
     ]
 
 
-def _trajectory_close(con: DuckCon) -> dict[str, dict[str, Any]]:
-    """
-    era2 轨迹派生欧赔收盘。
+# 收盘流式扫描批大小（票 15）：真树 1x2 资格收盘 ≈8.5M（sid, 书）对，
+# 批式取行 + sid 分组流式聚合控内存（批内 ~10 万行 ≈ 数十 MB）。
+_CLOSE_BATCH_ROWS = 100_000
 
-    逐书赛前末价 → 锚（cid177）原值 + 多书中位数共识（1/中位数归一）+
-    pit_ms。SQL 侧严格 published_at < 开球。
+
+class _CloseAcc:
+    """单 sid 收盘累加器：(sid, bookmaker_id) 流序喂数，组末 finalize。"""
+
+    def __init__(self) -> None:
+        self.entry: dict[str, Any] = {}
+        self._sums = [0.0, 0.0, 0.0]
+        self._books = 0
+        self.pit_ms: int | None = None
+        self.coverage_books: set[str] = set()
+
+    def add(self, book: str, close_q: dict[str, Any]) -> None:
+        """一书的资格收盘：pit 面记账 + 锚原值 + 有效书 Shin 概率累加。"""
+        t = close_q["t"]
+        if t is not None and (self.pit_ms is None or t > self.pit_ms):
+            self.pit_ms = t
+        if book == E1X2_ANCHOR:
+            self.entry["close1x2_h"] = close_q["h"]
+            self.entry["close1x2_d"] = close_q["d"]
+            self.entry["close1x2_a"] = close_q["a"]
+        odds3 = (close_q["h"], close_q["d"], close_q["a"])
+        if all(o is not None and o > 1.0 for o in odds3):
+            probs = shin_implied(odds3)
+            for i in range(3):
+                self._sums[i] += probs[i]
+            self._books += 1
+            self.coverage_books.add(book)
+
+    def finalize(self) -> tuple[dict[str, Any], int]:
+        """组末落账：补书数/共识均值/pit；返回 (特征条目, 贡献书数)。"""
+        if self._books:
+            n = self._books
+            self.entry["close1x2_books"] = n
+            self.entry["close1x2_cons_h"] = self._sums[0] / n
+            self.entry["close1x2_cons_d"] = self._sums[1] / n
+            self.entry["close1x2_cons_a"] = self._sums[2] / n
+        if self.pit_ms is not None:
+            self.entry["pit_ms"] = self.pit_ms
+        return self.entry, self._books
+
+
+def _stream_close_groups(
+    cur: duckdb.DuckDBPyConnection, absorb: Callable[[str, str, _CloseAcc], None]
+) -> None:
+    """收盘行流批式扫描：(sid, bookmaker_id) 序分组，组切换时回调 absorb。"""
+    sid_cur = ""
+    season_cur = ""
+    acc: _CloseAcc | None = None
+    while True:
+        batch = cur.fetchmany(_CLOSE_BATCH_ROWS)
+        if not batch:
+            break
+        for sid, book, season, close_q in batch:
+            if acc is None or sid != sid_cur:
+                if acc is not None:
+                    absorb(sid_cur, season_cur, acc)
+                sid_cur, season_cur, acc = sid, season, _CloseAcc()
+            if close_q is not None:  # None=该书零资格行（占位行，不入收盘面）
+                acc.add(book, close_q)
+    if acc is not None:
+        absorb(sid_cur, season_cur, acc)
+
+
+def _trajectory_close(
+    con: DuckCon,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, int]]]:
     """
-    rows = con.execute(
+    轨迹派生欧赔收盘（全时代，票 15 桥接口径）。
+
+    逐书 ``published_at ≤ kickoff`` 末笔（arg_max 按
+    ``(published_at, source_order)``——同刻并列后行胜，与 corpus_gate 门②
+    取序及生产 ``clv.srct_closing_prob`` 资格线一致）→ 逐书 Shin 去水
+    （``odds_math.shin_implied``）→ 跨书均值。锚（cid177）另存原值三元组
+    （有效性不过滤，随行如实）；``pit_ms`` = 资格收盘最大 published_at。
+    返回（sid → 特征条目, 逐季覆盖率）；零资格书 sid 不入条目（整组
+    NULL，绝不为 0）。流序按 (sid, bookmaker_id) 定序——浮点累加顺序
+    确定，幂等重建字节级一致。
+    """
+    cur = con.execute(
         f"""
-        WITH {_era2_cte()},
+        WITH {_kickoffs_cte()},
         per_book AS (
             SELECT e.sid, e.bookmaker_id,
                    arg_max(
@@ -301,53 +382,52 @@ def _trajectory_close(con: DuckCon) -> dict[str, dict[str, Any]]:
                        struct_pack(
                            t := epoch_ms(e.published_at), o := e.source_order
                        )
-                   ) FILTER (WHERE epoch_ms(e.published_at) < era2.kickoff_ms)
-                       AS close_q
+                   ) FILTER (WHERE epoch_ms(e.published_at)
+                                 <= kickoffs.kickoff_ms) AS close_q,
+                   any_value(kickoffs.season) AS season
             FROM odds_change_event e
-            JOIN era2 ON era2.sid = e.sid
+            JOIN kickoffs ON kickoffs.sid = e.sid
             WHERE e.market = '1x2'
             GROUP BY e.sid, e.bookmaker_id
         )
-        SELECT sid,
-               count(close_q) AS books,
-               median(close_q.h) AS med_h,
-               median(close_q.d) AS med_d,
-               median(close_q.a) AS med_a,
-               max(close_q.t) AS pit_ms,
-               any_value(close_q)
-                   FILTER (WHERE bookmaker_id = '{E1X2_ANCHOR}') AS anchor
+        SELECT sid, bookmaker_id, season, close_q
         FROM per_book
-        WHERE close_q IS NOT NULL
-        GROUP BY sid
-        """  # noqa: S608 锚 id/era 界=模块常量
-    ).fetchall()
+        ORDER BY sid, bookmaker_id
+        """  # noqa: S608 表名/列名全字面量；锚 id=模块常量
+    )
     out: dict[str, dict[str, Any]] = {}
-    for sid, books, med_h, med_d, med_a, pit_ms, anchor in rows:
-        entry: dict[str, Any] = {
-            "close1x2_books": int(books),
-            "pit_ms": int(pit_ms) if pit_ms is not None else None,
+    season_books: dict[str, set[str]] = {}
+    season_fixtures: dict[str, int] = {}
+    season_quotes: dict[str, int] = {}
+
+    def _absorb(sid: str, season: str, acc: _CloseAcc) -> None:
+        """一个 sid 组的累加结果落账（条目 + 逐季覆盖计数）。"""
+        entry, n_books = acc.finalize()
+        if n_books:
+            season_fixtures[season] = season_fixtures.get(season, 0) + 1
+            season_quotes[season] = season_quotes.get(season, 0) + n_books
+            season_books.setdefault(season, set()).update(acc.coverage_books)
+        if entry:
+            out[sid] = entry
+
+    _stream_close_groups(cur, _absorb)
+    coverage = {
+        season: {
+            "fixtures": season_fixtures.get(season, 0),
+            "books": len(books),
+            "quotes": season_quotes.get(season, 0),
         }
-        prices = (med_h, med_d, med_a)
-        if all(p is not None and p > 0 for p in prices):
-            total = sum(1.0 / p for p in prices if p is not None)
-            entry["close1x2_cons_h"] = (1.0 / med_h) / total
-            entry["close1x2_cons_d"] = (1.0 / med_d) / total
-            entry["close1x2_cons_a"] = (1.0 / med_a) / total
-        if anchor is not None:
-            entry["close1x2_h"] = anchor["h"]
-            entry["close1x2_d"] = anchor["d"]
-            entry["close1x2_a"] = anchor["a"]
-            if anchor["t"] is not None:
-                entry["pit_ms"] = max(entry["pit_ms"] or 0, int(anchor["t"]))
-        out[str(sid)] = entry
-    return out
+        for season, books in season_books.items()
+    }
+    return out, coverage
 
 
 def _kickoffs_cte() -> str:
-    """全量场次 kickoff CTE（切片不限时代——AH 锚轨迹 2016 起全程在档）。"""
+    """全量场次 kickoff CTE（切片与收盘都不限时代；season 供收盘覆盖率）。"""
     return """
         kickoffs AS (
-            SELECT sid, epoch_ms(kickoff AT TIME ZONE 'Asia/Shanghai') AS kickoff_ms
+            SELECT sid, season,
+                   epoch_ms(kickoff AT TIME ZONE 'Asia/Shanghai') AS kickoff_ms
             FROM fixture_universe
             WHERE kickoff IS NOT NULL
         )
@@ -686,15 +766,21 @@ def _fd_feature_row(ext: dict[str, Any], *, mature: bool) -> dict[str, Any]:
 
 
 def _assert_no_lookahead(rows: list[tuple[int, dict[str, Any]]]) -> None:
-    """PIT 纪律断言：pit_max_ms 非空行须严格早于开球，违规即构建失败。"""
+    """
+    PIT 纪律断言：pit_max_ms 非空行须不晚于开球，晚于即构建失败。
+
+    恰开球（== kickoff）放行——源侧收盘快照惯例（资格线 published_at
+    ≤ kickoff，与生产 ``clv.srct_closing_prob`` 一致，票 15 对齐）；前视
+    = 严格晚于开球的输入。
+    """
     bad = [
         (row["sid"], row.get("pit_max_ms"), kickoff_ms)
         for kickoff_ms, row in rows
-        if row.get("pit_max_ms") is not None and row["pit_max_ms"] >= kickoff_ms
+        if row.get("pit_max_ms") is not None and row["pit_max_ms"] > kickoff_ms
     ]
     if bad:
         raise AssertionError(
-            "gold PIT violation（特征输入时间戳 ≥ 开球）: "
+            "gold PIT violation（特征输入时间戳晚于开球）: "
             + "; ".join(f"sid={sid} pit={pit} kickoff={k}" for sid, pit, k in bad[:5])
         )
 
@@ -771,16 +857,17 @@ class _Sources:
     phases: dict[str, dict[str, int]]
 
 
-def _attach_trajectory(row: dict[str, Any], src: _Sources, era: str) -> int | None:
+def _attach_trajectory(row: dict[str, Any], src: _Sources) -> int | None:
     """
-    轨迹族装载：era2 收盘 + 双锚 1h/24h 切片。
+    轨迹族装载：收盘族（全时代，轨迹在场即物化）+ 双锚 1h/24h 切片。
 
-    收盘（1x2 轨迹起点季起）era2 装载；切片全时代（AH 锚轨迹 2016 起
-    在档，早时代 1x2 侧自然为空）。返回该行 PIT 类输入最大时间戳。
+    收盘族不再按 era 门控（票 15）：era1 行轨迹在场同样获得共识三列
+    （稳健锚消费面），era 字段的正典声明不变。切片全时代（AH 锚轨迹
+    2016 起在档，早时代 1x2 侧自然为空）。返回该行 PIT 类输入最大时间戳。
     """
     sid = row["sid"]
     pit: int | None = None
-    if era == ERA_TRAJECTORY and sid in src.close1x2:
+    if sid in src.close1x2:
         entry = src.close1x2[sid]
         row.update({k: v for k, v in entry.items() if k != "pit_ms"})
         pit = entry.get("pit_ms")
@@ -820,7 +907,7 @@ def _assemble_row(f: dict[str, Any], src: _Sources) -> dict[str, Any]:
         row["xg_home"], row["xg_away"] = src.srct_xg[sid]
         row["xg_source"] = "srct"
     row.update(src.fd_by_sid.get(sid, {}))
-    row["pit_max_ms"] = _attach_trajectory(row, src, era)
+    row["pit_max_ms"] = _attach_trajectory(row, src)
     if sid in src.ah_family:
         row.update({f"ah_{k}": v for k, v in src.ah_family[sid].items()})
     if sid in src.ou_family:
@@ -897,13 +984,15 @@ def build_match_features(
         fixture_rows, fdhists, exclusions, maturity
     )
     ah_family, ou_family = _market_family(duck_con)
+    close1x2, close1x2_coverage = _trajectory_close(duck_con)
+    report.close1x2_coverage = close1x2_coverage
     sources = _Sources(
         fd_by_sid=fd_by_sid,
         admin_sids=admin_sids,
         elo=_elo_rows(duck_con),
         understat_by_sid=_understat_pairing(fixture_rows, under_rows),
         srct_xg=_srct_xg_rows(duck_con),
-        close1x2=_trajectory_close(duck_con),
+        close1x2=close1x2,
         slices=_anchor_slices(duck_con),
         ah_family=ah_family,
         ou_family=ou_family,
@@ -939,6 +1028,8 @@ def build_match_features(
                 ERA_PSC_PROXY: report.era_psc_proxy_rows,
                 ERA_TRAJECTORY: report.era_trajectory_rows,
             },
+            # 收盘共识逐季覆盖率（票 15 验收面：逐季书数/场次，树侧留档）
+            "close1x2_coverage": report.close1x2_coverage,
             "maturity_today": report.maturity_today,
             "input_digests": report.input_digests,
             "face_inputs": report.face_inputs,

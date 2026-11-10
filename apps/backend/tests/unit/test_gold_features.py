@@ -21,7 +21,7 @@ import httpx
 import pyarrow.parquet as pq
 import pytest
 
-from goalx_backend import db
+from goalx_backend import db, odds_math
 from goalx_backend.config import Settings
 from goalx_backend.data import corpus_duckdb, gold
 from goalx_backend.data.corpus_store import CorpusStore
@@ -45,9 +45,12 @@ ERA2_DAY, ERA2_SID, ERA2_SCORE = "2024-10-01", "80002", "1-2"
 ERA2_KICKOFF = datetime(2024, 10, 1, 20, 0)  # 北京墙钟（开球标签 1日20:00）
 # era2b：同季次日、无 fdhist/understat 行——验 srct xG 补位与零配对留空
 ERA2B_DAY, ERA2B_SID, ERA2B_SCORE = "2024-10-02", "80004", "3-0"
+# era1c（票 15）：psc_proxy 时代但 1x2 轨迹在场（2021 版轨迹页）——
+# 早季共识三列物化 + 同分钟并列决胜的专用场次
+ERA1C_DAY, ERA1C_SID, ERA1C_SCORE = "2021-10-02", "80005", "1-1"
 
 # 1x2 轨迹（era2）：锚 cid177 双书。24h 前切片价/盘中价/收盘价逐档不同；
-# 20:00 恰开球行与 21:30 场内行必须被严格 < 开球滤掉。
+# 21:30 场内行被资格线滤掉；10-01 20:00 恰开球行入收盘（≤ 资格线，票 15）。
 _ODDS_ANCHOR_ROWS = (
     "1.60|6.20|9.40|09-30 18:00|0.90|0.90|0.90|2024;",
     "1.50|6.00|9.00|10-01 13:00|0.91|0.91|0.91|2024;",
@@ -59,6 +62,14 @@ _ODDS_BOOK_ROWS = (
     "1.55|5.90|8.90|10-01 12:00|0.93|0.97|0.84|2024;",
     "1.47|5.90|8.90|10-01 19:00|0.93|0.97|0.84|2024;",
 )
+# era1c 轨迹页（2021 版）：锚同分钟并列两行（后行 source_order 高、价
+# 不同）→ (published_at, source_order) 并列决胜可测；第二书独立 cid。
+_ODDS_ANCHOR_ROWS_2021 = (
+    "1.70|6.40|9.80|09-30 18:00|0.90|0.90|0.90|2021;",
+    "1.55|6.10|9.10|10-01 19:00|0.91|0.91|0.91|2021;",
+    "1.52|6.05|9.05|10-01 19:00|0.92|0.90|0.90|2021;",
+)
+_ODDS_BOOK_ROWS_2021 = ("1.58|6.20|9.30|10-01 18:00|0.93|0.97|0.84|2021;",)
 
 
 def _odds_js() -> bytes:
@@ -71,6 +82,27 @@ def _odds_js() -> bytes:
     detail = (
         "600001^" + "".join(_ODDS_ANCHOR_ROWS),
         "600002^" + "".join(_ODDS_BOOK_ROWS),
+    )
+    return (
+        'var matchname_cn="英超";\ngame=Array(\n"'
+        + '",\n"'.join(game)
+        + '");\ngameDetail=Array(\n"'
+        + '",\n"'.join(detail)
+        + '");\n'
+    ).encode()
+
+
+def _odds_js_era1c() -> bytes:
+    """era1c 专用 2021 版轨迹页（锚并列两行 + 第二书）。"""
+    game = (
+        "177|600003|TestAnchor|1.70|6.40|9.80|90|16|11|92|1.52|6.05|9.05|93|16|12|91|"
+        "0.90|0.90|0.90|2021,10-2,19,0,0,00|测试锚*|1|0|0.9|0.9|0.9",
+        "9002|600004|TestSharp2|1.58|6.20|9.30|93|17|12|94|1.58|6.20|9.30|94|17|11|95|"
+        "0.93|0.97|0.84|2021,10-2,19,0,0,00|测试乙*|1|0|0.85|0.95|1.11",
+    )
+    detail = (
+        "600003^" + "".join(_ODDS_ANCHOR_ROWS_2021),
+        "600004^" + "".join(_ODDS_BOOK_ROWS_2021),
     )
     return (
         'var matchname_cn="英超";\ngame=Array(\n"'
@@ -262,6 +294,7 @@ FIXTURES: list[tuple[str, str, str]] = [
     (ERA2_DAY, ERA2_SID, ERA2_SCORE),
     (ERA1X_DAY, ERA1X_SID, ERA1X_SCORE),
     (ERA2B_DAY, ERA2B_SID, ERA2B_SCORE),
+    (ERA1C_DAY, ERA1C_SID, ERA1C_SCORE),
 ]
 
 
@@ -404,7 +437,11 @@ def built(tmp_path: Path) -> Built:
     by_day: dict[str, list[tuple[str, str]]] = {}
     for day, sid, score in FIXTURES:
         by_day.setdefault(day, []).append((sid, score))
-        routes[f"odds:{sid}"] = httpx.Response(200, content=_odds_js())
+        # era1c 专用 2021 版轨迹页；其余场次共用 2024 版（era1/era1x 的
+        # 轨迹全在开球后 → 零资格书 = 空书集行为的数据面）
+        routes[f"odds:{sid}"] = httpx.Response(
+            200, content=_odds_js_era1c() if sid == ERA1C_SID else _odds_js()
+        )
         routes[f"ah:{sid}"] = httpx.Response(200, content=_asian_page())
         routes[f"ou:{sid}"] = httpx.Response(200, content=_overdown_page())
         routes[f"dt:{sid}"] = httpx.Response(200, content=DETAIL_BYTES)
@@ -450,22 +487,30 @@ def test_era_layering_and_report(built: Built) -> None:
     """era 字段=正典声明；报告 era 计数与覆盖面计数如实。"""
     _store, settings, report = built
     rows = _gold_rows(settings)
-    assert set(rows) == {ERA1_SID, ERA2_SID, ERA1X_SID, ERA2B_SID}
+    assert set(rows) == {ERA1_SID, ERA2_SID, ERA1X_SID, ERA2B_SID, ERA1C_SID}
     assert rows[ERA1_SID]["era"] == gold.ERA_PSC_PROXY
     assert rows[ERA1X_SID]["era"] == gold.ERA_PSC_PROXY
+    assert rows[ERA1C_SID]["era"] == gold.ERA_PSC_PROXY
     assert rows[ERA2_SID]["era"] == gold.ERA_TRAJECTORY
-    assert report.era_psc_proxy_rows == 2
+    assert report.era_psc_proxy_rows == 3
     assert report.era_trajectory_rows == 2
-    assert report.rows == 4
-    assert report.fd_paired == 2  # era1 + era2（era1b 排除、era2b 无 hist 行）
+    assert report.rows == 5
+    assert report.fd_paired == 2  # era1 + era2（era1b 排除、era2b/era1c 无 hist 行）
     assert report.admin_flagged == 1
     assert report.xg_understat == 1
-    assert report.xg_srct == 1  # era2b 走 srct 补位；era1 两场季门内留空
+    assert report.xg_srct == 1  # era2b 走 srct 补位；era1 三场季门内留空
     assert report.elo_rows == 1
-    assert report.close1x2_rows == 2
-    assert report.market_ah_rows == 4
-    assert report.market_ou_rows == 4
-    assert report.pit_rows == 4  # 双锚切片全时代（AH 锚轨迹 2016 起在档）
+    # 收盘族全时代物化（票 15）：era2 两场 + era1c 早季一场
+    assert report.close1x2_rows == 3
+    # 逐季覆盖率（票 15 验收）：fixtures=共识在场场次 / books=贡献书数 /
+    # quotes=贡献书-场次对数
+    assert report.close1x2_coverage == {
+        "2021-22": {"fixtures": 1, "books": 2, "quotes": 2},
+        "2024-25": {"fixtures": 2, "books": 2, "quotes": 4},
+    }
+    assert report.market_ah_rows == 5
+    assert report.market_ou_rows == 5
+    assert report.pit_rows == 5  # 双锚切片全时代（AH 锚轨迹 2016 起在档）
     assert report.face_inputs == {
         "hist_matches_rows": 3,
         "understat_rows": 1,
@@ -527,20 +572,25 @@ def test_xg_source_discipline(built: Built) -> None:
 
 
 def test_trajectory_close_and_slices(built: Built) -> None:
-    """轨迹收盘=严格 < 开球的末价；1h/24h 切片=时点末价；PIT 时间戳断言面。"""
+    """轨迹收盘=≤开球末笔（恰开球行入收盘）；1h/24h 切片=时点末价；PIT 断言面。"""
     _store, settings, _report = built
     row = _gold_rows(settings)[ERA2_SID]
-    # 收盘锚：19:30 行（20:00 恰开球与 21:30 场内行都被滤掉）
-    assert row["close1x2_h"] == pytest.approx(1.45)
-    assert row["close1x2_d"] == pytest.approx(5.80)
-    assert row["close1x2_a"] == pytest.approx(8.80)
+    # 收盘锚：10-01 20:00 恰开球行入收盘（≤ 资格线；21:30 场内行滤掉）
+    assert row["close1x2_h"] == pytest.approx(1.40)
+    assert row["close1x2_d"] == pytest.approx(5.00)
+    assert row["close1x2_a"] == pytest.approx(8.00)
     assert row["close1x2_books"] == 2
-    # 共识 = 双书中位数 1/odds 归一
-    med_h, med_d, med_a = 1.46, 5.85, 8.85
-    inv = 1 / med_h + 1 / med_d + 1 / med_a
-    assert row["close1x2_cons_h"] == pytest.approx((1 / med_h) / inv)
-    assert row["close1x2_cons_d"] == pytest.approx((1 / med_d) / inv)
-    assert row["close1x2_cons_a"] == pytest.approx((1 / med_a) / inv)
+    # 共识 = 逐书 Shin 去水 → 跨书均值（桥接票 21 语义，票 15 物化）
+    anchor_p = odds_math.shin_implied((1.40, 5.00, 8.00))
+    book_p = odds_math.shin_implied((1.47, 5.90, 8.90))
+    for i, col in enumerate("hda"):
+        assert row[f"close1x2_cons_{col}"] == pytest.approx(
+            (anchor_p[i] + book_p[i]) / 2
+        )
+    # 独立预计算字面量（均值-Shin 口径，防回归漂移的硬钉）
+    assert row["close1x2_cons_h"] == pytest.approx(0.7023498625875035)
+    assert row["close1x2_cons_d"] == pytest.approx(0.1822097120119226)
+    assert row["close1x2_cons_a"] == pytest.approx(0.11544042540057395)
     # 1h/24h 切片（1x2 锚）：≤19:00 末价 = 13:00 行；≤09-30 20:00 = 09-30 行
     assert row["q1h1x2_h"] == pytest.approx(1.50)
     assert row["q24h1x2_h"] == pytest.approx(1.60)
@@ -550,9 +600,10 @@ def test_trajectory_close_and_slices(built: Built) -> None:
     assert row["q1hah_home_water"] == pytest.approx(0.85)
     assert row["q24hah_line"] == pytest.approx(0.5)
     assert row["q24hah_home_water"] == pytest.approx(0.95)
-    # PIT：所用最大 published_at = 收盘 19:30（北京）< 开球 20:00
-    assert row["pit_max_ms"] == srct_odds.beijing_ms(datetime(2024, 10, 1, 19, 30))
-    # era1（2021）：1x2 轨迹不存在（切片为空），AH 锚切片全时代在档。
+    # PIT：所用最大 published_at = 恰开球行 20:00（== 开球；≤ 资格线内
+    # 不属前视，断言只拦晚于开球的行——票 15 与 clv 收盘锚同资格线）
+    assert row["pit_max_ms"] == srct_odds.beijing_ms(datetime(2024, 10, 1, 20, 0))
+    # era1（2021）：共享轨迹页全在开球后（零资格书），AH 锚切片全时代在档。
     # 开球 10-02 20:00 → 1h 界=10-02 19:00/24h 界=10-01 20:00——切片纪律
     # 纯时间 PIT（页内 status 不参与）：矩阵四行时间全在 1h 窗内，末价=
     # 10-01 21:48 行（受让半球 -0.5）；24h 末价=19:00 行（半球）
@@ -563,6 +614,68 @@ def test_trajectory_close_and_slices(built: Built) -> None:
     assert era1["q24hah_line"] == pytest.approx(0.5)
     assert era1["q24hah_home_water"] == pytest.approx(0.85)
     assert era1["pit_max_ms"] == srct_odds.beijing_ms(datetime(2021, 10, 1, 21, 48))
+
+
+def test_era1_consensus_materialized(built: Built) -> None:
+    """票 15：轨迹在场的早季（psc_proxy 时代）共识三列同车物化 + 并列决胜。"""
+    _store, settings, _report = built
+    row = _gold_rows(settings)[ERA1C_SID]
+    # era 正典声明不变（era1 正典仍是 PSC 族）；该场无 hist 行 → fd 族留空
+    assert row["era"] == gold.ERA_PSC_PROXY
+    assert row["psc_home"] is None
+    # 锚收盘：10-01 19:00 同分钟两行 → (published_at, source_order) 后行胜
+    assert row["close1x2_h"] == pytest.approx(1.52)
+    assert row["close1x2_d"] == pytest.approx(6.05)
+    assert row["close1x2_a"] == pytest.approx(9.05)
+    assert row["close1x2_books"] == 2
+    anchor_p = odds_math.shin_implied((1.52, 6.05, 9.05))
+    book_p = odds_math.shin_implied((1.58, 6.20, 9.30))
+    for i, col in enumerate("hda"):
+        assert row[f"close1x2_cons_{col}"] == pytest.approx(
+            (anchor_p[i] + book_p[i]) / 2
+        )
+    # PIT：max(1x2 收盘 19:00, AH 锚切片 10-01 21:48)——矩阵行更晚
+    assert row["pit_max_ms"] == srct_odds.beijing_ms(datetime(2021, 10, 1, 21, 48))
+
+
+def test_consensus_null_when_no_admissible_close(built: Built) -> None:
+    """零资格书：收盘族整组 NULL（绝不为 0）——空书集不冒充市场。"""
+    _store, settings, _report = built
+    row = _gold_rows(settings)[ERA1X_SID]  # 共享 2024 版轨迹全在 2021 开球后
+    assert row["close1x2_books"] is None
+    assert row["close1x2_h"] is None
+    for col in ("close1x2_cons_h", "close1x2_cons_d", "close1x2_cons_a"):
+        assert row[col] is None
+
+
+def test_close_timezone_session_independence(built: Built) -> None:
+    """
+    时区显式归一回归哨兵（票 15；跨票 26 警戒形态）。
+
+    ``published_at``=timestamptz vs ``kickoff``=CST-naive——收盘资格线在
+    生产 SQL 里走 ``epoch_ms`` 双侧显式归一（kickoff 侧 ``AT TIME ZONE
+    'Asia/Shanghai'``），不依赖会话时区。naive-vs-aware 回归（会话时区
+    隐式 cast 比较裸类型）在 UTC 会话下会把 21:30 场内行漏进收盘/丢掉
+    恰开球行——本测试强制 UTC 会话重建，断言 parquet 逐字节不变。
+    """
+    store, settings, _report = built
+    root = store.gold_path(gold.GOLD_PROVIDER, gold.GOLD_DATASET)
+    before = (root / "all" / "data.parquet").read_bytes()
+    duck_con = corpus_duckdb.connect(settings)
+    face = db.connect(settings.db_path)
+    try:
+        duck_con.execute("SET TimeZone='UTC'")
+        gold.build_match_features(store, face, duck_con, today=TODAY)
+    finally:
+        face.close()
+        duck_con.close()
+    assert (root / "all" / "data.parquet").read_bytes() == before
+    # 边界双钉（逐字节等价的语义面）：恰开球行仍在（≤ 界）；+1.5h 场内
+    # 行仍被排除（naive cast 回归时该行 13:30 UTC 墙钟数字 < 开球 20:00
+    # 会漏进，收盘变 1.30 → 断言失败）
+    row = _gold_rows(settings)[ERA2_SID]
+    assert row["close1x2_h"] == pytest.approx(1.40)
+    assert row["close1x2_h"] != pytest.approx(1.30)
 
 
 def test_market_family_and_phases(built: Built) -> None:
@@ -601,8 +714,10 @@ def test_version_stamp_idempotent_and_digest(built: Built) -> None:
     root = store.gold_path(gold.GOLD_PROVIDER, gold.GOLD_DATASET)
     meta = json.loads((root / "_meta.json").read_text())
     assert meta["gold_version"] == gold.GOLD_VERSION
-    assert meta["rows"] == 4
+    assert meta["rows"] == 5
     assert meta["maturity_today"] == TODAY.isoformat()
+    # 覆盖率随 _meta 留档（票 15 验收：逐季书数/场次树侧可审计）
+    assert meta["close1x2_coverage"] == first.close1x2_coverage
     assert meta["face_inputs"] == {
         "hist_matches_rows": 3,
         "understat_rows": 1,
@@ -636,13 +751,13 @@ def test_version_stamp_idempotent_and_digest(built: Built) -> None:
 
 
 def test_pit_assertion_fires() -> None:
-    """无前视断言：pit ≥ 开球（含恰等）即构建失败；None 行放行。"""
+    """无前视断言：pit 晚于开球即构建失败；恰开球（≤ 资格线收盘快照）放行。"""
     kickoff = srct_odds.beijing_ms(ERA2_KICKOFF)
     gold._assert_no_lookahead([(kickoff, {"sid": "s", "pit_max_ms": kickoff - 1})])
+    gold._assert_no_lookahead([(kickoff, {"sid": "s", "pit_max_ms": kickoff})])
     gold._assert_no_lookahead([(kickoff, {"sid": "s", "pit_max_ms": None})])
-    for bad_ms in (kickoff, kickoff + 1):
-        with pytest.raises(AssertionError, match="PIT violation"):
-            gold._assert_no_lookahead([(kickoff, {"sid": "s", "pit_max_ms": bad_ms})])
+    with pytest.raises(AssertionError, match="PIT violation"):
+        gold._assert_no_lookahead([(kickoff, {"sid": "s", "pit_max_ms": kickoff + 1})])
 
 
 def test_empty_corpus_degrades(tmp_path: Path) -> None:
@@ -685,14 +800,14 @@ def test_cli_gold_build(
     # 票 03① 起 market_quote 保鲜内联（remat 不覆盖，曾停摆月余）
     assert payload["market"]["quotes_ah"] >= 1
     assert payload["gold"]["gold_version"] == gold.GOLD_VERSION
-    assert payload["gold"]["rows"] == 4
+    assert payload["gold"]["rows"] == 5
     assert payload["gold"]["degraded"] is None
     con = corpus_duckdb.connect(settings)
     try:
         (n,) = con.execute("SELECT count(*) FROM match_features").fetchone()
     finally:
         con.close()
-    assert n == 4
+    assert n == 5
 
 
 def test_gold_rebuild_defers_low_headroom(
@@ -889,7 +1004,7 @@ def test_gold_rebuild_view_refresh_lock_degrades(
     payload = tasks_mod.gold_rebuild(settings=settings)
     assert calls["n"] == 3
     assert payload["gold"]["duckdb"] == "view_refresh_skipped:duck-lock"
-    assert payload["gold"]["rows"] == 4  # gold 本体不受视图刷新锁影响
+    assert payload["gold"]["rows"] == 5  # gold 本体不受视图刷新锁影响
 
 
 def test_gold_rebuild_view_refresh_retry_recovers(
