@@ -57,6 +57,7 @@ from goalx_backend.data.ingest import (
     clubelo,
     fdhist,
     guardian,
+    news_pit,
     oddsapi,
     openfootball,
     propline,
@@ -941,6 +942,38 @@ def guardian_sync(*, request_cap: int | None = None) -> dict[str, object]:
     finally:
         store.close()
     return guardian.stats_dict(stats)
+
+
+def news_pit_beat(*, request_cap: int | None = None) -> dict[str, object]:
+    """
+    新闻/伤停 PIT 前向夜拍（autoresearch 票 17，§4.1#11）。
+
+    daily-wrap 23:30 deployment 内定拍（零新增 cron）：当日窗文章以拍纪元
+    observed_at 落 ``news_article_pit`` 专表（append-only，晚到不回灌）；
+    共享卫报 500/日请求账本（语料轨同 ledger，防双花）。手动触发=同命令
+    cli（``goalx news-pit-beat``，冒烟/手工回补）。settings 注入口只服务
+    测试接缝。
+    """
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    try:
+        with httpx.Client(verify=browser_ssl_context()) as client:
+            stats = news_pit.run_news_pit_beat(
+                store, settings, client, request_cap=request_cap
+            )
+    finally:
+        store.close()
+    return news_pit.stats_dict(stats)
+
+
+def guardian_status() -> dict[str, object]:
+    """卫报双轨报告（票 17）：回填存量清单 + 增量通道（夜拍）只读面。"""
+    settings = get_settings()
+    store = CorpusStore(settings.corpus_root)
+    try:
+        return news_pit.dual_track_face(store, settings)
+    finally:
+        store.close()
 
 
 def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:

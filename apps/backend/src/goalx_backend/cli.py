@@ -74,6 +74,7 @@ from goalx_backend.data.ingest import (
     jc_audit,
     jc_backfill,
     jc_silver,
+    news_pit,
     openfootball,
     sporttery,
     srct,
@@ -981,7 +982,7 @@ def _cmd_srct_gate(
 
 
 def _cmd_morning_check() -> None:
-    """09:05 晨检代码化（ingest-orchestration 票 01/05）：20 项只读红绿面。"""
+    """09:05 晨检代码化（ingest-orchestration 票 01/05）：21 项只读红绿面。"""
     items = run_morning_check(get_settings())
     for item in items:
         sys.stdout.write(f"[{item.status}] {item.name}: {item.detail}\n")
@@ -991,6 +992,21 @@ def _cmd_morning_check() -> None:
     sys.stdout.write(f"共 {len(items)} 项：fail={fails} degraded={degraded} ok={ok}\n")
     if fails:
         raise SystemExit(1)
+
+
+def _cmd_news_pit_beat(args: argparse.Namespace) -> None:
+    """新闻/伤停 PIT 前向夜拍（票 17）：手动/冒烟触发（定拍面在 daily-wrap）。"""
+    kwargs: dict[str, int] = {}
+    if args.request_cap:
+        kwargs["request_cap"] = args.request_cap
+    payload = tasks.news_pit_beat(**kwargs)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_guardian_status() -> None:
+    """卫报双轨报告（autoresearch 票 17）：回填存量清单 + 增量通道夜拍面（只读）。"""
+    payload = tasks.guardian_status()
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _edge_scan_payload(
@@ -2078,7 +2094,21 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "morning-check",
-        help="09:05晨检代码化(ingest-orchestration票01/05;20项只读红绿面,任何fail退出1)",
+        help="09:05晨检代码化(ingest-orchestration票01/05;21项只读红绿面,任何fail退出1)",
+    )
+    news_pit_parser = sub.add_parser(
+        "news-pit-beat",
+        help="新闻/伤停 PIT 前向夜拍手动触发(票17;定拍面挂 daily-wrap 23:30)",
+    )
+    news_pit_parser.add_argument(
+        "--request-cap",
+        type=int,
+        default=None,
+        help=f"单拍请求上限(默认 {news_pit.BEAT_REQUEST_CAP})",
+    )
+    sub.add_parser(
+        "guardian-status",
+        help="卫报双轨报告(autoresearch票17;回填存量清单+增量通道夜拍,只读)",
     )
     edge_parser = sub.add_parser(
         "edge-scan",
@@ -2240,6 +2270,8 @@ def main(argv: list[str] | None = None) -> int:
         "price-edge-audit": lambda: _cmd_price_edge_audit(args),
         "edge-scan": lambda: _cmd_edge_scan(args),
         "morning-check": _cmd_morning_check,
+        "news-pit-beat": lambda: _cmd_news_pit_beat(args),
+        "guardian-status": _cmd_guardian_status,
         "repair-sale-status": lambda: _cmd_repair_sale_status(args),
         "jc-collect": lambda: _cmd_jc_collect(args),
         "jc-silver": lambda: _cmd_jc_silver(args),

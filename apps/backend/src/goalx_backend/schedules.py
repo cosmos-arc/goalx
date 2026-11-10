@@ -43,7 +43,10 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   （票面上限 10；robots Disallow，个人研究低频使用），赶在 daily-capture 前
 - clubelo-sync 09:10：Elo 评级日拍（票 74）——单请求全量快照，赶在
   daily-capture 前
-- daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查
+- daily-wrap 23:30：结算批跑 + CLV 对账 + 只读账务核查 + 新闻 PIT 夜拍
+  （autoresearch 票 17，§4.1#11）：当日卫报文章以拍纪元 observed_at 落
+  news_article_pit 专表（每晚不开=永久缺口；拍失败降级不炸 wrap 主链，
+  晨检第 21 项缺夜可见；零新增 cron）
 - pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 
 ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，

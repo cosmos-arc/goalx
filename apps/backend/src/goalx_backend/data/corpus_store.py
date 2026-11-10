@@ -41,7 +41,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from goalx_backend.db import utc_now_iso
 
@@ -213,6 +213,31 @@ CREATE TABLE IF NOT EXISTS guardian_request_days (
     requests INTEGER NOT NULL DEFAULT 0
 )
 """
+# 票 17 新闻 PIT 前向夜拍：单行游标（窗起+页码断点、保守完整日标记）+
+# 逐拍摘要行（晨检/双轨报告数源；同夜重试按 beat_date 累加）
+_NEWS_PIT_STATE_SQL = """
+CREATE TABLE IF NOT EXISTS news_pit_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    window_from TEXT NOT NULL DEFAULT '',
+    page INTEGER NOT NULL DEFAULT 1,
+    last_full_day TEXT,
+    total_articles INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+)
+"""
+_NEWS_PIT_BEATS_SQL = """
+CREATE TABLE IF NOT EXISTS news_pit_beats (
+    beat_date TEXT PRIMARY KEY,
+    observed_at TEXT NOT NULL,
+    window_from TEXT NOT NULL,
+    window_to TEXT NOT NULL,
+    pages INTEGER NOT NULL,
+    requests INTEGER NOT NULL,
+    articles INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
 # 票 11 增量物化状态（单行状态机）：高水位=上次成功 remat 快照时的
 # raw_artifacts 最大 rowid（行级提交序，判据 rowid > 水位即"上次未见"——
 # fetched_at 秒级定宽会有同秒竞态：快照末秒内后提交的行会被时间戳判据
@@ -290,6 +315,8 @@ _CHECKPOINT_TABLE_SQL = (
     _SRCT_DEEP_BACKFILL_DAYS_SQL,
     _GUARDIAN_SYNC_STATE_SQL,
     _GUARDIAN_REQUEST_DAYS_SQL,
+    _NEWS_PIT_STATE_SQL,
+    _NEWS_PIT_BEATS_SQL,
     _BRONZE_SIDS_SQL,
     _BRONZE_SID_BACKFILL_SQL,
     _SRCT_REMAT_STATE_SQL,
@@ -1265,6 +1292,111 @@ class CorpusStore:
         self._checkpoint().commit()
         del cur
         return self.guardian_requests(day)
+
+    # ---- 票 17 新闻 PIT 前向夜拍（游标 + 逐拍摘要） ----
+
+    _NEWS_PIT_STATE_COLUMNS = (
+        "window_from",
+        "page",
+        "last_full_day",
+        "total_articles",
+    )
+
+    def news_pit_state(self) -> dict[str, object]:
+        """夜拍游标（无行=初生默认：首拍窗由 seam_start 推导）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT * FROM news_pit_state WHERE id = 1")
+            .fetchone()
+        )
+        if row is None:
+            return {
+                "window_from": "",
+                "page": 1,
+                "last_full_day": None,
+                "total_articles": 0,
+            }
+        return dict(row)
+
+    def upsert_news_pit_state(self, row: Mapping[str, object]) -> None:
+        """整行覆写夜拍游标（键集与 news_pit_state 默认行一致）。"""
+        columns = self._NEWS_PIT_STATE_COLUMNS
+        self._checkpoint().execute(
+            "INSERT INTO news_pit_state (id,"  # noqa: S608
+            + f"{','.join(columns)},updated_at)"
+            + f" VALUES (1,{','.join('?' for _ in columns)},?)"
+            + " ON CONFLICT(id) DO UPDATE SET "
+            + ",".join(f"{c}=excluded.{c}" for c in columns)
+            + ",updated_at=excluded.updated_at",
+            (*tuple(row.get(c) for c in columns), utc_now_iso()),
+        )
+        self._checkpoint().commit()
+
+    def record_news_pit_beat(self, row: Mapping[str, object]) -> None:
+        """
+        逐拍摘要落账（票 17；同夜重试按 beat_date 累加计数、最新状态覆盖）。
+
+        window_from 保最早（缝夜多轮重试时展示窗起不漂移）；计数累加
+        （断点续拍的页/文章是同一夜的进度，不是新观测面）。
+        """
+        self._checkpoint().execute(
+            """
+            INSERT INTO news_pit_beats
+                (beat_date, observed_at, window_from, window_to,
+                 pages, requests, articles, status, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(beat_date) DO UPDATE SET
+                observed_at = excluded.observed_at,
+                window_from = MIN(news_pit_beats.window_from, excluded.window_from),
+                window_to = excluded.window_to,
+                pages = news_pit_beats.pages + excluded.pages,
+                requests = news_pit_beats.requests + excluded.requests,
+                articles = news_pit_beats.articles + excluded.articles,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(row["beat_date"]),
+                str(row["observed_at"]),
+                str(row["window_from"]),
+                str(row["window_to"]),
+                int(cast("int", row["pages"])),
+                int(cast("int", row["requests"])),
+                int(cast("int", row["articles"])),
+                str(row["status"]),
+                utc_now_iso(),
+            ),
+        )
+        self._checkpoint().commit()
+
+    def news_pit_beat(self, beat_date: str) -> dict[str, object] | None:
+        """单拍摘要行（无=该夜未拍）。"""
+        row = (
+            self._checkpoint()
+            .execute("SELECT * FROM news_pit_beats WHERE beat_date = ?", (beat_date,))
+            .fetchone()
+        )
+        return dict(row) if row is not None else None
+
+    def news_pit_beats(self, limit: int = 20) -> list[dict[str, object]]:
+        """最近 N 夜拍摘要（新→旧；晨检/双轨报告数源）。"""
+        rows = (
+            self._checkpoint()
+            .execute(
+                "SELECT * FROM news_pit_beats ORDER BY beat_date DESC LIMIT ?", (limit,)
+            )
+            .fetchall()
+        )
+        return [dict(row) for row in rows]
+
+    def news_pit_beat_dates(self) -> set[str]:
+        """全部拍夜日期集（缺夜检测用；表 ≤1 行/夜，量级无害）。"""
+        rows = (
+            self._checkpoint()
+            .execute("SELECT beat_date FROM news_pit_beats")
+            .fetchall()
+        )
+        return {str(row["beat_date"]) for row in rows}
 
     def close(self) -> None:
         """关 checkpoint 连接（树文件保留）。"""

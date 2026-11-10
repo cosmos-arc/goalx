@@ -68,6 +68,10 @@ OWNERS: dict[str, set[str]] = {
         # 票 79：卫报语料游标状态机 + 500/日请求账本（checkpoint 库）
         "guardian_sync_state",
         "guardian_request_days",
+        # autoresearch 票 17：新闻 PIT 前向夜拍游标 + 逐拍摘要
+        # （ingest/news_pit.py，同 checkpoint 库）
+        "news_pit_state",
+        "news_pit_beats",
         # 2026-09-30：bronze sid 索引 + 文件锚台账（解析层防重 O(1) 载体）
         "bronze_sids",
         "bronze_sid_backfill",
