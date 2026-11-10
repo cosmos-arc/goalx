@@ -65,6 +65,7 @@ from goalx_backend.data.ingest import (
     srct_asof,
     srct_market,
     srct_night,
+    srct_prematch,
     srct_remat,
     srct_results,
     srct_shift,
@@ -459,9 +460,22 @@ def srct_shift_run(
     夜窗让位/预算触顶都正常返回（拍键幂等，下轮自愈）；这里只回计数。
     no_window=True 跳过夜窗让位（白天冒烟/手工回补）。settings/client
     注入口只服务测试接缝（cli/flow 共用本函数，缺省真实装配）。
+
+    赛前拍相位（票 14）：主库解析 JC 板上场已链候选注入 run_shift（同一
+    now 钟面）；解析失败降级空候选继续拍班（拍键幂等下轮自愈），payload
+    留 prematch_degraded 注记。
     """
     resolved = settings if settings is not None else get_settings()
     store = CorpusStore(resolved.corpus_root)
+    now = datetime.now(UTC)
+    prematch: list[tuple[str, datetime]] = []
+    prematch_degraded: str | None = None
+    try:
+        with task_conn() as conn:
+            prematch = srct_prematch.jc_prematch_candidates(conn, now)
+    except sqlite3.Error as exc:
+        prematch_degraded = f"{type(exc).__name__}: {exc}"[:120]
+        logger.warning("prematch 候选解析降级（{}）：本轮赛前拍让位", exc)
     try:
         with ExitStack() as stack:
             run_client = (
@@ -477,10 +491,14 @@ def srct_shift_run(
                     srct_shift.SHIFT_REQUEST_CAP if request_cap is None else request_cap
                 ),
                 enforce_window=not no_window,
+                now_fn=lambda: now,
+                prematch_candidates=prematch,
             )
     finally:
         store.close()
     payload = srct_shift.stats_dict(stats)
+    if prematch_degraded is not None:
+        payload["prematch_degraded"] = prematch_degraded
     # 拍后收尾（odds-read-switch 票 01/03）：先映射同步（读侧短连接），
     # 再增量物化（写侧持锁）——顺序不可反，remat 持写锁时映射 reader
     # 会降级空转。各自降级不拖垮拍班本体（同 wrap 流降级哲学）

@@ -1,8 +1,9 @@
 """
-09:05 晨检代码化：17 项只读红绿面。
+09:05 晨检代码化：18 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
-15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项。）
+15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
+autoresearch 票 14 加第 18 项。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -69,6 +70,8 @@ _SERVE_LOG_MARKERS = ("Crashed", "CRASHED", "Traceback")
 # 票 05 等源T：临界=开球 ≤2h 仍未链（视界=补缺 GAP_HORIZON 同源）
 _JC_WAITING_CRITICAL = timedelta(hours=2)
 _CRITICAL_NAME_CAP = 3  # 名单单列上限（多则省略号）
+# 赛前拍近窗（票 14 观察项）：与夜班/收班新鲜界同 26h 一昼夜口径
+_PREMATCH_RECENT_HOURS = 26
 
 
 @dataclass(frozen=True)
@@ -485,6 +488,33 @@ def check_edge_scan(conn: sqlite3.Connection, *, now: datetime) -> CheckItem:
     return CheckItem("edge_scan", worst, "; ".join(parts))
 
 
+def check_prematch_snapshots(store: CorpusStore, *, now: datetime) -> CheckItem:
+    """
+    项 18 赛前拍快照落库计数（autoresearch 票 14；观察项只报数不判红）。
+
+    E-15 前向真值供给面的日频可见性：拍挂当期班（srct-shift */30），零拍
+    日可能是无近开球 JC 场（国际比赛周等合法态），不设红黄——连续性验收
+    （≥7 日）走票面运行期读数。数源=corpus_store.prematch_snapshot_face
+    （只认 match_detail 的 @pre- 拍键）。
+    """
+    face = store.prematch_snapshot_face(
+        since_iso=(now - timedelta(hours=_PREMATCH_RECENT_HOURS)).isoformat(
+            timespec="seconds"
+        )
+    )
+    total = int(cast("int", face["total"]))
+    if total == 0:
+        return CheckItem(
+            "prematch_snapshots", OK, "未开始积累（拍挂当期班 srct-shift）"
+        )
+    return CheckItem(
+        "prematch_snapshots",
+        OK,
+        f"累计 {total} 拍 · 近{_PREMATCH_RECENT_HOURS}h "
+        + f"{int(cast('int', face['recent']))} 拍 · 最新 {face['latest_fetched_at']}",
+    )
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -540,7 +570,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 17 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 18 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -568,6 +598,7 @@ def run_morning_check(
                 check_paper_account(conn),
                 check_freshness_shadow(conn, now=resolved_now),
                 check_edge_scan(conn, now=resolved_now),
+                check_prematch_snapshots(store, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,

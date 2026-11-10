@@ -26,6 +26,9 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
   双参照源对账，跟在官方同步 08:00 补扫落事实之后
 - srcb-collect 10:40/22:40：**判死面**（resume=False 不在役，三源停采
   留备用 2026-09-26 终局）——显式 --only 可复活
+- srct-shift 赛前拍相位（autoresearch 票 14）：srct-shift */30 拍内挂
+  JC 板上场 −150/−90/−60/−30min 四档 detail 快照（E-15 前向真值），
+  ≈32 请求/日共享当期班预算/滑窗，晨检第 18 项观察落库计数
 - srct-night 01:00（票 55 切片 13）：源T夜班 Phase1 回填——01:00-08:00 窗口
   内 ~8K 请求预算自动推进，连败 5 场熔断当晚收手，每夜摘要落语料树
   checkpoint 库（`goalx srct-night --list` 晨检）；Phase1 批次（三完整季+

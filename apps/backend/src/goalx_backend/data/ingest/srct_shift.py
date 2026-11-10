@@ -12,6 +12,10 @@
   管线，Over 页隔日稳态）。四拍组合即"当期轨迹 append-only 自建"
   （规格 v2 撤 changeDetail 的裁决）。
 
+**赛前拍相位（autoresearch 票 14，srct_prematch）**：JC 板上场在
+−150/−90/−60/−30min 四档拍 detail 页快照（E-15 前向真值供给），挂主班
+循环后、JC 相位前——共用预算/滑窗/客户端，相位失败只留痕不炸班。
+
 **入口（票 65 实测票 d 结论，2026-09-26）**：live 主机
 ``/vbsxml/Ballpub/BaSID.js``（采集器客户端桌面 UA 直通）——
 ``var Ba_Soccer="sid,…"`` ≈410 场 ±2 日窗，**含未开赛在售场**。bf 主机
@@ -38,7 +42,7 @@ import random
 import re
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
@@ -102,6 +106,10 @@ class ShiftStats:
     bronze_repaired: int = 0
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # budget/window_closed；None=清单跑完
+    # 赛前拍相位（票 14；候选/落拍/满 XI 快照计数）
+    prematch_candidates: int = 0
+    prematch_beats: int = 0
+    prematch_full_xi: int = 0
     # JC 官方拍相位（票 71；jc: 前缀区分于源T 层）
     jc_discovered: int = 0
     jc_open_beats: int = 0
@@ -525,7 +533,7 @@ def _bump_beats(
     return row
 
 
-def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四类拍/缺账面累加（同 collect_day 先例）
+def run_shift(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接缝集随四类拍/赛前拍/缺账面累加（同 collect_day 先例）
     store: CorpusStore,
     settings: Settings,
     client: httpx.Client,
@@ -538,6 +546,7 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
     rate_limiter: MovingWindowRateLimiter | None = None,
     budget: srct.NightBudget | None = None,
     enforce_window: bool = True,
+    prematch_candidates: Sequence[tuple[str, datetime]] | None = None,
 ) -> ShiftStats:
     """
     推进一次当期班：在售清单 → 逐 sid 四类拍决策 → raw+bronze append。
@@ -545,6 +554,9 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
     幂等：每拍以 raw 键查 checkpoint，已拍零重抓；失败拍无键下轮自愈。
     budget 触顶记 stopped 正常返回（进度已落库）。01:00-08:00 夜窗让位
     （enforce_window=False 供冒烟/手工回补绕过）。
+
+    prematch_candidates（票 14）：JC 板上场的已链 (sid, 开球) 候选——
+    赛前拍相位输入（主班循环后执行；None/空 = 相位零成本跳过）。
     """
     now = now_fn() if now_fn is not None else datetime.now(UTC)
     stats = ShiftStats(run_at=now.isoformat(timespec="seconds"))
@@ -638,9 +650,43 @@ def run_shift(  # noqa: PLR0911, PLR0913, PLR0915, C901 拍决策接缝集随四
             return stats
         if row is not None:
             known[sid] = row
+    # 赛前拍相位（票 14）：主班循环后、JC 相位前——拍窗随开球关闭，时间
+    # 敏感先于 JC 收口。与主班共用预算/滑窗（同一 limiter 实例，无跨进程
+    # 叠加）；预算触顶整班收手留痕；相位级异常只留痕不炸班（红线：拍点
+    # 失败不阻塞主链与 JC 相位，拍键幂等下轮自愈）。
+    if prematch_candidates:
+        from goalx_backend.data.ingest import (  # noqa: PLC0415 防环局部导入
+            srct_prematch,
+        )
+
+        try:
+            pre_stats = srct_prematch.run_prematch_beats(
+                store,
+                settings,
+                client,
+                prematch_candidates,
+                now=now,
+                limiter=limiter,
+                sleeper=sleeper,
+                budget=budget,
+            )
+        except srct.NightStop as stop:
+            stats.stopped = stop.reason
+            return stats
+        except (httpx.HTTPError, sqlite3.Error, OSError, EOFError) as exc:
+            stats.failed["prematch"] = f"{type(exc).__name__}: {exc}"[:120]
+            logger.warning("srct shift 赛前拍相位降级（{}）", exc)
+        else:
+            stats.prematch_candidates = pre_stats.candidates
+            stats.prematch_beats = pre_stats.beats
+            stats.prematch_full_xi = pre_stats.full_xi
+            stats.requests += pre_stats.requests
+            stats.raw_new += pre_stats.raw_new
+            stats.parsed_ok += pre_stats.parsed_ok
+            stats.failed.update(pre_stats.failed)
     # JC 官方拍（票 71）：同窗同预算殿后（源T 优先；发现失败只留痕）。
     # 局部导入防环（jc_shift 复用本模块的 BEIJING/slot/lead 决策件）
-    from goalx_backend.data.ingest import jc_shift  # noqa: PLC0415
+    from goalx_backend.data.ingest import jc_shift  # noqa: PLC0415 防环局部导入
 
     try:
         jc_stats = jc_shift.run_jc_beats(
