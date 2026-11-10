@@ -495,7 +495,7 @@ def check_prematch_snapshots(store: CorpusStore, *, now: datetime) -> CheckItem:
     E-15 前向真值供给面的日频可见性：拍挂当期班（srct-shift */30），零拍
     日可能是无近开球 JC 场（国际比赛周等合法态），不设红黄——连续性验收
     （≥7 日）走票面运行期读数。数源=corpus_store.prematch_snapshot_face
-    （只认 match_detail 的 @pre- 拍键）。
+    （只认 match_detail_prematch 专表的 @pre- 拍键——独立复核 W1 分表）。
     """
     face = store.prematch_snapshot_face(
         since_iso=(now - timedelta(hours=_PREMATCH_RECENT_HOURS)).isoformat(

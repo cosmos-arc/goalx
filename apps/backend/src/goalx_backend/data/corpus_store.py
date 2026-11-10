@@ -1044,9 +1044,10 @@ class CorpusStore:
         """
         赛前拍快照计数面（autoresearch 票 14 晨检项数源）。
 
-        只认源T match_detail 数据集的 ``@pre-`` 拍键（ingest.srct_prematch.
-        prematch_key 同源——LIKE 模式由 test_ingest_srct_prematch 钉死防
-        漂移）；recent=水线 fetched_at ≥ since_iso 的拍数；空面如实零。
+        只认源T match_detail_prematch 数据集（独立复核 W1 分表）的
+        ``@pre-`` 拍键（ingest.srct_prematch.prematch_key 同源——LIKE
+        模式由 test_ingest_srct_prematch 钉死防漂移）；recent=水线
+        fetched_at ≥ since_iso 的拍数；空面如实零。
         """
         row = (
             self._checkpoint()
@@ -1056,7 +1057,8 @@ class CorpusStore:
                    SUM(CASE WHEN fetched_at >= ? THEN 1 ELSE 0 END) AS recent,
                    MAX(fetched_at) AS latest
             FROM raw_artifacts
-            WHERE provider='srct' AND dataset='match_detail' AND key LIKE '%@pre-%'
+            WHERE provider='srct' AND dataset='match_detail_prematch'
+              AND key LIKE '%@pre-%'
             """,
                 (since_iso,),
             )

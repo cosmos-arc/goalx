@@ -473,7 +473,7 @@ def srct_shift_run(
     try:
         with task_conn() as conn:
             prematch = srct_prematch.jc_prematch_candidates(conn, now)
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, ValueError) as exc:  # I3：坏 kickoff 串只降级本相位
         prematch_degraded = f"{type(exc).__name__}: {exc}"[:120]
         logger.warning("prematch 候选解析降级（{}）：本轮赛前拍让位", exc)
     try:

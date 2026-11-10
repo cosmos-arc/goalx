@@ -123,7 +123,7 @@ def _run_beats(
 def _bronze_rows(store: CorpusStore, sid: str) -> list[dict[str, object]]:
     return [
         row
-        for row in store.read_bronze(srct.SRCT_PROVIDER, srct.DETAIL_DATASET)
+        for row in store.read_bronze(srct.SRCT_PROVIDER, srct_prematch.PREMATCH_DATASET)
         if str(row["sid"]) == sid
     ]
 
@@ -160,10 +160,23 @@ def test_due_lead_outside_horizon_or_started_is_none() -> None:
 
 
 def test_prematch_key_shape() -> None:
-    """拍键 `{sid}@pre-{n}`：与夜班裸键/既有拍键互不占位。"""
-    assert srct_prematch.prematch_key("123456", 150) == "123456@pre-150"
-    assert srct_prematch.prematch_key("123456", 30) != srct_prematch.prematch_key(
-        "123456", 60
+    """拍键 `{sid}@pre-{n}-{kickoff}`：与夜班裸键/既有拍键互不占位；
+    开球纪元使改期场新日程换键（W2）、废弃日程键存档不占位。"""
+    assert srct_prematch.prematch_key("123456", 150, KICKOFF) == (
+        "123456@pre-150-202611101900"
+    )
+    assert srct_prematch.prematch_key(
+        "123456", 30, KICKOFF
+    ) != srct_prematch.prematch_key("123456", 60, KICKOFF)
+    # W2：同档不同开球=不同键（CST 偏移同刻同键——纪元按 UTC 归一）
+    from datetime import timezone
+
+    cst = timezone(timedelta(hours=8))
+    assert srct_prematch.prematch_key("123456", 150, KICKOFF) == (
+        srct_prematch.prematch_key("123456", 150, KICKOFF.astimezone(cst))
+    )
+    assert srct_prematch.prematch_key("123456", 150, KICKOFF) != (
+        srct_prematch.prematch_key("123456", 150, KICKOFF + timedelta(days=1))
     )
 
 
@@ -178,13 +191,16 @@ def test_prematch_beat_lands_snapshot(tmp_path: Path) -> None:
     assert stats.raw_new == 1
     assert stats.parsed_ok == 1
     assert stats.full_xi == 0  # 赛前页阵容空（首次公开读数的"空"态）
-    key = srct_prematch.prematch_key(SID, 150)
-    assert store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key)
+    key = srct_prematch.prematch_key(SID, 150, KICKOFF)
+    assert store.has(srct.SRCT_PROVIDER, srct_prematch.PREMATCH_DATASET, key)
     rows = _bronze_rows(store, SID)
     assert len(rows) == 1
     row = rows[0]
-    assert row["parser_version"] == srct.BRONZE_VERSIONS[srct.DETAIL_DATASET]
-    assert row["raw_sha"] == store.raw_sha(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key)
+    assert row["dataset"] == srct_prematch.PREMATCH_DATASET
+    assert row["parser_version"] == srct_prematch.PREMATCH_BRONZE_VERSION
+    assert row["raw_sha"] == store.raw_sha(
+        srct.SRCT_PROVIDER, srct_prematch.PREMATCH_DATASET, key
+    )
     lineup = dict(row["payload"])["lineup"]  # type: ignore[arg-type]
     assert lineup["home_starters"] == []  # type: ignore[index]
     # PIT observed_at：抓取时刻（真实钟，秒精度），不是名义档时刻 kickoff−150
@@ -228,8 +244,8 @@ def test_each_lead_lands_own_key(tmp_path: Path) -> None:
         assert stats.beats == 1
         assert store.has(
             srct.SRCT_PROVIDER,
-            srct.DETAIL_DATASET,
-            srct_prematch.prematch_key(SID, expect_beat),
+            srct_prematch.PREMATCH_DATASET,
+            srct_prematch.prematch_key(SID, expect_beat, KICKOFF),
         )
         landed += 1
     assert landed == 4
@@ -261,9 +277,11 @@ def test_failed_beat_no_key_retries_next_round(tmp_path: Path) -> None:
         tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), _at(140)
     )
     assert stats.beats == 0
-    assert srct_prematch.prematch_key(SID, 150) in stats.failed
+    assert srct_prematch.prematch_key(SID, 150, KICKOFF) in stats.failed
     assert not store.has(
-        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, srct_prematch.prematch_key(SID, 150)
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, KICKOFF),
     )
     stats2, store = _run_beats(tmp_path, _client(), _at(135))
     assert stats2.beats == 1
@@ -278,7 +296,9 @@ def test_pseudo_200_page_counts_failed_no_key(tmp_path: Path) -> None:
     assert stats.beats == 0
     assert stats.raw_new == 0
     assert not store.has(
-        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, srct_prematch.prematch_key(SID, 150)
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, KICKOFF),
     )
     store.close()
 
@@ -301,7 +321,9 @@ def test_budget_stop_records_partial_progress(tmp_path: Path) -> None:
     assert stats.beats == 1  # 首拍已落库并计入摘要
     assert stats.requests == 1  # 触顶那次未发出不计
     assert store.has(
-        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, srct_prematch.prematch_key(SID, 150)
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, KICKOFF),
     )
     store.close()
 
@@ -328,29 +350,31 @@ def test_final_collected_and_kicked_off_skip(tmp_path: Path) -> None:
 
 
 def test_prematch_snapshot_face_counts(tmp_path: Path) -> None:
-    """计数面：只认 @pre- 拍键（裸键/@close 等不进面）；recent 按水线切。"""
+    """计数面：只认专表（W1 分表）@pre- 拍键——非拍键（裸键/@close 形态）
+    不进计数；recent 按水线切。"""
     import sqlite3
 
     stats, store = _run_beats(tmp_path, _client(), _at(140))
     assert stats.beats == 1
     store.close()
     store = CorpusStore(_settings(tmp_path).corpus_root)
-    # 同数据集混入非拍键工件：裸键（夜班收口）与 @close 拍键不得进计数
+    # 专表内混入非拍键工件（裸键形态=夜班收口若误写本表；@close 形态）：
+    # LIKE 过滤须排除；match_detail 主表的行天然不进面（分表）
     store.ingest_raw(
-        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, SID, b"final", ext=".html"
+        srct.SRCT_PROVIDER, srct_prematch.PREMATCH_DATASET, SID, b"final", ext=".html"
     )
     store.ingest_raw(
         srct.SRCT_PROVIDER,
-        srct.DETAIL_DATASET,
-        f"{SID}@close-{srct.DETAIL_DATASET}",
+        srct_prematch.PREMATCH_DATASET,
+        f"{SID}@close-{srct_prematch.PREMATCH_DATASET}",
         b"close",
         ext=".html",
     )
     # 一条老拍键回拨 fetched_at（验证 recent 水线切分）
     store.ingest_raw(
         srct.SRCT_PROVIDER,
-        srct.DETAIL_DATASET,
-        srct_prematch.prematch_key(SID, 90),
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 90, KICKOFF),
         b"older",
         ext=".html",
     )
@@ -358,7 +382,7 @@ def test_prematch_snapshot_face_counts(tmp_path: Path) -> None:
     conn.execute(
         "UPDATE raw_artifacts SET fetched_at = '2026-11-01T00:00:00+00:00'"
         " WHERE key = ?",
-        (srct_prematch.prematch_key(SID, 90),),
+        (srct_prematch.prematch_key(SID, 90, KICKOFF),),
     )
     conn.commit()
     conn.close()
@@ -449,7 +473,9 @@ def test_run_shift_phase_lands_prematch_beat(tmp_path: Path) -> None:
     assert stats.prematch_candidates == 1
     assert stats.prematch_beats == 1
     assert store.has(
-        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, srct_prematch.prematch_key(SID, 150)
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, KICKOFF),
     )
     store.close()
 
@@ -462,7 +488,7 @@ def test_run_shift_prematch_failure_isolated(tmp_path: Path) -> None:
     assert stats.stopped is None
     assert stats.open_beats == 1  # 主链不受阻
     assert stats.prematch_beats == 0
-    assert srct_prematch.prematch_key(SID, 150) in stats.failed
+    assert srct_prematch.prematch_key(SID, 150, KICKOFF) in stats.failed
     assert "jc:jc:discovery" in stats.failed  # JC 相位照常执行（未配置降级留痕）
     store.close()
 
@@ -675,3 +701,146 @@ def test_due_lead_timezone_explicit_equivalence() -> None:
     # PIT 准入侧：observed_at 恒 +00:00（utc_now_iso），与拍窗钟面同源无混比
     row_time = datetime.fromisoformat(srct.utc_now_iso())
     assert row_time.utcoffset() == timedelta(0)
+
+
+# —— 独立 correctness 复核修复（W1/W2）：掩蔽自愈 + 改期全拍丢失 ————————————
+
+# W1 回归素材：collect_day 裸键断窗自愈（日页一行完赛场，Over 实测形态裁剪）
+_DAY_ROW = (
+    "<tr height=18 align=center id='tr1_1' infoid='3' sId='" + SID + "'>"
+    "<td><span>英超</span><span></span></td><td>10日19:00</td>"
+    "<td class=style1>完</td><td align=right>主队甲</td>"
+    "<td class=style1><font color=red>2</font>-<font color=blue>1</font></td>"
+    "<td align=left>客队乙</td>"
+    "<td><font color=red>1</font>-<font color=blue>0</font></td>"
+    "<td>半球</td><td>2.5</td>"
+    "<td><a href=javascript: onclick='analysis(" + SID + ")'>析</a></td></tr>"
+)
+_DAY_PAGE = (
+    "<html><head><meta charset='gb18030'></head><body><table>"
+    + _DAY_ROW
+    + "</table></body></html>"
+).encode("gb18030")
+_MULTI_BOOK_BYTES = (
+    "<html><head><title>{title}</title></head><body>{title}<table>"
+    "<tr align=center><td><input type=checkbox></td><td>代称书商</td><td>盘1</td>"
+    "<td>0.93</td><td>半球</td><td>0.85</td><td>0.90</td><td>半球</td><td>0.88</td>"
+    "<td>0.95</td><td>半球</td><td>0.83</td>"
+    "<td><a href=/changeDetail/handicap.aspx?id=1&companyID=8>详</a></td></tr>"
+    "</table></body></html>"
+).encode()
+_ANALYSIS_BYTES = (
+    "<html><head><title>数据分析</title></head><body>数据分析<script>"
+    "var hometeam = '主队甲';var guestteam = '客队乙';"
+    "var h_data =[['25-05-10',36,'英超','#FF3333',52,'他队',60,'主队甲']];\n"
+    "</script><div>未来五场</div></body></html>"
+).encode()
+_STATS_BYTES = b'var jsonData = {"techStat": {}};'
+
+
+def test_w1_prematch_rows_do_not_mask_bare_backfill_repair(tmp_path: Path) -> None:
+    """W1：赛前拍 bronze 行不得掩蔽 collect_day 裸键断窗自愈——分表
+    （match_detail_prematch）后 bronze_sids[match_detail] 只含裸键行；
+    夹缝崩溃（裸 raw 在/bronze 缺）次夜照常回补终版 11 人行。"""
+    stats, store = _run_beats(tmp_path, _client(), _at(140))
+    assert stats.beats == 1
+    store.close()
+    settings = Settings(
+        corpus_root=tmp_path / "corpus",
+        srct_day_url="https://srct.test/over/{date}.htm",
+        srct_odds_url="https://srct.test/odds/{sid}.js",
+        srct_odds_referer="https://srct.test/oddslist/{sid}.htm",
+        srct_asianodds_url="https://srct.test/asian/{sid}.aspx",
+        srct_overdown_url="https://srct.test/overdown/{sid}.aspx",
+        srct_detail_url="https://srct.test/analysis/{sid}.html",
+        srct_analysis_url="https://srct.test/zq/{sid}.html",
+        srct_stats_url="https://srct.test/stats/{sid}.html",
+    )
+    final_page = _detail_page(starters_per_side=11)
+    store = CorpusStore(settings.corpus_root)
+    # 崩溃窗形状：夜班已拉裸键 detail raw、bronze 未落（ingest_raw→append 夹缝）
+    store.ingest_raw(
+        srct.SRCT_PROVIDER, srct.DETAIL_DATASET, SID, final_page, ext=".html"
+    )
+    store.close()
+
+    _multi = _MULTI_BOOK_BYTES
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: PLR0911 六端点路由
+        path = request.url.path
+        if path.startswith("/over/2"):
+            return httpx.Response(200, content=_DAY_PAGE)
+        if path.startswith("/odds/"):
+            return httpx.Response(200, content=_ODDS_JS)
+        if path.startswith("/analysis/"):
+            return httpx.Response(200, content=final_page)
+        if path.startswith("/stats/"):
+            return httpx.Response(200, content=_STATS_BYTES)
+        if path.startswith("/asian/"):
+            return httpx.Response(
+                200, content=_multi.replace(b"{title}", "亚指指数".encode())
+            )
+        if path.startswith("/overdown/"):
+            return httpx.Response(
+                200, content=_multi.replace(b"{title}", "大小指数".encode())
+            )
+        if path.startswith("/zq/"):
+            return httpx.Response(200, content=_ANALYSIS_BYTES)
+        return httpx.Response(500, text="no-route")
+
+    run_store = CorpusStore(settings.corpus_root)
+    stats2 = srct.collect_day(
+        run_store,
+        settings,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        date="2026-11-10",
+        sleeper=lambda _s: None,
+        jitter=None,
+        rate_limiter=default_limiter(),
+    )
+    assert stats2.bronze_repaired >= 1  # 裸键断窗照常自愈（旧码此处=0）
+    detail_rows = [
+        row
+        for row in run_store.read_bronze(srct.SRCT_PROVIDER, srct.DETAIL_DATASET)
+        if str(row["sid"]) == SID
+    ]
+    assert detail_rows, "终版 detail 行未落（W1 掩蔽）"
+    lineup = dict(detail_rows[-1]["payload"])["lineup"]  # type: ignore[arg-type]
+    assert len(lineup["home_starters"]) == 11  # type: ignore[index]
+    run_store.close()
+
+
+def test_w2_rescheduled_kickoff_rebeats(tmp_path: Path) -> None:
+    """W2：拍键带开球纪元——旧日程四键耗尽后改期 +24h，新日程重新落拍
+    （旧码 due=1/beats=0：键被废弃日程占用，真实比赛日零快照）。"""
+    stats, store = _run_beats(
+        tmp_path, _client(), _at(140), candidates=[(SID, KICKOFF)]
+    )
+    assert stats.beats == 1
+    for minutes in (85, 55, 25):  # 旧日程四档全耗尽
+        stats_n, _ = _run_beats(
+            tmp_path, _client(), _at(minutes), candidates=[(SID, KICKOFF)]
+        )
+        assert stats_n.beats == 1
+    store.close()
+    new_ko = KICKOFF + timedelta(days=1)
+    stats2, store2 = _run_beats(
+        tmp_path,
+        _client(),
+        new_ko - timedelta(minutes=140),
+        candidates=[(SID, new_ko)],
+    )
+    assert stats2.due == 1
+    assert stats2.beats == 1  # 新纪元键落拍（旧码此处=0）
+    assert store2.has(
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, new_ko),
+    )
+    # 旧日程键原样存档（PIT 诚实：废弃日程的观测仍是观测）
+    assert store2.has(
+        srct.SRCT_PROVIDER,
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key(SID, 150, KICKOFF),
+    )
+    store2.close()

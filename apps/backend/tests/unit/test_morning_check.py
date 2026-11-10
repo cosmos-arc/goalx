@@ -539,8 +539,8 @@ def test_check_prematch_snapshots_observation(store: CorpusStore) -> None:
     assert "未开始" in item.detail
     store.ingest_raw(
         "srct",
-        "match_detail",
-        srct_prematch.prematch_key("4012345", 150),
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key("4012345", 150, NOW),
         b"x",
         ext=".html",
     )

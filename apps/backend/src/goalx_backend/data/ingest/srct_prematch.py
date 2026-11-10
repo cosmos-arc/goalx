@@ -17,16 +17,25 @@ E-15 阵容线冻结的重开条件=名单首次公开时刻的**前向真值**�
 当期班让位（凌晨场的 −90/−60/−30 可能结构性缺席——读数按可观测面如实，
 晚间场公布窗 −75±30min 全程在拍）。
 
-**落库**：复用既有 match_detail bronze 数据集 + detail 抓取/解析器
-（fetch_detail_page + parse_detail_dispatch，WAF 白名单客户端与 30/min
-滑窗共用当期班同一进程实例）；raw 键 `{sid}@pre-{n}`（与夜班裸键、既有
-@open/@daily/@close 拍键互不占位），bronze 行 sid=裸 sid、fetched_at=
-抓取时刻（observed_at PIT 语义，晚到不回灌、不倒填名义档时刻）。夜班
-collect_day 赛后收口裸键行晚于一切赛前拍落库——latest-per-sid 收敛到
-终版页，赛前拍行原序保留供读数。拍失败不占键（下轮自愈）；夜班已收口
-（裸键在）或已开球的候选跳过。失败不阻塞当期班其余相位（隔离见
-srct_shift.run_shift）。并发积压拍可对同拍键双落 bronze 行（不同
-observed_at，latest-per-sid 与读数侧天然去重——sale probe 先例，接受）。
+**落库（独立数据集 match_detail_prematch，票面「分表」裁量）**：复用
+detail 抓取/解析器（fetch_detail_page + parse_detail_dispatch，WAF 白名单
+客户端与 30/min 滑窗共用当期班同一进程实例），但 raw+bronze 落**专表**
+而非 match_detail——独立复核 W1：拍行 sid=裸 sid 若混入 match_detail，
+会进 bronze_sids 的 sid 索引掩蔽 collect_day 裸键断窗自愈（夹缝崩溃后
+终版 11 人行永不回补，恰伤 E-15 目标人群）；分表后 match_detail 的
+bronze_sids 只含夜班裸键行，latest-per-sid silver 语义零扰动，赛前拍
+语料按 observed_at 自成读数面。bronze 行 fetched_at=抓取时刻
+（observed_at PIT 语义，晚到不回灌、不倒填名义档时刻）。拍失败不占键
+（下轮自愈）；夜班已收口（match_detail 裸键在）或已开球的候选跳过。
+失败不阻塞当期班其余相位（隔离见 srct_shift.run_shift）。并发积压拍可
+对同拍键双落 bronze 行（不同 observed_at，读数侧天然去重——sale probe
+先例，接受）。
+
+**拍键带开球纪元**（独立复核 W2）：`{sid}@pre-{n}-{kickoff:%Y%m%d%H%M}`
+（UTC）——改期路径保 fixture+link+sid 只改 kickoff（sporttery
+update_fixture_kickoff），键不带纪元会让旧日程四键耗尽、新日程真实
+比赛日零快照且晨检不可见；带纪元后改期场在新日程重新落拍，废弃日程
+的键原样存档（其观测仍是 PIT 诚实的观测）。
 
 预算：≈5–8 场/日 × 4 档 ≈ 32 请求/日，与当期班共用 NightBudget 与滑窗
 （同一 run_shift 调用内顺序执行，无跨进程叠加）。
@@ -58,13 +67,21 @@ PREMATCH_LEADS: tuple[int, ...] = (150, 90, 60, 30)
 PREMATCH_WINDOW_MINUTES = 30
 # 拍键中缀（corpus_store.prematch_snapshot_face 的 LIKE 模式与此同源钉死）
 PREMATCH_KEY_INFIX = "@pre-"
+# 赛前拍独立数据集（W1：不进 match_detail——防 sid 索引掩蔽夜班裸键
+# 断窗自愈；票面「与既有同表或按拍点档分表由实现裁」的分表裁量）
+PREMATCH_DATASET = "match_detail_prematch"
+# 赛前拍 bronze 版本（独立于 srct_detail_v3：赛前页形态演进独立升版）
+PREMATCH_BRONZE_VERSION = "srct_detail_prematch_v1"
 # 首发齐判（足球队首发 11 人；两侧同齐才算「名单已公开」的保守读数）
 _STARTERS_COMPLETE = 11
 
 
-def prematch_key(sid: str, lead_minutes: int) -> str:
-    """赛前拍 raw 键（一档一键；与裸键/@open/@daily/@close 互不占位）。"""
-    return f"{sid}{PREMATCH_KEY_INFIX}{lead_minutes}"
+def prematch_key(sid: str, lead_minutes: int, kickoff: datetime) -> str:
+    """赛前拍 raw 键（一档一日程一键；kickoff 纪元防改期场键耗尽——W2）。"""
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=UTC)
+    stamp = kickoff.astimezone(UTC).strftime("%Y%m%d%H%M")
+    return f"{sid}{PREMATCH_KEY_INFIX}{lead_minutes}-{stamp}"
 
 
 def due_prematch_lead(kickoff: datetime, now: datetime) -> int | None:
@@ -136,7 +153,8 @@ def run_prematch_beats(  # noqa: PLR0913 接缝集与当期班拍同构（防封
     「raw 键在而 bronze 行缺」的单拍缺失（@open 的 C8 同族）——本相
     不修：bronze_sids 索引按 sid 不按拍键，逐拍补判需全量扫描 bronze
     （78k 行/30min 不划算）；升级路径=读数侧发现缺拍时加拍键级 bronze
-    索引（bronze_sid_backfill 同构）。
+    索引（bronze_sid_backfill 同构）。独立复核 W1 后本相位已分表
+    （PREMATCH_DATASET），该缺失不再波及 match_detail 的裸键自愈面。
     """
     stats = PrematchStats(candidates=len(candidates))
     try:
@@ -148,8 +166,8 @@ def run_prematch_beats(  # noqa: PLR0913 接缝集与当期班拍同构（防封
             if lead is None:
                 continue
             stats.due += 1
-            key = prematch_key(sid, lead)
-            if store.has(srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key):
+            key = prematch_key(sid, lead, kickoff)  # 开球纪元（W2 改期重拍）
+            if store.has(srct.SRCT_PROVIDER, PREMATCH_DATASET, key):
                 continue
             throttle(limiter, srct.REQUEST_WINDOW, sleeper)
             if budget is not None:
@@ -164,21 +182,21 @@ def run_prematch_beats(  # noqa: PLR0913 接缝集与当期班拍同构（防封
                 continue
             observed_at = srct.utc_now_iso()
             store.ingest_raw(
-                srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key, page, ext=".html"
+                srct.SRCT_PROVIDER, PREMATCH_DATASET, key, page, ext=".html"
             )
             stats.raw_new += 1
             store.append_bronze(
                 srct.SRCT_PROVIDER,
-                srct.DETAIL_DATASET,
+                PREMATCH_DATASET,
                 [
                     {
                         "provider": srct.SRCT_PROVIDER,
-                        "dataset": srct.DETAIL_DATASET,
+                        "dataset": PREMATCH_DATASET,
                         "sid": sid,
                         "fetched_at": observed_at,
-                        "parser_version": srct.BRONZE_VERSIONS[srct.DETAIL_DATASET],
+                        "parser_version": PREMATCH_BRONZE_VERSION,
                         "raw_sha": store.raw_sha(
-                            srct.SRCT_PROVIDER, srct.DETAIL_DATASET, key
+                            srct.SRCT_PROVIDER, PREMATCH_DATASET, key
                         ),
                         "payload": payload,
                     }
@@ -223,6 +241,12 @@ def jc_prematch_candidates(
         sid = sids.get(int(row["fid"]))
         if sid is None:
             continue
+        # kickoff tz 读口注记（独立复核 I4）：naive 行的规范转换口是
+        # fx_store.kickoff_to_utc（v1 legacy=北京墙钟 naive 的单一读口，
+        # fixtures.py）；此处按 fx_store.beijing_naive 的防御惯例 naive→UTC
+        # ——生产面 623/623 全 '+00:00' aware（2026-11-10 只读实证）且在售
+        # 板行恒被 v2 写手（sporttery._cst_to_utc）刷新，naive 分支实为死
+        # 路；若 legacy naive 行回流，先经 kickoff_to_utc 归一再入本口。
         kickoff = datetime.fromisoformat(str(row["kickoff"]))
         if kickoff.tzinfo is None:
             kickoff = kickoff.replace(tzinfo=UTC)
