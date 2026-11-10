@@ -34,6 +34,7 @@ tasks.weekly_agent_batch 把 llm.client.glm_chat 适配进来；测试注入桩�
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -205,7 +206,9 @@ def read_faces(conn: sqlite3.Connection, *, lessons_dir: Path | None) -> dict[st
     return {
         "edge_findings": findings,
         "hypothesis_registry": hypothesis_registry.registry_view(conn),
-        "lessons_injection": [list(entry.triggers) for entry in injection],
+        # F3：教训注入带 lesson_id（render_injection 一行一条，[L-NN] 头）
+        # ——丢 id 则 LLM 无从引用实存教训，refs 校验必拒
+        "lessons_injection": lessons.render_injection(injection).splitlines(),
         "digest": digest,
     }
 
@@ -220,8 +223,10 @@ def build_generate_prompt(faces: dict[str, Any]) -> str:
         "你是量化研究的方法学假设生成器。下面是本系统上周的探索台账与注册表读面。\n"
         "任务：从这些**已有证据**出发，提出至多 5 条新的可证伪研究假设提案。\n\n"
         "硬性要求：\n"
-        "1. 只引用下面给出的证据，每条提案必须带 refs（引用 id 列表，元素取自"
-        " 台账行 id（整数）、教训 id（L-NN）、假设 id（H<number>)——缺失即被拒收；\n"
+        "1. 只引用下面给出的证据，每条提案必须带 refs（引用 id 列表）；所有"
+        ' 字段与 refs 元素一律字符串——台账行 id 写 "42"（不是 42）、教训 id'
+        ' 写 "L-01"、假设 id 写 "H2"，expected_n 写 "n≥300/桶"（不是 300）'
+        "——refs 缺失即被拒收；\n"
         "2. ledger_ref 必须精确回指：`edge:<台账行id>`（如 edge:42）或注册表在册"
         " 账本引用（edge-ledger:E-02 形态，取自下方注册表 ledger_ref 列）；\n"
         "3. 不得编造任何统计量或数字结论——判据描述门与样本量要求，数值门由"
@@ -263,6 +268,31 @@ def build_critique_prompt(proposal: dict[str, Any]) -> str:
 # ---- LLM 产出解析与管线层拒收（票 11 裁定：引用 id 缺失直接拒） ----
 
 _REQUIRED_FIELDS = ("statement", "judgement", "data_face", "expected_n", "ledger_ref")
+
+
+def _coerce_scalars(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    标量类型宽容归一（correctness F1），返回归一后的浅拷贝。
+
+    prompt 虽钉死全字符串约定，LLM 回 JSON 仍常混数字形态（refs:[42,
+    "L-01"] / expected_n:300）——int（不含 bool）→ str 归一后再校验，
+    避免首真跑大批误拒；落盘/注册消费的即归一后形态。其余异型（float/
+    嵌套）不救，走拒收留痕。
+    """
+    coerced = dict(raw)
+    expected = coerced.get("expected_n")
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        coerced["expected_n"] = str(expected)
+    refs = coerced.get("refs")
+    if isinstance(refs, list):
+        items = cast("list[object]", refs)
+        coerced["refs"] = [
+            str(item) if isinstance(item, int) and not isinstance(item, bool) else item
+            for item in items
+        ]
+    return coerced
+
+
 # 引用 id 家族路由正则（路由而已；存在性由各家族实存集合判）
 _LESSON_REF_RE = re.compile(r"^L-\d{2,}$")
 _HYPOTHESIS_REF_RE = re.compile(r"^H\d+$")
@@ -309,7 +339,9 @@ def _refs_resolve(
     hypothesis_ids: set[str],
 ) -> bool:
     """引用 id 可解析：台账行 id（int 形态）/ 教训 L-NN / 假设 H<number>。"""
-    if ref.isdigit():
+    if ref.isascii() and ref.isdigit():
+        # isdigit() Unicode 超集：上标 "²" 可过 isdigit 但 int() 抛、全角
+        # "４２" 能 int() 伪通过——ASCII 位先卡（correctness F2）
         return int(ref) in finding_ids
     if _LESSON_REF_RE.match(ref):
         return ref in lesson_ids
@@ -338,7 +370,11 @@ def _ledger_ref_resolves(
     conn: sqlite3.Connection, ledger_ref: str, all_refs: set[str]
 ) -> bool:
     """台账回指精确解析：edge:<行id> 实存，或在册账本引用（edge-ledger:E-xx）。"""
-    if ledger_ref.startswith("edge:") and ledger_ref[5:].isdigit():
+    if (
+        ledger_ref.startswith("edge:")
+        and ledger_ref[5:].isascii()
+        and ledger_ref[5:].isdigit()
+    ):
         row = conn.execute(
             "SELECT 1 FROM edge_findings WHERE id = ?", (int(ledger_ref[5:]),)
         ).fetchone()
@@ -431,15 +467,16 @@ def validate_batch(
     conn: sqlite3.Connection,
     raw_proposals: list[dict[str, Any]],
     *,
-    resolved_date: str,
+    id_prefix: str,
     lessons_dir: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     管线层校验整批 LLM 产出，返回 (过审提案（已编 id）, 拒收清单)。
 
-    校验面：字段齐、引用 id 必带且可解析、台账回指精确可解析、查重
-    v0、≤5 条/次。拒收只剔除不中断（一条坏产出不废整批）；拒收理由
-    进报告留痕。
+    校验面：字段齐（标量先经 _coerce_scalars 归一）、引用 id 必带且可
+    解析、台账回指精确可解析、查重 v0、≤5 条/次。拒收只剔除不中断
+    （一条坏产出不废整批）；拒收理由进报告留痕。id_prefix 含拍次位
+    （同日第二拍起 P-yyyymmdd-<拍>-NN，correctness F4）。
     """
     faces = _load_ref_faces(conn, lessons_dir)
     validated: list[dict[str, Any]] = []
@@ -455,13 +492,14 @@ def validate_batch(
                 }
             )
             continue
-        reasons = _proposal_reasons(conn, raw, faces, batch_refs=batch_refs)
+        coerced = _coerce_scalars(raw)
+        reasons = _proposal_reasons(conn, coerced, faces, batch_refs=batch_refs)
         if reasons:
             rejected.append({"raw": raw, "reasons": reasons})
             continue
         seq += 1
-        proposal = dict(raw)
-        proposal["id"] = f"P-{resolved_date.replace('-', '')}-{seq:02d}"
+        proposal = dict(coerced)
+        proposal["id"] = f"{id_prefix}-{seq:02d}"
         validated.append(proposal)
     return validated, rejected
 
@@ -514,20 +552,30 @@ def run_weekly_batch(
     report["anchor"] = contraction.ensure_exploration_anchor(
         conn, resolved_date, actor=BATCH_ACTOR
     )
+    # F5：拍名独占声明（O_EXCL 哨兵，常驻不删）——手动 CLI 与调度并发
+    # 双跑各得不同拍次，append-only 不被同名互覆；F4：拍次进提案/批次
+    # id（首拍无后缀，同日第二拍起 P-yyyymmdd-<拍>-NN / B-yyyymmdd-<拍>）
+    proposals_dir = store.root / PROPOSALS_SUBDIR
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    beat = _claim_beat_suffix(proposals_dir, resolved_date)
+    report["beat"] = beat
+    beat_tag = "" if beat == 1 else f"-{beat}"
+    date_compact = resolved_date.replace("-", "")
+    id_prefix = f"P-{date_compact}{beat_tag}"
     faces = read_faces(conn, lessons_dir=lessons_dir)
     report["read_faces"] = {
         "edge_findings": len(faces["edge_findings"]),
         "hypothesis_registry": len(faces["hypothesis_registry"]),
         "lessons_injection": len(faces["lessons_injection"]),
     }
-    batch_id = f"B-{resolved_date.replace('-', '')}"
+    batch_id = f"B-{date_compact}{beat_tag}"
     generate_outcome = chat(build_generate_prompt(faces))
     generate_cost = record_proposal_cost(
         conn, proposal_id=batch_id, phase=PHASE_GENERATE, outcome=generate_outcome
     )
     raw_proposals, parse_note = parse_proposals(generate_outcome.content)
     validated, rejected = validate_batch(
-        conn, raw_proposals, resolved_date=resolved_date, lessons_dir=lessons_dir
+        conn, raw_proposals, id_prefix=id_prefix, lessons_dir=lessons_dir
     )
     critique_cost = 0.0
     for proposal in validated:
@@ -554,7 +602,7 @@ def run_weekly_batch(
             },
         }
     )
-    json_path, md_path = write_beat_files(store, report)
+    json_path, md_path = write_beat_files(store, report, beat_suffix=beat)
     report["files"] = {"json": str(json_path), "md": str(md_path)}
     write_watermark(conn, watermark)
     return report
@@ -576,15 +624,34 @@ HUMAN_REVIEW_CHECKLIST: tuple[str, ...] = (
 )
 
 
-def _beat_basename(proposals_dir: Path, run_date: str) -> str:
-    """本次周拍文件基名：append-only——同名已存在时递增 -2/-3 后缀不覆盖。"""
+#: 拍次哨兵文件后缀（O_EXCL 独占声明；常驻不删=拍名永久保留不复用）
+_CLAIM_SUFFIX = ".claim"
+#: 单日拍次上限（到达=管线已病态，fail-loud 不无限自旋）
+_MAX_BEATS_PER_DAY = 999
+
+
+def _claim_beat_suffix(proposals_dir: Path, run_date: str) -> int:
+    """
+    拍次独占声明（correctness F5）：O_EXCL 抢拍名哨兵，返回本拍拍次。
+
+    哨兵文件常驻（不随拍结束删除）：① 并发双跑（手动 CLI × 调度）各抢
+    各的拍次，append-only 不被同名互覆；② 拍名永久保留——崩溃残拍（如
+    json 已落 md 未落）不复用旧拍名，下拍 -N 补齐双视图（F7 语义）。
+    """
+    proposals_dir.mkdir(parents=True, exist_ok=True)  # 自含：调用方可免预建
     base = f"weekly-proposals-{run_date}"
-    if not (proposals_dir / f"{base}.json").exists():
-        return base
-    n = 2
-    while (proposals_dir / f"{base}-{n}.json").exists():
-        n += 1
-    return f"{base}-{n}"
+    beat = 1
+    while beat <= _MAX_BEATS_PER_DAY:
+        tag = "" if beat == 1 else f"-{beat}"
+        claim = proposals_dir / f"{base}{tag}{_CLAIM_SUFFIX}"
+        try:
+            fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            beat += 1
+            continue
+        os.close(fd)
+        return beat
+    raise RuntimeError(f"{run_date} 拍次声明超过 {_MAX_BEATS_PER_DAY}：管线病态")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -633,16 +700,21 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_beat_files(store: CorpusStore, report: dict[str, Any]) -> tuple[Path, Path]:
+def write_beat_files(
+    store: CorpusStore, report: dict[str, Any], *, beat_suffix: int = 1
+) -> tuple[Path, Path]:
     """
-    周拍报告落语料树 reports/proposals/（JSON+MD，temp+rename 原子写）。
+    周拍报告落语料树 reports/proposals/（JSON+MD 双视图，temp+rename）。
 
-    受控目录 append-only：文件名含 run_date 且重名递增后缀——永不覆盖
-    既有拍次。返回 (JSON 路径（人审 CLI 消费口）, MD 路径)。
+    拍名=run_date+拍次后缀（claim 独占，append-only 永不覆盖既有拍次）。
+    双视图两 rename 非事务：json 先落、md 后落——中途崩溃留残 JSON（可
+    解析、下拍 -N 补齐，F7 钉死的行为面，不强求原子化）。返回
+    (JSON 路径（人审 CLI 消费口）, MD 路径)。
     """
     proposals_dir = store.root / PROPOSALS_SUBDIR
     proposals_dir.mkdir(parents=True, exist_ok=True)
-    basename = _beat_basename(proposals_dir, str(report["run_date"]))
+    tag = "" if beat_suffix == 1 else f"-{beat_suffix}"
+    basename = f"weekly-proposals-{report['run_date']}{tag}"
     json_tmp = proposals_dir / f"{basename}.json.tmp"
     md_tmp = proposals_dir / f"{basename}.md.tmp"
     json_tmp.write_text(
@@ -680,11 +752,14 @@ def register_from_proposal(
     """
     人过审后把一条提案 freeze 进 hypothesis_registry（人 CLI 核心逻辑）。
 
-    前置哨（fail-loud 零写入）：提案须在文件内且已附对抗质疑反驳意见
-    （无反驳=未过审）；台账回指不撞 refuted 库（判读后置翻转的场景）。
-    注册本身走 hypothesis_registry.register_hypothesis（actor='human:cli'，
-    注册面人审哨）——措辞注册即冻结，改预测=新 h_id。幂等：同 h_id 重复
-    注册返回既有行（idempotent=True）。
+    文件级前置（无库面）：提案须在文件内且已附对抗质疑反驳意见。库级
+    三哨（撞 refuted 库 / L1+ 停新注册 / 注册本身）在**同一个 atomic
+    （BEGIN IMMEDIATE）写事务**内闭环（correctness F6）：并发
+    hypothesis-mark/contraction-set 被写锁串行化——要么先于本事务提交
+    （哨在事务内重读可见、拒注册零写入），要么等本事务提交后才落——
+    哨查与注册之间的 TOCTOU 窗口不存在。注册走 register_hypothesis
+    （actor='human:cli'，注册面人审哨，嵌套 SAVEPOINT）；幂等：同 h_id
+    重复注册返回既有行（idempotent=True）。
     """
     beat = parse_beat_file(path)
     proposals_raw: object = beat.get("proposals")
@@ -702,33 +777,36 @@ def register_from_proposal(
             f"{proposal_id} 未附对抗质疑反驳意见——不得进入人审注册"
         )
     ledger_ref = str(match["ledger_ref"])
-    _, refuted_refs = _registry_refs(conn)
-    if ledger_ref in refuted_refs:
-        raise ProposalRegistrationError(
-            f"{proposal_id} 台账回指 {ledger_ref} 已有 refuted 假设"
-            + "（伪新颖；重开=人裁新预测新 h_id，不走本提案）"
+    # F6：库级三哨+注册同一写事务（BEGIN IMMEDIATE 串行化并发翻转；
+    # 哨拒绝在事务内抛出→回滚→零写入）
+    with atomic(conn):
+        _, refuted_refs = _registry_refs(conn)
+        if ledger_ref in refuted_refs:
+            raise ProposalRegistrationError(
+                f"{proposal_id} 台账回指 {ledger_ref} 已有 refuted 假设"
+                + "（伪新颖；重开=人裁新预测新 h_id，不走本提案）"
+            )
+        # prereg 附录 E 节（票 08 冻结）：L1+ 停新注册——deployment_plan.
+        # new_registrations=False 期间不得冻结新假设（恢复=L0 相邻步进
+        # 人 CLI）。全 register_hypothesis 面的统一闸留缝票 02/08；
+        # 周批提案的注册口在此消费该映射。
+        plan = contraction.deployment_plan(contraction.current_level(conn))
+        if not plan.new_registrations:
+            raise ProposalRegistrationError(
+                "收缩 L1+ 停新注册（prereg 附录 E 节）；恢复=L0 相邻步进人 CLI"
+            )
+        existed = hypothesis_registry.current_status(conn, h_id) is not None
+        row_id = hypothesis_registry.register_hypothesis(
+            conn,
+            h_id=h_id,
+            statement=str(match["statement"]),
+            judgement=str(match["judgement"]),
+            data_face=str(match["data_face"]),
+            expected_n=str(match["expected_n"]),
+            ledger_ref=ledger_ref,
+            family=family,
+            actor="human:cli",
         )
-    # prereg 附录 E 节（票 08 冻结）：L1+ 停新注册——deployment_plan.
-    # new_registrations=False 期间不得冻结新假设（恢复=L0 相邻步进人 CLI）。
-    # 全 register_hypothesis 面的统一闸留缝票 02/08；周批提案的注册口
-    # 在此消费该映射。
-    plan = contraction.deployment_plan(contraction.current_level(conn))
-    if not plan.new_registrations:
-        raise ProposalRegistrationError(
-            "收缩 L1+ 停新注册（prereg 附录 E 节）；恢复=L0 相邻步进人 CLI"
-        )
-    existed = hypothesis_registry.current_status(conn, h_id) is not None
-    row_id = hypothesis_registry.register_hypothesis(
-        conn,
-        h_id=h_id,
-        statement=str(match["statement"]),
-        judgement=str(match["judgement"]),
-        data_face=str(match["data_face"]),
-        expected_n=str(match["expected_n"]),
-        ledger_ref=ledger_ref,
-        family=family,
-        actor="human:cli",
-    )
     return {
         "h_id": h_id,
         "proposal_id": proposal_id,

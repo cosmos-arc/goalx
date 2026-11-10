@@ -385,21 +385,21 @@ def test_beat_files_append_only_on_same_date_rerun(
     from goalx_backend.data.corpus_store import CorpusStore
     from goalx_backend.evaluation import weekly_agent
 
-    _seed_finding(db, finding_id=1)
+    _seed_finding(db, finding_id=42)
     _seed_lesson(tmp_path, "L-01")
     store = CorpusStore(tmp_path / "corpus")
-    weekly_agent.run_weekly_batch(
+    first = weekly_agent.run_weekly_batch(
         db,
         store=store,
-        chat=_StubChat("[]"),
+        chat=_ScriptedChat(),
         lessons_dir=tmp_path,
         run_date="2026-11-16",
     )
-    _seed_finding(db, finding_id=2, found_at="2026-11-18T23:40:00+00:00")
-    weekly_agent.run_weekly_batch(
+    _seed_finding(db, finding_id=43, found_at="2026-11-18T23:40:00+00:00")
+    second = weekly_agent.run_weekly_batch(
         db,
         store=store,
-        chat=_StubChat("[]"),
+        chat=_ScriptedChat(),
         lessons_dir=tmp_path,
         run_date="2026-11-16",
     )
@@ -411,6 +411,15 @@ def test_beat_files_append_only_on_same_date_rerun(
         "weekly-proposals-2026-11-16-2.json",
         "weekly-proposals-2026-11-16.json",
     ]
+    # F4：拍次进提案/批次 id（首拍无后缀，第二拍 P-…-2-NN / B-…-2）
+    assert first["beat"] == 1
+    assert second["beat"] == 2
+    assert first["proposals"][0]["id"] == "P-20261116-01"
+    assert second["proposals"][0]["id"] == "P-20261116-2-01"
+    rows = db.execute(
+        "SELECT proposal_id FROM llm_proposal_costs WHERE phase='generate' ORDER BY id"
+    ).fetchall()
+    assert [str(r["proposal_id"]) for r in rows] == ["B-20261116", "B-20261116-2"]
 
 
 def test_parse_proposals_tolerates_wrapping_and_garbage() -> None:
@@ -748,3 +757,233 @@ def test_register_blocked_when_contraction_l1_plus(
         db, beat_json, proposal_id="P-20261116-01", h_id="H9"
     )
     assert result["h_id"] == "H9"
+
+
+# ---- correctness-review 批修回归（F1/F2/F3/F5/F6/F7） ----
+
+
+def test_numeric_scalar_forms_are_coerced(
+    db: sqlite3.Connection, tmp_path: Any
+) -> None:
+    """F1：refs 数字元素/expected_n 裸数字 → 管线层 coerce 过审不误拒。"""
+    import json as _json
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.evaluation import weekly_agent
+
+    _seed_finding(db, finding_id=42)
+    _seed_lesson(tmp_path, "L-01")
+    reply = _json.dumps(
+        [
+            {
+                "statement": "数字形态提案（LLM 常见裸数字输出）",
+                "judgement": "门",
+                "data_face": "面",
+                "expected_n": 300,
+                "ledger_ref": "edge:42",
+                "refs": [42, "L-01"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    report = weekly_agent.run_weekly_batch(
+        db,
+        store=CorpusStore(tmp_path / "corpus"),
+        chat=_StubChat(reply),
+        lessons_dir=tmp_path,
+        run_date="2026-11-16",
+    )
+    assert report["rejected"] == []
+    proposal = report["proposals"][0]
+    assert proposal["refs"] == ["42", "L-01"]  # 归一为字符串（落盘/注册同形态）
+    assert proposal["expected_n"] == "300"
+
+
+def test_unicode_digit_refs_rejected_without_crash(
+    db: sqlite3.Connection, tmp_path: Any
+) -> None:
+    """F2：上标 "²" 不炸整批、全角 "４２" 不伪通过（finding 42 实存仍拒）。"""
+    import json as _json
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.evaluation import weekly_agent
+
+    _seed_finding(db, finding_id=42)
+    _seed_lesson(tmp_path, "L-01")
+    reply = _json.dumps(
+        [
+            {
+                "statement": "上标与全角引用",
+                "judgement": "门",
+                "data_face": "面",
+                "expected_n": "n",
+                "ledger_ref": "edge:42",
+                "refs": ["²", "４２"],
+            },
+            {
+                "statement": "全角台账回指",
+                "judgement": "门",
+                "data_face": "面",
+                "expected_n": "n",
+                "ledger_ref": "edge:４２",
+                "refs": ["42"],
+            },
+            {
+                "statement": "上标台账回指",
+                "judgement": "门",
+                "data_face": "面",
+                "expected_n": "n",
+                "ledger_ref": "edge:²",
+                "refs": ["42"],
+            },
+        ],
+        ensure_ascii=False,
+    )
+    report = weekly_agent.run_weekly_batch(  # 旧码在此 ValueError 崩整批
+        db,
+        store=CorpusStore(tmp_path / "corpus"),
+        chat=_StubChat(reply),
+        lessons_dir=tmp_path,
+        run_date="2026-11-16",
+    )
+    assert report["status"] == "generated"
+    assert report["proposals"] == []  # 三条全拒，不伪通过
+    reasons = [r["reasons"][0] for r in report["rejected"]]
+    assert any("引用 id 不可解析" in r for r in reasons)
+    assert sum("台账回指不可解析" in r for r in reasons) == 2
+
+
+def test_generate_prompt_carries_lesson_ids(
+    db: sqlite3.Connection, tmp_path: Any
+) -> None:
+    """F3：教训注入带 lesson_id（render_injection 行形态）——LLM 有实存 L-NN 可引。"""
+    from goalx_backend.evaluation import weekly_agent
+
+    _seed_lesson(tmp_path, "L-07")
+    faces = weekly_agent.read_faces(db, lessons_dir=tmp_path)
+    assert any("L-07" in str(line) for line in faces["lessons_injection"])
+    prompt = weekly_agent.build_generate_prompt(faces)
+    assert "[L-07]" in prompt  # 引用形态与 refs 校验口径一致
+    assert "别再死因" in prompt  # render_injection 单行注入形态
+
+
+def test_concurrent_beat_claims_get_distinct_files(tmp_path: Any) -> None:
+    """F5：并发双跑（手动 CLI × 调度）O_EXCL 各抢拍次——两不同文件，不互覆。"""
+    import threading
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.evaluation import weekly_agent
+
+    store = CorpusStore(tmp_path / "corpus")
+    proposals_dir = tmp_path / "corpus" / "reports" / "proposals"
+    claimed: list[int] = []
+
+    def worker() -> None:
+        proposals_dir.mkdir(parents=True, exist_ok=True)
+        beat = weekly_agent._claim_beat_suffix(proposals_dir, "2026-11-16")
+        report: dict[str, Any] = {
+            "schema": "weekly-proposals/1",
+            "run_date": "2026-11-16",
+            "status": "generated",
+            "level": "L0",
+            "proposals": [],
+            "rejected": [],
+        }
+        weekly_agent.write_beat_files(store, report, beat_suffix=beat)
+        claimed.append(beat)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(claimed) == [1, 2]  # 各抢各的拍次
+    names = sorted(p.name for p in proposals_dir.glob("weekly-proposals-*.json"))
+    assert names == [
+        "weekly-proposals-2026-11-16-2.json",
+        "weekly-proposals-2026-11-16.json",
+    ]
+
+
+def test_register_sentinels_share_write_transaction(
+    db: sqlite3.Connection, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6：撞 refuted 哨/L1 哨/注册在同一写事务内（BEGIN IMMEDIATE 关 TOCTOU 窗）。"""
+    from goalx_backend.evaluation import hypothesis_registry, weekly_agent
+
+    beat_json, _ = _run_beat(db, tmp_path)
+    seen: dict[str, bool] = {}
+    original_refs = weekly_agent._registry_refs
+
+    def spy_refs(conn: sqlite3.Connection) -> tuple[set[str], set[str]]:
+        seen["sentinel_in_txn"] = conn.in_transaction
+        return original_refs(conn)
+
+    monkeypatch.setattr(weekly_agent, "_registry_refs", spy_refs)
+    original_register = hypothesis_registry.register_hypothesis
+
+    def spy_register(conn: sqlite3.Connection, **kwargs: object) -> int:
+        seen["register_in_txn"] = conn.in_transaction
+        return original_register(conn, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hypothesis_registry, "register_hypothesis", spy_register)
+    weekly_agent.register_from_proposal(
+        db, beat_json, proposal_id="P-20261116-01", h_id="H9"
+    )
+    # 哨读与注册都在同一 BEGIN IMMEDIATE 写事务内：并发 hypothesis-mark/
+    # contraction-set 被写锁串行化，哨后翻转要么先于本事务（哨内重读可见）
+    # 要么后于提交——窗口不存在
+    assert seen["sentinel_in_txn"] is True
+    assert seen["register_in_txn"] is True
+
+
+def test_partial_beat_residual_json_next_beat_completes(
+    db: sqlite3.Connection, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F7：双视图两 rename 非事务——json 落 md 未落留残拍（可解析），下拍 -2 补齐。"""
+    import json as _json
+
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.evaluation import weekly_agent
+
+    _seed_finding(db, finding_id=42)
+    _seed_lesson(tmp_path, "L-01")
+    store = CorpusStore(tmp_path / "corpus")
+    proposals_dir = tmp_path / "corpus" / "reports" / "proposals"
+
+    real_replace = Path.replace
+    md_renames = {"n": 0}
+
+    def flaky_replace(self: Path, target: str) -> Path:
+        if str(target).endswith(".md") and md_renames["n"] == 0:
+            md_renames["n"] += 1
+            raise OSError("注入崩溃：json 已 rename、md 未 rename")
+        return real_replace(self, target)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    with pytest.raises(OSError, match="注入崩溃"):
+        weekly_agent.run_weekly_batch(
+            db,
+            store=store,
+            chat=_StubChat("[]"),
+            lessons_dir=tmp_path,
+            run_date="2026-11-16",
+        )
+    monkeypatch.undo()
+    # 残拍：beat-1 JSON 在场且可解析（半拍证据保留），MD 缺席
+    residual = proposals_dir / "weekly-proposals-2026-11-16.json"
+    assert residual.is_file()
+    loaded = _json.loads(residual.read_text(encoding="utf-8"))
+    assert loaded["status"] == "generated"
+    assert not (proposals_dir / "weekly-proposals-2026-11-16.md").exists()
+    # 崩溃拍未写水位（非空转）；拍名被哨兵占用 → 下拍 -2 双视图补齐
+    report = weekly_agent.run_weekly_batch(
+        db,
+        store=store,
+        chat=_StubChat("[]"),
+        lessons_dir=tmp_path,
+        run_date="2026-11-16",
+    )
+    assert report["beat"] == 2
+    assert (proposals_dir / "weekly-proposals-2026-11-16-2.json").is_file()
+    assert (proposals_dir / "weekly-proposals-2026-11-16-2.md").is_file()
