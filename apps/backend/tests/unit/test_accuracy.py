@@ -126,6 +126,38 @@ def test_hand_computed_metrics_pinned(db: sqlite3.Connection) -> None:
     assert rows["hafu"]["skip_reason"] == "no_half_score"
 
 
+def test_log_loss_by_market_face(db: sqlite3.Connection) -> None:
+    """
+    票 32：log loss 第三指标读面（S2 面 C 数源）——手算钉死。
+
+    同一已知矩阵+1:0：had LL=−ln(.5)（k=3）/ttg LL=−ln(.8)（k=8）/
+    crs LL=−ln(.5)（k=31=28 精确格+三「其他」档）；skill=1−LL/ln(k)。
+    hhad 无线=skip 行不进面；窗口按 kickoff UTC 日期切片（与面 A 同口径）。
+    """
+    _seed_fixture(db, fid_tag="ll", result=_RESULT_1_0)
+    accuracy.score_settled_fixtures(db, now_iso=_AS_OF)
+    faces = accuracy.log_loss_by_market(
+        db, date_from="2026-11-01", date_to="2026-11-30"
+    )
+    had = faces["had"]
+    assert had.n == 1
+    assert had.n_classes == 3
+    assert had.mean_log_loss == pytest.approx(-math.log(0.5))
+    assert had.uniform_anchor == pytest.approx(math.log(3))
+    assert had.skill_vs_uniform == pytest.approx(1 - (-math.log(0.5)) / math.log(3))
+    ttg = faces["ttg"]
+    assert ttg.n_classes == 8
+    assert ttg.mean_log_loss == pytest.approx(-math.log(0.8), abs=1e-6)
+    crs = faces["crs"]
+    assert crs.n_classes == 31
+    assert crs.mean_log_loss == pytest.approx(-math.log(0.5), abs=1e-6)
+    assert "hhad" not in faces  # skip 行（无线）不进面
+    assert "hafu" not in faces  # skip 行（无半场）不进面
+    # 窗外（>90 日）不进面
+    out = accuracy.log_loss_by_market(db, date_from="2027-01-01", date_to="2027-03-01")
+    assert out == {}
+
+
 def test_hhad_integer_line_scored(db: sqlite3.Connection) -> None:
     """hhad 整数线：让球线 -1 自 odds meta 读出，按调整后结果评 RPS。"""
     fid = _seed_fixture(db, fid_tag="b", result=_RESULT_1_0)
