@@ -248,6 +248,27 @@ def rolling_clv_window(conn: sqlite3.Connection) -> list[float]:
     return [float(row["clv"]) for row in reversed(rows)]
 
 
+def settled_clvs_since(conn: sqlite3.Connection, *, window_start: str) -> list[float]:
+    """
+    window_start(ISO，闭端含) 以来已结算 auto 纸面注的每注 CLV（时间升序）。
+
+    票 08 CLV 主钟的日期窗读数面（与 ``rolling_clv_window`` 的 LIMIT 50
+    读面同准入语义：mode=paper ∧ strategy_version 非空 ∧ 已结算 ∧ clv
+    非空——daily-wrap 回填面）。窗内如实返回短表（由钟的最小 n 判不足）。
+    """
+    rows = conn.execute(
+        """
+        SELECT clv FROM bets
+        WHERE mode = 'paper' AND strategy_version IS NOT NULL
+          AND settled_at IS NOT NULL AND clv IS NOT NULL
+          AND settled_at >= ?
+        ORDER BY settled_at, id
+        """,
+        (window_start,),
+    ).fetchall()
+    return [float(row["clv"]) for row in rows]
+
+
 def clv_window_fired(clvs: Sequence[float]) -> bool:
     """
     触发器 A 谓词：滚动窗 CLV 均值为负且低出 0 达 2SE（严格不等）。

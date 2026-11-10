@@ -89,6 +89,8 @@
 | `anchor_sentinel_weekly` | 断点哨兵周级留痕（autoresearch 票 34） | srct（cid177 第一锚，只读）× propline:pinnacle（第二源）周级三轴（coverage_second/coverage_anchor/dev_odds/dev_prob）；1a 分母=cid177 资格场防自反、1b 分母=fixture 侧、signed 周均值禁用（结构零）；alert=留痕+晨检红面不自动处置 | append+幂等（同周重跑追加，读取最新行胜出） |
 | `hypothesis_registry` | 假设注册表（vision-build 票 02） | prereg 冻结账：h_id/措辞/判据/数据面/样本量/台账回指（edge-ledger E-xx）+status（registered→running→supported\|refuted，终态恒人 CLI）+attempt_count（家族总尝试，票 04 DSR/BH 分母）；H1-H8 种子在 v51（research/61 §二 原文） | 冻结字段 append（改预测=新 h_id）；status/attempt_count 属主函数 UPDATE；终态留痕不删 |
 | `hypothesis_attempts` | 假设逐次评估留痕（vision-build 票 02） | UNIQUE(h_id, window_key) 吸收同窗重扫（scanner 前缀域窗键）；attempt_count 递增的唯一入口 | append-only |
+| `contraction_transitions` | 收缩级别 transitions 账（vision-build 票 08） | 五级反向金丝雀（L0…L4）级别变更留痕；genesis=L0，现态=最新行；相邻一级转移（跳级/自环拒绝，重升必经 L2）；级别变更恒人 CLI（actor 哨，agent 无路径） | append-only（触发器拒改写） |
+| `contraction_clock_readings` | 收缩双钟读数账（vision-build 票 08） | clv_main=CLV 主钟滚动 183 日窗概率域均值（3% 阈/2SE 单侧/n≥50）；exploration=探索钟 365 日窗幸存者计数（锚点=周批首跑日，票 03 钉）；显式读（人 CLI/月读）落账，晨检只读 | append-only；UNIQUE(clock, window_end) 吸收同窗重读 |
 
 ### infra / 脚手架
 
@@ -174,6 +176,12 @@ erDiagram
         INTEGER id PK
     }
     competitions {
+        INTEGER id PK
+    }
+    contraction_clock_readings {
+        INTEGER id PK
+    }
+    contraction_transitions {
         INTEGER id PK
     }
     cost_ledger {
@@ -1797,6 +1805,51 @@ attempt_count 只许递增，monotonic 守卫进触发器 WHEN）。H1-H8 首批
 迁移（research/61 §二 冻结原文；台账回指=edge-ledger 判决条目）。
 `hypothesis_attempts` = 逐次统计评估留痕（UNIQUE(h_id, window_key) 吸收
 同窗重扫），票 04 月读 DSR/BH 按总尝试数校正消费。
+
+<!-- schema-doc:BEGIN:table:contraction_transitions -->
+#### `contraction_transitions`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `level` | TEXT | NOT NULL |
+| `actor` | TEXT | NOT NULL |
+| `reason` | TEXT | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+
+append-only 触发器：`contraction_transitions_no_delete`、`contraction_transitions_no_update`
+<!-- schema-doc:END:table:contraction_transitions -->
+
+<!-- schema-doc:BEGIN:table:contraction_clock_readings -->
+#### `contraction_clock_readings`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `clock` | TEXT | NOT NULL |
+| `window_start` | TEXT | NOT NULL |
+| `window_end` | TEXT | NOT NULL |
+| `n` | INTEGER | NOT NULL |
+| `value` | REAL | NOT NULL |
+| `se` | REAL | — |
+| `fired` | INTEGER | NOT NULL |
+| `detail` | TEXT | — |
+| `ts` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`clock`, `window_end`)`
+
+append-only 触发器：`contraction_clock_readings_no_delete`、`contraction_clock_readings_no_update`
+<!-- schema-doc:END:table:contraction_clock_readings -->
+
+vision-build 票 08（v52）：收缩双钟两账——五级反向金丝雀（L0 全速→L1
+停新注册→L2 停探针+自动选票→L3 采集缩监测最小集→L4 全停只留漂移监测）
+的级别 transitions 账（genesis 行=L0；现态=最新行；相邻一级转移，跳级/
+自环拒绝；级别变更恒人 CLI=actor 哨，agent 无路径）+ 双钟读数账
+（clv_main=CLV 主钟滚动 183 日窗概率域均值 / exploration=探索钟 365 日
+窗幸存者计数；显式读落账 UNIQUE(clock, window_end) 吸收同窗重读；晨检
+只读不写）。判据与常数=prereg 附录（edge-program prereg 文件族
+06-prereg-appendix-contraction-clocks，冻结 2026-11-10）；钟只建议不
+执行，越门=晨检黄面待人 CLI。
 ### infra / 脚手架
 
 <!-- schema-doc:BEGIN:table:markets -->

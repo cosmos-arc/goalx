@@ -815,3 +815,65 @@ def test_check_lessons_review_due_semantic_bad_date_degrades(tmp_path: Path) -> 
     assert item.status == DEGRADED
     assert "不可读" in item.detail
     assert "created 非法日期" in item.detail
+
+
+def test_check_contraction_clocks_states(db: sqlite3.Connection) -> None:
+    """项 23（vision-build 票 08）：钟触发=黄告警待人 CLI；已收缩到位=绿。"""
+    from datetime import UTC, datetime
+
+    from goalx_backend.evaluation import contraction
+
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    # 双钟皆不触发（CLV 窗不足 + 锚点未钉）→ 绿
+    item = mc.check_contraction_clocks(db, now=now)
+    assert item.status == OK
+    assert "L0" in item.detail
+    # 主钟触发（50 注全负 CLV）→ 黄（建议 L1 待人 CLI）
+    for i in range(50):
+        db.execute(
+            """
+            INSERT INTO bets (mode, market_kind, stake, created_at, status, payout,
+                              profit, settled_at, strategy_version, clv)
+            VALUES ('paper', 'fixed', 2.0, ?, 'won', 0.0, 0.0, ?, 'auto-v1', -0.05)
+            """,
+            (f"2026-06-{i + 1:02d}T00:00:00+00:00",) * 2,
+        )
+    item = mc.check_contraction_clocks(db, now=now)
+    assert item.status == DEGRADED
+    assert "L1" in item.detail
+    # 人已收缩至 L1（建议已处置）→ 绿（钟读数照报）
+    contraction.set_level(
+        db, contraction.ContractionLevel.L1, actor="human:cli", reason="主钟"
+    )
+    item = mc.check_contraction_clocks(db, now=now)
+    assert item.status == OK
+    assert "L1" in item.detail
+
+
+def test_check_rescan_signals_states(db: sqlite3.Connection) -> None:
+    """项 24（vision-build 票 08）：信号触发=黄（唤醒重扫）；静默=绿报接线面。"""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    # 空库：联赛面 insufficient，其余 unwired → 绿（只报不判）
+    item = mc.check_rescan_signals(db, now=now)
+    assert item.status == OK
+    assert "league_mix=insufficient" in item.detail
+    # 联赛构成显著变 → 黄（唤醒告警）
+    comp_id = fx_store.upsert_competition(db, "英超")
+    other_id = fx_store.upsert_competition(db, "英冠")
+    home = fx_store.upsert_team(db, "th")
+    iso = lambda d: d.isoformat(timespec="seconds")  # noqa: E731
+    for i in range(50):
+        away = fx_store.upsert_team(db, f"ta-{i}")
+        fx_store.upsert_fixture(
+            db, other_id, iso(now - timedelta(days=100 + i)), home, away
+        )
+    for i in range(30):
+        away = fx_store.upsert_team(db, f"tb-{i}")
+        fx_store.upsert_fixture(
+            db, comp_id, iso(now - timedelta(days=20 + i // 5)), home, away
+        )
+    item = mc.check_rescan_signals(db, now=now)
+    assert item.status == DEGRADED
+    assert "league_mix=fired" in item.detail
