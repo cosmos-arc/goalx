@@ -121,8 +121,8 @@ def _verdict(age: float | None, *, green: float, yellow: float | None = None) ->
     return FAIL
 
 
-def check_stack(*, api_port: int = 8000, prefect_port: int = 4200) -> CheckItem:
-    """项 1 栈活性：Prefect 4200 + API 8000 双端口。"""
+def check_stack(*, api_port: int = 8000, prefect_port: int = 4201) -> CheckItem:
+    """项 1 栈活性：Prefect 4201（goalx 专端口，ditto 占 4200）+ API 8000 双端口。"""
     up: list[str] = []
     down: list[str] = []
     for label, port in (("prefect", prefect_port), ("api", api_port)):

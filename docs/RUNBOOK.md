@@ -9,18 +9,18 @@ goalx 是本机单机运行的足彩量化研究系统：FastAPI 后端（SQLite
 | 进程 | 端口 | 启动 | 日志 |
 |---|---|---|---|
 | API server（granian） | 127.0.0.1:8000 | `nohup task server >> .scratch/server.log 2>&1 &` | `.scratch/server.log` |
-| Prefect server | 127.0.0.1:4200（API+UI） | 由 `task serve-schedules` 自动拉起 | `.scratch/prefect-server.log` |
+| Prefect server | 127.0.0.1:4201（API+UI；4201=goalx 专端口，ditto 占 4200） | 由 `task serve-schedules` 自动拉起 | `.scratch/prefect-server.log` |
 | 调度（serve 19 deployment） | — | `nohup task serve-schedules >> .scratch/prefect-serve.log 2>&1 &` | `.scratch/prefect-serve.log` |
 | Web dev server（vite） | 5173 | `nohup task dev >> .scratch/web.log 2>&1 &` | `.scratch/web.log` |
 
-**为什么是 server + serve 两进程**：Prefect ≥3.7 的临时 server 不运行 scheduler，单进程 `flow.serve()` 的 schedule 永不触发（2026-09 上线初期连续两天 0 触发的根因）。`task serve-schedules` 先探活并按需启动专用 server（`PREFECT_API_URL=http://127.0.0.1:4200/api`），再启动 serve；server 存活独立于 serve，serve 重启不影响已排程 run。
+**为什么是 server + serve 两进程**：Prefect ≥3.7 的临时 server 不运行 scheduler，单进程 `flow.serve()` 的 schedule 永不触发（2026-09 上线初期连续两天 0 触发的根因）。`task serve-schedules` 先探活并按需启动专用 server（`PREFECT_API_URL=http://127.0.0.1:4201/api`），再启动 serve；server 存活独立于 serve，serve 重启不影响已排程 run。
 
 健康检查：
 
 ```bash
 curl -sf http://127.0.0.1:8000/readyz                  # 就绪：业务库可读 + schema==迁移链末版（v41）
 curl -sf http://127.0.0.1:8000/api/v1/fixtures/today   # API 业务面
-curl -sf http://127.0.0.1:4200/api/health              # Prefect
+curl -sf http://127.0.0.1:4201/api/health              # Prefect
 pgrep -f goalx_backend.schedules                       # 调度进程
 ```
 
@@ -61,7 +61,7 @@ pgrep -f goalx_backend.schedules                       # 调度进程
 | srct-remat | `10 8 * * *` | 源T silver 增量物化（rowid 水位+触及分区重写；护栏命中自动全量兜底） | 0 |
 | gold-rebuild | `40 8 * * *` | market_quote 保鲜 + gold 全量重算（赶在 09:05 晨检 gold 新鲜度检查之前）。market/gold 两重段各起 spawn 子进程 + duckdb 资源帽（BuildGuards，见 CONTEXT.md）；余量不足/子进程硬死/撞锁 → deferred 让位明日自愈（2026-11-06 内存收口，全链 38min→~6min） | 0 |
 
-全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4200 。频率调整只改 `schedules.py`（组合任务）或 `datasets.py`（注册表任务）的 cron。
+全部 flow 幂等、append-only（快照重复即去重计数）。Prefect UI：http://127.0.0.1:4201 。频率调整只改 `schedules.py`（组合任务）或 `datasets.py`（注册表任务）的 cron。
 
 **M3 degraded 语义**：daily-wrap 内 M3 评测是独立异常边界——报告读 corpus 追加窗口可撞并发读 EOFError（写完重读正常，非永久损坏），降级只标记 `m3.degraded` 进返回体，不拖其后的冻结对账/CLV/账本回填/账务核查；**失败不得记成通过**。freshness_shadow 同款边界（挂采集流后拍快照，影子失败不拖采集）。
 
