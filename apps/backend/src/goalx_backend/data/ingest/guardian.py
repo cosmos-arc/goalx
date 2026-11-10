@@ -303,15 +303,33 @@ def _state_view(state: State) -> dict[str, object]:
     }
 
 
-def _converged_state(window: tuple[str, str, int, bool], total: int) -> State:
-    """到尾收敛态（回填锚定日收口/日增量窗口拉完同构——都转 daily）。"""
+def _converged_state(
+    window: tuple[str, str, int, bool],
+    total: int,
+    today: date,
+    last_completed: object,
+) -> State:
+    """
+    到尾收敛态（回填锚定日收口/日增量窗口拉完同构——都转 daily）。
+
+    进行中日（to_date ≥ today）不标完成（票 35）：完成线只记 to_date−1
+    ——该日已完整走完且本窗已拉到尾页；当日尾部（拉取时刻之后发布的
+    当日文）由明日窗重含当日兜住（完成线+1=窗起，同 news_pit 保守完成
+    标记）。窗仅剩今日单日时无可标前序日，完成线原样保留（不虚标未观测
+    日）。已完成日（to_date < today，如跨日续跑收口的回填锚）行为不变：
+    完成线=to_date。
+    """
     from_date, to_date, _, _ = window
+    completed: object = to_date
+    if to_date >= today.isoformat():
+        candidate = (date.fromisoformat(to_date) - timedelta(days=1)).isoformat()
+        completed = candidate if candidate >= from_date else last_completed
     return {
         "phase": PHASE_DAILY,
         "from_date": from_date,
         "to_date": to_date,
         "page": 1,
-        "last_completed_date": to_date,
+        "last_completed_date": completed,
         "total_articles": total,
         "boundary": None,
     }
@@ -350,9 +368,12 @@ def sync_guardian(
     顺序翻页同步（断点续跑幂等；预算/单次上限任一触顶即停，游标已进）。
 
     - 回填态：from=1999-01-01、to=首跑锚定日、oldest-first 深翻页；
-      到尾页转 daily（last_completed=锚定日）。
-    - 日增量态：窗口=上次完成日+1→今日，新→旧 1-2 页；当日已完成则
-      零请求跳过（零成本心跳，与赛果同步同模式）。
+      到尾页转 daily（last_completed=锚定日或其前一日——锚定日仍在
+      进行中时保守取前一日，票 35）。
+    - 日增量态：窗口=上次完成日+1→今日，新→旧 1-2 页；进行中日拉到
+      尾也不标完成（完成线停在昨日，当日尾部由明日窗重含当日兜住，
+      同夜重跑持续入账；票 35）。完成线=今日的既存态仍零请求跳过
+      （零成本心跳，与赛果同步同模式）。
     每请求先过预算账本（当日已用 ≥500 → budget_exhausted 停），间距 1s。
     """
     now_dt = now or datetime.now(UTC)
@@ -399,7 +420,9 @@ def sync_guardian(
         stats.raw_bytes += pull.raw_bytes
         total = _as_int(state["total_articles"]) + pull.articles
         if window[2] >= pull.total_pages:
-            state = _converged_state(window, total)
+            state = _converged_state(
+                window, total, today, state.get("last_completed_date")
+            )
             stats.completed = True
             stats.phase = PHASE_DAILY
             break
