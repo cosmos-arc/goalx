@@ -25,7 +25,8 @@ E-15 阵容线冻结的重开条件=名单首次公开时刻的**前向真值**�
 collect_day 赛后收口裸键行晚于一切赛前拍落库——latest-per-sid 收敛到
 终版页，赛前拍行原序保留供读数。拍失败不占键（下轮自愈）；夜班已收口
 （裸键在）或已开球的候选跳过。失败不阻塞当期班其余相位（隔离见
-srct_shift.run_shift）。
+srct_shift.run_shift）。并发积压拍可对同拍键双落 bronze 行（不同
+observed_at，latest-per-sid 与读数侧天然去重——sale probe 先例，接受）。
 
 预算：≈5–8 场/日 × 4 档 ≈ 32 请求/日，与当期班共用 NightBudget 与滑窗
 （同一 run_shift 调用内顺序执行，无跨进程叠加）。

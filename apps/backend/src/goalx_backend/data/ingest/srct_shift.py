@@ -655,7 +655,9 @@ def run_shift(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915, C901 拍决策接缝
     # 叠加）；预算触顶整班收手留痕；相位级异常只留痕不炸班（红线：拍点
     # 失败不阻塞主链与 JC 相位，拍键幂等下轮自愈）。
     if prematch_candidates:
-        from goalx_backend.data.ingest import (  # noqa: PLC0415 防环局部导入
+        # 局部导入（同 jc_shift 惯例）：srct_prematch 带主库依赖
+        # （fixtures/mapping），srct_shift 本体保持 corpus-only 可导入
+        from goalx_backend.data.ingest import (  # noqa: PLC0415 局部导入=重依赖惰性
             srct_prematch,
         )
 
