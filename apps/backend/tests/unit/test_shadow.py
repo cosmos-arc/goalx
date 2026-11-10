@@ -328,6 +328,36 @@ def test_ml_had_probabilities_window_read(db: sqlite3.Connection) -> None:
     assert rows[0]["a"] == pytest.approx(0.2)
 
 
+def test_ml_had_probabilities_excludes_post_kickoff_rows(
+    db: sqlite3.Connection,
+) -> None:
+    """F2 PIT 过滤：开球后才 issued 的 ml 行不进漂移窗（issued≤kickoff
+    才算模型输出面——19:00 腿赛后重发行会污染 30/90 窗读数）。"""
+    from goalx_backend.data import fixtures as fx_store_mod
+
+    comp = fx_store_mod.upsert_competition(db, "英超")
+    home = fx_store_mod.upsert_team(db, "主队p")
+    away = fx_store_mod.upsert_team(db, "客队p")
+    fid = fx_store_mod.upsert_fixture(db, comp, "2026-11-10T19:00:00+00:00", home, away)
+    for tag, issued in (
+        ("pre", "2026-11-10T02:00:00+00:00"),
+        ("post", "2026-11-10T20:00:00+00:00"),
+    ):
+        fc.insert_forecast(
+            db,
+            fixture_id=fid,
+            track="ml",
+            model_version="dc-x",
+            content_hash=f"pit-{tag}",
+            payload=_payload(0.4),
+            issued_at=issued,
+        )
+    rows = fc.ml_had_probabilities(
+        db, ts_from="2026-11-01T00:00:00+00:00", ts_to="2026-12-01T00:00:00+00:00"
+    )
+    assert len(rows) == 1  # 只有赛前 issued 行进窗
+
+
 # ---- 漂移读数：模型输出分布 PSI（接 contraction.psi；当前 30 日 vs 前 90 日） ----
 
 
@@ -572,6 +602,23 @@ def test_shadow_retrain_chain_e2e(db: sqlite3.Connection, tmp_path: Path) -> Non
         ).fetchone()["c"]
         == 1
     )
+    # F1：自动注册的 genesis actor=trigger 前缀（审计账不冒充人审）；
+    # 人 CLI 注册缺省 actor=human:cli（兼容）
+    genesis = db.execute(
+        "SELECT actor FROM version_transitions WHERE version_id=?", (challenger_id,)
+    ).fetchone()
+    assert genesis["actor"] == "trigger:shadow-retrain"
+    human_version = versioning.register_version(
+        db,
+        estimator_version="dc-human-f1",
+        calibration_version="shin",
+        params_version="fp",
+        label="cli",
+    )
+    human_genesis = db.execute(
+        "SELECT actor FROM version_transitions WHERE version_id=?", (human_version,)
+    ).fetchone()
+    assert human_genesis["actor"] == "human:cli"
     # 生产面不动：champion ml 行唯一且无版本标签（不回溯打标）
     ml_rows = db.execute(
         "SELECT model_version, strategy_version_id FROM forecasts WHERE track='ml'"
@@ -799,22 +846,48 @@ def test_v57_upgrade_rehearsal_preserves_forecast_rows() -> None:
         conn = db_mod.connect(":memory:")
         assert db_mod.migrate(conn) == 56
         fid = _seed_fixture(conn)
+        # 双轨存量：ml（生产史行）+ llm（他轨同表共存）
         conn.execute(
             """
             INSERT INTO forecasts
-                (fixture_id, track, model_version, issued_at, content_hash, payload)
-            VALUES (?, 'ml', 'dc-old', '2026-10-01T00:00:00+00:00', 'h-old', '{}')
+                (id, fixture_id, track, model_version, issued_at, content_hash, payload)
+            VALUES (11, ?, 'ml', 'dc-old', '2026-10-01T00:00:00+00:00', 'h-old',
+                    '{"matrix": [[0.1, 0.2], [0.3, 0.1]]}')
+            """,
+            (fid,),
+        )
+        conn.execute(
+            """
+            INSERT INTO forecasts
+                (id, fixture_id, track, model_version, issued_at, content_hash, payload)
+            VALUES (12, ?, 'llm', 'llm-old', '2026-10-02T00:00:00+00:00', 'h-llm', '{}')
             """,
             (fid,),
         )
         conn.commit()
     assert db_mod.migrate(conn) == 57  # v57 施行：重建 forecasts（全链恢复后）
+    # F3：全七列逐一保行（id 序/track/model_version/issued_at/content_hash/
+    # payload 逐字）+ strategy_version_id 不回溯打标
     rows = conn.execute(
-        "SELECT track, model_version, strategy_version_id FROM forecasts"
+        """
+        SELECT id, fixture_id, track, model_version, issued_at, content_hash,
+               payload, strategy_version_id
+        FROM forecasts ORDER BY id
+        """
     ).fetchall()
-    assert [
-        (r["track"], r["model_version"], r["strategy_version_id"]) for r in rows
-    ] == [("ml", "dc-old", None)]  # 史行保住、不回溯打标
+    assert [tuple(r) for r in rows] == [
+        (
+            11,
+            fid,
+            "ml",
+            "dc-old",
+            "2026-10-01T00:00:00+00:00",
+            "h-old",
+            '{"matrix": [[0.1, 0.2], [0.3, 0.1]]}',
+            None,
+        ),
+        (12, fid, "llm", "llm-old", "2026-10-02T00:00:00+00:00", "h-llm", "{}", None),
+    ]
     conn.execute(
         "INSERT OR IGNORE INTO forecasts"
         " (fixture_id, track, model_version, issued_at, content_hash, payload)"
@@ -823,5 +896,89 @@ def test_v57_upgrade_rehearsal_preserves_forecast_rows() -> None:
         (fid,),
     )
     assert db_mod.migrate(conn) == 57  # 重入幂等
-    assert conn.execute("SELECT COUNT(*) c FROM forecasts").fetchone()["c"] == 2
+    # 两存量行 + 一新影子行；重入不重复重建不丢行
+    assert conn.execute("SELECT COUNT(*) c FROM forecasts").fetchone()["c"] == 3
     conn.close()
+
+
+def test_beat_scope_follows_champion_coverage_and_gate_fail_closed(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """F4：同流量 scope 直测——业务日两场（一场 champion 覆盖/一场
+    no_mapping 未覆盖），beat 后影子行恰在覆盖场、两轨键集相等；
+    challenger 三元组在下注闸 fail-closed（version_not_live——策略消费
+    恒=live 态 champion）。"""
+    from goalx_backend.modelling import dc_model as dcm
+    from goalx_backend.models import MatchCodeInput, Tier
+
+    _seed_league_history(db)
+    champion_dir = tmp_path / "models"
+    challenger_dir = tmp_path / "models-shadow"
+    dcm.train_competition(db, "E0", models_dir=champion_dir, n_boot=8, seed=3)
+    # 场一：曼联（有别名→champion 覆盖）
+    covered = _seed_sale_fixture(
+        db,
+        code="周五001",
+        kickoff="2026-11-20T19:00:00+00:00",
+        business_date="2026-11-20",
+    )
+    # 场二：同业务日、无别名队（champion generate 跳 no_mapping→未覆盖）
+    competition = fx_store.upsert_competition(
+        db, "英超", tier=Tier.TIER1, odds_api_sport_key="soccer_epl"
+    )
+    home = fx_store.upsert_team(db, "陌生队")
+    away = fx_store.upsert_team(db, "无名队")
+    uncovered = fx_store.upsert_fixture(
+        db, competition, "2026-11-20T19:00:00+00:00", home, away
+    )
+    fx_store.upsert_match_code(
+        db,
+        MatchCodeInput(
+            fixture_id=uncovered,
+            kind="jingcai",
+            business_date="2026-11-20",
+            code="周五002",
+            source_match_id="m-002",
+            is_single=True,
+        ),
+    )
+    db.commit()
+    champion_stats = fc.generate_forecasts(
+        db, business_date="2026-11-20", models_dir=str(champion_dir)
+    )
+    assert champion_stats.generated == 1  # 场二 no_mapping 被跳过
+    assert champion_stats.skipped[0]["reason"] == "no_mapping"
+    _register_live_champion(db)
+
+    report = _beat(db, challenger_dir)
+    assert report["status"] == "registered"
+
+    def _ids(track: str) -> set[int]:
+        return {
+            int(r["fixture_id"])
+            for r in db.execute(
+                "SELECT fixture_id FROM forecasts WHERE track=?", (track,)
+            )
+        }
+
+    assert _ids("shadow") == {covered}  # 影子行恰在覆盖场（scope 生效）
+    assert _ids("ml") == {covered}
+    assert _ids("shadow") == _ids("ml")  # 两轨键集相等（同流量）
+    # 下注闸 fail-closed：**beat 实际注册的** challenger 三元组非 live 态
+    # 拒放行（version_not_live，state=shadow——策略消费恒=live 态 champion）
+    row = db.execute(
+        """
+        SELECT estimator_version, calibration_version, params_version
+        FROM strategy_versions WHERE id = ?
+        """,
+        (report["challenger_version_id"],),
+    ).fetchone()
+    gate = versioning.engine_gate(
+        db,
+        estimator_version=str(row["estimator_version"]),
+        calibration_version=str(row["calibration_version"]),
+        params_version=str(row["params_version"]),
+    )
+    assert gate.allowed is False
+    assert gate.reason == "version_not_live"
+    assert gate.state is StrategyState.SHADOW

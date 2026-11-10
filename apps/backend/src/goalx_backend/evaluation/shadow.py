@@ -219,20 +219,21 @@ def monthly_floor_due(conn: sqlite3.Connection, *, period: str) -> bool:
     return row is None
 
 
-def retrain_event_counts(
-    conn: sqlite3.Connection, *, ts_from: str, ts_to: str
-) -> dict[str, int]:
+def retrain_event_counts(conn: sqlite3.Connection, *, period: str) -> dict[str, int]:
     """
-    触发账窗口计数（月读⑤消费面）：``{reason|outcome: n}`` + total。
+    触发账按期计数（月读⑤消费面）：``{reason|outcome: n}`` + total。
 
-    窗=[ts_from, ts_to)（ts 半开——⑤节各面同界）；只读。
+    口径钉死（correctness F5）：按 period（北京业务日月键，与 beat 落账
+    同源）计数，不按 ts 计窗——月首北京 0-8 点拍的 ts 仍在上一 UTC 日
+    （北京 12-01 07:00=UTC 11-30 23:00），ts 窗会把该拍计进上一月报表；
+    period 恒对齐报送月。只读。
     """
     rows = conn.execute(
         """
         SELECT reason, outcome, COUNT(*) AS c FROM shadow_retrain_events
-        WHERE ts >= ? AND ts < ? GROUP BY reason, outcome ORDER BY reason, outcome
+        WHERE period = ? GROUP BY reason, outcome ORDER BY reason, outcome
         """,
-        (ts_from, ts_to),
+        (period,),
     ).fetchall()
     counts = {f"{row['reason']}|{row['outcome']}": int(row["c"]) for row in rows}
     counts["total"] = sum(value for key, value in counts.items() if key != "total")
@@ -404,6 +405,7 @@ def run_shadow_retrain_beat(
             params_version=triple[2],
             label=f"{_CHALLENGER_LABEL}-{period}",
             initial_state=versioning.StrategyState.SHADOW,
+            actor="trigger:shadow-retrain",
         )
         outcome = "registered"
     else:

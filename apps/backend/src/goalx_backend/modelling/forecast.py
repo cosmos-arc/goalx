@@ -355,28 +355,60 @@ def champion_traffic_fixture_ids(
     return sorted(covered)
 
 
+def _issued_pre_kickoff(issued_at: str, kickoff_utc: str | None) -> bool:
+    """
+    预报发布是否早于开球（票 07 漂移窗 PIT 口径）。
+
+    与 evaluation/forward_validation._issued_pre_kickoff 同口径（双胞胎，
+    分层不允许 modelling→evaluation 反向 import）：kickoff 走
+    fx_store.kickoff_to_utc 双代读口；任一侧不可解析按**赛后**计——证
+    不出赛前就不进漂移分母（fail-closed）；issued_at naive 兜底按 UTC。
+    """
+    if kickoff_utc is None:
+        return False
+    try:
+        issued = datetime.fromisoformat(issued_at)
+    except ValueError:
+        return False
+    kickoff = fx_store.kickoff_to_utc(kickoff_utc)
+    return kickoff is not None and issued.replace(tzinfo=issued.tzinfo or UTC) < kickoff
+
+
 def ml_had_probabilities(
     conn: sqlite3.Connection, *, ts_from: str, ts_to: str
 ) -> list[dict[str, float]]:
     """
-    窗内 ml 轨逐行 had 三概率（票 07 漂移读数取数口）。
+    窗内 ml 轨逐行 had 三概率（票 07 漂移读数取数口；PIT 过滤在内）。
 
-    payload → 矩阵重建 → had 视图（与消费端同口径）；窗=[ts_from, ts_to)
-    （issued_at 半开）。行级面（同场多次发出=多行——内容哈希吸收下同
-    内容只一行，不同内容本就是不同预测）。
+    只取 issued_at ≤ kickoff 的行（correctness F2：开球后才 issued 的
+    重发行不是模型输出面，混进 30/90 窗会污染漂移读数——同场多次发出
+    仍可为多行，但都在赛前）。payload → 矩阵重建 → had 视图（与消费端
+    同口径）；窗=[ts_from, ts_to)（issued_at 半开）。kickoff 逐场经
+    fx_store 读（fixtures 表 SQL 归 data 域，不跨包 join）。
     """
     rows = conn.execute(
         """
-        SELECT payload FROM forecasts
+        SELECT fixture_id, issued_at, payload FROM forecasts
         WHERE track = 'ml' AND issued_at >= ? AND issued_at < ?
         ORDER BY issued_at, id
         """,
         (ts_from, ts_to),
     ).fetchall()
-    return [
-        forecast_matrix_from_payload(json.loads(str(row["payload"]))).had()
-        for row in rows
-    ]
+    kickoffs: dict[int, str | None] = {}
+    probabilities: list[dict[str, float]] = []
+    for row in rows:
+        fixture_id = int(row["fixture_id"])
+        if fixture_id not in kickoffs:
+            fixture = fx_store.get_fixture(conn, fixture_id)
+            kickoffs[fixture_id] = (
+                None if fixture is None else str(fixture["kickoff_utc"])
+            )
+        if not _issued_pre_kickoff(str(row["issued_at"]), kickoffs[fixture_id]):
+            continue
+        probabilities.append(
+            forecast_matrix_from_payload(json.loads(str(row["payload"]))).had()
+        )
+    return probabilities
 
 
 def latest_forecast(

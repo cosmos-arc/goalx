@@ -518,7 +518,11 @@ def test_forced_failure_view_aggregates(db: sqlite3.Connection, tmp_path: Path) 
 def test_forced_failure_includes_shadow_retrains_face(
     db: sqlite3.Connection, tmp_path: Path
 ) -> None:
-    """⑤ 影子重训触发面：窗内 reason×outcome 计数+总量（窗外不计）。"""
+    """⑤ 影子重训触发面：**按 period=报送月**计数（与事件落账 period 同源）。
+
+    F5 口径钉死：不按 ts 计窗——月首北京 0-8 点拍的 ts 仍在上一 UTC 日
+    （如北京 12-01 07:00=UTC 11-30 23:00），ts 窗会把该拍计进 11 月报表；
+    period=北京业务日月键，与 beat 落账同源恒对齐。"""
     db.execute(
         "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
         " VALUES ('2026-11', 'drift', 'registered', 'd',"
@@ -533,6 +537,13 @@ def test_forced_failure_includes_shadow_retrains_face(
         "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
         " VALUES ('2026-10', 'monthly', 'registered', 'd',"
         " '2026-10-01T02:35:00+00:00')"
+    )
+    # F5 月界样本：period=2026-12（北京 12-01 晨拍）而 ts 落 UTC 11-30——
+    # 11 月报表不得计入（ts 窗口径会把 11-30 23:00 错收进 [11-01,12-01)）
+    db.execute(
+        "INSERT INTO shadow_retrain_events (period, reason, outcome, detail, ts)"
+        " VALUES ('2026-12', 'monthly', 'registered', 'd',"
+        " '2026-11-30T23:00:00+00:00')"
     )
     section = monthly_read.forced_failure(
         db, store=_store(tmp_path), report_month="2026-11"

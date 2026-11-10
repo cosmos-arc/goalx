@@ -99,6 +99,7 @@ def register_version(
     params_version: str,
     label: str,
     initial_state: StrategyState = StrategyState.REGISTERED,
+    actor: str = "human:cli",
 ) -> int:
     """
     注册一个策略版本（幂等：同三元组返回既有 id，不落新行）。
@@ -107,7 +108,9 @@ def register_version(
     定义（current_state 不必兜底「无转移=registered」分支）。initial_state
     缺省 registered（人 CLI 语义）；票 07 challenger 自动注册传 shadow
     （注册≠晋升：genesis 行非转移，不触晋升哨；后续一切梯上移动仍只能
-    人审 transition_version）。
+    人审 transition_version）。actor 落 genesis 行审计账：缺省 human:cli
+    （人注册）；自动路径传 trigger:* 前缀（票 07 beat=trigger:shadow-retrain，
+    审计账不冒充人审——correctness F1）。
     """
     with atomic(conn):
         cursor = conn.execute(
@@ -140,12 +143,13 @@ def register_version(
                 """
                 INSERT INTO version_transitions
                     (version_id, from_state, to_state, reason, actor, ts)
-                VALUES (?, NULL, ?, ?, 'human', ?)
+                VALUES (?, NULL, ?, ?, ?, ?)
                 """,
                 (
                     int(row["id"]),
                     initial_state.value,
                     "注册",
+                    actor,
                     utc_now_iso(),
                 ),
             )

@@ -466,9 +466,9 @@ def forced_failure(
             "total_cny": round(sum(by_phase.values()), 6),
             "by_phase": by_phase,
         },
-        "shadow_retrains": shadow.retrain_event_counts(
-            conn, ts_from=date_from, ts_to=next_first
-        ),
+        # F5 口径：按 period=报送月计数（与事件落账 period 同源，月首
+        # 北京 0-8 点拍 ts 仍在上一 UTC 日，ts 窗会错收进上一月）
+        "shadow_retrains": shadow.retrain_event_counts(conn, period=report_month),
         "advice": "失败面观察项：异常聚集（门挂/拒收/失败率）由人裁决处置",
     }
 
