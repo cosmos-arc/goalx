@@ -54,6 +54,23 @@ def page_payload(
     }
 
 
+def full_page_ids(page_no: int) -> list[str]:
+    """满页 200 行 id（非末页满页基线——F3 截断防御的合法形态）。"""
+    return [f"s{page_no}_{i:03d}" for i in range(guardian.PAGE_SIZE)]
+
+
+def make_clock(stamps: list[str]) -> Any:
+    """注入时钟：按序弹出预置时刻（拍班起点 + 逐页纪元；耗尽即炸=显式）。"""
+    pool = list(stamps)
+
+    def tick() -> str:
+        if not pool:
+            raise AssertionError("clock 耗尽：测试未预置足够时刻")
+        return pool.pop(0)
+
+    return tick
+
+
 class FakeClient:
     """按 (from_date, page) 派发预置响应的假客户端（参数断言 + 失败注入）。"""
 
@@ -105,7 +122,13 @@ def test_first_beat_window_from_corpus_seam(tmp_path: Path) -> None:
             ),
         }
     )
-    stats = news_pit.run_news_pit_beat(store, settings, client, now=NIGHT1)
+    stats = news_pit.run_news_pit_beat(
+        store,
+        settings,
+        client,
+        now=NIGHT1,
+        clock=make_clock(["2026-11-10T15:30:00+00:00", "2026-11-10T15:30:05+00:00"]),
+    )
     store.close()
     assert stats.requests == 1
     assert stats.articles == 2
@@ -114,11 +137,12 @@ def test_first_beat_window_from_corpus_seam(tmp_path: Path) -> None:
     assert call["from-date"] == "2026-11-08"  # 语料完成日 −1（缝 + 保守回看）
     assert call["to-date"] == "2026-11-10"  # 拍日（进行中日入窗，尾由明晚补）
     assert call["order-by"] == "oldest"
-    # 拍行落专表（match_detail_prematch 分表先例），observed_at=拍纪元
+    assert stats.observed_at == "2026-11-10T15:30:00+00:00"  # 拍班起点（拍行面）
+    # 拍行落专表（match_detail_prematch 分表先例），fetched_at=该页拉取时刻
     rows = store.read_bronze(news_pit.PROVIDER, news_pit.PIT_DATASET)
     assert len(rows) == 2
     assert rows[0]["parser_version"] == news_pit.PIT_BRONZE_VERSION
-    assert rows[0]["fetched_at"] == stats.observed_at
+    assert rows[0]["fetched_at"] == "2026-11-10T15:30:05+00:00"
 
 
 def test_first_beat_virgin_corpus_default_lookback(tmp_path: Path) -> None:
@@ -148,6 +172,8 @@ def test_next_beat_reincludes_partial_day_tail(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     store.ensure_tree()
+    epoch1 = "2026-11-10T15:30:06+00:00"  # 夜 1 页拉取时刻
+    epoch2 = "2026-11-11T15:30:06+00:00"  # 夜 2 页拉取时刻
     # 夜 1（11-10 15:30）：窗 [11-09, 11-10]，只看得见拍日午前的 early
     client1 = FakeClient(
         {
@@ -156,7 +182,9 @@ def test_next_beat_reincludes_partial_day_tail(tmp_path: Path) -> None:
             ),
         }
     )
-    stats1 = news_pit.run_news_pit_beat(store, settings, client1, now=NIGHT1)
+    stats1 = news_pit.run_news_pit_beat(
+        store, settings, client1, now=NIGHT1, clock=make_clock(["t0", epoch1])
+    )
     assert stats1.completed
     # 夜 2（11-11 15:30）：窗 [11-10, 11-11]——重含 11-10，late（拍日
     # 18:00 发布>夜1拍点）此刻首次入观测；early 二次观测=新纪元行
@@ -170,7 +198,9 @@ def test_next_beat_reincludes_partial_day_tail(tmp_path: Path) -> None:
             ),
         }
     )
-    stats2 = news_pit.run_news_pit_beat(store, settings, client2, now=NIGHT2)
+    stats2 = news_pit.run_news_pit_beat(
+        store, settings, client2, now=NIGHT2, clock=make_clock(["t0", epoch2])
+    )
     store.close()
     assert stats2.completed
     assert client2.calls[0]["from-date"] == "2026-11-10"
@@ -179,10 +209,10 @@ def test_next_beat_reincludes_partial_day_tail(tmp_path: Path) -> None:
     by_sid: dict[str, list[str]] = {}
     for row in rows:
         by_sid.setdefault(str(row["sid"]), []).append(str(row["fetched_at"]))
-    # late：只在夜 2 出现——其最早（=首次）观测纪元=夜 2
-    assert by_sid["late"] == [stats2.observed_at]
+    # late：只在夜 2 出现——其最早（=首次）观测纪元=夜 2 页拉取时刻
+    assert by_sid["late"] == [epoch2]
     # early：两夜各一行（append-only 多纪元；读侧取最早为首次准入）
-    assert sorted(by_sid["early"]) == sorted([stats1.observed_at, stats2.observed_at])
+    assert sorted(by_sid["early"]) == sorted([epoch1, epoch2])
     assert store.news_pit_state()["last_full_day"] == "2026-11-10"
 
 
@@ -212,14 +242,14 @@ def test_same_night_rerun_zero_request_heartbeat(tmp_path: Path) -> None:
 
 
 def test_page_cap_stop_and_resume_no_refetch(tmp_path: Path) -> None:
-    """缝夜多页撞单拍上限：页游标持久，次夜续页不重翻前页。"""
+    """缝夜多页撞单拍上限：页游标持久，次夜续页不重翻前页（满页基线）。"""
     settings = make_settings(tmp_path)
     store = CorpusStore(settings.corpus_root)
     store.ensure_tree()
-    # 4 页窗口（缝夜形态）
+    # 4 页窗口（缝夜形态；非末页满页 200 行——F3 基线）
     pages = {
         ("2026-11-09", n): page_payload(
-            pages=4, page=n, ids=[f"s{n}"], published="2026-11-09T08:00:00Z"
+            pages=4, page=n, ids=full_page_ids(n), published="2026-11-09T08:00:00Z"
         )
         for n in range(1, 5)
     }
@@ -229,6 +259,7 @@ def test_page_cap_stop_and_resume_no_refetch(tmp_path: Path) -> None:
     )
     assert stats.stopped == "cap"
     assert stats.requests == 2
+    assert stats.articles == 2 * guardian.PAGE_SIZE
     assert store.news_pit_state()["page"] == 3  # 游标=下一未拉页
     # 次夜续跑：窗起不变（缝未收口）、page 3 起——不重翻 1/2
     stats2 = news_pit.run_news_pit_beat(store, settings, client, now=NIGHT2)
@@ -237,13 +268,14 @@ def test_page_cap_stop_and_resume_no_refetch(tmp_path: Path) -> None:
     fetched_pages = [int(str(c["page"])) for c in client.calls]
     assert fetched_pages == [1, 2, 3, 4]
     assert stats2.requests == 2
+    assert stats2.articles == 2 * guardian.PAGE_SIZE
     # 拍行：两夜各一行（cap 夜如实 + 完成夜 ok）
     beats = store.news_pit_beats()
     assert [b["status"] for b in beats] == [news_pit.STATUS_OK, "cap"]  # 新→旧
     assert beats[1]["requests"] == 2
     assert beats[0]["requests"] == 2
     # 累计计数按页增量（correctness：stats.articles 是本拍累计——跨页不双计）
-    assert store.news_pit_state()["total_articles"] == 4  # 4 页 × 1 篇
+    assert store.news_pit_state()["total_articles"] == 4 * guardian.PAGE_SIZE
 
 
 def test_budget_exhausted_stops_before_any_request(tmp_path: Path) -> None:
@@ -325,6 +357,191 @@ def test_missing_key_skips_with_honest_beat_row(tmp_path: Path) -> None:
     assert stats.requests == 0
     assert client.calls == []
     assert store.news_pit_beats()[0]["status"] == news_pit.STATUS_NO_KEY
+
+
+def test_per_page_epoch_never_precedes_publication(tmp_path: Path) -> None:
+    """F1 回归：逐页观测纪元——跨缝多页拍班中，行 fetched_at 永不早于
+    其页拉取时刻、亦不早于页内 webPublicationDate（拍班共享纪元会把
+    尾页文章记早=前瞻准入）。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    # 2 页窗：page1 满页（published 拍班前）；page2 末页含 mid-beat 发布文
+    pages = {
+        ("2026-11-09", 1): page_payload(
+            pages=2, page=1, ids=full_page_ids(1), published="2026-11-10T15:29:00Z"
+        ),
+        ("2026-11-09", 2): page_payload(
+            pages=2, page=2, ids=["midbeat"], published="2026-11-10T15:30:30Z"
+        ),
+    }
+    client = FakeClient(pages)
+    stats = news_pit.run_news_pit_beat(
+        store,
+        settings,
+        client,
+        now=NIGHT1,
+        sleeper=lambda _: None,
+        clock=make_clock(
+            [
+                "2026-11-10T15:30:00+00:00",  # 拍班起点
+                "2026-11-10T15:30:10+00:00",  # page1 拉取
+                "2026-11-10T15:31:00+00:00",  # page2 拉取（midbeat 15:30:30 后）
+            ]
+        ),
+    )
+    rows = store.read_bronze(news_pit.PROVIDER, news_pit.PIT_DATASET)
+    store.close()
+    assert stats.completed
+    by_sid = {str(r["sid"]): str(r["fetched_at"]) for r in rows}
+    # midbeat 发布于拍班起点后 30s、page2 拉取前 30s——纪元必须是 page2
+    # 拉取时刻（15:31:00），绝不是拍班起点 15:30:00
+    assert by_sid["midbeat"] == "2026-11-10T15:31:00+00:00"
+    assert by_sid["s1_000"] == "2026-11-10T15:30:10+00:00"
+    # 纪元 ≥ 发布：每行都不早于其 payload.webPublicationDate（逐行断言）
+    for row in rows:
+        pub = str(row["payload"]["webPublicationDate"]).replace("Z", "+00:00")  # type: ignore[index]
+        stamp = datetime.fromisoformat(str(row["fetched_at"]))
+        assert stamp >= datetime.fromisoformat(pub), (
+            f"{row['sid']} 纪元 {row['fetched_at']} 早于发布 {pub}"
+        )
+    # 直接断言：midbeat 对 15:30:15 的决策不可准入（共享纪元旧实现会放行）
+    assert not news_pit.pit_admitted(
+        by_sid["midbeat"], datetime(2026, 11, 10, 15, 30, 15, tzinfo=UTC)
+    )
+
+
+def _cap_status_error() -> httpx.HTTPStatusError:
+    """真 400 深页帽响应（guardian 实测文案）——驱动 F2 识别分支。"""
+    response = httpx.Response(
+        400,
+        json={
+            "response": {
+                "status": "error",
+                "message": (
+                    "Content API does not support paging this far. Please change"
+                    " page or page-size or consider filtering using a date range."
+                ),
+            }
+        },
+        request=httpx.Request("GET", "https://x"),
+    )
+    return httpx.HTTPStatusError(
+        "Client error '400 Bad Request' for url 'https://x?api-key=SECRET'",
+        request=response.request,
+        response=response,
+    )
+
+
+def test_paging_cap_400_detected_honest_stop_no_infinite_retry(
+    tmp_path: Path,
+) -> None:
+    """F2 回归：400 深页帽按 guardian 签名识别——如实 paging_cap、cursor
+    保留、连续两夜每夜恰 1 请求（不无限重拉同页）。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    client = FakeClient(
+        {
+            ("2026-11-09", 1): _cap_status_error(),  # 夜 1 缝窗
+            ("2026-11-10", 1): _cap_status_error(),  # 夜 2 重导缝窗（today−1）
+        }
+    )
+    stats = news_pit.run_news_pit_beat(store, settings, client, now=NIGHT1)
+    assert stats.stopped == "paging_cap"
+    assert stats.requests == 1
+    assert store.news_pit_beats()[0]["status"] == "paging_cap"  # 晨检可见
+    # 次夜重试：同一毒页再拉一次即停（窗宽增长不放大重拉）
+    stats2 = news_pit.run_news_pit_beat(store, settings, client, now=NIGHT2)
+    store.close()
+    assert stats2.stopped == "paging_cap"
+    assert stats2.requests == 1
+    assert len(client.calls) == 2  # 两夜各 1 请求，非每夜全窗重翻
+    assert store.news_pit_state()["page"] == 1  # cursor 保留（运维重播种后自续）
+
+
+def test_short_mid_page_honest_stop_cursor_retained(tmp_path: Path) -> None:
+    """F3 回归：非末页短计数（截断/漂移嫌疑）诚实停、cursor 保留、次跑
+    满页自愈到完成——照常翻页会让未达文章永久漏出后续窗。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    # 夜 1：pages=3 而 page1 只回 2 行（<200 满页基线）=截断形态
+    client = FakeClient(
+        {
+            ("2026-11-09", 1): page_payload(
+                pages=3, page=1, ids=["t1", "t2"], published="2026-11-09T08:00:00Z"
+            ),
+        }
+    )
+    stats = news_pit.run_news_pit_beat(store, settings, client, now=NIGHT1)
+    assert stats.stopped == "short_page"
+    assert stats.requests == 1
+    assert stats.pages == 0  # 截断页不落库（半真页面不进 append-only 面）
+    assert store.news_pit_state()["page"] == 1  # cursor 保留在原页
+    assert store.news_pit_beats()[0]["status"] == "short_page"
+    assert store.read_bronze(news_pit.PROVIDER, news_pit.PIT_DATASET) == []
+    # 同夜重试：服务面修复为满页三页窗——从 page1 续完
+    good = FakeClient(
+        {
+            ("2026-11-09", n): page_payload(
+                pages=3, page=n, ids=full_page_ids(n), published="2026-11-09T08:00:00Z"
+            )
+            for n in range(1, 4)
+        }
+    )
+    stats2 = news_pit.run_news_pit_beat(
+        store, settings, good, now=NIGHT1, sleeper=lambda _: None
+    )
+    store.close()
+    assert stats2.completed
+    assert stats2.articles == 3 * guardian.PAGE_SIZE
+    assert store.news_pit_state()["total_articles"] == 3 * guardian.PAGE_SIZE
+
+
+def test_no_key_after_ok_heartbeat_and_window_from_not_pinned(
+    tmp_path: Path,
+) -> None:
+    """F4 回归：今晚已 ok 后无 key 重跑走心跳守卫（不覆写 ok 致次日假黄）；
+    no_key 落行时空窗起不把该夜 window_from 钉成空串。"""
+    settings = make_settings(tmp_path)
+    store = CorpusStore(settings.corpus_root)
+    store.ensure_tree()
+    client = FakeClient(
+        {
+            ("2026-11-09", 1): page_payload(
+                pages=1, page=1, ids=["a1"], published="2026-11-10T08:00:00Z"
+            ),
+        }
+    )
+    news_pit.run_news_pit_beat(store, settings, client, now=NIGHT1)
+    no_key_settings = Settings(corpus_root=settings.corpus_root, guardian_api_key="")
+    again = news_pit.run_news_pit_beat(store, no_key_settings, client, now=NIGHT1)
+    beats = store.news_pit_beats()
+    assert again.skipped_done_today  # 心跳守卫先于 no_key
+    assert len(beats) == 1
+    assert beats[0]["status"] == news_pit.STATUS_OK  # ok 行不被覆写成假黄
+    # 另一夜（11-08）：先 failed 行（真窗起）再 no_key 同夜重跑——
+    # 状态如实转 no_key，但窗起不被空串钉值
+    store.record_news_pit_beat(
+        {
+            "beat_date": "2026-11-08",
+            "observed_at": "2026-11-08T15:30:00+00:00",
+            "window_from": "2026-11-07",
+            "window_to": "2026-11-08",
+            "pages": 0,
+            "requests": 1,
+            "articles": 0,
+            "status": "http_failure",
+        }
+    )
+    news_pit.run_news_pit_beat(
+        store, no_key_settings, client, now=datetime(2026, 11, 8, 16, 0, tzinfo=UTC)
+    )
+    rows = {str(r["beat_date"]): r for r in store.news_pit_beats(limit=5)}
+    store.close()
+    assert rows["2026-11-08"]["status"] == news_pit.STATUS_NO_KEY
+    assert rows["2026-11-08"]["window_from"] == "2026-11-07"  # 非空串
 
 
 def test_pit_admission_predicate_tz_strict() -> None:

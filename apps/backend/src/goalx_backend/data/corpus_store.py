@@ -1336,10 +1336,22 @@ class CorpusStore:
         """
         逐拍摘要落账（票 17；同夜重试按 beat_date 累加计数、最新状态覆盖）。
 
-        window_from 保最早（缝夜多轮重试时展示窗起不漂移）；计数累加
-        （断点续拍的页/文章是同一夜的进度，不是新观测面）。
+        window_from 合并在 Python 侧完成（独立复核 F4）：保最早**非空**值
+        ——no_key 行窗起尚未推导为空串，SQL MIN 会把该夜窗起钉成空；
+        计数累加（断点续拍的页/文章是同一夜的进度，不是新观测面）。
         """
-        self._checkpoint().execute(
+        beat_date = str(row["beat_date"])
+        conn = self._checkpoint()
+        existing = conn.execute(
+            "SELECT window_from FROM news_pit_beats WHERE beat_date = ?",
+            (beat_date,),
+        ).fetchone()
+        merged = str(row["window_from"])
+        if existing is not None:
+            prior = str(existing["window_from"] or "")
+            if not merged or (prior and prior < merged):
+                merged = prior or merged
+        conn.execute(
             """
             INSERT INTO news_pit_beats
                 (beat_date, observed_at, window_from, window_to,
@@ -1347,7 +1359,7 @@ class CorpusStore:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(beat_date) DO UPDATE SET
                 observed_at = excluded.observed_at,
-                window_from = MIN(news_pit_beats.window_from, excluded.window_from),
+                window_from = excluded.window_from,
                 window_to = excluded.window_to,
                 pages = news_pit_beats.pages + excluded.pages,
                 requests = news_pit_beats.requests + excluded.requests,
@@ -1356,9 +1368,9 @@ class CorpusStore:
                 updated_at = excluded.updated_at
             """,
             (
-                str(row["beat_date"]),
+                beat_date,
                 str(row["observed_at"]),
-                str(row["window_from"]),
+                merged,
                 str(row["window_to"]),
                 int(cast("int", row["pages"])),
                 int(cast("int", row["requests"])),
@@ -1367,7 +1379,7 @@ class CorpusStore:
                 utc_now_iso(),
             ),
         )
-        self._checkpoint().commit()
+        conn.commit()
 
     def news_pit_beat(self, beat_date: str) -> dict[str, object] | None:
         """单拍摘要行（无=该夜未拍）。"""

@@ -21,10 +21,16 @@
 - 同夜已 ok 重跑=零请求心跳（幂等）；断点=窗起+页游标持久，次夜续页
   不重翻；预算/单拍上限/HTTP 失败诚实停（拍行如实记 stopped/failed）。
 
-PIT 语义：每拍一个观测纪元 ``observed_at``（行 fetched_at 同源）；同一
-文章多拍多行=多观测纪元（append-only，读侧按 sid 取最早 observed_at 为
-首次准入时刻）。晚到（发布早于观测）如实保留 published_at 原样——不倒
-填、不回灌早期拍。准入判据单一真相源=``pit_admitted``。
+PIT 语义：观测纪元取**逐页拉取时刻**（行 fetched_at=该页拉取时刻，
+独立复核 F1：拍班共享纪元会把尾页文章记早=前瞻准入，完成时刻共享纪元
+则需缓冲 bronze 或放宽崩溃窗，逐页两者皆免且永不早于页内任何
+webPublicationDate）；同一文章多拍多行=多观测纪元（append-only，读侧
+按 sid 取最早 observed_at 为首次准入时刻）。晚到（发布早于观测）如实
+保留 published_at 原样——不倒填、不回灌早期拍。准入判据单一真相源=
+``pit_admitted``。非末页短计数（截断/漂移嫌疑）诚实停保留游标
+（独立复核 F3——照常翻页会让未达文章永久漏出后续窗）；400 深页帽按
+guardian 签名从响应体识别、如实记 ``paging_cap`` 停（独立复核 F2——
+实际不可达，运维重播种窗起后自续）。
 
 E-12 扩样面预留（读数面 stub，采集是长跑）：事件→JC 调盘配对读面以
 ``E12_PAIRING_NOTES`` 钉住口径（n≈785 独立场次才够 55% 功效门），
@@ -52,6 +58,10 @@ from goalx_backend.data.ingest import guardian
 from goalx_backend.db import utc_now_iso
 
 PROVIDER = guardian.PROVIDER
+# 深翻页帽载体状态码（独立复核 F2；与 guardian._HTTP_BAD_REQUEST 同值——
+# 跨模块私有常量不引用，此处钉字面并注释同源性）
+_PAGING_CAP_HTTP_STATUS = 400
+_PAGING_CAP_BODY_MARK = "paging this far"
 # 夜拍专表（分表先例：match_detail_prematch 不混 match_detail）
 PIT_DATASET = "news_article_pit"
 PIT_RAW_DATASET = "search_pit"
@@ -183,12 +193,16 @@ def _pull_beat_page(  # 接缝集与 guardian._pull_page 同构（防封/预算/
     *,
     page: int,
     budget_day: str,
+    clock: Callable[[], str],
 ) -> _BeatPagePull | str:
     """
     拉一页并落 raw+bronze+账（成功 → 计数入 stats）。
 
-    失败返回停因字符串（``http_failure``/``paging_cap``，已记账、
-    stats.requests 已加）由调用方诚实停；成功返回页面对象。
+    失败返回停因字符串（``http_failure``/``paging_cap``/``short_page``，
+    已记账、stats.requests 已加）由调用方诚实停；成功返回页面对象。
+    行 ``fetched_at``=**该页拉取时刻**（逐页观测纪元，独立复核 F1：
+    拍班共享纪元会把尾页文章记早=前瞻准入；完成时刻共享纪元则需缓冲
+    bronze 或放宽崩溃窗——逐页取时刻两者皆免且永不早于页内发布）。
     """
     try:
         payload = guardian.fetch_search_page(
@@ -199,10 +213,21 @@ def _pull_beat_page(  # 接缝集与 guardian._pull_page 同构（防封/预算/
             page=page,
             oldest_first=True,
         )
-    except guardian.PagingCapReached:
+    except httpx.HTTPStatusError as exc:
         store.increment_guardian_requests(budget_day)
         stats.requests += 1
-        return "paging_cap"
+        # 深翻页帽（独立复核 F2）：fetch_search_page 走 raise_for_status，
+        # 只会抛 HTTPStatusError——按 guardian 同签名（400 + "paging this
+        # far" 文案）从响应体识别。单窗超 ~190 页（≈5 年窗）实际不可达，
+        # 但如实记 paging_cap（晨检黄面可见）、cursor 保留，运维重播种
+        # 窗起（手工改 checkpoint news_pit_state.window_from）后自续。
+        if (
+            exc.response.status_code == _PAGING_CAP_HTTP_STATUS
+            and _PAGING_CAP_BODY_MARK in exc.response.text
+        ):
+            return "paging_cap"
+        logger.warning("news-pit page {} failed: {}", page, _safe_error(exc))
+        return "http_failure"
     except httpx.HTTPError as exc:
         store.increment_guardian_requests(budget_day)
         stats.requests += 1
@@ -210,6 +235,22 @@ def _pull_beat_page(  # 接缝集与 guardian._pull_page 同构（防封/预算/
         return "http_failure"
     store.increment_guardian_requests(budget_day)
     stats.requests += 1
+    response = cast("dict[str, object]", payload.get("response") or {})
+    total_pages = int(cast("int", response.get("pages") or 0))
+    results = cast("list[object]", response.get("results") or [])
+    # 截断防御（独立复核 F3）：非末页行数必须满页（page-size=200）——
+    # 短计数=截断/漂移，若照常翻页会让未达文章永久漏出所有后续窗
+    # （关窗即不可回补）。诚实停、cursor 保留、次夜重拉该页自愈。
+    if page < total_pages and len(results) < guardian.PAGE_SIZE:
+        logger.warning(
+            "news-pit page {}/{} 短计数 {}/{}（截断/漂移嫌疑）——诚实停保留游标",
+            page,
+            total_pages,
+            len(results),
+            guardian.PAGE_SIZE,
+        )
+        return "short_page"
+    page_observed_at = clock()  # 逐页观测纪元（≥该页任何 webPublicationDate）
     body = json.dumps(payload, ensure_ascii=False).encode()
     raw = store.ingest_raw(
         PROVIDER,
@@ -223,7 +264,7 @@ def _pull_beat_page(  # 接缝集与 guardian._pull_page 同构（防封/预算/
             "provider": PROVIDER,
             "dataset": PIT_DATASET,
             "sid": _as_str(article["id"]),
-            "fetched_at": stats.observed_at,  # 拍纪元（PIT 观测时刻）
+            "fetched_at": page_observed_at,
             "parser_version": PIT_BRONZE_VERSION,
             "raw_sha": raw.sha256,
             "payload": article,
@@ -231,9 +272,8 @@ def _pull_beat_page(  # 接缝集与 guardian._pull_page 同构（防封/预算/
         for article in articles
     ]
     store.append_bronze(PROVIDER, PIT_DATASET, rows)
-    response = cast("dict[str, object]", payload.get("response") or {})
     return _BeatPagePull(
-        total_pages=int(cast("int", response.get("pages") or 0)),
+        total_pages=total_pages,
         articles=len(rows),
     )
 
@@ -246,20 +286,30 @@ def run_news_pit_beat(
     now: datetime | None = None,
     request_cap: int | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    clock: Callable[[], str] = utc_now_iso,
 ) -> NewsPitBeatStats:
     """
     推进一次夜拍：窗口翻页 → raw+bronze append → 状态/拍行落账。
 
-    幂等：同夜已 ok 重跑零请求心跳；失败拍游标不进（次夜/重试自续）。
-    预算任一触顶或 HTTP 失败诚实停（completed=False，stopped 置因）。
+    幂等：同夜已 ok 重跑零请求心跳（守卫先于 no_key——独立复核 F4：
+    no_key 先落行会覆写 ok 状态致次日假黄）；失败拍游标不进（次夜/
+    重试自续）。预算任一触顶或 HTTP/截断失败诚实停（stopped 置因）。
+    clock 注入口只服务测试接缝（逐页观测纪元的时间源）。
     """
     now_dt = now or datetime.now(UTC)
     today = now_dt.date()
     stats = NewsPitBeatStats(
-        observed_at=utc_now_iso(),
+        observed_at=clock(),
         beat_date=today.isoformat(),
         window_to=today.isoformat(),
     )
+    tonight = store.news_pit_beat(stats.beat_date)
+    if tonight is not None and _as_str(tonight["status"]) == STATUS_OK:
+        # 同夜 ok 心跳：零请求原样返回（不落新拍行——ok 行即该夜记录；
+        # 覆写成 done_today/no_key 会让晨检读到非 ok 假降级）
+        stats.skipped_done_today = True
+        stats.stopped = "done_today"
+        return stats
     if not settings.guardian_api_key:
         stats.stopped = "no_key"
         stats.skipped_no_key = True
@@ -267,13 +317,6 @@ def run_news_pit_beat(
         logger.warning("news-pit beat skipped: api key 未配置")
         return stats
     state = store.news_pit_state()
-    tonight = store.news_pit_beat(stats.beat_date)
-    if tonight is not None and _as_str(tonight["status"]) == STATUS_OK:
-        # 同夜 ok 心跳：零请求原样返回（不落新拍行——ok 行即该夜记录；
-        # 覆写成 done_today 会让晨检读到非 ok 假降级）
-        stats.skipped_done_today = True
-        stats.stopped = "done_today"
-        return stats
     window_from, page = _beat_window(state)
     stats.window_from = window_from or seam_start(store, today).isoformat()
     page = page if window_from else 1
@@ -293,7 +336,13 @@ def run_news_pit_beat(
             status = stats.stopped
             break
         pull = _pull_beat_page(
-            store, settings, client, stats, page=page, budget_day=budget_day
+            store,
+            settings,
+            client,
+            stats,
+            page=page,
+            budget_day=budget_day,
+            clock=clock,
         )
         if isinstance(pull, str):
             stats.stopped = pull
