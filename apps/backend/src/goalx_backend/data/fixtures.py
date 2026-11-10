@@ -290,6 +290,28 @@ def jc_fixtures_by_competition_window(
     ).fetchall()
 
 
+def fixture_counts_by_competition(
+    conn: sqlite3.Connection, *, kickoff_from_iso: str, kickoff_to_iso: str
+) -> dict[str, int]:
+    """
+    [from, to) 开球窗内按联赛的场次数（vision-build 票 08 联赛分布信号读面）。
+
+    fixtures/competitions 属主查询（ADR-0008）；半开窗与断点哨兵同语义。
+    PSI 口径与越阈判定在调用方（evaluation/contraction，prereg 附录 C）。
+    """
+    rows = conn.execute(
+        """
+            SELECT c.name AS competition_name, COUNT(*) AS n
+            FROM fixtures f
+            JOIN competitions c ON c.id = f.competition_id
+            WHERE f.kickoff_utc >= ? AND f.kickoff_utc < ?
+            GROUP BY c.name
+        """,
+        (kickoff_from_iso, kickoff_to_iso),
+    ).fetchall()
+    return {str(row["competition_name"]): int(row["n"]) for row in rows}
+
+
 def upsert_match_code(conn: sqlite3.Connection, code: MatchCodeInput) -> int:
     """Insert or refresh an official sales code for a fixture; return its id."""
     conn.execute(

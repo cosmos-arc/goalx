@@ -2650,6 +2650,66 @@ def _apply_v51(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_v52(conn: sqlite3.Connection) -> None:
+    """
+    v52（vision-build 票 08）：收缩双钟两账（evaluation 域，ADR-0008）。
+
+    - contraction_transitions：收缩级别 transitions 账 append-only
+      （v50 version_transitions 同构）——genesis 行=L0（prereg 附录 A：
+      现态=最新行；级别变更只能人 CLI，agent 无路径）。相邻一级转移
+      谓词在属主函数（evaluation/contraction.py）先验落账。
+    - contraction_clock_readings：双钟读数账（CLV 主钟/探索钟）append-only
+      ——显式读（人 CLI contraction-read/月读）落账留痕，UNIQUE(clock,
+      window_end) 吸收同窗重读（幂等，forecast_scores 吸收键先例）；
+      晨检只读不写（晨检红线）。
+
+    SQL 读写归 evaluation（evaluation/contraction.py 属主）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contraction_transitions (
+            id INTEGER PRIMARY KEY,
+            level TEXT NOT NULL CHECK (level IN ('L0', 'L1', 'L2', 'L3', 'L4')),
+            actor TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            ts TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contraction_clock_readings (
+            id INTEGER PRIMARY KEY,
+            clock TEXT NOT NULL CHECK (clock IN ('clv_main', 'exploration')),
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            n INTEGER NOT NULL,
+            value REAL NOT NULL,
+            se REAL,
+            fired INTEGER NOT NULL CHECK (fired IN (0, 1)),
+            detail TEXT,
+            ts TEXT NOT NULL,
+            UNIQUE (clock, window_end)
+        )
+        """
+    )
+    for table in ("contraction_transitions", "contraction_clock_readings"):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END
+            """)
+    # genesis 行=L0（db.utc_now_iso 不可 import：db→migrations 方向不反成环）
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO contraction_transitions (id, level, actor, reason, ts)
+        VALUES (1, 'L0', 'human:genesis', 'prereg 附录 06 落档 genesis（票 08）', ?)
+        """,
+        (datetime.now(UTC).isoformat(timespec="seconds"),),
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2702,6 +2762,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (49, _apply_v49),
     (50, _apply_v50),
     (51, _apply_v51),
+    (52, _apply_v52),
 )
 
 

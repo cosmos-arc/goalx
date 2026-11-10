@@ -116,6 +116,9 @@ OWNERS: dict[str, set[str]] = {
         # vision-build 票 02：假设注册表两表（evaluation/hypothesis_registry.py）
         "hypothesis_registry",
         "hypothesis_attempts",
+        # vision-build 票 08：收缩双钟两账（evaluation/contraction.py）
+        "contraction_transitions",
+        "contraction_clock_readings",
     },
     "betting": {
         "bets",

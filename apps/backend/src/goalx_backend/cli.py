@@ -37,6 +37,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
         --reason "过门放量"
     uv run python -m goalx_backend.cli hypothesis-mark --h-id H4 --to supported \
         --reason "滞后案例率 63.6% 远超门（人裁）"
+    uv run python -m goalx_backend.cli contraction-set --level L1 --reason "主钟触发"
+    uv run python -m goalx_backend.cli contraction-read
 """
 
 from __future__ import annotations
@@ -99,6 +101,7 @@ from goalx_backend.db import connect, connect_research, migrate, table_exists
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import (
     baseline,
+    contraction,
     edge_scan,
     hypothesis_registry,
     market_lambda,
@@ -266,6 +269,76 @@ def _cmd_hypothesis_mark(
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     logger.info("hypothesis transition: {}", payload)
+
+
+def _cmd_contraction_set(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    收缩级别切换（vision-build 票 08，人 CLI）：写 transitions 留痕。
+
+    级别变更恒人审——agent 无该写路径；谓词拒绝（跳级/自环）fail-loud。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    target = contraction.ContractionLevel(args.level)
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        from_level = contraction.set_level(
+            conn,
+            target,
+            actor="human:cli",
+            reason=args.reason,
+        )
+        to_level = contraction.current_level(conn)
+    finally:
+        conn.close()
+    payload: dict[str, Any] = {
+        "from_level": from_level.value,
+        "to_level": to_level.value,
+        "actor": "human:cli",
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("contraction transition: {}", payload)
+
+
+def _cmd_contraction_read(*, settings: Settings | None = None) -> None:
+    """
+    收缩双钟读数（vision-build 票 08）：双钟读数+落账+现级动作面。
+
+    首读口（真数据面）与月读消费面；同窗重读吸收（读数账幂等）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        clv, exploration = contraction.record_clock_readings(conn)
+        level = contraction.current_level(conn)
+    finally:
+        conn.close()
+    payload: dict[str, Any] = {
+        "level": level.value,
+        "clv_main": {
+            "status": clv.status,
+            "fired": clv.fired,
+            "n": clv.n,
+            "mean": clv.mean,
+            "se": clv.se,
+        },
+        "exploration": {
+            "status": exploration.status,
+            "fired": exploration.fired,
+            "survivors": exploration.survivors,
+            "new_findings": exploration.new_findings,
+        },
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("contraction clocks: {}", payload)
 
 
 def _cmd_ingest_jingcai() -> None:
@@ -2412,6 +2485,23 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     hypothesis_mark_parser.add_argument(
         "--reason", required=True, help="翻转理由(落账审计)"
     )
+    contraction_set_parser = sub.add_parser(
+        "contraction-set",
+        help="收缩级别切换(vision票08;恒人CLI写transitions,相邻一级)",
+    )
+    contraction_set_parser.add_argument(
+        "--level",
+        required=True,
+        choices=tuple(level.value for level in contraction.ContractionLevel),
+        help="目标收缩级别(L0 全速…L4 全停只留漂移监测)",
+    )
+    contraction_set_parser.add_argument(
+        "--reason", required=True, help="切换理由(落账审计)"
+    )
+    sub.add_parser(
+        "contraction-read",
+        help="收缩双钟读数+落账(vision票08;首读/月读口,同窗重读吸收)",
+    )
     # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
     datasets.add_cli_subparsers(sub)
     return parser
@@ -2493,6 +2583,8 @@ def main(argv: list[str] | None = None) -> int:
         "version-register": lambda: _cmd_version_register(args),
         "version-promote": lambda: _cmd_version_promote(args),
         "hypothesis-mark": lambda: _cmd_hypothesis_mark(args),
+        "contraction-set": lambda: _cmd_contraction_set(args),
+        "contraction-read": _cmd_contraction_read,
     }
     # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
     # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）

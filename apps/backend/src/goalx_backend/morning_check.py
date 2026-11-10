@@ -1,11 +1,12 @@
 """
-09:05 晨检代码化：22 项只读红绿面。
+09:05 晨检代码化：24 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
 autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
 票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项；
-vision-build 票 05 加第 22 项教训库复审到期。）
+vision-build 票 05 加第 22 项教训库复审到期；vision-build 票 08 加第
+23 项收缩双钟与第 24 项四信号重扫唤醒。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -52,7 +53,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
-from goalx_backend.evaluation import anchor_sentinel, edge_scan, lessons
+from goalx_backend.evaluation import anchor_sentinel, contraction, edge_scan, lessons
 from goalx_backend.modelling import forecast
 
 OK = "ok"
@@ -678,6 +679,64 @@ def check_lessons_review_due(
     )
 
 
+def check_contraction_clocks(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> CheckItem:
+    """
+    项 23 收缩双钟（vision-build 票 08）：触发告警面，黄不红待人 CLI。
+
+    钟只建议不执行（prereg 附录 B）：主钟/探索钟越门且现级未及建议级
+    =黄（待人 CLI 落痕）；已收缩至建议级或更深=绿（钟读数照报，告警
+    已处置）；insufficient/unanchored=绿只报。只读——读数账由人 CLI/
+    月读写（晨检红线）。
+    """
+    resolved = now or datetime.now(UTC)
+    clv = contraction.clv_clock_reading(conn, now=resolved)
+    exploration = contraction.exploration_clock_reading(conn, now=resolved)
+    level = contraction.current_level(conn)
+    clv_face = (
+        f"mean={clv.mean:.4f},n={clv.n}" if clv.mean is not None else f"n={clv.n}"
+    )
+    parts = [
+        f"级={level.value}",
+        f"主钟={'触发' if clv.fired else clv.status}({clv_face})",
+        f"探索钟={'触发' if exploration.fired else exploration.status}"
+        + f"(幸存者={exploration.survivors},发现={exploration.new_findings})",
+    ]
+    pending: list[str] = []
+    if clv.fired and contraction.level_rank(level) < contraction.level_rank(
+        contraction.ContractionLevel.L1
+    ):
+        pending.append(f"主钟建议 {contraction.ContractionLevel.L1.value}")
+    if exploration.fired and contraction.level_rank(level) < contraction.level_rank(
+        contraction.ContractionLevel.L2
+    ):
+        pending.append(f"探索钟建议 {contraction.ContractionLevel.L2.value}")
+    if pending:
+        parts.append("待人 CLI：" + "、".join(pending))
+    return CheckItem(
+        "contraction_clocks", DEGRADED if pending else OK, "；".join(parts)
+    )
+
+
+def check_rescan_signals(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> CheckItem:
+    """
+    项 24 四信号重扫唤醒（vision-build 票 08）：触发=黄（人裁执行重扫）。
+
+    信号触发只告警不自动恢复（prereg 附录 C——恢复仍走人 CLI 相邻步进）；
+    未接线面如实 unwired（不伪造绿）。只读。
+    """
+    resolved = now or datetime.now(UTC)
+    faces = contraction.rescan_signals(conn, now=resolved)
+    parts = [f"{face.name}={face.status}" for face in faces]
+    fired = [face for face in faces if face.status == "fired"]
+    if fired:
+        parts.append("唤醒重扫（人裁执行）")
+    return CheckItem("rescan_signals", DEGRADED if fired else OK, "；".join(parts))
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -733,7 +792,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 22 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 24 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -765,6 +824,8 @@ def run_morning_check(
                 check_anchor_sentinel(conn, now=resolved_now),
                 check_news_pit_beats(store, now=resolved_now),
                 check_lessons_review_due(now=resolved_now),
+                check_contraction_clocks(conn, now=resolved_now),
+                check_rescan_signals(conn, now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,
