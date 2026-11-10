@@ -364,9 +364,72 @@ def test_migration_v43_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
     version = migrate(db)
-    assert version == 49
-    assert migrate(db) == 49  # 同版本重跑零效果
+    assert version == 50
+    assert migrate(db) == 50  # 同版本重跑零效果
     assert db.execute("SELECT COUNT(*) c FROM auto_paper_runs").fetchone()["c"] == 0
+
+
+def test_shadow_version_refused_and_live_paper_places(db: sqlite3.Connection) -> None:
+    """
+    vision-build 票 01 e2e：shadow 态版本被引擎拒单且留痕；人审升
+    live-paper 后放行。
+
+    下单前查状态（消费端最小接线）：非 live 态整锚跳过留痕
+    （zero_note=version_not_live），升 live 后同锚正常落注。
+    """
+    from goalx_backend.betting import versioning
+    from goalx_backend.betting.versioning import StrategyState
+
+    fixtures = [
+        _seed_fixture(db, tag, code=f"周六1{i}")
+        for i, tag in enumerate(("A", "B", "C"), 1)
+    ]
+    for fixture in fixtures:
+        _seed_on_sale(db, fixture)
+        _seed_forecast(db, fixture, 1.3, 1.1)
+        _seed_positive_single(db, fixture, "2", ev=0.5)
+    db.commit()
+
+    # 注册本引擎参数指纹的版本并人审升到 shadow
+    fp = versioning.params_fingerprint(au.AUTO_V1_PARAMS)
+    version_id = versioning.register_version(
+        db,
+        estimator_version="dc-test",
+        calibration_version="shin",
+        params_version=fp,
+        label=au.AUTO_V1,
+    )
+    versioning.transition_version(
+        db, version_id, StrategyState.SHADOW, actor="human:test", reason="影子起跑"
+    )
+
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 0
+    assert stats["version_not_live"] == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) c FROM bets WHERE strategy_version='auto-v1'"
+        ).fetchone()["c"]
+        == 0
+    )
+    note = db.execute(
+        "SELECT zero_note FROM auto_paper_runs"
+        " WHERE business_date=? AND anchor_label=?",
+        (BUSINESS_DATE, ANCHOR),
+    ).fetchone()["zero_note"]
+    assert note == "version_not_live"
+
+    # 人审逐级升 live-paper：同锚放行（下注照常）
+    for target in (
+        StrategyState.PROBE,
+        StrategyState.CANDIDATE,
+        StrategyState.LIVE_PAPER,
+    ):
+        versioning.transition_version(
+            db, version_id, target, actor="human:test", reason="过门放量"
+        )
+    live_stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert live_stats["bets"] == 3
 
 
 def test_zero_rounded_stake_skips_not_aborts(db: sqlite3.Connection) -> None:

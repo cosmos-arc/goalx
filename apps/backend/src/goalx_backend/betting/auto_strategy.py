@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 
-from goalx_backend.betting import pool_strategy
+from goalx_backend.betting import pool_strategy, versioning
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     BetDraft,
@@ -712,15 +712,17 @@ def record_anchor_run(
     *,
     stats: dict[str, int],
     strategy: str = AUTO_V1,
+    zero_note: str | None = None,
 ) -> None:
     """
     锚台账 upsert（v46 起按 strategy 分行）。
 
     行存在=跑了；zero_note 可区分零注原因（票验收）。同引擎同锚重跑才
-    MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。
+    MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。zero_note
+    显式入参=调用方已定案的零注原因（票 01 版本闸 version_not_live），
+    优先于下方推断链。
     """
-    zero_note = None
-    if stats.get("bets", 0) == 0 and stats.get("slips", 0) == 0:
+    if zero_note is None and stats.get("bets", 0) == 0 and stats.get("slips", 0) == 0:
         if stats.get("candidates", 0) == 0:
             zero_note = "no_candidates"
         elif stats.get("price_drift", 0) > 0:
@@ -767,6 +769,43 @@ def anchor_datetime(anchor_label: str, now: datetime) -> datetime:
     return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
+def refuse_if_version_not_live(
+    conn: sqlite3.Connection,
+    business_date: str,
+    anchor_label: str,
+    *,
+    params: object,
+    strategy: str,
+) -> dict[str, int] | None:
+    """
+    版本闸（vision 票 01 消费端最小接线，v1/v2 引擎共用）。
+
+    本引擎参数指纹的注册版本非 live-paper/live-real 态→整锚拒单留痕
+    （zero_note=version_not_live），返回留痕 stats；未注册版本放行
+    （返回 None 继续正常落注——票 03 challenger 自动注册前的 seam）。
+    """
+    gate = versioning.engine_gate(
+        conn, params_version=versioning.params_fingerprint(params)
+    )
+    if gate.allowed:
+        return None
+    stats = {
+        "candidates": 0,
+        "bets": 0,
+        "slips": 0,
+        "version_not_live": 1,
+    }
+    record_anchor_run(
+        conn,
+        business_date,
+        anchor_label,
+        stats=stats,
+        strategy=strategy,
+        zero_note="version_not_live",
+    )
+    return stats
+
+
 def run_auto_v1(
     conn: sqlite3.Connection,
     *,
@@ -776,12 +815,17 @@ def run_auto_v1(
     reads: QuoteReads | None = None,
 ) -> dict[str, int]:
     """
-    一锚完整执行（task 入口）：落注+池票+台账；返回统计。
+    一锚完整执行（task 入口）：版本闸→落注+池票+台账；返回统计。
 
     锚标签由调用方解析（ADR-0008 分层：betting 不依赖 evaluation 的
-    锚工具，tasks 层解析后下传）。
+    锚工具，tasks 层解析后下传）。版本闸语义见 refuse_if_version_not_live。
     """
     business_date = fx_store.beijing_business_date(run_at)
+    refused = refuse_if_version_not_live(
+        conn, business_date, anchor_label, params=params, strategy=AUTO_V1
+    )
+    if refused is not None:
+        return refused
     stats = place_anchor_bets(
         conn,
         anchor_label=anchor_label,

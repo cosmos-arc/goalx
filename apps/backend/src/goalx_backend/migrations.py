@@ -2381,6 +2381,64 @@ def _apply_v49(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v50(conn: sqlite3.Connection) -> None:
+    """
+    v50（vision-build 票 01）：策略版本状态机两表（回路心脏地基）。
+
+    - strategy_versions：版本=三元组（estimator/calibration/params 的内容
+      寻址标识——逻辑外键，来源是模块产出（dc 工件身份/校准口径/auto
+      参数指纹）而非库表），UNIQUE 三元组吸收重复注册；
+    - version_transitions：转移台账 append-only（trial ledger 同构，
+      v29/v49 触发器先例）——from_state NULL=注册 genesis 行（初始
+      registered 态），之后每行一次状态转移；现态=该版本最新行 to_state。
+
+    SQL 读写归 betting（ADR-0008，betting/versioning.py 属主）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS strategy_versions (
+            id INTEGER PRIMARY KEY,
+            estimator_version TEXT NOT NULL,
+            calibration_version TEXT NOT NULL,
+            params_version TEXT NOT NULL,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (estimator_version, calibration_version, params_version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS version_transitions (
+            id INTEGER PRIMARY KEY,
+            version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+            from_state TEXT CHECK (
+                from_state IN ('registered', 'shadow', 'probe', 'candidate',
+                               'live-paper', 'live-real', 'demoted', 'retired')),
+            to_state TEXT NOT NULL CHECK (
+                to_state IN ('registered', 'shadow', 'probe', 'candidate',
+                             'live-paper', 'live-real', 'demoted', 'retired')),
+            reason TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            ts TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_version_transitions
+            ON version_transitions (version_id, id)
+        """
+    )
+    for table in ("strategy_versions", "version_transitions"):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END
+            """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2431,6 +2489,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (47, _apply_v47),
     (48, _apply_v48),
     (49, _apply_v49),
+    (50, _apply_v50),
 )
 
 

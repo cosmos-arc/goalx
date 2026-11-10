@@ -302,6 +302,9 @@ erDiagram
     srcb_change_runs {
         INTEGER id PK
     }
+    strategy_versions {
+        INTEGER id PK
+    }
     team_aliases {
         INTEGER id PK
     }
@@ -326,6 +329,9 @@ erDiagram
         INTEGER id PK
     }
     uniform_result_observations {
+        INTEGER id PK
+    }
+    version_transitions {
         INTEGER id PK
     }
     backtest_bets }|--|| backtest_runs : run_id
@@ -383,6 +389,7 @@ erDiagram
     team_aliases }|--|| teams : team_id
     understat_matches }o--|| fixtures : fixture_id
     uniform_result_observations }o--|| fixtures : fixture_id
+    version_transitions }|--|| strategy_versions : version_id
 ```
 <!-- schema-doc:END:er -->
 <a id="t4"></a>
@@ -1552,6 +1559,43 @@ append-only 触发器：`trg_frozen_div_no_delete`、`trg_frozen_div_no_update`
 measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重算与已落卡的
 **决策级** 分歧（would_bet↔not）追加落账，供日终人工裁决；纯原因码漂移
 不落账。重跑不改历史（票 02 裁决：write-once + 分歧暴露，非静默版本化）。
+<!-- schema-doc:BEGIN:table:strategy_versions -->
+#### `strategy_versions`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `estimator_version` | TEXT | NOT NULL |
+| `calibration_version` | TEXT | NOT NULL |
+| `params_version` | TEXT | NOT NULL |
+| `label` | TEXT | NOT NULL |
+| `created_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`estimator_version`, `calibration_version`, `params_version`)`
+
+append-only 触发器：`strategy_versions_no_delete`、`strategy_versions_no_update`
+<!-- schema-doc:END:table:strategy_versions -->
+<!-- schema-doc:BEGIN:table:version_transitions -->
+#### `version_transitions`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `version_id` | INTEGER | NOT NULL，FK→strategy_versions.id |
+| `from_state` | TEXT | — |
+| `to_state` | TEXT | NOT NULL |
+| `reason` | TEXT | NOT NULL |
+| `actor` | TEXT | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+
+append-only 触发器：`version_transitions_no_delete`、`version_transitions_no_update`
+<!-- schema-doc:END:table:version_transitions -->
+
+vision-build 票 01（v50）：策略版本状态机——版本=三元组身份（估计器/
+校准/参数指纹，内容寻址标识），transitions=转移台账（trial ledger 同构
+append-only）。状态集 registered→shadow→probe→candidate→live-paper→
+live-real；demoted 可再升（唯一回梯口=重新注册走 L2 人审）、retired 归档
+终态。自动降级（trigger:A/B/C）与人审晋升都落账；永无自动晋升代码路径。
 ### evaluation 域
 
 <!-- schema-doc:BEGIN:table:backtest_runs -->
