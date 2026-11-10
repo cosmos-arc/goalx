@@ -157,6 +157,14 @@ def current_state(conn: sqlite3.Connection, version_id: int) -> StrategyState | 
     return StrategyState(str(row["to_state"]))
 
 
+def version_label(conn: sqlite3.Connection, version_id: int) -> str | None:
+    """版本的库内 label（幂等注册命中时回显首注册 label；无版本=None）。"""
+    row = conn.execute(
+        "SELECT label FROM strategy_versions WHERE id = ?", (version_id,)
+    ).fetchone()
+    return str(row["label"]) if row is not None else None
+
+
 def transition_version(
     conn: sqlite3.Connection,
     version_id: int,
@@ -168,25 +176,29 @@ def transition_version(
     """
     落一次状态转移（先验谓词，非法抛 InvalidTransition 且零写入）。
 
+    检查（存在性/现态/谓词/晋升哨）与 INSERT 同在 BEGIN IMMEDIATE 事务
+    内——check-then-act 竞态闭环（correctness F1）：现态在写锁内重读，
+    并发写者被串行化，账本 from_state 链恒连续，等效跳级转移不可落账。
+
     晋升（梯上/回梯）只允许 actor 以 ``human`` 起头的调用方（人 CLI）；
     自动路径（actor=trigger:*）只可达降级/出梯目标——永无自动晋升在
     调用侧结构成立，此处再设哨（防未来接线误用）。
     """
-    exists = conn.execute(
-        "SELECT 1 FROM strategy_versions WHERE id = ?", (version_id,)
-    ).fetchone()
-    if exists is None:
-        raise UnknownVersion(f"版本不存在: {version_id}")
-    from_state = current_state(conn, version_id)
-    if from_state is None:  # pragma: no cover - register 必写 genesis 行
-        raise InvalidTransition(f"版本 {version_id} 无转移历史")
-    if not transition_allowed(from_state, to_state):
-        raise InvalidTransition(f"非法转移: {from_state.value} → {to_state.value}")
-    if not actor.startswith("human") and _is_promotion(from_state, to_state):
-        raise InvalidTransition(
-            f"自动 actor 不得晋升（{from_state.value} → {to_state.value}）"
-        )
     with atomic(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM strategy_versions WHERE id = ?", (version_id,)
+        ).fetchone()
+        if exists is None:
+            raise UnknownVersion(f"版本不存在: {version_id}")
+        from_state = current_state(conn, version_id)
+        if from_state is None:  # pragma: no cover - register 必写 genesis 行
+            raise InvalidTransition(f"版本 {version_id} 无转移历史")
+        if not transition_allowed(from_state, to_state):
+            raise InvalidTransition(f"非法转移: {from_state.value} → {to_state.value}")
+        if not actor.startswith("human") and _is_promotion(from_state, to_state):
+            raise InvalidTransition(
+                f"自动 actor 不得晋升（{from_state.value} → {to_state.value}）"
+            )
         conn.execute(
             """
             INSERT INTO version_transitions
@@ -326,11 +338,15 @@ def apply_rollback_triggers(
     calibration_reading: tuple[float, float] | None = None,
 ) -> RollbackResult:
     """
-    评估三触发器并对全部版本落自动降级（A/C 降一级、B 冻结 live-real）。
+    评估三触发器并落自动降级（A/C 降一级、B 冻结 live-real）。
 
-    顺序=B→A→C：B 先冻结（live-real→demoted），被冻版本不再受 A/C 步降
-    ——「live-real 全冻结」按评估时点的原态生效。registered（梯底）无级
-    可降；retired/demoted 不在梯上不动。晋升恒人审：本函数只写降级目标。
+    作用面（correctness F5）：A/C 只作用于 live-paper/live-real 态版本
+    ——滚动 CLV 窗与校准读数是 live 版本下注产生的**全局窗**读数，未下注
+    的 shadow/probe 版本被连坐降级是归因污染（reason 标 global-window
+    口径）；B 本就只冻结 live-real。顺序=B→A→C：B 先冻结（live-real→
+    demoted），被冻版本不再受 A/C 步降——「live-real 全冻结」按评估时点
+    的原态生效。retired/demoted/registered 等非 live 态一律不动。晋升恒
+    人审：本函数只写降级目标。
     """
     clvs = rolling_clv_window(conn)
     a_fired = clv_window_fired(clvs)
@@ -342,15 +358,17 @@ def apply_rollback_triggers(
     )
     reasons = {
         "A": (
-            f"rolling clv mean={fmean(clvs):.6f} n={len(clvs)}"
+            f"clv global-window mean={fmean(clvs):.6f} n={len(clvs)}"
             if clvs
-            else "rolling clv window empty"
+            else "clv global-window empty"
         ),
         "B": f"account drawdown>{TRIGGER_B_DRAWDOWN:.0%}",
     }
     if calibration_reading is not None:
         deviation, se = calibration_reading
-        reasons["C"] = f"calibration drift deviation={deviation:.6f} se={se:.6f}"
+        reasons["C"] = (
+            f"calibration global-reading deviation={deviation:.6f} se={se:.6f}"
+        )
     demotions: list[Demotion] = []
     versions = conn.execute(
         "SELECT id, label FROM strategy_versions ORDER BY id"
@@ -365,15 +383,15 @@ def apply_rollback_triggers(
         for row in versions:
             version_id = int(row["id"])
             state = current_state(conn, version_id)
-            if state is None or state not in LADDER:  # retired/demoted 不动
+            if state is None:  # pragma: no cover - register 必写 genesis 行
                 continue
             if actor == "trigger:B":
                 if state is not StrategyState.LIVE_REAL:
                     continue  # 纸面态仅告警（fired 面已记）
                 target = StrategyState.DEMOTED
-            else:
-                if state is StrategyState.REGISTERED:
-                    continue  # 梯底无级可降
+            else:  # A/C：只降 live 态（全局窗读数归因于 live 版本的下注）
+                if state not in LIVE_STATES:
+                    continue
                 target = LADDER[LADDER.index(state) - 1]
             transition_version(
                 conn,
@@ -427,41 +445,47 @@ class EngineGate:
     version_id: int | None = None
 
 
-def engine_gate(conn: sqlite3.Connection, *, params_version: str) -> EngineGate:
+def engine_gate(
+    conn: sqlite3.Connection,
+    *,
+    estimator_version: str,
+    calibration_version: str,
+    params_version: str,
+) -> EngineGate:
     """
-    引擎下注闸：该参数指纹下任一版本处 live 态才放行。
+    引擎下注闸：三元组全维匹配 + fail-closed。
 
-    - 有版本、任一 live-paper/live-real → 放行（version_id=最新 live 行）；
-    - 有版本、无 live → 拒（version_not_live——shadow/probe/registered/
-      demoted/retired 一律拒）；
-    - 无版本 → 放行（version_unregistered：票 03 challenger 自动注册前的
-      未版本化时代 seam，闸随注册全覆盖）。
+    - 全维匹配（correctness F2）：同参数指纹不同估计器的版本不得互相
+      借用 live 态；三元组 UNIQUE ⇒ 恰匹配至多一行（无「最新/最旧」
+      歧义，现态口径与 current_state 一致）。
+    - fail-closed（correctness F3）：无匹配版本也拒（version_unregistered）
+      ——票面「非 live 态跳过留痕」，未注册=非 live 态，回滚不得因换
+      参数指纹重开 fail-open 缝。
     """
-    rows = conn.execute(
+    row = conn.execute(
         """
         SELECT v.id, t.to_state AS state FROM strategy_versions v
         JOIN version_transitions t ON t.version_id = v.id
-        WHERE v.params_version = ?
+        WHERE v.estimator_version = ? AND v.calibration_version = ?
+          AND v.params_version = ?
           AND t.id = (SELECT MAX(t2.id) FROM version_transitions t2
                       WHERE t2.version_id = v.id)
-        ORDER BY v.id
         """,
-        (params_version,),
-    ).fetchall()
-    if not rows:
-        return EngineGate(allowed=True, reason="version_unregistered")
-    for row in rows:
-        if str(row["state"]) in LIVE_STATES:
-            return EngineGate(
-                allowed=True,
-                reason="live",
-                state=StrategyState(str(row["state"])),
-                version_id=int(row["id"]),
-            )
-    first = StrategyState(str(rows[0]["state"]))
+        (estimator_version, calibration_version, params_version),
+    ).fetchone()
+    if row is None:
+        return EngineGate(allowed=False, reason="version_unregistered")
+    state = StrategyState(str(row["state"]))
+    if state in LIVE_STATES:
+        return EngineGate(
+            allowed=True,
+            reason="live",
+            state=state,
+            version_id=int(row["id"]),
+        )
     return EngineGate(
         allowed=False,
         reason="version_not_live",
-        state=first,
-        version_id=int(rows[0]["id"]),
+        state=state,
+        version_id=int(row["id"]),
     )

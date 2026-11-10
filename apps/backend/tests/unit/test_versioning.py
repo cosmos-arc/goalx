@@ -354,20 +354,54 @@ def test_apply_triggers_b_freezes_live_real_and_warns_paper(
 def test_apply_triggers_c_demotes_via_calibration_reading(
     db: sqlite3.Connection,
 ) -> None:
-    """C 触发：校准读数越 2SE→梯上版本降一级（actor=trigger:C）。"""
+    """C 触发：校准读数越 2SE→live 版本降一级（actor=trigger:C）。"""
     version_id = _register(db)
-    _promote_to(db, version_id, StrategyState.PROBE)
+    _promote_to(db, version_id, StrategyState.LIVE_PAPER)
     result = versioning.apply_rollback_triggers(
         db, initial_bankroll=1000.0, calibration_reading=(0.05, 0.01)
     )
     assert result.fired["C"] is True
-    assert versioning.current_state(db, version_id) is StrategyState.SHADOW
+    assert versioning.current_state(db, version_id) is StrategyState.CANDIDATE
     row = db.execute(
-        "SELECT actor FROM version_transitions"
+        "SELECT actor, reason FROM version_transitions"
         " WHERE version_id=? ORDER BY id DESC LIMIT 1",
         (version_id,),
     ).fetchone()
     assert row["actor"] == "trigger:C"
+    assert "global-reading" in row["reason"]
+
+
+def test_apply_triggers_a_spares_non_live_versions(db: sqlite3.Connection) -> None:
+    """
+    F5 回归：全局 CLV 窗只降 live 版本——未下注的 shadow 不连坐。
+
+    窗口由 live 版本的下注产生；shadow/probe 版本被全局读数降级是归因
+    污染。reason 标 global-window 口径。
+    """
+    live_id = _register(db, suffix="-live")
+    shadow_id = _register(db, suffix="-shadow")
+    _promote_to(db, live_id, StrategyState.LIVE_PAPER)
+    versioning.transition_version(
+        db, shadow_id, StrategyState.SHADOW, actor="human:test", reason="影子"
+    )
+    for i in range(versioning.TRIGGER_A_WINDOW):
+        _seed_settled_bet(
+            db,
+            clv=-0.05,
+            profit=-1.0,
+            settled_at=f"2026-11-01T00:{i % 60:02d}:00+00:00",
+        )
+    result = versioning.apply_rollback_triggers(db, initial_bankroll=1000.0)
+    assert result.fired["A"] is True
+    assert [demotion.version_id for demotion in result.demotions] == [live_id]
+    assert versioning.current_state(db, live_id) is StrategyState.CANDIDATE
+    assert versioning.current_state(db, shadow_id) is StrategyState.SHADOW
+    reason_row = db.execute(
+        "SELECT reason FROM version_transitions WHERE version_id=?"
+        " ORDER BY id DESC LIMIT 1",
+        (live_id,),
+    ).fetchone()
+    assert "global-window" in reason_row["reason"]
 
 
 def test_apply_triggers_healthy_account_is_noop(db: sqlite3.Connection) -> None:
@@ -446,6 +480,78 @@ def test_apply_triggers_skip_off_ladder_and_bottom_rungs(
     assert versioning.current_state(db, 999) is None  # 未知版本=None 非 raise
 
 
+def test_transition_check_then_act_race_keeps_chain_continuous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    F1 回归：检查与落账同事务——竞争写者不得造成 from_state 断链。
+
+    竞争注入=谓词求值时另一连接抢写一步合法转移（check 与 INSERT 之间
+    的窗口）。修复后（检查在 BEGIN IMMEDIATE 写锁内）另一连接的写被
+    锁挡下（OperationalError）或转移被拒——无论哪条路，账本 from_state
+    链恒连续；修复前会落出 live-real 之后再 from live-paper 的断链行。
+    """
+    from goalx_backend.db import connect as db_connect
+    from goalx_backend.db import migrate, utc_now_iso
+
+    path = tmp_path / "race.db"
+    conn = db_connect(path)
+    other = db_connect(path)
+    try:
+        migrate(conn)
+        version_id = versioning.register_version(
+            conn,
+            estimator_version="dc-race",
+            calibration_version="shin",
+            params_version="fp-race",
+            label="auto-race",
+        )
+        _promote_to(conn, version_id, StrategyState.LIVE_PAPER)
+        other.execute("PRAGMA busy_timeout=200")  # 竞争写者快速失败
+        real_allowed = versioning.transition_allowed
+        armed: list[bool] = []
+
+        def racing_allowed(from_state: StrategyState, to_state: StrategyState) -> bool:
+            if not armed:  # 一次性注入：模拟检查与落账之间的并发写
+                armed.append(True)
+                other.execute(
+                    """
+                    INSERT INTO version_transitions
+                        (version_id, from_state, to_state, reason, actor, ts)
+                    VALUES (?, 'live-paper', 'live-real', '竞争转移',
+                            'human:race', ?)
+                    """,
+                    (version_id, utc_now_iso()),
+                )
+                other.commit()
+            return real_allowed(from_state, to_state)
+
+        monkeypatch.setattr(versioning, "transition_allowed", racing_allowed)
+        with pytest.raises((versioning.InvalidTransition, sqlite3.OperationalError)):
+            versioning.transition_version(
+                conn,
+                version_id,
+                StrategyState.CANDIDATE,
+                actor="human:test",
+                reason="降级",
+            )
+        monkeypatch.setattr(versioning, "transition_allowed", real_allowed)
+        rows = conn.execute(
+            "SELECT from_state, to_state FROM version_transitions"
+            " WHERE version_id=? ORDER BY id",
+            (version_id,),
+        ).fetchall()
+        assert all(
+            rows[i]["from_state"] == rows[i - 1]["to_state"]
+            for i in range(1, len(rows))
+        ), "账本 from_state 链断——检查与落账间有未加锁窗口"
+        # 竞争写者被锁挡下时主连接事务回滚：现态停在 live-paper
+        assert versioning.current_state(conn, version_id) is StrategyState.LIVE_PAPER
+    finally:
+        conn.close()
+        other.close()
+
+
 def test_drawdown_degenerate_peak_not_evaluated() -> None:
     """退化水位（高点 ≤0，账户亏穿零）不评估除零面。"""
     assert not versioning.drawdown_fired([-100.0, -50.0])
@@ -482,6 +588,21 @@ def test_cli_version_register_and_promote(
     payload = json.loads(capsys.readouterr().out)
     assert payload["id"] == 1
     assert payload["state"] == "registered"
+    assert payload["label"] == "auto-v2"
+
+    # F4：幂等命中回显库内首注册 label（后到 --label 不改写既有行）
+    _cmd_version_register(
+        argparse.Namespace(
+            estimator="dc-abc123",
+            calibration="shin",
+            params="fp-001",
+            label="auto-v2-relabeled",
+        ),
+        settings=settings,
+    )
+    again = json.loads(capsys.readouterr().out)
+    assert again["id"] == 1
+    assert again["label"] == "auto-v2"
 
     _cmd_version_promote(
         argparse.Namespace(id=1, to="shadow", reason="影子起跑"),
@@ -516,22 +637,32 @@ def test_params_fingerprint_is_content_addressed() -> None:
 
 def test_engine_gate_semantics(db: sqlite3.Connection) -> None:
     """
-    消费端闸：非 live 态拒；live-paper/live-real 放行；未注册=票 03 前
-    未版本化时代放行（闸随 challenger 自动注册全覆盖）。
+    消费端闸（F2/F3 语义）：全三元组匹配；非 live 态拒；未注册同拒
+    （fail-closed——未注册=非 live 态=拒单留痕）；live-paper 放行。
     """
-    fp = "fp-gate"
-    gate = versioning.engine_gate(db, params_version=fp)
-    assert gate.allowed
+    gate = versioning.engine_gate(
+        db,
+        estimator_version="dc-g",
+        calibration_version="shin",
+        params_version="fp-gate",
+    )
+    assert not gate.allowed  # F3：未注册不放行
     assert gate.reason == "version_unregistered"
+    assert gate.state is None
 
     version_id = versioning.register_version(
         db,
         estimator_version="dc-g",
         calibration_version="shin",
-        params_version=fp,
+        params_version="fp-gate",
         label="auto-g",
     )
-    gate = versioning.engine_gate(db, params_version=fp)
+    gate = versioning.engine_gate(
+        db,
+        estimator_version="dc-g",
+        calibration_version="shin",
+        params_version="fp-gate",
+    )
     assert not gate.allowed
     assert gate.reason == "version_not_live"
     assert gate.state is StrategyState.REGISTERED
@@ -542,7 +673,56 @@ def test_engine_gate_semantics(db: sqlite3.Connection) -> None:
         versioning.transition_version(
             db, version_id, target, actor="human:test", reason="逐级"
         )
-    gate = versioning.engine_gate(db, params_version=fp)
+    gate = versioning.engine_gate(
+        db,
+        estimator_version="dc-g",
+        calibration_version="shin",
+        params_version="fp-gate",
+    )
     assert gate.allowed
     assert gate.state is StrategyState.LIVE_PAPER
     assert gate.version_id == version_id
+
+
+def test_engine_gate_full_triple_no_cross_estimator_leak(
+    db: sqlite3.Connection,
+) -> None:
+    """
+    F2 回归：同参数指纹不同估计器的版本不互借 live 态。
+
+    (E1,C,P) 升 live-paper 后，(E2,C,P)（registered）按 E2 查闸必须拒
+    ——单维 params 匹配会让未过梯的 E2 借 E1 的 live 放行。
+    """
+    live_id = versioning.register_version(
+        db,
+        estimator_version="E1",
+        calibration_version="C",
+        params_version="P",
+        label="auto-x",
+    )
+    versioning.register_version(
+        db,
+        estimator_version="E2",
+        calibration_version="C",
+        params_version="P",
+        label="auto-y",
+    )
+    for target in (
+        StrategyState.SHADOW,
+        StrategyState.PROBE,
+        StrategyState.CANDIDATE,
+        StrategyState.LIVE_PAPER,
+    ):
+        versioning.transition_version(
+            db, live_id, target, actor="human:test", reason="逐级"
+        )
+    leaked = versioning.engine_gate(
+        db, estimator_version="E2", calibration_version="C", params_version="P"
+    )
+    assert not leaked.allowed
+    assert leaked.reason == "version_not_live"
+    assert leaked.state is StrategyState.REGISTERED
+    # E1 自身照常放行
+    assert versioning.engine_gate(
+        db, estimator_version="E1", calibration_version="C", params_version="P"
+    ).allowed

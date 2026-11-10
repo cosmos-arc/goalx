@@ -45,6 +45,8 @@ from goalx_backend.data import pool as pool_store
 from goalx_backend.data.pool import PoolMatchView
 from goalx_backend.data.quote_evidence import QuoteReads
 from goalx_backend.db import atomic
+from goalx_backend.modelling import dc_model
+from goalx_backend.modelling.calibration import CALIBRATION_KINDS
 from goalx_backend.modelling.forecast import (
     forecast_matrix_from_payload,
     latest_forecast_asof,
@@ -769,6 +771,25 @@ def anchor_datetime(anchor_label: str, now: datetime) -> datetime:
     return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
+def engine_version_triple(params: object) -> tuple[str, str, str]:
+    """
+    引擎消费身份三元组（correctness F2）：注册与下注闸共用同一推导。
+
+    - estimator：modelling 实现版本规范串（dc 工件 schema + 关键依赖
+      版本，``dc_model.implementation_versions()`` 排序键值拼接）；
+    - calibration：校准口径族（``CALIBRATION_KINDS``——口径集变化=换版本）；
+    - params：参数指纹（``versioning.params_fingerprint``）。
+
+    全维匹配防「同参数指纹不同估计器的未过梯版本借旧版本 live 放行」。
+    """
+    estimator = ";".join(
+        f"{key}={value}"
+        for key, value in sorted(dc_model.implementation_versions().items())
+    )
+    calibration = "+".join(CALIBRATION_KINDS)
+    return estimator, calibration, versioning.params_fingerprint(params)
+
+
 def refuse_if_version_not_live(
     conn: sqlite3.Connection,
     business_date: str,
@@ -778,14 +799,19 @@ def refuse_if_version_not_live(
     strategy: str,
 ) -> dict[str, int] | None:
     """
-    版本闸（vision 票 01 消费端最小接线，v1/v2 引擎共用）。
+    版本闸（vision 票 01 消费端最小接线，v1/v2 引擎共用；fail-closed）。
 
-    本引擎参数指纹的注册版本非 live-paper/live-real 态→整锚拒单留痕
-    （zero_note=version_not_live），返回留痕 stats；未注册版本放行
-    （返回 None 继续正常落注——票 03 challenger 自动注册前的 seam）。
+    引擎实际三元组全维匹配的版本非 live-paper/live-real 态→整锚拒单
+    留痕（zero_note=version_not_live），返回留痕 stats；未注册三元组
+    同样拒（zero_note=version_unregistered——非 live 态即拒，回滚不得
+    因换参数指纹重开缝，correctness F3）。放行返回 None 继续正常落注。
     """
+    estimator, calibration, fingerprint = engine_version_triple(params)
     gate = versioning.engine_gate(
-        conn, params_version=versioning.params_fingerprint(params)
+        conn,
+        estimator_version=estimator,
+        calibration_version=calibration,
+        params_version=fingerprint,
     )
     if gate.allowed:
         return None
@@ -801,7 +827,7 @@ def refuse_if_version_not_live(
         anchor_label,
         stats=stats,
         strategy=strategy,
-        zero_note="version_not_live",
+        zero_note=gate.reason,
     )
     return stats
 

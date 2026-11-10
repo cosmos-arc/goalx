@@ -163,11 +163,14 @@ def _cmd_version_register(
             label=args.label,
         )
         state = versioning.current_state(conn, version_id)
+        # 幂等命中回显库内首注册 label（correctness F4：三元组=身份，
+        # 后到的 --label 不改写既有行，回显不得谎报）
+        stored_label = versioning.version_label(conn, version_id)
     finally:
         conn.close()
     payload: dict[str, Any] = {
         "id": version_id,
-        "label": args.label,
+        "label": stored_label,
         "state": state.value if state is not None else None,
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
