@@ -380,6 +380,11 @@ def build(settings: Settings, *, base: datetime | None = None) -> dict[str, Any]
     moment = base or datetime.now(UTC)
     manifest: dict[str, Any] = {**build_corpus(settings, base=moment)}
     manifest.update(seed_running_db(settings, base=moment))
+    if base is None:
+        # corpus 行 observed=采集墙钟，恒晚于生成锚点；admission 以
+        # observed_at≤as_of 为准——慢机上采集行晚于锚点即被 as-of 丢行
+        # （CI eu_no_quote 翻车）。base_utc 改为生成完成后盖戳。
+        manifest["base_utc"] = _iso(datetime.now(UTC))
     manifest["db_path"] = str(settings.db_path)
     manifest_path = Path(settings.db_path).parent / MANIFEST_NAME
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
