@@ -290,6 +290,28 @@ def forecasts_for_track(conn: sqlite3.Connection, track: str) -> list[sqlite3.Ro
     ).fetchall()
 
 
+def model_version_counts(
+    conn: sqlite3.Connection, *, ts_from: str, ts_to: str
+) -> dict[str, int]:
+    """
+    窗内各 model_version 的 Forecast 行数（票 04/票 07 读缝）。
+
+    月读③节占位读口=票 07 champion/challenger 影子对比的消费缝（版本
+    标签面在库即读得到）。窗=[ts_from, ts_to)（issued_at 半开）；
+    track 不限（ml/fused/llm 同面
+    分列由版本前缀自表）。
+    """
+    rows = conn.execute(
+        """
+        SELECT model_version, COUNT(*) AS c FROM forecasts
+        WHERE issued_at >= ? AND issued_at < ?
+        GROUP BY model_version ORDER BY model_version
+        """,
+        (ts_from, ts_to),
+    ).fetchall()
+    return {str(row["model_version"]): int(row["c"]) for row in rows}
+
+
 def latest_forecast(
     conn: sqlite3.Connection, fixture_id: int, track: str = "ml"
 ) -> sqlite3.Row | None:

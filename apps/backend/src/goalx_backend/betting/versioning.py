@@ -269,6 +269,28 @@ def settled_clvs_since(conn: sqlite3.Connection, *, window_start: str) -> list[f
     return [float(row["clv"]) for row in rows]
 
 
+def settled_auto_bet_ids(
+    conn: sqlite3.Connection, *, ts_from: str, ts_to: str
+) -> list[int]:
+    """
+    窗内已结算 auto 纸面注 id（票 04 月读双锚审计人口面；只读）。
+
+    准入=触发器 A 同语义（mode=paper ∧ strategy_version 非空 ∧ 已结算）；
+    窗=[ts_from, ts_to)（settled_at 字符串界）。evaluation 侧再按属主
+    面连 clv_records——本读口是 bets 表在月读②节的唯一取数处。
+    """
+    rows = conn.execute(
+        """
+        SELECT id FROM bets
+        WHERE mode = 'paper' AND strategy_version IS NOT NULL
+          AND settled_at IS NOT NULL AND settled_at >= ? AND settled_at < ?
+        ORDER BY id
+        """,
+        (ts_from, ts_to),
+    ).fetchall()
+    return [int(row["id"]) for row in rows]
+
+
 def clv_window_fired(clvs: Sequence[float]) -> bool:
     """
     触发器 A 谓词：滚动窗 CLV 均值为负且低出 0 达 2SE（严格不等）。
@@ -479,9 +501,9 @@ def engine_gate(
     - 全维匹配（correctness F2）：同参数指纹不同估计器的版本不得互相
       借用 live 态；三元组 UNIQUE ⇒ 恰匹配至多一行（无「最新/最旧」
       歧义，现态口径与 current_state 一致）。
-    - fail-closed（correctness F3）：无匹配版本也拒（version_unregistered）
+    - fail-closed（correctness F3）：无匹配版本也拒（version_unregistered
       ——票面「非 live 态跳过留痕」，未注册=非 live 态，回滚不得因换
-      参数指纹重开 fail-open 缝。
+      参数指纹重开 fail-open 缝）。
     """
     row = conn.execute(
         """
@@ -510,3 +532,96 @@ def engine_gate(
         state=state,
         version_id=int(row["id"]),
     )
+
+
+# ---- 事件流回放读口（票 04 月读④节消费；只读） ----
+
+
+@dataclass(frozen=True)
+class TransitionEvent:
+    """一条 transitions 行的事件投影（kind=分类，人读面）。"""
+
+    version_id: int
+    label: str
+    from_state: str | None  # None=注册 genesis 行
+    to_state: str
+    reason: str
+    actor: str
+    ts: str
+    kind: str
+
+
+def classify_transition(
+    from_state: StrategyState | None, to_state: StrategyState, actor: str
+) -> str:
+    """
+    事件分类（月读④节计数面；状态机属主单处定义）。
+
+    触发器命中（actor=trigger:*）单列——自动降级的 reason 分类计数是
+    月读④的「触发器命中」读数；其余按转移目标分类（晋升/降级/出梯/
+    回梯/归档/注册）。
+    """
+    if actor.startswith("trigger:"):
+        return f"trigger:{actor.split(':', 2)[1].lower()}"
+    if from_state is None:
+        return "registration"
+    if to_state in (StrategyState.RETIRED, StrategyState.DEMOTED):
+        return "retired" if to_state is StrategyState.RETIRED else "exit_demoted"
+    if from_state is StrategyState.DEMOTED:
+        return "reentry"
+    if from_state in LADDER and to_state in LADDER:
+        return (
+            "promotion"
+            if LADDER.index(to_state) > LADDER.index(from_state)
+            else "demotion"
+        )
+    return "other"  # pragma: no cover - 谓词外的组合不可达（全表转移已受限）
+
+
+def transition_events(
+    conn: sqlite3.Connection,
+    *,
+    ts_from: str | None = None,
+    limit: int | None = None,
+) -> list[TransitionEvent]:
+    """
+    Transitions 回放（时间倒序，label 随行；只读）。
+
+    ts_from（ISO，闭端含）缺省=全量；limit=SQL LIMIT（最新 N 行，缺省
+    None=全表——月读的窗内计数与全史总数需要全量回放，显示清单在调用
+    侧截断；correctness F2：limit 必须真实落进 SQL，死参=签名谎言）。
+    """
+    sql = """
+        SELECT t.version_id, v.label, t.from_state, t.to_state, t.reason,
+               t.actor, t.ts
+        FROM version_transitions t
+        JOIN strategy_versions v ON v.id = t.version_id
+    """
+    params: list[str | int] = []
+    if ts_from is not None:
+        sql += " WHERE t.ts >= ?"
+        params.append(ts_from)
+    sql += " ORDER BY t.id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    events = [
+        TransitionEvent(
+            version_id=int(row["version_id"]),
+            label=str(row["label"]),
+            from_state=None if row["from_state"] is None else str(row["from_state"]),
+            to_state=str(row["to_state"]),
+            reason=str(row["reason"]),
+            actor=str(row["actor"]),
+            ts=str(row["ts"]),
+            kind=classify_transition(
+                None
+                if row["from_state"] is None
+                else StrategyState(str(row["from_state"])),
+                StrategyState(str(row["to_state"])),
+                str(row["actor"]),
+            ),
+        )
+        for row in conn.execute(sql, params).fetchall()
+    ]
+    return events

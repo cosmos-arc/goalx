@@ -50,6 +50,11 @@ server 存活独立于 serve 进程，serve 重启不影响已排程的 run。
 - weekly-agent 周一 06:00（vision-build 票 03）：周批 agent 心跳——读台账/
   注册表/教训库→LLM 提案（≤5 条+对抗质疑）落语料树，人审 CLI 注册；
   空转守卫无新料只报心跳（TM 周拍 03:20 后、周报/晨检前）
+- monthly-read 每月 1 日 09:35（vision-build 票 04）：月读报告生成器
+  （晨检 09:05 后）——八节只读报告落语料树 reports/monthly/（JSON+MD，
+  append-only 拍次）；②双锚审计/⑥双钟+四信号账（v55）落账+ B.3 到期
+  读数（票 08 缝回填）；裁定动作全人 CLI，报告不写决策状态；首读
+  2026-12-01 部署注册后自然到点
 - pool-snapshot 10:20/16:20/22:20（票 43）：彩池期次/对阵/人气分布三拍
 
 ponytail: 本机进程随睡眠暂停，睡过的窗口如实记漏跑（协议允许，
@@ -84,10 +89,10 @@ from goalx_backend.run_fingerprint import process_face
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：手写组合面 + 注册表推导面 = 28 面。
+    全量 deployment 装配：手写组合面 + 注册表推导面 = 29 面。
 
     组合面手写（票 09 后 6 面 + auto-paper 票 01 冻结/落注面）+ 注册表
-    推导面（19 面，含 vision-build 票 03 weekly-agent）。
+    推导面（20 面，含 vision-build 票 03 weekly-agent/票 04 monthly-read）。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """

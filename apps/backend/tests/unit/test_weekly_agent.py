@@ -21,8 +21,8 @@ from goalx_backend.evaluation import weekly_agent
 
 def test_migration_v54_idempotent(db: sqlite3.Connection) -> None:
     """v54 幂等：三表就位、花费/锚账 append-only、重跑零效果。"""
-    assert migrate(db) == 54
-    assert migrate(db) == 54  # 同版本重跑零效果
+    assert migrate(db) == 55
+    assert migrate(db) == 55  # 同版本重跑零效果
     for table in (
         "llm_proposal_costs",
         "weekly_agent_state",

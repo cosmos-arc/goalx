@@ -92,8 +92,8 @@ def test_migration_v51_idempotent(db: sqlite3.Connection) -> None:
     """v51 幂等：两表就位、H1-H8 种子恰八行、重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 54
-    assert migrate(db) == 54  # 同版本重跑零效果
+    assert migrate(db) == 55
+    assert migrate(db) == 55  # 同版本重跑零效果
     assert db.execute("SELECT COUNT(*) FROM hypothesis_registry").fetchone()[0] == 8
     assert db.execute("SELECT COUNT(*) FROM hypothesis_attempts").fetchone()[0] == 0
 

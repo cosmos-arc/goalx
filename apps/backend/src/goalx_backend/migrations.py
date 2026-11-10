@@ -2861,6 +2861,44 @@ def _apply_v54(conn: sqlite3.Connection) -> None:
             """)
 
 
+def _apply_v55(conn: sqlite3.Connection) -> None:
+    """
+    v55（vision-build 票 04 缝回填）：四信号重扫唤醒触发史账（evaluation 域）。
+
+    - rescan_signal_events：月读时点信号面评估落账（append-only，v49/v52
+      触发器先例）。观测面非决策面：信号触发只告警不自动恢复（prereg
+      附录 C），晨检只读红线决定写口=月读（record_rescan_signals）。
+    - UNIQUE(signal, period) 吸收同月重跑（报告文件拍次递增不覆盖，但
+      信号评估每月一读）；period=yyyy-mm（月读覆盖刚结束的自然月）。
+    - signal CHECK 钉死四信号名——B.3 计时器是读数（transitions+本账
+      派生），不落本账。
+
+    SQL 读写归 evaluation（evaluation/contraction.py 属主：读口=B.3 到期
+    读数/晨检信号面；写口=月读 record_rescan_signals）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rescan_signal_events (
+            id INTEGER PRIMARY KEY,
+            signal TEXT NOT NULL CHECK (
+                signal IN ('odds_psi', 'jc_rules', 'league_mix', 'quarterly_sweep')),
+            period TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('ok', 'fired', 'insufficient', 'unwired')),
+            detail TEXT NOT NULL,
+            evaluated_at TEXT NOT NULL,
+            UNIQUE (signal, period)
+        )
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS rescan_signal_events_no_{operation.lower()}
+            BEFORE {operation} ON rescan_signal_events
+            BEGIN SELECT RAISE(ABORT, 'rescan_signal_events is append-only'); END
+        """)
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2916,6 +2954,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (52, _apply_v52),
     (53, _apply_v53),
     (54, _apply_v54),
+    (55, _apply_v55),
 )
 
 

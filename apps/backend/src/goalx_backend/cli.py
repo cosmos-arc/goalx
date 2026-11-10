@@ -41,6 +41,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
     uv run python -m goalx_backend.cli contraction-read
     uv run python -m goalx_backend.cli proposal-register <提案文件>\
       [--proposal-id P-… --h-id H9]
+    uv run python -m goalx_backend.cli monthly-read  # 月读报告（vision 票 04）：
+    # 八节只读报告落语料树 reports/monthly/；裁定动作走上方人 CLI，报告只读
 """
 
 from __future__ import annotations
@@ -314,7 +316,8 @@ def _cmd_contraction_read(*, settings: Settings | None = None) -> None:
     """
     收缩双钟读数（vision-build 票 08）：双钟读数+落账+现级动作面。
 
-    首读口（真数据面）与月读消费面；同窗重读吸收（读数账幂等）。
+    首读口（真数据面）与月读消费面；每次读每钟落一行（观测流水，
+    UNIQUE 只防同秒双写——F3 裁定口径）。
     """
     resolved = settings if settings is not None else get_settings()
     if not resolved.db_path.exists():
@@ -2594,7 +2597,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     sub.add_parser(
         "contraction-read",
-        help="收缩双钟读数+落账(vision票08;首读/月读口,同窗重读吸收)",
+        help="收缩双钟读数+落账(vision票08;首读/月读口,每次读每钟一行观测流水)",
     )
     proposal_register_parser = sub.add_parser(
         "proposal-register",

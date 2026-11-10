@@ -7,7 +7,8 @@ dead_names）、（语料数据集的）checkpoint 表核对全部由声明推�
 唯一住所仍是 tasks（ADR-0005）：本模块持引用不持实现。
 
 vision-build 票 03 后注册面 = 全部单 cron 定拍数据集（19 条，含两个
-判死面 resume=False）；
+判死面 resume=False）；票 04 加 monthly-read（月定拍先例：cron 日-of-
+月位 1，每月 1 日 09:35）成 20 条；
 留在 flows.py 手写的非同构形状：组合面（daily-capture/weekly-refresh/
 daily-wrap 多 flow 编排）与 draw-results-sync（单 flow 双 deployment 双 cron）。
 cli=False 的记录不派生 cli（official-reconcile 的手写 handler 带 pending_manual
@@ -412,7 +413,28 @@ _WEEKLY_AGENT = DatasetSpec(
     ),
 )
 
-#: 注册面（vision-build 票 03 全量）：单 cron 定拍数据集；
+_MONTHLY_READ = DatasetSpec(
+    name="monthly-read",
+    cron="35 9 1 * *",
+    task=tasks.monthly_read_run,
+    cli_help=(
+        "月读报告生成器(vision票04;八节只读报告+双锚审计+四信号账落账;"
+        "人裁定走CLI,报告不写决策状态)"
+    ),
+    flow_help=(
+        "月读报告生成器（vision-build 票 04）：每月 1 日 09:35（晨检\n"
+        "09:05 后），人的裁定面。八节固定：六门进度（DSR/BH 校正框架）/\n"
+        "CLV 双锚审计（主锚 srct Pinnacle+副锚欧共识，同注两锚差超界告警）/\n"
+        "champion-challenger 影子窗（票 07 占位）/版本状态机事件流/强制\n"
+        "失败视图/双钟读数（含四信号面评估落账 v55+B.3 到期读数——票 08\n"
+        "缝回填）/教训库视图/下月预算建议。报告落语料树 reports/monthly/\n"
+        "（JSON+MD，append-only 拍次）；纯只读：裁定动作全人 CLI 留痕。\n"
+        "首读 2026-12-01：部署注册后自然到点，覆盖 11 月（半月数据，\n"
+        "跑通优先于完整）。"
+    ),
+)
+
+#: 注册面（vision-build 票 04 起 20 条）：单 cron 定拍数据集；
 #: 组合面/双 cron 另见 flows/schedules
 DATASETS: tuple[DatasetSpec, ...] = (
     _GUARDIAN,
@@ -434,6 +456,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _ANCHOR_SENTINEL_CAPTURE,
     _ANCHOR_SENTINEL_WEEKLY,
     _WEEKLY_AGENT,
+    _MONTHLY_READ,
 )
 
 
