@@ -656,3 +656,22 @@ def test_srct_shift_run_prematch_resolution_degrades(
     )
     payload = tasks.srct_shift_run(no_window=True, settings=settings, client=_client())
     assert "database is locked" in str(payload["prematch_degraded"])
+
+
+def test_due_lead_timezone_explicit_equivalence() -> None:
+    """跨票 26 时区加固：+08:00 显式偏移与 UTC 同刻同窗（拍窗按绝对时间
+    差计算，kickoff 带 CST 偏移不 mis-slice）；naive 防御按 UTC 解释
+    （fx_store.beijing_naive 同惯例——fixtures.kickoff_utc 生产面 100%
+    +00:00，CST-naive 面（match_features）不经本调度器）。"""
+    from datetime import timezone
+
+    cst = timezone(timedelta(hours=8))
+    kickoff_cst = KICKOFF.astimezone(cst)  # 北京 2026-11-11 03:00+08:00
+    assert kickoff_cst != KICKOFF.replace(tzinfo=None)  # 钟面同数不同刻
+    assert srct_prematch.due_prematch_lead(kickoff_cst, _at(140)) == 150
+    assert (
+        srct_prematch.due_prematch_lead(KICKOFF.replace(tzinfo=None), _at(140)) == 150
+    )  # naive 防御=UTC（文档化口径，不抛 TypeError）
+    # PIT 准入侧：observed_at 恒 +00:00（utc_now_iso），与拍窗钟面同源无混比
+    row_time = datetime.fromisoformat(srct.utc_now_iso())
+    assert row_time.utcoffset() == timedelta(0)
