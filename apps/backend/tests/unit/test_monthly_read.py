@@ -94,7 +94,8 @@ def test_rerun_same_month_beat_increments_append_only(
     db: sqlite3.Connection, tmp_path: Path
 ) -> None:
     """幂等重跑（auto-paper 03 同缝）：同月重跑报告文件拍次递增不覆盖；
-    信号账同期吸收（每月一读）；首拍文件内容不被改写。"""
+    信号账同期吸收（每月一读）；首拍文件内容不被改写；双钟读数账=每次
+    月读每钟追加一行（观测流水非吸收面，F3 裁定口径——重跑用不同 now）。"""
     store = _store(tmp_path)
     first = monthly_read.run_monthly_read(
         db, store=store, now=_RUN_AT, lessons_dir=tmp_path
@@ -102,8 +103,16 @@ def test_rerun_same_month_beat_increments_append_only(
     assert first["beat"] == 1
     base = tmp_path / "corpus" / "reports" / "monthly"
     first_json = (base / "monthly-read-202611.json").read_text(encoding="utf-8")
+    assert (
+        db.execute("SELECT COUNT(*) c FROM contraction_clock_readings").fetchone()["c"]
+        == 2
+    )
+    # 真实重跑=不同时刻（同 now 会靠 UNIQUE 同秒防重假吸收）
     second = monthly_read.run_monthly_read(
-        db, store=store, now=_RUN_AT, lessons_dir=tmp_path
+        db,
+        store=store,
+        now=_RUN_AT.replace(second=_RUN_AT.second + 30),
+        lessons_dir=tmp_path,
     )
     assert second["beat"] == 2
     assert (base / "monthly-read-202611-2.json").is_file()
@@ -115,6 +124,11 @@ def test_rerun_same_month_beat_increments_append_only(
         db.execute(
             "SELECT COUNT(*) c FROM rescan_signal_events WHERE period = '2026-11'"
         ).fetchone()["c"]
+        == 4
+    )
+    # 双钟读数账：每次月读每钟一行（两次读=4 行，F3）
+    assert (
+        db.execute("SELECT COUNT(*) c FROM contraction_clock_readings").fetchone()["c"]
         == 4
     )
 
@@ -580,3 +594,59 @@ def test_report_readonly_red_line(db: sqlite3.Connection, tmp_path: Path) -> Non
         db.execute("SELECT COUNT(*) c FROM contraction_transitions").fetchone()["c"]
         == 1  # v52 genesis 行原样
     )
+
+
+# ---- correctness-review 回归（F1 家族总尝试 / F2 limit 死参） ----
+
+
+def test_gate_progress_family_attempts_from_ledger_count(
+    db: sqlite3.Connection,
+) -> None:
+    """F1 回归：同族两非终态行各自 record_attempt 时，家族 m=账面
+    hypothesis_attempts COUNT（票 02 总尝试口径），非 MAX(attempt_count)
+    （同族双活行各自计数时 MAX 低估——DSR/BH 分母反保守失真）。"""
+    from goalx_backend.evaluation import hypothesis_registry as hr
+
+    for i in range(3):
+        hr.record_attempt(db, "H1", window_key=f"s1:a{i}")  # H1 计数 3
+    hr.register_hypothesis(  # 家族复试新行（继承族史快照 attempt_count=3）
+        db,
+        h_id="H1B",
+        family="H1",
+        statement="复试措辞",
+        judgement="j",
+        data_face="d",
+        expected_n="n",
+        ledger_ref="edge-ledger:E-02",
+        actor="human:cli",
+    )
+    for i in range(2):
+        hr.record_attempt(db, "H1", window_key=f"s1:b{i}")  # 旧行继续 → 5
+        hr.record_attempt(db, "H1B", window_key=f"s1:c{i}")  # 新行 → 5
+    section = monthly_read.gate_progress(db)
+    family = next(f for f in section["families"] if f["family"] == "H1")
+    assert family["m_attempts"] == 7  # 账面 COUNT=3+2+2；MAX(attempt_count)=5
+    assert family["n_rows"] == 2
+
+
+def test_transition_events_limit_honored_in_sql(db: sqlite3.Connection) -> None:
+    """F2 回归：limit 走 SQL LIMIT（最新 N 行）；缺省 None=全表（月读的
+    窗内计数与全史总数需要全量回放，显示清单在调用侧截断）。"""
+    vid = versioning.register_version(
+        db,
+        estimator_version="e2",
+        calibration_version="c2",
+        params_version="p2",
+        label="auto-v2",
+    )
+    versioning.transition_version(
+        db, vid, versioning.StrategyState.SHADOW, actor="human:cli", reason="一步"
+    )
+    versioning.transition_version(
+        db, vid, versioning.StrategyState.PROBE, actor="human:cli", reason="二步"
+    )
+    limited = versioning.transition_events(db, limit=1)
+    assert len(limited) == 1
+    assert limited[0].kind == "promotion"
+    assert limited[0].reason == "二步"  # 时间倒序=最新
+    assert len(versioning.transition_events(db)) == 3  # 缺省全量（genesis+2）

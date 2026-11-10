@@ -842,8 +842,10 @@ def record_clock_readings(
     """
     双钟显式读并落账（人 CLI contraction-read/月读口；晨检只读不写）。
 
-    同窗重读吸收（UNIQUE(clock, window_end) INSERT OR IGNORE——forecast_
-    scores 吸收键先例）：账面=首读留痕，重跑零效果。value 语义随钟：
+    每次显式读每钟追加一行（观测流水）：window_end=运行时刻秒精度，
+    UNIQUE(clock, window_end) 的真实职责是同窗（同秒）双写防重——不同
+    时刻的真实重跑各留一行（append 无害，账面=读数流水非幂等面，
+    correctness F3 裁定口径）。value 语义随钟：
     clv_main=概率域均值（insufficient 无均值记 0.0，status 在 detail）；
     exploration=幸存者计数（n=窗内越门发现数）。
     """

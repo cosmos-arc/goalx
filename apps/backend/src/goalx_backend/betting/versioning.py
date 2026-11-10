@@ -582,13 +582,14 @@ def transition_events(
     conn: sqlite3.Connection,
     *,
     ts_from: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[TransitionEvent]:
     """
     Transitions 回放（时间倒序，label 随行；只读）。
 
-    ts_from（ISO，闭端含）缺省=全量；limit 只截事件清单面（计数由
-    调用方在 Python 侧做全量分类——月读同时要窗内计数与全史总数）。
+    ts_from（ISO，闭端含）缺省=全量；limit=SQL LIMIT（最新 N 行，缺省
+    None=全表——月读的窗内计数与全史总数需要全量回放，显示清单在调用
+    侧截断；correctness F2：limit 必须真实落进 SQL，死参=签名谎言）。
     """
     sql = """
         SELECT t.version_id, v.label, t.from_state, t.to_state, t.reason,
@@ -596,11 +597,14 @@ def transition_events(
         FROM version_transitions t
         JOIN strategy_versions v ON v.id = t.version_id
     """
-    params: tuple[str, ...] = ()
+    params: list[str | int] = []
     if ts_from is not None:
         sql += " WHERE t.ts >= ?"
-        params = (ts_from,)
+        params.append(ts_from)
     sql += " ORDER BY t.id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
     events = [
         TransitionEvent(
             version_id=int(row["version_id"]),

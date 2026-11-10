@@ -32,7 +32,9 @@ reports/monthly/，JSON+MD 双视图，append-only 拍次——票 03 同缝）�
   受控目录=唯一事实源），账表 llm_proposal_costs 只有花费——⑤节拒收
   计数聚合语料树 proposals 文件，不读账表推断。
 - 幂等重跑（auto-paper 03 同缝）：同月重跑报告文件拍次递增不覆盖；
-  信号账 UNIQUE(signal, period) 吸收同期；双钟读数账同窗吸收。
+  信号账 UNIQUE(signal, period) 吸收同期；双钟读数账=每次月读每钟追加
+  一行（观测流水非吸收面——UNIQUE(clock, window_end) 只防同秒双写，
+  correctness F3 裁定口径）。
 """
 
 from __future__ import annotations
@@ -145,11 +147,24 @@ def gate_progress(conn: sqlite3.Connection) -> dict[str, Any]:
     """
     ① 六门进度（只读）：家族总尝试数 DSR/BH 校正读数框架。
 
-    注册表状态面随行（六步门逐门统计量接缝见 GATE_STATISTICS_SEAM）；
-    家族总尝试 m=族内 MAX(attempt_count)（票 02 继承语义：复试新行继承
-    族史，族总尝试=最新行计数；分母=尝试数非行数）。BH 临界梯
-    （k 序越门阈=α·k/m）报 k=1（最严，α/m）与 k=m（α）两点定梯形。
+    注册表状态面随行（六步门逐门统计量接缝见 GATE_STATISTICS_SEAM）。
+    家族总尝试 m=hypothesis_attempts 账面 COUNT（票 02 口径=总尝试数），
+    非行上 attempt_count 的 MAX——那是族史继承快照，同族多非终态行各自
+    record_attempt 时 MAX 低估总尝试（DSR/BH 分母反保守失真，
+    correctness F1）。BH 临界梯（k 序越门阈=α·k/m）报 k=1（最严，α/m）
+    与 k=m（α）两点定梯形。
     """
+    attempt_counts = {
+        str(row["family"]): int(row["c"])
+        for row in conn.execute(
+            """
+            SELECT r.family, COUNT(*) AS c
+            FROM hypothesis_attempts a
+            JOIN hypothesis_registry r ON r.h_id = a.h_id
+            GROUP BY r.family
+            """
+        )
+    }
     rows = hypothesis_registry.registry_view(conn)
     families: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -157,17 +172,16 @@ def gate_progress(conn: sqlite3.Connection) -> dict[str, Any]:
             str(row["family"]),
             {
                 "family": str(row["family"]),
-                "m_attempts": 0,
                 "n_rows": 0,
                 "statuses": {},
             },
         )
         entry["n_rows"] += 1
-        entry["m_attempts"] = max(entry["m_attempts"], int(row["attempt_count"]))
         status = str(row["status"])
         entry["statuses"][status] = entry["statuses"].get(status, 0) + 1
     for entry in families.values():
-        m = entry["m_attempts"]
+        m = attempt_counts.get(str(entry["family"]), 0)
+        entry["m_attempts"] = m
         entry["dsr_expected_max_z"] = dsr_expected_max_z(m)
         entry["bh_thresholds"] = {
             "k1": GATE_ALPHA / m if m else None,
@@ -459,9 +473,10 @@ def clocks_section(
     """
     ⑥ 双钟读数：contraction-read 同款显式读并落账 + 月读专属两写。
 
-    月读写路径（晨检只读红线）：双钟读数账（同窗吸收）+ 四信号触发史
-    账（v55，UNIQUE(signal, period) 吸收同月）+ B.3 到期读数（只读派生，
-    建议进报告不执行）。全部观测面非决策面。
+    月读写路径（晨检只读红线）：双钟读数账（每次月读每钟追加一行观测
+    流水，F3 裁定口径）+ 四信号触发史账（v55，UNIQUE(signal, period)
+    吸收同月）+ B.3 到期读数（只读派生，建议进报告不执行）。全部
+    观测面非决策面。
     """
     clv, exploration = contraction.record_clock_readings(conn, now=now)
     signals = contraction.record_rescan_signals(conn, period=report_month, now=now)

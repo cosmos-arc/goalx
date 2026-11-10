@@ -384,10 +384,14 @@ def test_exploration_clock_window_excludes_old_survivor(
 # ---- 读数账（v52 contraction_clock_readings：显式读落账，同窗幂等）----
 
 
-def test_record_clock_readings_idempotent(
+def test_record_clock_readings_append_per_read(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """显式读落账：双钟各一行；同窗重读吸收（UNIQUE(clock, window_end)）。"""
+    """显式读落账：每次读每钟追加一行（观测流水，票 04 F3 裁定口径）。
+
+    UNIQUE(clock, window_end) 只吸收同窗（同秒）双写防重；不同时刻的
+    真实重跑各留一行——append 无害，账面=读数流水非幂等面。
+    """
     from datetime import UTC, datetime
 
     now = datetime(2026, 11, 10, tzinfo=UTC)
@@ -400,11 +404,18 @@ def test_record_clock_readings_idempotent(
     assert (
         db.execute("SELECT COUNT(*) FROM contraction_clock_readings").fetchone()[0] == 2
     )
+    # 同秒双写防重（UNIQUE(clock, window_end) 的真实职责）
     again = contraction.record_clock_readings(db, now=now)
     assert {r.clock for r in again} == {"clv_main", "exploration"}
     assert (
-        db.execute("SELECT COUNT(*) FROM contraction_clock_readings").fetchone()[0]
-        == 2  # 同窗重读吸收，不重复落账
+        db.execute("SELECT COUNT(*) FROM contraction_clock_readings").fetchone()[0] == 2
+    )
+    # 不同时刻重跑=新读数，各钟再追加一行（每次月读每钟留痕一行）
+    contraction.record_clock_readings(
+        db, now=datetime(2026, 11, 10, 0, 0, 30, tzinfo=UTC)
+    )
+    assert (
+        db.execute("SELECT COUNT(*) FROM contraction_clock_readings").fetchone()[0] == 4
     )
     row = db.execute(
         """
