@@ -55,10 +55,15 @@ repos:
 
       # --------------------------------------------------------
       # pytest (pre-push 阶段)
+      # 输出经 scripts/pre_push_pytest.sh 落盘+失败时有界回放（票 36）：
+      # pre-commit 对 hook 捕获输出做单次整体重放；log_cli=true 使满量
+      # xdist 的逐用例行不受 -q 压制（~360KB），慢排水/非阻塞 push 管道下
+      # 单次大写触发 BlockingIOError 自崩。回放字节必须 <64KB 管道容量。
+      # 退出码原样透传。
       # --------------------------------------------------------
       - id: pytest-fast
         name: backend fast tests
-        entry: uv run --no-sync pytest apps/backend/tests -q --no-cov -n auto -m "not slow"
+        entry: scripts/pre_push_pytest.sh
         language: system
         pass_filenames: false
         always_run: true
