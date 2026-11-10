@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
 
 from goalx_backend.config import Settings
 from goalx_backend.data import fixtures as fx_store
@@ -349,13 +350,12 @@ def test_week_report_md_written_to_corpus_tree(
 ) -> None:
     from goalx_backend.data.corpus_store import CorpusStore
 
-    anchor_sentinel.compute_week(
+    report = anchor_sentinel.compute_week(
         db,
         2026,
         45,
         srct_reader=reader_from_map(seed_week(db, n=12, srct=STALE_SRCT, pl=FRESH_PL)),
     )
-    report = anchor_sentinel.latest_report(db, iso_year=2026, iso_week=45)
     store = CorpusStore(tmp_path / "corpus")
     try:
         path = anchor_sentinel.write_week_report(store, report)
@@ -654,3 +654,59 @@ def test_morning_check_item_green_on_ok(db: sqlite3.Connection) -> None:
     assert item.status == "ok"
     assert "coverage_second=ok" in item.detail
     assert "dev_prob=ok" in item.detail
+
+
+# ---- correctness 批修回归 ----
+
+
+def test_backfill_old_week_does_not_roll_face_back(db: sqlite3.Connection) -> None:
+    """读取面=最新周（周键序）：手动回填旧周不顶替当前周（id 序缺陷）。"""
+    anchor_sentinel.compute_week(
+        db,
+        2026,
+        45,
+        srct_reader=reader_from_map(seed_week(db, n=11)),
+    )
+    face_current = face_by_axis(db)
+    assert face_current[anchor_sentinel.AXIS_COVERAGE_ANCHOR]["iso_week"] == 45
+    anchor_sentinel.compute_week(
+        db,
+        2026,
+        44,
+        srct_reader=reader_from_map(
+            seed_week(
+                db,
+                n=11,
+                iso_week=anchor_sentinel.previous_iso_week(2026, 45),
+            )
+        ),
+    )
+    face_after = face_by_axis(db)
+    assert face_after == face_current  # 旧周回填不回滚晨检面
+
+
+def test_morning_check_item_yellow_on_insufficient(db: sqlite3.Connection) -> None:
+    """insufficient=晨检黄不红（设计稿 §三）——小周不绿冒充。"""
+    from goalx_backend.morning_check import check_anchor_sentinel
+
+    triplets = seed_week(db, n=9)  # n<10：四轴全 insufficient
+    anchor_sentinel.compute_week(db, 2026, 45, srct_reader=reader_from_map(triplets))
+    item = check_anchor_sentinel(db, now=datetime(2026, 11, 10, 1, 5, tzinfo=UTC))
+    assert item.status == "degraded"
+    assert "insufficient" in item.detail
+
+
+def test_weekly_task_rejects_partial_iso_args(tmp_path: Path) -> None:
+    """--iso-year/--iso-week 必须成对（只给其一=静默丢参数的防呆）。"""
+    from goalx_backend import tasks
+
+    settings = _isolated_settings(tmp_path)
+    face = connect(settings.db_path)
+    try:
+        migrate(face)
+    finally:
+        face.close()
+    with pytest.raises(ValueError, match="成对"):
+        tasks.anchor_sentinel_weekly(
+            iso_year=2026, settings=settings, srct_reader=reader_from_map({})
+        )

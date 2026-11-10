@@ -376,7 +376,13 @@ def compute_week(
 
 
 def latest_week_face(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
-    """读取面：每轴最新留痕行（dict：status/n/metrics/周键/computed_at）。"""
+    """
+    读取面：每轴最新周留痕行（dict：status/n/metrics/周键/computed_at）。
+
+    「最新周」按周键（iso_year, iso_week）排序、id 平局——手动回填旧周
+    （--iso-week 指定历史周重算）不把晨检面滚回旧周（correctness：最新
+    行≠最新周，id 序会被回填行顶替）。
+    """
     face: dict[str, dict[str, Any]] = {}
     for axis in AXES:
         row = conn.execute(
@@ -385,7 +391,7 @@ def latest_week_face(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
                    computed_at
             FROM anchor_sentinel_weekly
             WHERE axis = ?
-            ORDER BY id DESC LIMIT 1
+            ORDER BY iso_year DESC, iso_week DESC, id DESC LIMIT 1
             """,
             (axis,),
         ).fetchone()
@@ -400,36 +406,6 @@ def latest_week_face(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
             "computed_at": str(row["computed_at"]),
         }
     return face
-
-
-def latest_report(
-    conn: sqlite3.Connection, *, iso_year: int, iso_week: int
-) -> dict[str, Any]:
-    """指定 ISO 周的报告读相（每轴最新行；缺轴=该周未完整计算）。"""
-    report: dict[str, Any] = {
-        "iso_year": iso_year,
-        "iso_week": iso_week,
-        "axes": {},
-    }
-    for axis in AXES:
-        row = conn.execute(
-            """
-            SELECT status, n_fixtures, metrics_json, computed_at
-            FROM anchor_sentinel_weekly
-            WHERE iso_year = ? AND iso_week = ? AND axis = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (iso_year, iso_week, axis),
-        ).fetchone()
-        if row is None:
-            continue
-        report["axes"][axis] = {
-            "status": str(row["status"]),
-            "n_fixtures": int(row["n_fixtures"]),
-            "metrics": json.loads(str(row["metrics_json"])),
-        }
-        report["computed_at"] = str(row["computed_at"])
-    return report
 
 
 REPORTS_DIR = "anchor-sentinel"

@@ -1366,6 +1366,9 @@ def anchor_sentinel_weekly(
     resolved = settings if settings is not None else get_settings()
     if not resolved.db_path.exists():
         raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    if (iso_year is None) != (iso_week is None):
+        msg = "--iso-year 与 --iso-week 须成对给出（缺省=最近完整周）"
+        raise ValueError(msg)
     if iso_year is None or iso_week is None:
         iso_year, iso_week = anchor_sentinel.latest_complete_iso_week(now)
     conn = connect(resolved.db_path)
