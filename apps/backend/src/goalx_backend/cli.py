@@ -101,6 +101,7 @@ from goalx_backend.evaluation import metrics as ev
 from goalx_backend.evaluation import model_layers as mlp
 from goalx_backend.evaluation import multiline_bounds as mlb
 from goalx_backend.evaluation import news_signal as nsw
+from goalx_backend.evaluation import pbo_feasibility as pbo
 from goalx_backend.evaluation import price_edge as pe
 from goalx_backend.evaluation import signal_attribution as sig
 from goalx_backend.evaluation.drift_replay import drift_replay_report
@@ -748,6 +749,14 @@ def _cmd_xg_compare(args: argparse.Namespace) -> None:
             shrink_k=tuple(float(k) for k in args.shrink_k),
         )
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_pbo_feasibility(args: argparse.Namespace) -> None:
+    """CSCV-PBO 可行性核验（票 33）：试验账只读分析，verdict JSON 打 stdout。"""
+    verdict = pbo.assess_pbo_feasibility(pbo.load_trial_ledger(args.ledger))
+    sys.stdout.write(
+        json.dumps(pbo.verdict_payload(verdict), ensure_ascii=False, indent=2) + "\n"
+    )
 
 
 def _cmd_srct_collect(
@@ -1923,6 +1932,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     xgcmp.add_argument(
         "--shrink-k", nargs="*", default=["6"], help="收缩先验 k 值列表(默认 6)"
     )
+    pbo_parser = sub.add_parser(
+        "pbo-feasibility",
+        help="CSCV-PBO 可行性核验(票 33;试验账只读,verdict JSON)",
+    )
+    pbo_parser.add_argument(
+        "--ledger", required=True, help="EM 试验账 CSV 路径(轮 1 冻结档)"
+    )
     corpus = sub.add_parser(
         "corpus-report", help="十年语料报表(票 46;完整性+可选交叉验证)"
     )
@@ -2191,6 +2207,7 @@ def main(argv: list[str] | None = None) -> int:
         "clv-reconcile": _cmd_clv_reconcile,
         "pool-backfill": lambda: _cmd_pool_backfill(args),
         "xg-compare": lambda: _cmd_xg_compare(args),
+        "pbo-feasibility": lambda: _cmd_pbo_feasibility(args),
         "corpus-report": lambda: _cmd_corpus_report(args),
         "pool-replay-report": lambda: _cmd_pool_replay_report(args),
         "drift-replay-report": lambda: _cmd_drift_replay_report(args),
