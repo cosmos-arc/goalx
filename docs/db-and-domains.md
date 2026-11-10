@@ -86,6 +86,7 @@
 | `forecast_scores` | 前瞻准确率评分行（auto-paper 票 02） | acc-v1：had/hhad=RPS、ttg/crs/hafu=Brier+log-loss；双基准差值=票 01 快照同窗（缺=unknown NULL）；hhad 仅整数线/hafu 缺半场 → skip_reason 行；派生概率不落库（ADR-0006） | upsert UNIQUE(fixture,market,version)；结果更正 fingerprint 覆盖重评 |
 | `edge_findings` | 探索轨发现台账（autoresearch 票 01） | 越门发现一行（scanner/segment/metric_value/n/se/window）；晋升=人裁开验证票（status new→promoted\|dead） | append+幂等 UNIQUE(scanner,segment,window)；status 人裁 UPDATE |
 | `edge_observations` | 扫描器运行/观测留痕（autoresearch 票 01/04/02） | s1 逐窗统计快照/s2 模型校准分箱+EV 实现差（票 02：分玩法置信 10 箱 + 纸面注配对差，n≥200 门）/s4 观测日（无信号日记零）/s5 期次回看（滚存标注）；派生态非证据 | 同键 REPLACE 重跑重建 |
+| `anchor_sentinel_weekly` | 断点哨兵周级留痕（autoresearch 票 34） | srct（cid177 第一锚，只读）× propline:pinnacle（第二源）周级三轴（coverage_second/coverage_anchor/dev_odds/dev_prob）；1a 分母=cid177 资格场防自反、1b 分母=fixture 侧、signed 周均值禁用（结构零）；alert=留痕+晨检红面不自动处置 | append+幂等（同周重跑追加，读取最新行胜出） |
 
 ### infra / 脚手架
 
@@ -120,6 +121,9 @@ as-of 纯函数重放即决策存证；EVAssessment 口径在视图与 betting �
 ```mermaid
 erDiagram
     admin_match_exclusions {
+        INTEGER id PK
+    }
+    anchor_sentinel_weekly {
         INTEGER id PK
     }
     auto_paper_runs {
@@ -1575,6 +1579,21 @@ measure-02（v29）：冻结决策 write-once 的分歧账——同业务日重�
 
 唯一键 `UNIQUE(`business_date`, `fixture_id`, `anchor_label`, `source`, `market`)`
 <!-- schema-doc:END:table:market_baseline_snapshots -->
+<!-- schema-doc:BEGIN:table:anchor_sentinel_weekly -->
+#### `anchor_sentinel_weekly`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `iso_year` | INTEGER | NOT NULL |
+| `iso_week` | INTEGER | NOT NULL |
+| `axis` | TEXT | NOT NULL |
+| `status` | TEXT | NOT NULL |
+| `n_fixtures` | INTEGER | NOT NULL |
+| `metrics_json` | TEXT | NOT NULL |
+| `note` | TEXT | — |
+| `computed_at` | TEXT | NOT NULL |
+<!-- schema-doc:END:table:anchor_sentinel_weekly -->
 ### infra / 脚手架
 
 <!-- schema-doc:BEGIN:table:markets -->

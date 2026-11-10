@@ -1494,6 +1494,51 @@ def _srct_pinnacle_asof(
     return float(event[0]), float(event[1]), float(event[2])
 
 
+#: 哨兵第二源腿的快照源标签（票 34：propline 采集面的 pinnacle-only 写入）
+PROPLINE_PINNACLE_SOURCE = "propline:pinnacle"
+
+
+def propline_pinnacle_closing_triplet(
+    conn: sqlite3.Connection, fixture_id: int, kickoff_utc: str
+) -> tuple[float, float, float] | None:
+    """
+    propline:pinnacle 资格收盘三元组（票 34 断点哨兵第二源腿）。
+
+    资格线=captured_at < kickoff（哨兵的「收盘」=开球前最后一拍，与生产
+    srct published_at ≤ kickoff 末笔同构；免费层无历史端点，断采窗口永久
+    缺——覆盖轴显形不静默）。取每选项末笔；三向不全=None（快照三向才
+    完整=既有裁决，采集侧保证同拍三向，读侧再守一道）。odds_snapshots
+    属主查询（ADR-0008）。
+    """
+    rows = conn.execute(
+        """
+        SELECT selection_code, odds FROM odds_snapshots
+        WHERE fixture_id = ? AND market_code = 'had'
+          AND source = ? AND captured_at < ?
+        ORDER BY captured_at
+        """,
+        (fixture_id, PROPLINE_PINNACLE_SOURCE, kickoff_utc),
+    ).fetchall()
+    latest: dict[str, float] = {}
+    for row in rows:
+        latest[str(row["selection_code"])] = float(row["odds"])
+    if set(latest) != {"h", "d", "a"}:
+        return None
+    return latest["h"], latest["d"], latest["a"]
+
+
+def assert_odds_change_event_view(con: duckdb.DuckDBPyConnection) -> None:
+    """
+    金丝雀读：odds_change_event 视图须可解析（缺则抛 duckdb.Error）。
+
+    桥文件在而视图缺（gold-rebuild 崩一半等）时 CatalogException 会被
+    srct_pinnacle_asof_triplet 逐场吞成 None——整周全 None 落成假 1b
+    alert（票 34 哨兵）。对账面前置金丝雀把该形态转 deferred
+    （独立复核 F2）。odds_change_event 读侧属主查询（ADR-0008）。
+    """
+    con.execute("SELECT 1 FROM odds_change_event LIMIT 1").fetchall()
+
+
 def _resolve_sid_fallback(
     con: duckdb.DuckDBPyConnection, home: str, away: str, beijing: datetime
 ) -> str | None:

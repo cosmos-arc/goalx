@@ -257,6 +257,39 @@ def jc_board_rows_in_horizon(
     ).fetchall()
 
 
+def jc_fixtures_by_competition_window(
+    conn: sqlite3.Connection,
+    *,
+    competitions: tuple[str, ...],
+    kickoff_from_iso: str,
+    kickoff_to_iso: str,
+) -> list[sqlite3.Row]:
+    """
+    指定联赛 ∩ 竞彩宇宙 ∩ [from, to) 开球窗的场次（票 34 断点哨兵配对域）。
+
+    DISTINCT fixture 身份 + 主客 canonical 队名 + 联赛名投影；窗为半开
+    区间。fixtures/match_codes/competitions/teams 属主查询（ADR-0008），
+    ISO 周桶等哨兵口径在调用方（evaluation/anchor_sentinel）。
+    """
+    marks = ",".join("?" for _ in competitions)
+    return conn.execute(
+        f"""
+            SELECT DISTINCT f.id, f.kickoff_utc,
+                   ht.canonical_name AS home_name, at.canonical_name AS away_name,
+                   c.name AS competition_name
+            FROM fixtures f
+            JOIN match_codes mc ON mc.fixture_id = f.id AND mc.kind = 'jingcai'
+            JOIN competitions c ON c.id = f.competition_id
+            JOIN teams ht ON ht.id = f.home_team_id
+            JOIN teams at ON at.id = f.away_team_id
+            WHERE c.name IN ({marks})
+              AND f.kickoff_utc >= ? AND f.kickoff_utc < ?
+            ORDER BY f.id
+        """,  # noqa: S608 — 占位符由 competitions 定宽构造，非用户输入
+        (*competitions, kickoff_from_iso, kickoff_to_iso),
+    ).fetchall()
+
+
 def upsert_match_code(conn: sqlite3.Connection, code: MatchCodeInput) -> int:
     """Insert or refresh an official sales code for a fixture; return its id."""
     conn.execute(

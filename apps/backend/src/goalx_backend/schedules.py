@@ -78,10 +78,10 @@ from goalx_backend.run_fingerprint import process_face
 
 def build_deployments() -> dict[str, RunnerDeployment]:
     """
-    全量 deployment 装配：手写组合面 + 注册表推导面 = 22 面。
+    全量 deployment 装配：手写组合面 + 注册表推导面 = 24 面。
 
     组合面手写（票 09 后 6 面 + auto-paper 票 01 冻结面）+ 注册表推导面
-    （15 面）。
+    （17 面）。
 
     纯构造不副作用（serve 在 main）；规格断言测试打此处锁 serve 清单。
     """

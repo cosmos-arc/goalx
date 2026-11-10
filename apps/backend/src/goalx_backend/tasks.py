@@ -79,7 +79,7 @@ from goalx_backend.data.quote_evidence import (
     bind_quote_reads,
 )
 from goalx_backend.db import atomic, connect, migrate, utc_now_iso
-from goalx_backend.evaluation import accuracy, edge_scan
+from goalx_backend.evaluation import accuracy, anchor_sentinel, edge_scan
 from goalx_backend.evaluation import clv as clv_mod
 from goalx_backend.evaluation.baseline_freeze import (
     anchor_label_at,
@@ -1297,6 +1297,122 @@ def edge_digest_week() -> dict[str, object]:
         finally:
             store.close()
     return report
+
+
+def anchor_sentinel_capture(
+    *,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """
+    断点哨兵采集面（票 34 设计稿 §二）：窄化 propline 拉取。
+
+    仅 pinnacle（服务端 bookmakers 过滤，~50-200 请求/日，护栏 900 原样
+    复用）仅活跃 sport（已链 36h ∪ JC FD 待链 7d，零请求选择）；滚中行
+    写侧防护（commence 已过只入观察不入对账）。零候选零请求空转正常。
+    settings/client/now 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    moment = now or datetime.now(UTC)
+    with ExitStack() as stack:
+        conn = stack.enter_context(connect(resolved.db_path))
+        migrate(conn)
+        run_client = (
+            client if client is not None else stack.enter_context(polite_client())
+        )
+        sports = propline.sentinel_sport_keys(conn, moment)
+        stats = propline.fetch_and_store_odds(
+            conn,
+            resolved,
+            run_client,
+            raw_root=resolved.observations_dir,
+            now=moment,
+            sport_keys=sports,
+            books=(propline.SENTINEL_BOOK,),
+            skip_commenced=True,
+        )
+    return {
+        "sports": sports,
+        "requests": stats.requests_used,
+        "snapshots": stats.ingest.snapshots,
+        "duplicate_snapshots": stats.ingest.duplicate_snapshots,
+        "post_commence": stats.post_commence,
+        "skipped_no_books": stats.skipped_no_books,
+        "unavailable_sports": stats.unavailable_sports,
+        "daily_remaining": stats.daily_remaining,
+    }
+
+
+def anchor_sentinel_weekly(
+    *,
+    iso_year: int | None = None,
+    iso_week: int | None = None,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+    srct_reader: anchor_sentinel.SrctReader | None = None,
+) -> dict[str, object]:
+    """
+    断点哨兵对账面（票 34 设计稿 §四）：周一 08:50 三轴计算+留痕+周报 md。
+
+    缺省=最近完整 ISO 周（晚于它的周拒收——未来周行会钉死晨检面，
+    独立复核 F3）；srct 腿只读消费 srct_pinnacle_closing_triplet（与
+    生产 CLV 锚同一函数=同一语义，生产第一锚零改动）。语料桥缺席/视图
+    缺（金丝雀读）=deferred 不落行（防"全覆盖塌缩"假 alert 留痕；晨检
+    8 天无新周行条款兜底可见）。iso_year/iso_week/settings/now/srct_reader
+    注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    if (iso_year is None) != (iso_week is None):
+        msg = "--iso-year 与 --iso-week 须成对给出（缺省=最近完整周）"
+        raise ValueError(msg)
+    latest_year, latest_week = anchor_sentinel.latest_complete_iso_week(now)
+    if iso_year is None or iso_week is None:
+        iso_year, iso_week = latest_year, latest_week
+    elif (iso_year, iso_week) > (latest_year, latest_week):
+        msg = (
+            f"拒绝未来 ISO 周 {iso_year}-W{iso_week:02d}"
+            f"（最近完整周={latest_year}-W{latest_week:02d}；未来周行会钉死晨检面）"
+        )
+        raise ValueError(msg)
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        # 桥连接活到 compute 结束（独立复核 F1：srct 腿闭包在 compute 期逐场
+        # 查询，提前 close=逐场降级 None=整周假 1b alert）
+        duck_con = None
+        try:
+            if srct_reader is None:
+                try:
+                    duck_con = corpus_duckdb.connect(resolved)
+                    quote_evidence.assert_odds_change_event_view(duck_con)
+                except (duckdb.Error, OSError) as exc:
+                    note = f"corpus_anchor_unavailable: {exc}"
+                    logger.warning("anchor-sentinel-weekly {}", note)
+                    return {
+                        "deferred": note,
+                        "iso_year": iso_year,
+                        "iso_week": iso_week,
+                    }
+                srct_reader = anchor_sentinel.make_srct_reader(conn, duck_con)
+            report = anchor_sentinel.compute_week(
+                conn, iso_year, iso_week, srct_reader=srct_reader, now=now
+            )
+        finally:
+            if duck_con is not None:
+                duck_con.close()
+        store = CorpusStore(resolved.corpus_root)
+        try:
+            path = anchor_sentinel.write_week_report(store, report)
+        finally:
+            store.close()
+    finally:
+        conn.close()
+    return {**report, "md_path": str(path)}
 
 
 def frozen_reconcile() -> dict[str, object]:

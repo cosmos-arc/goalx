@@ -2235,6 +2235,39 @@ def _apply_v47(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE freshness_shadow ADD COLUMN clock_gap_seconds REAL")
 
 
+def _apply_v48(conn: sqlite3.Connection) -> None:
+    """
+    v48（autoresearch 票 34）：断点哨兵周级留痕表 anchor_sentinel_weekly。
+
+    一行=一 ISO 周一轴（coverage_second/coverage_anchor/dev_odds/dev_prob）
+    的判定；append-only 追加（同周重跑新增行，读取取每轴最新行胜出）。
+    告警动作到此为止=留痕+晨检红面（设计稿 13-sentinel-design §五：不换
+    锚/不补采/不启动付费兜底）。表查询归 evaluation（ADR-0008，v45 同款）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS anchor_sentinel_weekly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            iso_year INTEGER NOT NULL,
+            iso_week INTEGER NOT NULL,
+            axis TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (status IN ('ok', 'warn', 'alert', 'insufficient')),
+            n_fixtures INTEGER NOT NULL,
+            metrics_json TEXT NOT NULL,
+            note TEXT,
+            computed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_anchor_sentinel_week
+            ON anchor_sentinel_weekly (iso_year, iso_week, axis, id)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -2283,6 +2316,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (45, _apply_v45),
     (46, _apply_v46),
     (47, _apply_v47),
+    (48, _apply_v48),
 )
 
 
