@@ -62,6 +62,9 @@ class Purpose(StrEnum):
     SCOUT = "scout"
     POOL = "pool"
     ASK = "ask"
+    # vision-build 票 03：周批提案层（generate/critique）——非彩池用途，
+    # 80% 熔断档自动不放行（_enforce_purpose 只放 POOL）
+    WEEKLY = "weekly"
 
 
 @dataclass(frozen=True)

@@ -39,6 +39,8 @@ task_conn 壳。日常定时采集走 Prefect deployments；本 CLI 覆盖初始
         --reason "滞后案例率 63.6% 远超门（人裁）"
     uv run python -m goalx_backend.cli contraction-set --level L1 --reason "主钟触发"
     uv run python -m goalx_backend.cli contraction-read
+    uv run python -m goalx_backend.cli proposal-register <提案文件>\
+      [--proposal-id P-… --h-id H9]
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 import httpx
@@ -106,6 +108,7 @@ from goalx_backend.evaluation import (
     hypothesis_registry,
     market_lambda,
     unlock_report,
+    weekly_agent,
 )
 from goalx_backend.evaluation import bucket_reaudit as bkt
 from goalx_backend.evaluation import clv as clv_mod
@@ -341,6 +344,75 @@ def _cmd_contraction_read(*, settings: Settings | None = None) -> None:
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     logger.info("contraction clocks: {}", payload)
+
+
+def _cmd_proposal_register(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    周批提案人审注册（vision-build 票 03，人 CLI）：过审提案 freeze 进注册表。
+
+    两态：缺省 --proposal-id/--h-id=只读清单（人审 checklist + 提案概要，
+    零写入）；两旗齐给=把该提案经 register_hypothesis（actor='human:cli'）
+    注册冻结。前置哨（无对抗质疑反驳/撞 refuted 库）fail-loud 零写入。
+    settings 注入口只服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    proposal_file = Path(args.proposal_file)
+    if not proposal_file.is_file():
+        raise FileNotFoundError(f"提案文件不存在: {proposal_file}")
+    beat = weekly_agent.parse_beat_file(proposal_file)
+    proposals: list[dict[str, Any]] = cast(
+        "list[dict[str, Any]]", beat.get("proposals", [])
+    )
+    rejected = cast("list[dict[str, Any]]", beat.get("rejected", []))
+    if args.proposal_id is None or args.h_id is None:
+        payload: dict[str, Any] = {
+            "mode": "review",
+            "file": str(proposal_file),
+            "run_date": beat.get("run_date"),
+            "checklist": list(weekly_agent.HUMAN_REVIEW_CHECKLIST),
+            "proposals": [
+                {
+                    "id": str(p.get("id")),
+                    "statement": str(p.get("statement")),
+                    "ledger_ref": str(p.get("ledger_ref")),
+                    "critiqued": bool(str(p.get("critique") or "").strip()),
+                }
+                for p in proposals
+            ],
+            "rejected": [
+                {"reasons": [str(r) for r in item.get("reasons", [])]}
+                for item in rejected
+            ],
+            "hint": "人审确认 checklist 后：proposal-register <file>"
+            + " --proposal-id <id> --h-id <新h_id> [--family <族>] 完成注册",
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        return
+    if not str(args.h_id).strip():
+        raise SystemExit("--h-id 不能为空")
+    conn = connect(resolved.db_path)
+    try:
+        migrate(conn)
+        result = weekly_agent.register_from_proposal(
+            conn,
+            proposal_file,
+            proposal_id=str(args.proposal_id),
+            h_id=str(args.h_id),
+            family=str(args.family) if args.family else None,
+        )
+    finally:
+        conn.close()
+    payload = {
+        **result,
+        "actor": "human:cli",
+        "checklist": list(weekly_agent.HUMAN_REVIEW_CHECKLIST),
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info("proposal registered: {}", payload)
 
 
 def _cmd_ingest_jingcai() -> None:
@@ -2524,6 +2596,22 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "contraction-read",
         help="收缩双钟读数+落账(vision票08;首读/月读口,同窗重读吸收)",
     )
+    proposal_register_parser = sub.add_parser(
+        "proposal-register",
+        help="周批提案人审注册(vision票03;缺省=checklist清单,--proposal-id/--h-id=freeze进注册表)",
+    )
+    proposal_register_parser.add_argument(
+        "proposal_file", help="提案文件路径（周拍 JSON，语料树 reports/proposals/）"
+    )
+    proposal_register_parser.add_argument(
+        "--proposal-id", help="要注册的提案 id（如 P-20261116-01）"
+    )
+    proposal_register_parser.add_argument(
+        "--h-id", help="注册用的假设 id（新 h_id，改预测=新 h_id）"
+    )
+    proposal_register_parser.add_argument(
+        "--family", help="假设族（缺省=h_id；家族复试继承 attempt 计数）"
+    )
     # 注册数据集子命令（票 02 起：guardian-sync / pool-sync / srct-night）
     datasets.add_cli_subparsers(sub)
     return parser
@@ -2609,6 +2697,7 @@ def main(argv: list[str] | None = None) -> int:
         "hypothesis-mark": lambda: _cmd_hypothesis_mark(args),
         "contraction-set": lambda: _cmd_contraction_set(args),
         "contraction-read": _cmd_contraction_read,
+        "proposal-register": lambda: _cmd_proposal_register(args),
     }
     # 注册数据集命令（票 02 起）：dispatch 与手写面向同一 tasks 函数；
     # cli=False 记录不派生（official-reconcile 手写 handler 带 pending_manual 走查）

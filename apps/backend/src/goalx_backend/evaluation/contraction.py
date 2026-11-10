@@ -43,7 +43,9 @@ CLV_CLOCK_MIN_N = 50  # 票 01 触发器 A 滚动窗同数
 CLV_CLOCK_SE_GATE = 2.0  # 单侧 2SE（票 01 同门）
 EXPLORATION_WINDOW_DAYS = 365  # 12 月窗
 #: 探索钟锚点=周批首跑日（prereg B.2：不折算历史段，只有前向能答）。
-#: TODO(票 03)：周批 deployment 落地首跑后钉值（ISO 日期串）。
+#: 运行面真源=exploration_clock_anchor 账行（v54，周批首跑经
+#: ensure_exploration_anchor 一次性钉值）；本常量=无账行时的 prereg 兜底
+#: （票 08 冻结值 None，账行落值前读数恒 unanchored）。
 EXPLORATION_CLOCK_ANCHOR: str | None = None
 EM_SWEEP_FRESH_HOURS = 26.0  # EM 阵列新鲜界（晨检同口径；s5 期次节奏不进）
 #: EM 日频阵列（新鲜度面）：与晨检项 17 同集合
@@ -500,6 +502,43 @@ def rescan_signals(
 # ---- 探索钟（prereg B.2：365 日窗 / 锚点 / EM 全阴 + 零幸存者）----
 
 
+def ensure_exploration_anchor(
+    conn: sqlite3.Connection, anchor_date: str, *, actor: str
+) -> str:
+    """
+    探索钟锚点一次性钉值（票 03 周批首跑写口）：无锚=写入，有锚=返回既有。
+
+    append-only（v54 账行 UPDATE/DELETE 库层拒绝）且一次性：幂等重跑
+    （同值）与后续周拍（异值）都不覆盖——锚量的是「新回路首跑日」，
+    只有第一次真跑算数。周批 flow 每次真跑前调用（幂等可常调）；
+    返回生效锚（ISO 日期串）供留痕。
+    """
+    with atomic(conn):
+        row = conn.execute(
+            "SELECT anchor_date FROM exploration_clock_anchor WHERE id = 1"
+        ).fetchone()
+        if row is not None:
+            return str(row["anchor_date"])
+        conn.execute(
+            """
+            INSERT INTO exploration_clock_anchor (id, anchor_date, actor, ts)
+            VALUES (1, ?, ?, ?)
+            """,
+            (anchor_date, actor, utc_now_iso()),
+        )
+    return anchor_date
+
+
+def _effective_anchor(conn: sqlite3.Connection) -> str | None:
+    """生效锚点：DB 账行优先，缺席回退 prereg 常量（票 08 行为兜底）。"""
+    row = conn.execute(
+        "SELECT anchor_date FROM exploration_clock_anchor WHERE id = 1"
+    ).fetchone()
+    if row is not None:
+        return str(row["anchor_date"])
+    return EXPLORATION_CLOCK_ANCHOR
+
+
 @dataclass(frozen=True)
 class ExplorationClockReading:
     """探索钟一次读数（幸存者计数面；unanchored/insufficient 只报不判）。"""
@@ -576,7 +615,8 @@ def exploration_clock_reading(
     resolved = now or datetime.now(UTC)
     window_end = resolved.isoformat(timespec="seconds")
     fresh = _em_sweeps_fresh(conn, now=resolved)
-    if EXPLORATION_CLOCK_ANCHOR is None:
+    anchor_raw = _effective_anchor(conn)
+    if anchor_raw is None:
         return ExplorationClockReading(
             window_start=None,
             window_end=window_end,
@@ -585,7 +625,7 @@ def exploration_clock_reading(
             scanners_fresh=fresh,
             status="unanchored",
         )
-    anchor = _parse_iso_utc(EXPLORATION_CLOCK_ANCHOR)
+    anchor = _parse_iso_utc(anchor_raw)
     if anchor > resolved - timedelta(days=EXPLORATION_WINDOW_DAYS):
         return ExplorationClockReading(
             window_start=anchor.isoformat(timespec="seconds"),

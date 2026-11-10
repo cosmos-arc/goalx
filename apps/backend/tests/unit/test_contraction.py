@@ -75,8 +75,8 @@ def test_migration_v52_idempotent(db: sqlite3.Connection) -> None:
     """v52 幂等：两表就位、genesis L0 落账、重跑零效果（同版本重跑先例）。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 53
-    assert migrate(db) == 53  # 同版本重跑零效果
+    assert migrate(db) == 54
+    assert migrate(db) == 54  # 同版本重跑零效果
     for table in ("contraction_transitions", "contraction_clock_readings"):
         assert (
             db.execute(
@@ -800,3 +800,51 @@ def test_rescan_signals_l3l4_timer_face_unwired(db: sqlite3.Connection) -> None:
     }
     assert faces["l3l4_timer"].status == "unwired"
     assert "票 04" in faces["l3l4_timer"].detail
+
+
+# ---- 票 03 接线：探索钟锚点一次性写口（周批首跑钉值） ----
+
+
+def test_exploration_anchor_one_time_write_port(db: sqlite3.Connection) -> None:
+    """锚点写口：一次性（首写落账）、幂等重跑不覆盖（同值/异值都返回既有锚）。"""
+    effective = contraction.ensure_exploration_anchor(
+        db, "2026-11-16", actor="agent:weekly-batch"
+    )
+    assert effective == "2026-11-16"
+    # 幂等重跑（同值）：不覆盖、不多行
+    assert (
+        contraction.ensure_exploration_anchor(
+            db, "2026-11-16", actor="agent:weekly-batch"
+        )
+        == "2026-11-16"
+    )
+    # 后续周拍（异值）：仍返回首跑锚（一次性，不覆盖）
+    assert (
+        contraction.ensure_exploration_anchor(
+            db, "2026-11-23", actor="agent:weekly-batch"
+        )
+        == "2026-11-16"
+    )
+    rows = db.execute("SELECT anchor_date FROM exploration_clock_anchor").fetchall()
+    assert [str(r["anchor_date"]) for r in rows] == ["2026-11-16"]
+
+
+def test_exploration_clock_reading_prefers_db_anchor(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """读数锚点解析：DB 锚行优先，缺席回退模块常量（票 08 行为不变）。"""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 11, 16, tzinfo=UTC)
+    # 无 DB 锚 + 常量 None → unanchored（票 08 原行为）
+    assert contraction.exploration_clock_reading(db, now=now).status == "unanchored"
+    # 无 DB 锚 + 常量有值 → 用常量（monkeypatch 只影响常量面，不改库）
+    monkeypatch.setattr(contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-16")
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.status in ("ok", "insufficient")  # 恰满弦=insufficient（无留痕）
+    assert reading.window_start is not None
+    # DB 锚优先于常量
+    contraction.ensure_exploration_anchor(db, "2026-11-09", actor="agent:weekly-batch")
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.status == "insufficient"  # 锚后 7 日，远未满弦
+    assert reading.window_start == "2026-11-09T00:00:00+00:00"

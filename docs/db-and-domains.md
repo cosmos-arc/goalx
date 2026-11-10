@@ -91,6 +91,9 @@
 | `hypothesis_attempts` | 假设逐次评估留痕（vision-build 票 02） | UNIQUE(h_id, window_key) 吸收同窗重扫（scanner 前缀域窗键）；attempt_count 递增的唯一入口 | append-only |
 | `contraction_transitions` | 收缩级别 transitions 账（vision-build 票 08） | 五级反向金丝雀（L0…L4）级别变更留痕；genesis=L0，现态=最新行；相邻一级转移（跳级/自环拒绝，重升必经 L2）；级别变更恒人 CLI（actor 哨，agent 无路径） | append-only（触发器拒改写） |
 | `contraction_clock_readings` | 收缩双钟读数账（vision-build 票 08） | clv_main=CLV 主钟滚动 183 日窗概率域均值（3% 阈/2SE 单侧/n≥50）；exploration=探索钟 365 日窗幸存者计数（锚点=周批首跑日，票 03 钉）；显式读（人 CLI/月读）落账，晨检只读 | append-only；UNIQUE(clock, window_end) 吸收同窗重读 |
+| `llm_proposal_costs` | 周批提案层 LLM 花费账（vision-build 票 03） | 逐调用一行：phase=generate（批次级 B-yyyymmdd）/critique（逐条提案 id）+model/tokens/cost_cny；票 04 月读月度复核消费 | append-only（触发器拒改写） |
+| `weekly_agent_state` | 周批空转守卫水位（vision-build 票 03） | face='watermark' 一行：edge_findings 最大 id + 教训库条目数（对比上次周拍，无新料只报心跳不烧 LLM） | face 键 upsert（face_derive_state 同款） |
+| `exploration_clock_anchor` | 探索钟锚点一次性钉值账（vision-build 票 03） | id=1 单行：周批首跑日（ensure_exploration_anchor 一次性写入，幂等重跑/后续周拍不覆盖）；读数 DB 行优先、缺席回退常量 | append-only（触发器拒改写）+ id=1 单行约束 |
 
 ### infra / 脚手架
 
@@ -213,6 +216,9 @@ erDiagram
     }
     elo_ratings {
     }
+    exploration_clock_anchor {
+        INTEGER id PK
+    }
     face_derive_state {
         TEXT face PK
     }
@@ -262,6 +268,9 @@ erDiagram
         INTEGER id PK
     }
     intel_observations {
+        INTEGER id PK
+    }
+    llm_proposal_costs {
         INTEGER id PK
     }
     market_baseline_snapshots {
@@ -358,6 +367,9 @@ erDiagram
     }
     version_transitions {
         INTEGER id PK
+    }
+    weekly_agent_state {
+        TEXT face PK
     }
     backtest_bets }|--|| backtest_runs : run_id
     backtest_metrics }|--|| backtest_runs : run_id
@@ -1919,6 +1931,55 @@ append-only 触发器：`contraction_transitions_no_delete`、`contraction_trans
 
 append-only 触发器：`contraction_clock_readings_no_delete`、`contraction_clock_readings_no_update`
 <!-- schema-doc:END:table:contraction_clock_readings -->
+
+<!-- schema-doc:BEGIN:table:llm_proposal_costs -->
+#### `llm_proposal_costs`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `proposal_id` | TEXT | NOT NULL |
+| `phase` | TEXT | NOT NULL |
+| `model` | TEXT | NOT NULL |
+| `prompt_tokens` | INTEGER | NOT NULL |
+| `completion_tokens` | INTEGER | NOT NULL |
+| `cost_cny` | REAL | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+
+append-only 触发器：`llm_proposal_costs_no_delete`、`llm_proposal_costs_no_update`
+<!-- schema-doc:END:table:llm_proposal_costs -->
+
+<!-- schema-doc:BEGIN:table:weekly_agent_state -->
+#### `weekly_agent_state`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `face` | TEXT | PK |
+| `updated_at` | TEXT | NOT NULL |
+| `stats` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`face`)`
+<!-- schema-doc:END:table:weekly_agent_state -->
+
+<!-- schema-doc:BEGIN:table:exploration_clock_anchor -->
+#### `exploration_clock_anchor`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `anchor_date` | TEXT | NOT NULL |
+| `actor` | TEXT | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+
+append-only 触发器：`exploration_clock_anchor_no_delete`、`exploration_clock_anchor_no_update`
+<!-- schema-doc:END:table:exploration_clock_anchor -->
+
+vision-build 票 03（v54）：周批 agent 循环三账——提案层 LLM 花费
+（generate=批次/critique=逐条，票 04 月读消费）、空转守卫水位
+（台账+教训库对比上次周拍，无新料只报心跳——反模式 7 自然刹车）、
+探索钟锚点一次性钉值（票 08 常量 None 的运行面真源；周批首跑日，
+append-only 不覆盖）。SQL 属主 evaluation/weekly_agent.py +
+contraction.py（ensure_exploration_anchor）。
 
 vision-build 票 08（v52）：收缩双钟两账——五级反向金丝雀（L0 全速→L1
 停新注册→L2 停探针+自动选票→L3 采集缩监测最小集→L4 全停只留漂移监测）
