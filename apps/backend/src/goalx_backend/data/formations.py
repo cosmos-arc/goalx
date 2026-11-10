@@ -29,7 +29,7 @@ import duckdb
 from goalx_backend.data.coach_changes import Tenure, assign_manager_day
 from goalx_backend.data.leagues import LEAGUE_TO_FD
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.modelling.team_align import transfermarkt_alias_by_team
+from goalx_backend.modelling.team_align import transfermarkt_aliases_by_team
 
 #: 受控族全集（迁移 v53 CHECK 字面同源；「other」只由兜底产生，不经映射）
 FAMILIES: tuple[str, ...] = (
@@ -86,15 +86,19 @@ class _Cell:
     team_id: int
 
 
-def _corpus_sides(duck_con: DuckCon) -> tuple[Iterator[dict[str, object]], int]:
+def _corpus_sides(
+    duck_con: DuckCon,
+) -> tuple[Iterator[dict[str, object]], int, int]:
     """
     语料侧观察流：match_detail × fixture_universe（sid 链）逐场两侧。
 
-    返回 (行迭代, 语料总场数)。season 取 universe hive 分区（8 月界），
-    league 取中文名（fd 映射在落库时折算）；day 取 match_detail 开球 UTC
-    日期（duckdb 会话时区会影响 TIMESTAMPTZ 直 CAST，须 AT TIME ZONE
-    'UTC' 归一——欧洲晚场 20:00Z 不漂日）；universe 缺席的孤儿 sid 计入
-    总数但不出行（无赛季轴，诚实丢弃——覆盖报告的 universe_missing）。
+    返回 (行迭代, 语料总场数, 开球缺失场数)。season 取 universe hive 分区
+    （8 月界），league 取中文名（fd 映射在落库时折算）；day 取
+    match_detail 开球 UTC 日期（duckdb 会话时区会影响 TIMESTAMPTZ 直
+    CAST，须 AT TIME ZONE 'UTC' 归一——欧洲晚场 20:00Z 不漂日）。
+    universe 缺席的孤儿 sid 计入总数但不出行（无赛季轴，诚实丢弃——
+    universe_missing）；kickoff NULL 场独立分桶（correctness-review F8，
+    不混入 universe_missing）。
     """
     rows = duck_con.execute(
         """
@@ -112,6 +116,10 @@ def _corpus_sides(duck_con: DuckCon) -> tuple[Iterator[dict[str, object]], int]:
     ).fetchall()
     seen = duck_con.execute("SELECT COUNT(*) FROM match_detail").fetchone()
     total = int(seen[0]) if seen is not None else 0
+    nulls = duck_con.execute(
+        "SELECT COUNT(*) FROM match_detail WHERE kickoff IS NULL"
+    ).fetchone()
+    kickoff_missing = int(nulls[0]) if nulls is not None else 0
 
     def stream() -> Iterator[dict[str, object]]:
         for sid, day, home_f, away_f, season, league in rows:
@@ -124,7 +132,7 @@ def _corpus_sides(duck_con: DuckCon) -> tuple[Iterator[dict[str, object]], int]:
                 "league": str(league),
             }
 
-    return stream(), total
+    return stream(), total, kickoff_missing
 
 
 def _linked_sides(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
@@ -146,14 +154,18 @@ def _linked_sides(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
     }
 
 
-def _tm_clubs(conn: sqlite3.Connection) -> tuple[dict[int, str], dict[str, int]]:
+def _tm_clubs(
+    conn: sqlite3.Connection,
+) -> tuple[dict[int, tuple[str, ...]], dict[str, int]]:
     """
-    TM 身份两查（team→TM 俱乐部名 / 俱乐部名→club_tm_id）。
+    TM 身份两查（team→TM 俱乐部名全集 / 俱乐部名→club_tm_id）。
 
     别名桥经 team_align 读口（transfermarkt，ADR-0008 属主）；club_name
-    撞多名俱乐部（TM 重命名窗口等）→ 不硬配，整名丢弃（计数）。
+    撞多名俱乐部（TM 重命名窗口等）→ 不硬配，整名丢弃（计数）。team 的
+    多别名由派生侧逐名试解（correctness-review F7：旧名先落库但任期面
+    只挂新名时不再整队 no_club）。
     """
-    alias_to_club = transfermarkt_alias_by_team(conn)
+    aliases = transfermarkt_aliases_by_team(conn)
     club_ids: dict[str, int] = {}
     club_conflicts: set[str] = set()
     for row in conn.execute(
@@ -165,7 +177,7 @@ def _tm_clubs(conn: sqlite3.Connection) -> tuple[dict[int, str], dict[str, int]]
         club_ids[name] = int(row["club_tm_id"])
     for name in club_conflicts:
         club_ids.pop(name, None)
-    return alias_to_club, club_ids
+    return aliases, club_ids
 
 
 def _tenures_by_club(conn: sqlite3.Connection) -> dict[int, list[Tenure]]:
@@ -189,6 +201,73 @@ def _tenures_by_club(conn: sqlite3.Connection) -> dict[int, list[Tenure]]:
     return out
 
 
+def _write_facet(
+    conn: sqlite3.Connection,
+    cells: dict[tuple[str, str, int, str, str], _Cell],
+    group_known: dict[tuple[str, str, int, str], int],
+    group_last: dict[tuple[str, str, int, str], tuple[str, str]],
+    resolved_club: dict[int, tuple[int, str]],
+    rebuilt_at: str,
+) -> None:
+    """格子聚合态全量落库（derive 的写腿；原子块内调用）。"""
+    for key in sorted(cells):
+        season, league_zh, club_tm_id, coach, family = key
+        cell = cells[key]
+        conn.execute(
+            """
+            INSERT INTO formation_family_facet
+                (season, league_fd, league_zh, team_id, club_tm_id, club_name,
+                 coach_name, coach_role, family, n_matches, n_known,
+                 first_match_date, last_match_date, rebuilt_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                season,
+                _LEAGUE_FD.get(league_zh),
+                league_zh,
+                cell.team_id,
+                club_tm_id,
+                resolved_club[cell.team_id][1],
+                coach,
+                group_last[(season, league_zh, club_tm_id, coach)][1],
+                family,
+                cell.n,
+                group_known[(season, league_zh, club_tm_id, coach)],
+                cell.first,
+                cell.last,
+                rebuilt_at,
+            ),
+        )
+
+
+def _resolve_club(
+    team_id: int,
+    aliases: dict[int, tuple[str, ...]],
+    club_ids: dict[str, int],
+    cache: dict[int, tuple[int, str]],
+) -> tuple[str, tuple[int, str] | None]:
+    """
+    Team → TM 俱乐部（多别名逐名试解，correctness-review F7）。
+
+    返回 (drops 键, 结果)：``"ok"``+``(club_tm_id, 命中名)``——任一别名指
+    到唯一俱乐部即接通（TM 改名窗口内旧名先落库、任期面挂新名不再整队
+    no_club）；无别名=``no_alias``；全别名不中=``no_club``（键与 drops
+    桶同名，直接计数）。队级缓存——决议一场内不变。
+    """
+    cached = cache.get(team_id)
+    if cached is not None:
+        return ("ok", cached)
+    names = aliases.get(team_id)
+    if not names:
+        return ("no_alias", None)
+    for name in names:
+        if name in club_ids:
+            club = (club_ids[name], name)
+            cache[team_id] = club
+            return ("ok", club)
+    return ("no_club", None)
+
+
 def derive_formation_family_facet(
     conn: sqlite3.Connection,
     duck_con: DuckCon,
@@ -200,15 +279,17 @@ def derive_formation_family_facet(
 
     粒度=(season, league_zh, club_tm_id, coach_name, family)。丢弃口径
     （进 stats，诚实现态）：universe_missing=detail 场不在 universe（无赛季
-    轴）；unlinked=无 sid 链；no_alias=链到 team 但无 transfermarkt 别名；
-    no_club=别名名不指唯一 TM 俱乐部；unattributed=当日无覆盖任期（空窗
-    场）；formation_unknown=指派成功但阵型缺失（不进任何族分母）。
+    轴）；kickoff_missing=开球缺失（无日期轴，correctness-review F8 独立
+    分桶不混入前者）；unlinked=无 sid 链；no_alias=链到 team 但无
+    transfermarkt 别名；no_club=该队全部别名都不指唯一 TM 俱乐部
+    （多别名逐名试解，F7——任一名命中即用）；unattributed=当日无覆盖任期
+    （空窗场）；formation_unknown=指派成功但阵型缺失（不进任何族分母）。
     空输入零行不炸。
     """
     rebuilt_at = now or utc_now_iso()
-    sides, matches_seen = _corpus_sides(duck_con)
+    sides, matches_seen, kickoff_missing = _corpus_sides(duck_con)
     links = _linked_sides(conn)
-    alias_to_club, club_ids = _tm_clubs(conn)
+    aliases_by_team, club_ids = _tm_clubs(conn)
     tenures = _tenures_by_club(conn)
     drops = {
         "unlinked": 0,
@@ -221,6 +302,7 @@ def derive_formation_family_facet(
     # 组键=(season, league_zh, club_tm_id, coach) → 分母（已知阵型场数）与
     # 末场（角色取末场指派，同人转正口径与 coach_changes 一致）
     cells: dict[tuple[str, str, int, str, str], _Cell] = {}
+    resolved_club: dict[int, tuple[int, str]] = {}  # team_id → (club_tm_id, 名)
     group_known: dict[tuple[str, str, int, str], int] = {}
     group_last: dict[tuple[str, str, int, str], tuple[str, str]] = {}
     joined = 0
@@ -235,14 +317,13 @@ def derive_formation_family_facet(
             (linked[0], match["home_formation"]),
             (linked[1], match["away_formation"]),
         ):
-            club_name = alias_to_club.get(team_id)
-            if club_name is None:
-                drops["no_alias"] += 1
+            status, club = _resolve_club(
+                team_id, aliases_by_team, club_ids, resolved_club
+            )
+            if status != "ok":
+                drops[status] += 1
                 continue
-            club_tm_id = club_ids.get(club_name)
-            if club_tm_id is None:
-                drops["no_club"] += 1
-                continue
+            club_tm_id = club[0] if club is not None else 0
             assigned = assign_manager_day(tenures.get(club_tm_id, []), day)
             if assigned is None:
                 drops["unattributed"] += 1
@@ -263,39 +344,12 @@ def derive_formation_family_facet(
             cell.last = max(cell.last, day)
     with atomic(conn):
         conn.execute("DELETE FROM formation_family_facet")
-        for key in sorted(cells):
-            season, league_zh, club_tm_id, coach, family = key
-            group = (season, league_zh, club_tm_id, coach)
-            cell = cells[key]
-            conn.execute(
-                """
-                INSERT INTO formation_family_facet
-                    (season, league_fd, league_zh, team_id, club_tm_id, club_name,
-                     coach_name, coach_role, family, n_matches, n_known,
-                     first_match_date, last_match_date, rebuilt_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    season,
-                    _LEAGUE_FD.get(league_zh),
-                    league_zh,
-                    cell.team_id,
-                    club_tm_id,
-                    alias_to_club[cell.team_id],
-                    coach,
-                    group_last[group][1],
-                    family,
-                    cell.n,
-                    group_known[group],
-                    cell.first,
-                    cell.last,
-                    rebuilt_at,
-                ),
-            )
+        _write_facet(conn, cells, group_known, group_last, resolved_club, rebuilt_at)
         stats: dict[str, object] = {
             "matches_seen": matches_seen,
             **drops,
-            "universe_missing": matches_seen - joined,
+            "kickoff_missing": kickoff_missing,
+            "universe_missing": matches_seen - kickoff_missing - joined,
             "rows": len(cells),
             "club_season_leagues": len(group_known),
             "coach_club_pairs": len({(k[2], k[3]) for k in group_known}),

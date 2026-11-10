@@ -1141,6 +1141,13 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 
 唯一键 `UNIQUE(`season`, `league_zh`, `club_tm_id`, `coach_name`, `family`)`
 <!-- schema-doc:END:table:formation_family_facet -->
+
+六轴 ② 阵型族条件面（票 09；data/formations.py 派生重建，DELETE+INSERT
+非事实面）。族字典受控（未匹配归 `other`）；教练=manager-of-the-day
+指派（TM 英文名空间，中文名不入面）；PIT 读缝 `coach_family_prior` 只取
+查询时点前已完结格子（不含当场面）。覆盖报告只出英超+英冠切片；
+TM 多别名逐名试解（F7）；开球缺失场独立分桶（F8）。
+
 <!-- schema-doc:BEGIN:table:club_pedigree -->
 #### `club_pedigree`
 
@@ -1152,8 +1159,8 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `top_flight_streak` | INTEGER | — |
 | `points_pct_l5` | REAL | — |
 | `l5_seasons` | INTEGER | NOT NULL |
-| `tier1_titles` | INTEGER | NOT NULL |
-| `major_honours` | INTEGER | NOT NULL |
+| `tier1_titles` | INTEGER | — |
+| `major_honours` | INTEGER | — |
 | `promo_to_tier1` | INTEGER | — |
 | `releg_from_tier1` | INTEGER | — |
 | `club_tm_id` | INTEGER | — |
@@ -1161,6 +1168,15 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 
 唯一键 `UNIQUE(`team`, `season`)`
 <!-- schema-doc:END:table:club_pedigree -->
+
+六轴 ④ 底蕴硬层四因子面（票 09；data/pedigree.py 派生重建）。四因子
+独立列不合成：连续年限=截至上一赛季（tm_club_seasons，顶级口径=逐国
+顶级，F1）、近 5 季积分百分位=前 5 季均值（hist 逐场 3-1-0）、荣誉=
+HONOURS 受控常量（tier1_titles=as-of-season：全史总数 − 窗内后置赛季
+冠军数，F4；major_honours=静态先验——窗内年份带前视增量，消费方
+EM facet 签字可用）、升降级频谱=纯后视窗 tier1 出入计数。TM 未解析
+队年限/频谱=NULL；荣誉种子未命中/互撞两列 NULL 不写假 0（F2/F3/F6）。
+荣誉数字出处（F5 逐条复核）见 data/pedigree.py 常量注记。
 <!-- schema-doc:BEGIN:table:face_derive_state -->
 #### `face_derive_state`
 

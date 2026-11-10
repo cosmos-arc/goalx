@@ -501,3 +501,120 @@ def test_migration_v53_family_check_matches_controlled_constant(db) -> None:
     assert row is not None
     for family in formations.FAMILIES:
         assert f"'{family}'" in str(row["sql"])
+
+
+def test_tm_rename_resolves_via_any_alias(tmp_path: Path) -> None:
+    """F7：TM 改名窗口内多别名并存——任一名指到唯一俱乐部即接通，旧名不独裁。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    conn.execute(
+        "INSERT INTO competitions (id, name, tier, created_at)"
+        " VALUES (1, '英超', 'tier1', '2026-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO teams (id, canonical_name, created_at)"
+        " VALUES (1, '甲队', '2026-01-01')"
+    )
+    cur = conn.execute(
+        """
+        INSERT INTO fixtures
+            (id, competition_id, kickoff_utc, home_team_id, away_team_id)
+        VALUES (1, 1, '2024-08-01T20:00:00+00:00', 1, 1)
+        """
+    )
+    assert cur.lastrowid is not None
+    conn.execute(
+        """
+        INSERT INTO source_match_links
+            (fixture_id, source, source_match_id, method, status, meta, mapped_at)
+        VALUES (?, 'srct', 's1', 'primary_key', 'linked', '{}', '2026-01-01')
+        """,
+        (int(cur.lastrowid),),
+    )
+    # 任期面只挂新名（club 900）；别名桥旧名先落库（id 序在前）
+    conn.execute(
+        """
+        INSERT INTO tm_coach_tenures
+            (club_tm_id, club_name, role, coach_tm_id, coach_name, date_from,
+             date_to, games, first_seen_at, observed_at, parse_version)
+        VALUES (900, 'New Name FC', 'manager', 1, 'The Coach', '2024-01-01',
+                NULL, 10, '2026-01-01', '2026-01-01', 'tm_coach_v1')
+        """
+    )
+    conn.executemany(
+        "INSERT INTO team_aliases (team_id, source, alias)"
+        " VALUES (1, 'transfermarkt', ?)",
+        [("Old Name FC",), ("New Name FC",)],
+    )
+    conn.commit()
+    kickoff = datetime(2024, 8, 1, 20, 0, tzinfo=UTC)
+    store = CorpusStore(tmp_path / "corpus")
+    _build_corpus(
+        store,
+        [_fixture_row("s1", "英超", kickoff, "甲队", "乙队")],
+        [_detail_row("s1", kickoff, "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y")],
+    )
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        stats = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+        rows = conn.execute(
+            "SELECT club_tm_id, club_name, coach_name FROM formation_family_facet"
+        ).fetchall()
+    finally:
+        duck_con.close()
+        conn.close()
+    # 旧名先落库但 tenure 挂新名：命中名=New Name FC，不再整队 no_club
+    assert stats["no_club"] == 0
+    assert stats["no_alias"] == 0
+    assert stats["rows"] == 2  # 同队主客两侧各一格（4-4-2 / 4-2-3-1）
+    assert {(r["club_tm_id"], r["club_name"], r["coach_name"]) for r in rows} == {
+        (900, "New Name FC", "The Coach")
+    }
+
+
+def test_kickoff_null_buckets_separately(tmp_path: Path) -> None:
+    """F8：开球缺失场独立分桶 kickoff_missing，不混入 universe_missing。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_face(conn, ["s1", s_null := "s9"])
+    kickoff = datetime(2024, 8, 1, 20, 0, tzinfo=UTC)
+    store = CorpusStore(tmp_path / "corpus")
+    _build_corpus(
+        store,
+        [
+            _fixture_row("s1", "英超", kickoff, "甲队", "乙队"),
+            # universe 有行、detail 开球缺失 → 无日期轴
+            _fixture_row(
+                s_null, "英超", datetime(2024, 9, 1, 20, 0, tzinfo=UTC), "甲队", "乙队"
+            ),
+        ],
+        [
+            _detail_row(
+                "s1", kickoff, "甲队", "乙队", "4-4-2", "4-2-3-1", "奥帅", "伊帅"
+            ),
+            _detail_row(
+                s_null, None, "甲队", "乙队", "4-4-2", "4-2-3-1", "奥帅", "伊帅"
+            )
+            | {"kickoff": None, "observed_at": kickoff},
+        ],
+    )
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        stats = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+    finally:
+        duck_con.close()
+        conn.close()
+    assert stats["matches_seen"] == 2
+    assert stats["kickoff_missing"] == 1  # 独立桶
+    assert stats["universe_missing"] == 0  # 不再被 NULL 开球污染
+    assert stats["unlinked"] == 0

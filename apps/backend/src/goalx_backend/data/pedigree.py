@@ -5,12 +5,20 @@
 
 - 顶级联赛连续年限：``tm_club_seasons`` 派生——**截至上一赛季**（PIT：
   该赛季开始前可知；观察窗 2016 起，窗首连续段为下界，诚实有界口径）；
+  顶级口径=逐国顶级（fd 11 联赛除英格兰次级 E1 外均为本国顶级——
+  Ajax/Celtic/Benfica 照常计年限，correctness-review F1）；
 - 近 5 季积分百分位：``hist_matches`` 派生（无 standings 表，逐场 3-1-0
   算积分分享率 = 积分/(3×场次)，跨联赛可比）——只用该赛季前 5 季，无
   前季 NULL 不造率；
-- 荣誉计数：``HONOURS`` 受控常量（免费静态源，全史口径任一时点可知）：
-  顶级联赛冠军数 + 总重要荣誉数（=顶级冠军+欧战主要冠军[欧冠/欧联/
-  欧洲超级杯/优胜者杯/洲际杯/世俱杯]；国内杯不计入，口径写死在常量）；
+- 荣誉计数：``HONOURS`` 受控常量（免费静态源）：顶级联赛冠军数 +
+  总重要荣誉数（=顶级冠军+欧战主要冠军[欧冠/欧联/欧洲超级杯/优胜者杯/
+  洲际杯/世俱杯]；国内杯与 2024 起 FIFA 洲际杯新赛不计入，口径写死在
+  常量）。**tier1_titles 为 as-of-season 值**（F4）：全史总数 − 窗内
+  S'≥S 赛季冠军数（窗内冠军从 hist 派生 standings；2016 前的全史部分对
+  任何窗内赛季都是过去，PIT 干净）；**major_honours 是静态先验**——
+  无窗内逐年级免费源，窗内年份带前视增量，消费方（EM facet）签字可用
+  （correctness-review F4 裁定）。种子未命中/互撞 → 两列 NULL（不写
+  假 0，F2/F6）；
 - 升降级频谱：``tm_club_seasons`` 派生——观察窗（库内 tm 赛季全局 min/
   max）内的 tier1 出入计数，**纯后视窗**（转换对 t→t+1 只计 t+1 ≤ 上一
   赛季者）：tier1→非 tier1（含离开受采面）=降级类，反向=升级类；升级进
@@ -30,15 +38,18 @@ import sqlite3
 from goalx_backend.data.coach_changes import resolve_season_club_hist_names
 from goalx_backend.data.ingest.tm_coach import TM_LEAGUES
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.modelling.dc_model import TIER1_COMPETITIONS
 from goalx_backend.modelling.team_align import normalize_team_name
 
 FACE_NAME = "club_pedigree"
 #: 近 5 季窗口（票面：近 5 季积分百分位）
 L5_WINDOW = 5
 
-#: TM 顶级联赛码（TIER1_COMPETITIONS fd 码 → TM 码；真源=dc_model 常量）
-_TIER1_TM: frozenset[str] = frozenset(TM_LEAGUES[fd] for fd in TIER1_COMPETITIONS)
+#: 顶级联赛 fd 码（逐国顶级：fd 11 联赛中除英格兰次级 E1 外均为本国顶级；
+#: correctness-review F1——顶级口径=逐国顶级而非 dc_model 的五大建模优先序，
+#: 荷/葡/土/比/苏俱乐部年限不再恒 0；data 域自建受控常量，不借 modelling）
+_TOP_FLIGHT_FD: frozenset[str] = frozenset(fd for fd in TM_LEAGUES if fd != "E1")
+#: 顶级联赛 TM 码（fd → TM 映射折算；tm_club_seasons.league_tm_code 键空间）
+_TIER1_TM: frozenset[str] = frozenset(TM_LEAGUES[fd] for fd in _TOP_FLIGHT_FD)
 
 # ---------------------------------------------------------------------------
 # 荣誉静态源（受控常量；markets/selections 种子先例）
@@ -46,15 +57,22 @@ _TIER1_TM: frozenset[str] = frozenset(TM_LEAGUES[fd] for fd in TIER1_COMPETITION
 # 口径：顶级联赛冠军（各国顶级联赛全史；英格兰=老英甲+英超，德国=德甲
 # 前+德甲，荷兰含 1956 前全国冠军，苏格兰含共享冠军）+ 欧战主要冠军
 # （欧洲冠军杯/欧冠、联盟杯/欧联、欧洲超级杯、欧洲优胜者杯、洲际杯、
-# 世俱杯）。国内杯不计。major_honours = 冠军数 + 欧战主要冠军数。
+# 世俱杯）。国内杯与 2024 起 FIFA 洲际杯新赛不计。
+# major_honours = 冠军数 + 欧战主要冠军数。
 #
-# 数字冻结 2026-11-11（含 2025-26 赛季收官）：手工整理自公开冠军榜与
-# UEFA/FIFA 赛事纪录（Wikipedia 各国 champions 清单 + 2025-26 欧战决赛
-# 核验：欧冠/欧联 PSG/Aston Villa、欧洲超级杯 PSG、2025 世俱杯 Chelsea）。
+# 数字冻结 2026-11-11（含 2025-26 赛季收官）：联赛冠军数逐国核自
+# Wikipedia 各国 champions 清单（en.wikipedia.org/wiki/List_of_*_
+# football_champions，11 国）；欧战计数核自 UEFA/FIFA 纪录与俱乐部页
+# （correctness-review F5 逐条复核：Real Madrid/Bayern/Forest 三条修正
+# ——RM 世俱 5 非另有 2024 新赛
+# https://en.wikipedia.org/wiki/Real_Madrid_CF；Bayern 补 1967 优胜者杯
+# https://en.wikipedia.org/wiki/FC_Bayern_Munich；Forest 1980 洲际杯
+# 决赛负不计 https://en.wikipedia.org/wiki/Nottingham_Forest_F.C.；
+# Milan/Liverpool/Tottenham/Feyenoord/PSV/Sporting 六条复核无误）。
 # 种子覆盖=fd 11 联赛 2016-2026 观察窗内出现过、且有上述任一荣誉的俱乐部
 # （窗外俱乐部不种——面只 join 观察窗队；改数字/扩键=PR 人审）。
-# 键名经 NameIndex 三级解析到 fd hist 队名（缩写变体由 ABBREVIATIONS 桥
-# 接：Man United→Manchester United 等）；少数 fd 拼写不确定处双键并列。
+# 键名经 normalize_team_name 精确匹配到 fd hist 队名（缩写变体由
+# ABBREVIATIONS 桥接 + fd 真名形态双键并列，correctness-review F2）。
 # ---------------------------------------------------------------------------
 HONOURS: dict[str, dict[str, tuple[int, int]]] = {
     # (顶级联赛冠军, 冠军+欧战主要冠军)
@@ -69,6 +87,7 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "Chelsea": (6, 16),
         "Sheffield Wednesday": (4, 4),
         "Sheffield Wed": (4, 4),
+        "Sheffield Weds": (4, 4),  # fd 真名形态（F2）
         "Newcastle United": (4, 4),
         "Newcastle": (4, 4),
         "Blackburn Rovers": (3, 3),
@@ -76,6 +95,7 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "Huddersfield Town": (3, 3),
         "Huddersfield": (3, 3),
         "Wolverhampton Wanderers": (3, 3),
+        "Wolves": (3, 3),  # fd 真名形态（F2）
         "Leeds United": (3, 3),
         "Leeds": (3, 3),
         "Preston North End": (2, 2),
@@ -91,15 +111,20 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "West Brom": (1, 1),
         "Ipswich Town": (1, 2),
         "Ipswich": (1, 2),
-        "Nottingham Forest": (1, 5),
-        "Forest": (1, 5),
+        # F5 复核（Forest 俱乐部页）：1980 洲际杯决赛负（0-1 Nacional）、
+        # 1979 弃赛——洲际 0 非 1，=1+2UCL+1SC 共 4
+        "Nottingham Forest": (1, 4),
+        "Forest": (1, 4),
         "Leicester City": (1, 1),
         "Leicester": (1, 1),
         "West Ham United": (0, 1),  # 1965 优胜者杯
         "West Ham": (0, 1),
     },
     "SP1": {
-        "Real Madrid": (36, 69),
+        # F5 复核（RM 俱乐部页）：36 联赛+15UCL+2UEL+6SC+3 洲际+5 世俱
+        # =67——世俱是 5 非 7（2000/2002 属洲际杯纪元）；2024 FIFA 洲际杯
+        # 新赛未入定义不计
+        "Real Madrid": (36, 67),
         "Barcelona": (29, 46),
         "Atletico Madrid": (11, 19),
         "Athletic Bilbao": (8, 8),
@@ -110,11 +135,14 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "Real Betis": (1, 1),
         "Betis": (1, 1),
         "Deportivo La Coruna": (1, 1),
+        "La Coruna": (1, 1),  # fd 真名形态（F2）
         "Depor": (1, 1),
         "Villarreal": (0, 1),  # 2021 欧联
     },
     "D1": {
-        "Bayern Munich": (35, 48),
+        # F5 复核（Bayern 俱乐部页）：35+6UCL+1UEL+2SC+2 洲际+2 世俱
+        # +1CWC(1967 优胜者杯，首版漏计) = 49
+        "Bayern Munich": (35, 49),
         "Borussia Dortmund": (8, 11),
         "Dortmund": (8, 11),
         "Schalke 04": (7, 8),
@@ -186,6 +214,7 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "Porto": (31, 38),
         "Sporting CP": (21, 22),
         "Sporting": (21, 22),
+        "Sp Lisbon": (21, 22),  # fd 真名形态（F2）
         "Belenenses": (1, 1),
         "Boavista": (1, 1),
     },
@@ -197,6 +226,7 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         "Bursaspor": (1, 1),
         "Istanbul Basaksehir": (1, 1),
         "Basaksehir": (1, 1),
+        "Buyuksehyr": (1, 1),  # fd 真名形态（F2）
     },
     "B1": {
         "Anderlecht": (34, 39),
@@ -205,7 +235,9 @@ HONOURS: dict[str, dict[str, tuple[int, int]]] = {
         # fd 常用缩写双键（同值并列不构成解析歧义）
         "Union SG": (12, 12),
         "Union St. Gilloise": (12, 12),
+        "St Gilloise": (12, 12),  # fd 真名形态（F2）
         "Standard Liege": (10, 10),
+        "Standard": (10, 10),  # fd 真名形态（F2）
         "Royal Antwerp": (5, 5),
         "Antwerp": (5, 5),
         "KV Mechelen": (4, 6),
@@ -300,42 +332,85 @@ def _points_face(
 
 def _honours_face(
     hist: list[tuple[str, str, str, str, int, int]],
-) -> tuple[dict[str, dict[str, tuple[int, int]]], dict[str, list[str]]]:
+) -> tuple[dict[str, tuple[int, int]], dict[str, list[str]], list[str]]:
     """
-    Comp → hist 队名 → (冠军, 重要荣誉)（归一化精确匹配，不用词元子集）。
+    **全局** hist 队名 → (冠军, 重要荣誉)（归一化精确匹配，不用词元子集）。
 
     词元子集会跨俱乐部泄漏（hist 短名 "Rovers" ⊂ 种子 "Blackburn Rovers"），
     故只做 normalize_team_name 后的精确等值——fd 缩写变体由种子的双键
-    （"Dortmund"/"Borussia Dortmund" 等并列）+ ABBREVIATIONS 归一（
-    "Man United"→"manchester united"）覆盖。同一 hist 名被不同值的多键
-    命中=互撞不硬配（同值双键天然合并）；未解析键按 comp 列出（覆盖
-    报告消费，人工补键走 PR）。
+    （"Dortmund"/"Borussia Dortmund"/fd 真名形态等并列）+ ABBREVIATIONS
+    归一（"Man United"→"manchester united"）覆盖。**全局名池跨 comp 并查**
+    （correctness-review F3）：同一俱乐部的荣誉不随当季联赛跳变——
+    Blackburn 只在 E1 出现也拿得到 3 冠。名池内两 hist 名归一后相撞=歧义
+    名（弃用）；同一 hist 名被不同值命中=互撞，该名落 NULL 并入
+    conflicts（F6，与「不硬配」注释一致）；未解析键按种子 comp 列出
+    （覆盖报告消费，人工补键走 PR）。
     """
-    names_by_comp: dict[str, set[str]] = {}
-    for comp, _season, home, away, _hg, _ag in hist:
-        names_by_comp.setdefault(comp, set()).update((home, away))
-    resolved: dict[str, dict[str, tuple[int, int]]] = {}
+    norm_to_name: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for _comp, _season, home, away, _hg, _ag in hist:
+        for name in (home, away):
+            norm = normalize_team_name(name)
+            if norm in norm_to_name and norm_to_name[norm] != name:
+                ambiguous.add(norm)  # 两 hist 名归一同形=歧义，弃用
+            norm_to_name.setdefault(norm, name)
+    for norm in ambiguous:
+        del norm_to_name[norm]
+    global_table: dict[str, tuple[int, int]] = {}
+    conflicting: set[str] = set()
     unresolved: dict[str, list[str]] = {}
     for comp, seed in HONOURS.items():
-        names = names_by_comp.get(comp)
-        if not names:
-            unresolved[comp] = sorted(seed)  # 该联赛 hist 无行（面外）
-            continue
-        norm_to_name: dict[str, str] = {}
-        for name in sorted(names):
-            norm_to_name.setdefault(normalize_team_name(name), name)
-        table: dict[str, tuple[int, int]] = {}
         for key in sorted(seed):
             target = norm_to_name.get(normalize_team_name(key))
             if target is None:
                 unresolved.setdefault(comp, []).append(key)
                 continue
             value = seed[key]
-            if target in table and table[target] != value:
-                continue  # 互撞：不同值双配=不硬配（同值双键天然合并）
-            table[target] = value
-        resolved[comp] = table
-    return resolved, unresolved
+            if target in conflicting:
+                continue  # 已判互撞的名不再写回
+            if target in global_table and global_table[target] != value:
+                conflicting.add(target)  # 不同值互撞 → 整名弃配落 NULL
+                del global_table[target]
+                continue
+            global_table[target] = value  # 同值多键/多 comp 命中天然合并
+    return global_table, unresolved, sorted(conflicting)
+
+
+def _window_champions(
+    hist: list[tuple[str, str, str, str, int, int]],
+) -> dict[str, list[str]]:
+    """
+    窗内逐季顶级联赛冠军（team → 冠军赛季键升序）——titles as-of 的减数。
+
+    冠军判定=逐 (顶级 comp, season) 的 (积分, 净胜球, 进球, 队名) 字典序
+    最高者（fd 各国决胜规则不统一，points+GD+GF 为通行近似，末位队名只
+    保证确定性）；次级联赛（E1）冠军不是顶级冠军不计。hist 缺季则该季
+    无冠军行（as-of 少减一分，有界诚实）。
+    """
+    table: dict[tuple[str, str], dict[str, tuple[int, int, int]]] = {}
+    for comp, season, home, away, fthg, ftag in hist:
+        if comp not in _TOP_FLIGHT_FD:
+            continue
+        bucket = table.setdefault((comp, season), {})
+        home_key = bucket.get(home, (0, 0, 0))
+        away_key = bucket.get(away, (0, 0, 0))
+        bucket[home] = (
+            home_key[0] + (3 if fthg > ftag else 1 if fthg == ftag else 0),
+            home_key[1] + fthg - ftag,
+            home_key[2] + fthg,
+        )
+        bucket[away] = (
+            away_key[0] + (3 if ftag > fthg else 1 if ftag == fthg else 0),
+            away_key[1] + ftag - fthg,
+            away_key[2] + ftag,
+        )
+    champions: dict[str, list[str]] = {}
+    for (_comp, season), bucket in table.items():
+        best = max(bucket, key=lambda team: (*bucket[team], team))
+        champions.setdefault(best, []).append(season)
+    for seasons_list in champions.values():
+        seasons_list.sort()
+    return champions
 
 
 def _tm_season_face(
@@ -398,17 +473,14 @@ def derive_club_pedigree(
     rebuilt_at = now or utc_now_iso()
     hist = _load_hist(conn)
     share, appearances = _points_face(hist)
-    honours, honours_unresolved = _honours_face(hist)
+    honours, honours_unresolved, honours_conflicts = _honours_face(hist)
+    champions = _window_champions(hist)
     club_by_name = {
         name: club for club, name in resolve_season_club_hist_names(conn).items()
     }
     tm_seasons = _tm_season_face(conn)
     tm_years = [year for seasons in tm_seasons.values() for year in seasons]
     window = (min(tm_years), max(tm_years)) if tm_years else (0, -1)
-    comps_by_team_season: dict[tuple[str, str], set[str]] = {}
-    for comp, season, home, away, _hg, _ag in hist:
-        comps_by_team_season.setdefault((home, season), set()).add(comp)
-        comps_by_team_season.setdefault((away, season), set()).add(comp)
     tm_unresolved: set[str] = set()
     prior_seasons_by_team: dict[str, list[tuple[int, str]]] = {}
     for team, season in appearances:
@@ -436,13 +508,20 @@ def derive_club_pedigree(
                 club_seasons = tm_seasons.get(club_tm_id, {})
                 streak = _streak(club_seasons, season_year - 1)
                 promo, releg = _tier1_flux(club_seasons, season_year - 1, window)
-            titles = 0
-            majors = 0
-            for comp in sorted(comps_by_team_season.get((team, season), ())):
-                entry = honours.get(comp, {}).get(team)
-                if entry is not None:
-                    titles, majors = entry
-                    break
+            entry = honours.get(team)
+            if entry is None:
+                # 未命中=种子未覆盖或互撞（F2/F6）：NULL 诚实缺，不写假 0
+                titles: int | None = None
+                majors: int | None = None
+            else:
+                # titles as-of（F4）：全史总数 − 窗内 S'≥S 的冠军数（当季
+                # 冠军季末才定，季内行也不计——严格 PIT）；major_honours=
+                # 静态先验（无窗内逐年级免费源，窗内有前视增量，消费方
+                # EM facet 签字可用）
+                titles = entry[0] - sum(
+                    1 for won in champions.get(team, ()) if won >= season
+                )
+                majors = entry[1]
             conn.execute(
                 """
                 INSERT INTO club_pedigree
@@ -471,6 +550,7 @@ def derive_club_pedigree(
             "seasons": len({season for _team, season in appearances}),
             "tm_unresolved_teams": sorted(tm_unresolved),
             "honours_unresolved_keys": honours_unresolved,
+            "honours_conflicts": honours_conflicts,
             "rebuilt_at": rebuilt_at,
         }
         conn.execute(
@@ -503,7 +583,9 @@ def pedigree_for(
     Facet 扫描器读缝：按 (hist 队名, fd 赛季键) 直读四因子行。
 
     消费演示=EM facet 对 hist 场次按 (home_team|away_team, season) 联结；
-    行缺席（队该季不在 fd 面）返回 None，由调用方决定缺省。
+    行缺席（队该季不在 fd 面）返回 None，由调用方决定缺省。荣誉列语义：
+    tier1_titles=as-of 该季（窗内冠军已扣减）；major_honours=静态先验，
+    窗内年份带前视增量，消费方签字可用（correctness-review F4）。
     """
     row = conn.execute(
         """
