@@ -213,7 +213,9 @@ tasks:
       - sh: 'test -f "{{.VENV_PYTHON}}"'
         msg: Python environment is missing; run task python-install explicitly.
     env:
-      PREFECT_API_URL: http://127.0.0.1:4200/api
+      # 4201=goalx 专端口（2026-11-10 隔离终裁）：4200 曾与 ditto 共用，谁先起
+      # server 谁的 PREFECT_HOME 就是公共库；各占一端口后重启/升级/版本互不相干
+      PREFECT_API_URL: http://127.0.0.1:4201/api
       # 2026-11-10 人裁固化：goalx 独立 PREFECT_HOME——默认 ~/.prefect 与 ditto
       # (prefect 3.9.x) 共库，其迁移 goalx 3.7.x 不认（27d8f4e1a6c9 事故实录）
       PREFECT_HOME: "{{.ROOT_DIR}}/.scratch/prefect-home"
@@ -221,11 +223,11 @@ tasks:
       # Prefect ≥3.7 临时 server 不跑 scheduler,serve 的 schedule 永不触发;
       # 必须连专用 server(task 内自动拉起,server 独立存活于本 serve 进程)
       - |
-        if ! curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1; then
-          nohup uv run --no-sync prefect server start --host 127.0.0.1 --port 4200 \
+        if ! curl -sf http://127.0.0.1:4201/api/health >/dev/null 2>&1; then
+          nohup uv run --no-sync prefect server start --host 127.0.0.1 --port 4201 \
             >> .scratch/prefect-server.log 2>&1 &
           for _ in $(seq 1 60); do
-            curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1 && break
+            curl -sf http://127.0.0.1:4201/api/health >/dev/null 2>&1 && break
             sleep 1
           done
         fi
