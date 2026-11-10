@@ -339,7 +339,7 @@ def psi(
     def bucketize(values: Sequence[float]) -> list[int]:
         counts = [0] * bins
         for value in values:
-            index = bisect.bisect_left(edges, value)
+            index = bisect.bisect_right(edges, value)
             counts[min(index, bins - 1)] += 1
         return counts
 
@@ -485,6 +485,15 @@ def rescan_signals(
             detail=f"下次季度轻扫 {_next_quarter_start(resolved)}"
             + "（定拍 deployment 未建，四信号静默期保底）",
         ),
+        # prereg B.3 计时面（L2+ 满 183 日且四信号零触发→建议再降一级）。
+        # 信号触发史落账+到期读数随票 04 月读实现——晨检只读红线决定了
+        # 写路径只能在月读/CLI 面；TODO(票 04)：接 B.3 到期读数与触发史。
+        RescanSignalFace(
+            name="l3l4_timer",
+            status="unwired",
+            detail="B.3 探针全停计时：L2+ 满 183 日且四信号零触发→建议再降"
+            + "一级；信号触发史落账与到期读数随票 04 月读实现",
+        ),
     ]
 
 
@@ -514,17 +523,31 @@ class ExplorationClockReading:
         )
 
 
+def _parse_iso_utc(stamp: str) -> datetime:
+    """
+    ISO 串解析；naive 串按 UTC 补 tzinfo（晨检 _age_hours 同防御）。
+
+    aware−naive 相减抛 TypeError（correctness F1）——旧数据/手拍行的
+    naive 时间戳不少见，统一按 UTC 读不炸读数面；坏串 ValueError 由
+    调用方按语境定（新鲜度=不新鲜，常数=代码审 fail-loud）。
+    """
+    parsed = datetime.fromisoformat(stamp)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 def _age_hours(stamp: str | None, now: datetime) -> float | None:
     """
     ISO 串距 now 的小时数；空/坏串 None。
 
     未知不算新鲜（晨检 _age_hours 同语义）：坏留痕读作不新鲜→钟
-    insufficient，不炸晨检。
+    insufficient，不炸晨检；naive 串按 UTC 补（_parse_iso_utc）。
     """
     if stamp is None:
         return None
     try:
-        parsed = datetime.fromisoformat(stamp)
+        parsed = _parse_iso_utc(stamp)
     except ValueError:
         return None
     return (now - parsed).total_seconds() / 3600.0
@@ -562,7 +585,7 @@ def exploration_clock_reading(
             scanners_fresh=fresh,
             status="unanchored",
         )
-    anchor = datetime.fromisoformat(EXPLORATION_CLOCK_ANCHOR)
+    anchor = _parse_iso_utc(EXPLORATION_CLOCK_ANCHOR)
     if anchor > resolved - timedelta(days=EXPLORATION_WINDOW_DAYS):
         return ExplorationClockReading(
             window_start=anchor.isoformat(timespec="seconds"),

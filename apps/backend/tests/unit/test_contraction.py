@@ -705,3 +705,98 @@ def test_exploration_clock_bad_freshness_stamp_degrades(
     assert reading.status == "insufficient"
     assert reading.scanners_fresh is False
     assert reading.fired is False
+
+
+# ---- correctness-review 批修：F1 naive 串 / F2 PSI 桶界 / F3 B.3 标注 ----
+
+
+def test_exploration_clock_naive_freshness_stamp(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1：naive created_at 按 UTC 补 tzinfo（晨检同防御）——不抛 TypeError。"""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    monkeypatch.setattr(
+        contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
+    )
+    # s1/s2 aware 新鲜；s4 naive 陈旧（无 tz 后缀）→ 不新鲜 → 钟不误判全阴
+    for scanner in ("s1", "s2"):
+        _seed_observation(db, scanner, now.isoformat(timespec="seconds"))
+    db.execute(
+        """
+        INSERT OR REPLACE INTO edge_observations
+            (scanner, window_key, payload, created_at)
+        VALUES ('s4', 's4:naive-old', '{}', '2025-06-01T00:00:00')
+        """
+    )
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.status == "insufficient"
+    assert reading.scanners_fresh is False
+    # naive 但按 UTC 补后新鲜 → 阵列算新鲜（naive≠坏串）
+    db.execute(
+        """
+        INSERT OR REPLACE INTO edge_observations
+            (scanner, window_key, payload, created_at)
+        VALUES ('s4', 's4:naive-new', '{}', '2026-11-10T00:00:00')
+        """
+    )
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.scanners_fresh is True
+    assert reading.fired is True  # 满弦+全阴+零幸存者（空台账）
+
+
+def test_exploration_clock_naive_anchor(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1：锚点常量 naive 串同样按 UTC 补——aware-naive 比较不抛 TypeError。"""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    monkeypatch.setattr(contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00")
+    _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.status == "ok"  # naive 2025-11-10T00:00 按 UTC 读=恰满弦
+    assert reading.fired is True
+
+
+def test_psi_bin_boundaries_per_prereg() -> None:
+    """F2：桶界归属照 prereg C——<e_1 归首桶 / ==e_i 归 [e_i,e_{i+1}) / ≥e_9 归末桶。"""
+    import math
+    from statistics import quantiles
+
+    reference = [0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.0]
+    edges = quantiles(reference, n=3, method="inclusive")
+    assert edges == [1.0, 4.0]  # 手算前提（inclusive 分位恰落样本点）
+    p_ref = (0.3, 0.3, 0.4)
+    empty, full = 0.5, 1.0  # n_cur=1：空桶半样本代理 1/(2·1)，非空桶 1.0
+
+    def expected(p_cur: tuple[float, float, float]) -> float:
+        return sum((c - r) * math.log(c / r) for c, r in zip(p_cur, p_ref, strict=True))
+
+    # ==e_1（1.0）归中桶 [e_1, e_2)：bisect_left 误归首桶（值不同可分辨）
+    assert contraction.psi(reference, [1.0], bins=3) == pytest.approx(
+        expected((empty, full, empty))
+    )
+    # <e_1（0.5）归首桶
+    assert contraction.psi(reference, [0.5], bins=3) == pytest.approx(
+        expected((full, empty, empty))
+    )
+    # ≥e_2（9.0）归末桶（闭端且外无界）
+    assert contraction.psi(reference, [9.0], bins=3) == pytest.approx(
+        expected((empty, empty, full))
+    )
+
+
+def test_rescan_signals_l3l4_timer_face_unwired(db: sqlite3.Connection) -> None:
+    """F3：B.3 计时面如实 unwired 标注（读数随票 04 月读，不伪造绿）。"""
+    from datetime import UTC, datetime
+
+    faces = {
+        face.name: face
+        for face in contraction.rescan_signals(
+            db, now=datetime(2026, 11, 10, tzinfo=UTC)
+        )
+    }
+    assert faces["l3l4_timer"].status == "unwired"
+    assert "票 04" in faces["l3l4_timer"].detail
