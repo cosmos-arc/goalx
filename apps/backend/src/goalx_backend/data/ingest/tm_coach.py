@@ -74,6 +74,7 @@ ROLE_PARAMS: dict[str, str] = {MANAGER_ROLE: "1", CARETAKER_ROLE: "10"}
 ROLES: tuple[str, ...] = (MANAGER_ROLE, CARETAKER_ROLE)
 
 BACKFILL_FIRST_SEASON = 2016  # 票面：2016-2026 十年窗
+_SEASON_KEY_LEN = 4  # TM saison_id / 覆盖键 = 4 位起始年（入参校验用）
 # 礼貌限速：固定间距主导 + 滑窗只加顶（rate_limit.py 语义约定，票 57 不变量）
 REQUEST_GAP_SECONDS = 2.0
 REQUEST_WINDOW = RateLimitItemPerMinute(30)
@@ -280,7 +281,12 @@ def upsert_club_seasons(
     clubs: list[TmClub],
     observed_at: str,
 ) -> int:
-    """联赛×赛季成员面 upsert（首见名冻结，观测时刻刷新）。"""
+    """
+    联赛×赛季成员面 upsert。
+
+    行为（复核 F5 写死）：现态名随最新爬取刷新（改名可追——distinct_clubs
+    喂别名桥始终见当前名）；身份键=club_tm_id，first_seen_at 冻结首见。
+    """
     count = 0
     for club in clubs:
         cur = conn.execute(
@@ -498,12 +504,25 @@ def sync_tm_coach(
     observed_at = now_dt.isoformat(timespec="seconds")
     stats = TmCoachSyncStats(observed_at=observed_at)
     fetch = _Fetcher(client, default_limiter(), sleeper)
+    resolved_seasons = seasons or (season_start_year(now_dt.date()),)
+    # 入参校验先行（复核 F3/F4）：脏季串会直写 saison_id 与 source_coverage
+    # 脏键、未知联赛码裸 KeyError——都在任何请求/写入之前命名失败。
+    bad_seasons = [
+        s for s in resolved_seasons if len(s) != _SEASON_KEY_LEN or not s.isdigit()
+    ]
+    if bad_seasons:
+        msg = f"seasons 须为 4 位起始年(如 2016): {bad_seasons}"
+        raise ValueError(msg)
+    if leagues is not None:
+        unknown = [code for code in leagues if code not in TM_LEAGUES]
+        if unknown:
+            msg = f"未知联赛码 {unknown}；有效码: {', '.join(TM_LEAGUES)}"
+            raise ValueError(msg)
     resolved_leagues = (
         tuple(TM_LEAGUES.items())
         if leagues is None
         else tuple((code, TM_LEAGUES[code]) for code in leagues)
     )
-    resolved_seasons = seasons or (season_start_year(now_dt.date()),)
 
     clubs_seen: dict[int, TmClub] = {}
     for season in resolved_seasons:

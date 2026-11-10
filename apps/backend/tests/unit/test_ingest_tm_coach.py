@@ -256,3 +256,66 @@ def test_rate_window_is_polite() -> None:
     assert tm_coach.REQUEST_WINDOW.amount <= 30
     assert tm_coach.REQUEST_GAP_SECONDS >= 1.0
     assert re.fullmatch(r"\d+", str(tm_coach.REQUEST_WINDOW.amount))
+
+
+def test_seasons_must_be_four_digit_years(db) -> None:
+    """季串校验先行（复核 F3）：笔误季不落任何脏覆盖键。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, text=""))
+    )
+    with pytest.raises(ValueError, match=r"2016\.\.2026"):
+        tm_coach.sync_tm_coach(
+            db,
+            Settings(),
+            client,
+            leagues=("E0",),
+            seasons=("2016..2026",),
+            sleeper=lambda _s: None,
+        )
+    rows = db.execute("SELECT COUNT(*) AS n FROM source_coverage").fetchone()
+    assert rows["n"] == 0  # 校验先于任何请求/写入
+
+
+def test_unknown_league_code_raises_named_error(db) -> None:
+    """未知联赛码命名错误（复核 F4）：列有效码，不裸 KeyError。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, text=""))
+    )
+    with pytest.raises(ValueError, match=r"E9.*E0"):
+        tm_coach.sync_tm_coach(
+            db,
+            Settings(),
+            client,
+            leagues=("E0", "E9"),
+            seasons=("2016",),
+            sleeper=lambda _s: None,
+        )
+
+
+def test_club_seasons_name_tracks_latest_crawl(db) -> None:
+    """成员面名=现态（复核 F5 写死所选行为）：改名随最新爬取刷新，首见冻结。"""
+    club = tm_coach.TmClub(club_tm_id=11, club_name="Arsenal FC", slug="arsenal-fc")
+    renamed = tm_coach.TmClub(
+        club_tm_id=11, club_name="Arsenal FC 2026", slug="arsenal-fc"
+    )
+    tm_coach.upsert_club_seasons(
+        db,
+        league_tm_code="GB1",
+        season="2016",
+        clubs=[club],
+        observed_at="2026-11-10T00:00:00+00:00",
+    )
+    tm_coach.upsert_club_seasons(
+        db,
+        league_tm_code="GB1",
+        season="2016",
+        clubs=[renamed],
+        observed_at="2026-12-01T00:00:00+00:00",
+    )
+    row = db.execute(
+        "SELECT club_name, first_seen_at, observed_at FROM tm_club_seasons"
+        " WHERE club_tm_id = 11"
+    ).fetchone()
+    assert row["club_name"] == "Arsenal FC 2026"  # 现态名（喂别名桥跟改名）
+    assert row["first_seen_at"] == "2026-11-10T00:00:00+00:00"  # 首见冻结
+    assert row["observed_at"] == "2026-12-01T00:00:00+00:00"

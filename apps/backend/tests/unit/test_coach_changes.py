@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from goalx_backend.data import coach_changes
 from goalx_backend.data.ingest import tm_coach
 
@@ -126,6 +128,7 @@ def test_basic_succession_event_and_three_game_samples(db) -> None:
     assert stats["events"] == 1
     assert stats["samples"] == 3
     assert stats["unresolved_clubs"] == []
+    assert stats["identity_status"] == "ok"  # 全解析基线（门槛观测互证）
 
 
 def test_caretaker_interim_and_return_of_manager(db) -> None:
@@ -416,3 +419,130 @@ def test_coverage_report_league_by_season(db) -> None:
     assert row["clubs"] == 2
     assert row["clubs_with_tenures"] == 1
     assert row["status"] == "covered"
+
+
+def test_same_person_promotion_is_not_a_change(db) -> None:
+    """同人转正不发换帅事件（复核 F1：索尔斯克亚 2019-03-28 真实行对）。
+
+    TM 上 caretaker→manager 相邻两行仅 role 不同：边界只比教练名，role 留
+    payload；转正日前后段同人连续，样本窗跨转正续计。
+    """
+    _seed_club(db, 985, "Manchester United", "GB1")
+    tm_coach.upsert_tenures(
+        db,
+        [
+            _tenure(
+                985, "Manchester United", "Jose Mourinho", "2016-07-01", "2018-12-18"
+            ),
+            _tenure(
+                985,
+                "Manchester United",
+                "Ole Gunnar Solskjaer",
+                "2018-12-19",
+                "2019-03-28",
+                role="caretaker",
+            ),
+            _tenure(
+                985,
+                "Manchester United",
+                "Ole Gunnar Solskjaer",
+                "2019-03-28",
+                "2021-11-21",
+            ),
+        ],
+        observed_at=NOW,
+    )
+    _insert_hist(
+        db,
+        [
+            ("E0", "1819", "2018-12-15", "Man United", "Liverpool"),  # Mourinho 末战
+            ("E0", "1819", "2018-12-22", "Cardiff", "Man United"),  # 新帅首战（真换帅）
+            ("E0", "1819", "2019-03-30", "Man United", "Watford"),  # 转正后首战——非事件
+            ("E0", "1819", "2019-04-02", "Man United", "Wolves"),
+        ],
+    )
+    coach_changes.derive_coach_changes(db, now=NOW)
+    events = _events(db)
+    assert len(events) == 1  # 只有 Mourinho→Solskjaer；转正不发事件
+    assert events[0]["outgoing_coach"] == "Jose Mourinho"
+    assert events[0]["incoming_coach"] == "Ole Gunnar Solskjaer"
+    assert events[0]["incoming_is_caretaker"] == 1  # 首战在代理段——payload 留痕
+    assert events[0]["event_date"] == "2018-12-22"
+    samples = _samples(db)
+    # 样本窗跨转正续计（同人在任）：12-22 / 03-30 / 04-02
+    assert [s["match_date"] for s in samples] == [
+        "2018-12-22",
+        "2019-03-30",
+        "2019-04-02",
+    ]
+
+
+def test_identity_bridge_via_team_aliases_resolves_lexically_unrelated(db) -> None:
+    """词法无关对子经 team_aliases 桥入流（复核 F2：Hearts 对子）。
+
+    TM「Heart of Midlothian FC」↔ fd SC0「Hearts」无词法关系——直接三级
+    匹配永远 unresolved；别名桥（clubelo 侧两名都登记过）接通后必须入流。
+    """
+    db.execute(
+        "INSERT INTO teams (canonical_name, created_at) VALUES ('哈茨', ?)", (NOW,)
+    )
+    db.execute(
+        "INSERT INTO team_aliases (team_id, source, alias) VALUES"
+        " (1, 'clubelo', 'Heart of Midlothian'), (1, 'clubelo', 'Hearts')"
+    )
+    db.commit()
+    _seed_club(db, 1017, "Heart of Midlothian FC", "SC1")
+    tm_coach.upsert_tenures(
+        db,
+        [
+            _tenure(
+                1017, "Heart of Midlothian FC", "Boss A", "2019-07-01", "2019-11-01"
+            ),
+            _tenure(1017, "Heart of Midlothian FC", "Boss B", "2019-11-15", None),
+        ],
+        observed_at=NOW,
+    )
+    _insert_hist(
+        db,
+        [
+            ("SC0", "1920", "2019-10-01", "Hearts", "Celtic"),
+            ("SC0", "1920", "2019-11-16", "Hearts", "Rangers"),
+        ],
+    )
+    stats = coach_changes.derive_coach_changes(db, now=NOW)
+    assert stats["unresolved_clubs"] == []
+    events = _events(db)
+    assert len(events) == 1
+    assert events[0]["club_name"] == "Heart of Midlothian FC"
+    assert events[0]["team_id"] == 1  # 桥接通后 canonical 也直达
+
+
+def test_identity_status_gate_flags_low_resolution(db) -> None:
+    """解析率守门（复核 F2 门槛观测）：大面积 unresolved → degraded。"""
+    _seed_club(db, 11, "Arsenal", "GB1")
+    _seed_club(db, 900, "Nowhere Town", "GB1")
+    _seed_club(db, 901, "Elsewhere City", "GB1")
+    tenures = [
+        _tenure(11, "Arsenal", "Boss A", "2019-07-01", "2019-11-01"),
+        _tenure(11, "Arsenal", "Boss B", "2019-11-15", None),
+    ]
+    for club in (900, 901):
+        name = "Nowhere Town" if club == 900 else "Elsewhere City"
+        tenures += [
+            _tenure(club, name, "Boss C", "2019-07-01", "2019-11-01"),
+            _tenure(club, name, "Boss D", "2019-11-15", None),
+        ]
+    tm_coach.upsert_tenures(db, tenures, observed_at=NOW)
+    _insert_hist(
+        db,
+        [
+            ("E0", "1920", "2019-10-01", "Arsenal", "Southampton"),
+            ("E0", "1920", "2019-11-16", "Everton", "Arsenal"),
+            ("E0", "1920", "2019-10-02", "Watford", "Burnley"),
+            ("E0", "1920", "2019-11-17", "Watford", "Burnley"),
+        ],
+    )
+    stats = coach_changes.derive_coach_changes(db, now=NOW)
+    assert stats["resolution_rate"] == pytest.approx(1 / 3, abs=1e-3)
+    assert stats["identity_status"] == "degraded"
+    assert stats["unresolved_clubs"] == ["Elsewhere City", "Nowhere Town"]

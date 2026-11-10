@@ -7,15 +7,18 @@
 - 指派语义：一场一帅——date_from ≤ 当日且区间覆盖（开区间=现任）、
   date_from 最晚的任职行接管（主帅病假未结 + 代理重叠时代理在任）；
 - 事件语义：同一俱乐部相邻两场（主客皆入流）的指派从 A 换到 B 即换帅
-  边界，事件日 = B 段首战日（空窗场无指派、不计边界；窗首上任无前段、
-  非事件）；
+  边界（**只比教练名**——caretaker→manager 同人转正是连续段不是换帅，
+  独立复核 F1；role 只进 payload），事件日 = B 段首战日（空窗场无指派、
+  不计边界；窗首上任无前段、非事件）；
 - 样本语义：新帅段头 1-3 场（§5-1 可证伪化补注「换帅后 1-3 场」样本面）。
 
-identity（票面红线）：英文侧匹配——TM 俱乐部英文名经三级 NameIndex
+identity（票面红线）：英文侧匹配——TM 俱乐部英文名先经三级 NameIndex
 （normalize + 词元子集，identity-alias 票 01 方法复用）在 club 所属 fd
-联赛内解析到 hist 队名；跨联赛解析不一致或未解析的俱乐部诚实计数入
-unresolved，不硬配（定则 1）。中文名映射只作用 JC 中文面：事件行的
-canonical team_id 由 hist 队名经 team_aliases 英文别名解析，未解析留 NULL。
+联赛内直接解析 hist 队名；词法无关对子（Hearts↔Heart of Midlothian 这
+类，独立复核 F2）再经 team_aliases 英文别名桥（两侧各解析到 canonical
+team_id 相接）兜底。跨联赛解析不一致或仍未解析的俱乐部诚实计数入
+unresolved，不硬配（定则 1），解析率低于 IDENTITY_DEGRADED_RATE 报
+identity_status=degraded（回填后门槛观测）。中文名映射只作用 JC 中文面。
 """
 
 from __future__ import annotations
@@ -29,6 +32,10 @@ from goalx_backend.modelling.team_align import NameIndex, alias_index
 
 #: 换帅后样本窗（票面：新帅首 1-3 场）
 SAMPLE_WINDOW = 3
+#: identity 解析率守门（独立复核 F2）：低于此值 identity_status=degraded
+#: （team_align ALIGNMENT_DEGRADED_COVERAGE=0.95 起步先例的宽松版——
+#: TM↔fd 是新桥，先把缺口显性化再随别名补线收紧）
+IDENTITY_DEGRADED_RATE = 0.7
 
 _TM_CODE_TO_FD = {code: fd for fd, code in TM_LEAGUES.items()}
 
@@ -126,36 +133,41 @@ def _resolve_hist_names(
     clubs: dict[int, tuple[str, list[_Tenure]]],
     memberships: dict[int, set[str]],
     hist: list[_HistMatch],
+    canonical: NameIndex,
 ) -> dict[int, str]:
     """
-    club_tm_id → hist 队名（英文侧三级匹配）。
+    club_tm_id → hist 队名（英文侧：三级直配 → team_aliases 桥兜底）。
 
-    只在俱乐部覆盖到的 fd 联赛索引内解析；各联赛解析结果必须一致，且
-    一队名不得被两家 TM 俱乐部认领（同名互撞=双方都不硬配）。
+    直接词法匹配（normalize + 词元子集）在俱乐部覆盖到的 fd 联赛索引内
+    解析；词法无关对子（Hearts↔Heart of Midlothian 族）经别名桥：TM 名
+    与 hist 名各自解析到同一 canonical team_id 即接通。各联赛解析结果
+    必须一致；一 hist 名不得被两家 TM 俱乐部认领（互撞=双方都不硬配）。
     """
-    names_by_comp: dict[str, set[str]] = {}
+    unique_by_comp: dict[str, set[str]] = {}
     for match in hist:
-        names_by_comp.setdefault(match.competition, set()).add(match.home_team)
-        names_by_comp.setdefault(match.competition, set()).add(match.away_team)
-    indexes = {
-        comp: (
-            NameIndex.build({name: pos for pos, name in enumerate(sorted(names))}),
-            sorted(names),
+        unique_by_comp.setdefault(match.competition, set()).update(
+            (match.home_team, match.away_team)
         )
-        for comp, names in names_by_comp.items()
+    lists_by_comp = {comp: sorted(names) for comp, names in unique_by_comp.items()}
+    indexes = {
+        comp: NameIndex.build({name: pos for pos, name in enumerate(names)})
+        for comp, names in lists_by_comp.items()
+    }
+    # hist 名 → canonical team_id（桥兜底输入；未解析名不参与桥接）
+    canonical_by_name: dict[str, int | None] = {
+        name: canonical.resolve(name)
+        for names in lists_by_comp.values()
+        for name in names
     }
     resolved: dict[int, str] = {}
     claimed: dict[str, int] = {}
     for club, (club_name, _tenures) in clubs.items():
-        found: set[str] = set()
-        for fd in sorted(memberships.get(club, ())):
-            entry = indexes.get(fd)
-            if entry is None:
-                continue
-            index, names = entry
-            pos = index.resolve(club_name)
-            if pos is not None:
-                found.add(names[pos])
+        comps = sorted(memberships.get(club, ()))
+        found = _lexical_matches(club_name, comps, indexes, lists_by_comp)
+        if not found:  # 词法无关 → team_aliases 桥兜底（复核 F2）
+            found = _bridge_matches(
+                club_name, comps, canonical, canonical_by_name, lists_by_comp
+            )
         if len(found) != 1:
             continue  # 未解析/跨联赛不一致 → 不入派生面（调用方计数）
         hist_name = next(iter(found))
@@ -165,6 +177,43 @@ def _resolve_hist_names(
         claimed[hist_name] = club
         resolved[club] = hist_name
     return resolved
+
+
+def _lexical_matches(
+    club_name: str,
+    comps: list[str],
+    indexes: dict[str, NameIndex],
+    lists_by_comp: dict[str, list[str]],
+) -> set[str]:
+    """三级直配：TM 名在覆盖联赛的 hist 名索引内 normalize/词元子集命中。"""
+    found: set[str] = set()
+    for fd in comps:
+        index = indexes.get(fd)
+        if index is None:
+            continue
+        pos = index.resolve(club_name)
+        if pos is not None:
+            found.add(lists_by_comp[fd][pos])
+    return found
+
+
+def _bridge_matches(
+    club_name: str,
+    comps: list[str],
+    canonical: NameIndex,
+    canonical_by_name: dict[str, int | None],
+    lists_by_comp: dict[str, list[str]],
+) -> set[str]:
+    """别名桥兜底：TM 名与 hist 名解析到同一 canonical team_id 即接通。"""
+    tm_team = canonical.resolve(club_name)
+    if tm_team is None:
+        return set()
+    found: set[str] = set()
+    for fd in comps:
+        for name in lists_by_comp.get(fd, ()):
+            if canonical_by_name[name] == tm_team:
+                found.add(name)
+    return found
 
 
 def derive_coach_changes(
@@ -179,11 +228,13 @@ def derive_coach_changes(
     tenures_by_club = _load_tenures(conn)
     memberships = _load_memberships(conn)
     hist = _load_hist(conn)
-    resolved = _resolve_hist_names(tenures_by_club, memberships, hist)
     canonical = alias_index(conn)
+    resolved = _resolve_hist_names(tenures_by_club, memberships, hist, canonical)
     unresolved = sorted(
         name for club, (name, _rows) in tenures_by_club.items() if club not in resolved
     )
+    total_clubs = len(tenures_by_club)
+    resolution_rate = (len(resolved) / total_clubs) if total_clubs else 1.0
 
     # hist 队名 → 该队比赛流（主客皆收）
     resolved_names = set(resolved.values())
@@ -201,13 +252,15 @@ def derive_coach_changes(
         for club in sorted(resolved):
             club_name, tenures = tenures_by_club[club]
             hist_name = resolved[club]
-            # 前任=最近一段已知指派（空窗场不抹除前任——换帅真发生在空窗内）
+            # 前任=最近一段已知指派（空窗场不抹除前任——换帅真发生在空窗内）。
+            # 边界只比教练名（复核 F1）：同人 caretaker→manager 转正是连续段，
+            # role 只随 (name, role) 元组进 payload。
             prev_known: tuple[str, str] | None = None
             current_event: int | None = None
             games_counted = 0
             for match in streams.get(hist_name, ()):
                 cur = _assign(tenures, match.match_date)
-                if cur is not None and cur != prev_known:
+                if cur is not None and (prev_known is None or cur[0] != prev_known[0]):
                     if prev_known is not None:
                         cur_event = conn.execute(
                             """
@@ -269,6 +322,10 @@ def derive_coach_changes(
         "events": events,
         "samples": samples,
         "unresolved_clubs": unresolved,
+        "resolution_rate": round(resolution_rate, 4),
+        "identity_status": (
+            "ok" if resolution_rate >= IDENTITY_DEGRADED_RATE else "degraded"
+        ),
         "rebuilt_at": rebuilt_at,
     }
 
