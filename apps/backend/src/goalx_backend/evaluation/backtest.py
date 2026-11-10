@@ -316,7 +316,8 @@ def era_fair_probs(
     第二份链）。
 
     - auto：era1 = PSC→AvgC（Shin 去水）；era2 = cid177 锚收盘（Shin）→
-      多书中位数共识归一（traj_cons，构建侧已归一的概率直用）；
+      多书共识（traj_cons，构建侧逐书 Shin 去水→跨书均值，票 15 桥接
+      口径，概率直用；早季行同列已物化但 auto 正典链不取）；
     - psc/avgc：只用该源（票 34 对照 run；跨 era 作用于配对行）。
 
     缺列/无效价 = 无基准返回 None。PSC 成熟度由 gold 快照承载：未成熟行
