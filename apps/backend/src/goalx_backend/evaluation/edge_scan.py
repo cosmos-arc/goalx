@@ -1369,6 +1369,16 @@ def _rhythm_line(rhythm: dict[str, Any] | None) -> str:
     )
 
 
+def _md_cell(text: str) -> str:
+    """
+    MD 表格单元格转义（vision-build 票 02 I2）：管符劈裂与换行错位。
+
+    冻结措辞是自由文本（含 `|`/换行即劈裂表行）——渲染层转义，JSON 面
+    保持原文不转义。
+    """
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
 def _render_markdown(report: dict[str, Any]) -> str:
     """MD 视图（周报人读面；数字与 JSON 同源）。"""
     lines: list[str] = []
@@ -1432,7 +1442,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
     for row in hyp["rows"]:
         w(
             f"| {row['h_id']} | {row['status']} | {row['suggested'] or '—'}"
-            + f" | {row['attempt_count']} | {row['statement']} |"
+            + f" | {row['attempt_count']} | {_md_cell(str(row['statement']))} |"
         )
     w("")
     w("## 本周新台账行")

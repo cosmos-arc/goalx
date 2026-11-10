@@ -7,8 +7,8 @@ attempt 计数），refuted 留痕不删、全量结果（含阴性）入账。
 
 状态机（registered→running→supported|refuted）：
 - 程序（扫描器 actor）只可把 registered 点亮为 running（数据面在场）；
-- 终态（supported|refuted）翻转恒人审——人 CLI 落账，agent 不自注册、
-  不自动定生死（人审在环不变量，票 01 晋升哨同构）；
+- 注册与终态翻转恒人审——人 CLI 落账；agent 不自注册（注册面 actor 哨）、
+  不自动定生死（终态哨；人审在环不变量，票 01 晋升哨同构）；
 - 终态不翻案：重开=改预测=新 h_id（prereg 纪律延续）。
 
 统计全部程序算（定则 5）：record_attempt 落逐次评估留痕
@@ -66,6 +66,14 @@ def transition_allowed(from_state: HypothesisState, to_state: HypothesisState) -
 
 class InvalidTransition(ValueError):
     """非法状态转移（谓词拒绝或终态哨拦截；转移零写入）。"""
+
+
+class InvalidRegistration(ValueError):
+    """非法注册（agent 不自注册——注册面与终态同为人在环哨）。"""
+
+
+class HIdFamilyConflict(InvalidRegistration):
+    """同 h_id 已被异 family 注册（family 归属不可改；改预测=新 h_id）。"""
 
 
 class UnknownHypothesis(LookupError):
@@ -136,15 +144,22 @@ def register_hypothesis(  # noqa: PLR0913 - prereg 字段即列（store.py 同�
     expected_n: str,
     ledger_ref: str,
     family: str | None = None,
+    actor: str = "human",
 ) -> int:
     """
-    注册一个假设（幂等：同 h_id 返回既有行 id，冻结措辞不随后到调用改写）。
+    注册一个假设（幂等：同 h_id 同 family 返回既有行 id，措辞不随后到改写）。
 
     新行 attempt_count=同族（family，缺省=h_id）既有行的最大计数——家族
     复试递增，DSR/BH 校正分母=家族总尝试数而非行数（票 04 消费口径）。
     注册=冻结（frozen_at/first_registered_at=落账时刻）；措辞改写唯一
-    路径=新 h_id 新行。
+    路径=新 h_id 新行；h_id 的 family 归属同样不可改（同 h_id 异 family
+    =HIdFamilyConflict 参数冲突，fail-loud 零写入）。
+
+    人审哨（I1，镜像终态哨）：注册恒人审——actor 非 ``human`` 前缀拒绝
+    （agent 不自注册）；status_actor 如实落调用方身份。
     """
+    if not actor.startswith("human"):
+        raise InvalidRegistration(f"注册恒人审（actor={actor} 不得自注册假设）")
     resolved_family = family if family is not None else h_id
     registered_at = utc_now_iso()
     with atomic(conn):
@@ -154,7 +169,7 @@ def register_hypothesis(  # noqa: PLR0913 - prereg 字段即列（store.py 同�
                 (h_id, family, statement, judgement, data_face, expected_n,
                  ledger_ref, attempt_count, first_registered_at, frozen_at,
                  status, status_actor, status_reason, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'registered', 'human',
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'registered', ?,
                     '注册', ?)
             """,
             (
@@ -167,18 +182,21 @@ def register_hypothesis(  # noqa: PLR0913 - prereg 字段即列（store.py 同�
                 ledger_ref,
                 registered_at,
                 registered_at,
+                actor,
                 registered_at,
             ),
         )
+        # 按 h_id 回读（族冲突在下一行分流，miss 只剩不可达防御面）
         row = conn.execute(
-            """
-            SELECT id, attempt_count FROM hypothesis_registry
-            WHERE h_id = ? AND family = ?
-            """,
-            (h_id, resolved_family),
+            "SELECT id, family FROM hypothesis_registry WHERE h_id = ?", (h_id,)
         ).fetchone()
-        if row is None:  # pragma: no cover - INSERT OR IGNORE 后必命中
+        if row is None:  # pragma: no cover - 同事务回读自家 INSERT 必命中
             raise UnknownHypothesis("注册后读不到假设行")
+        if str(row["family"]) != resolved_family:
+            raise HIdFamilyConflict(
+                f"h_id {h_id} 已被 family={row['family']} 注册"
+                + "（异 family 复用 h_id=参数冲突；改预测=新 h_id）"
+            )
         if cursor.rowcount == 1:
             inherited = conn.execute(
                 """

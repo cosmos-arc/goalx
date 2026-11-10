@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -28,7 +29,7 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import srct, srct_asof, srct_odds
 from goalx_backend.db import connect, connect_research, migrate
-from goalx_backend.evaluation import accuracy, edge_scan
+from goalx_backend.evaluation import accuracy, edge_scan, hypothesis_registry
 from goalx_backend.models import DrawResultInput, MatchCodeInput, SnapshotInput
 from goalx_backend.morning_check import check_edge_scan
 
@@ -288,6 +289,28 @@ def test_digest_includes_hypothesis_registry_section(
     assert "## 假设注册表" in md
     assert "| H1 |" in md
     assert "| H5 |" in md
+
+
+def test_digest_markdown_escapes_statement_cell(db: sqlite3.Connection) -> None:
+    """I2 回归：冻结措辞含 | 与换行不劈裂周报 MD 表（渲染层转义）。"""
+    hypothesis_registry.register_hypothesis(
+        db,
+        h_id="H11",
+        statement="含管符|与\n换行的措辞",
+        judgement="n≥10",
+        data_face="自由文本面",
+        expected_n="n≥10",
+        ledger_ref="edge-ledger:E-01",
+    )
+    report = edge_scan.build_edge_digest(db, week_end=_BUSINESS_DATE)
+    md = edge_scan._render_markdown(report)
+    line = next(row for row in md.splitlines() if row.startswith("| H11 |"))
+    assert "含管符\\|" in line  # 管符转义，不劈裂单元格
+    assert "与 换行的措辞" in line  # 换行折成空格，表体行不断行
+    # 按未转义管符切分仍=5 列（首尾空段+5 单元格）：转义管符不增列
+    cells = re.split(r"(?<!\\)\|", line)
+    assert len(cells) == 7
+    assert cells[-2].strip() == "含管符\\|与 换行的措辞"
 
 
 # ---- 票 32：Romano-Wolf stepdown（S1 多重校正，21 段族；只收紧不放宽） ----

@@ -2632,7 +2632,7 @@ def _apply_v51(conn: sqlite3.Connection) -> None:
                 (h_id, family, statement, judgement, data_face, expected_n,
                  ledger_ref, attempt_count, first_registered_at, frozen_at,
                  status, status_actor, status_reason, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '2026-11-07', ?, 'human',
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '2026-11-07', ?, 'human:seed',
                     'seed: research/61 §二 首批注册（vision-build 票 02）', ?)
             """,
             (

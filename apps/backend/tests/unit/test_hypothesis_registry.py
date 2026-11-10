@@ -354,6 +354,102 @@ def test_register_new_family_starts_at_zero(db: sqlite3.Connection) -> None:
     assert hreg.current_status(db, "H10") is HypothesisState.REGISTERED
 
 
+def test_register_same_h_id_different_family_is_conflict(
+    db: sqlite3.Connection,
+) -> None:
+    """W1 回归：同 h_id 异 family=参数冲突（语义明确报既有 family）。
+
+    不再落「注册后读不到假设行」式误导错误；同 h_id 同 family 幂等回显
+    既有行不变。
+    """
+    first = hreg.register_hypothesis(
+        db,
+        h_id="H20",
+        statement="原措辞",
+        judgement="n≥10",
+        data_face="原数据面",
+        expected_n="n≥10",
+        ledger_ref="edge-ledger:E-01",
+        family="F20",
+    )
+    with pytest.raises(hreg.HIdFamilyConflict, match="F20"):
+        hreg.register_hypothesis(
+            db,
+            h_id="H20",
+            statement="异族换皮",
+            judgement="n≥10",
+            data_face="另一数据面",
+            expected_n="n≥10",
+            ledger_ref="edge-ledger:E-23",
+            family="OTHER",
+        )
+    # 缺省 family=h_id 与显式异族同理：冲突面=族归属不可改
+    with pytest.raises(hreg.HIdFamilyConflict):
+        hreg.register_hypothesis(
+            db,
+            h_id="H20",
+            statement="缺省族冲突",
+            judgement="n≥10",
+            data_face="面",
+            expected_n="n≥10",
+            ledger_ref="edge-ledger:E-01",
+        )
+    # 同 h_id 同 family：幂等回显既有行（措辞/计数均不被后到调用改写）
+    again = hreg.register_hypothesis(
+        db,
+        h_id="H20",
+        statement="后到措辞不得改写",
+        judgement="n≥10",
+        data_face="原数据面",
+        expected_n="n≥10",
+        ledger_ref="edge-ledger:E-01",
+        family="F20",
+    )
+    assert again == first
+    row = db.execute(
+        "SELECT statement, family FROM hypothesis_registry WHERE h_id='H20'"
+    ).fetchone()
+    assert (row["statement"], row["family"]) == ("原措辞", "F20")
+
+
+def test_register_requires_human_actor(db: sqlite3.Connection) -> None:
+    """I1 回归：注册面人审哨——非 human 前缀 actor 拒绝且零写入。
+
+    agent 不自注册（人审在环不变量）：默认 actor='human' 兼容人 CLI；
+    落账 status_actor 如实记录调用方。
+    """
+    with pytest.raises(hreg.InvalidRegistration, match="人审"):
+        hreg.register_hypothesis(
+            db,
+            h_id="H21",
+            statement="程序试图自注册",
+            judgement="n≥10",
+            data_face="面",
+            expected_n="n≥10",
+            ledger_ref="edge-ledger:E-01",
+            actor="agent:loop",
+        )
+    assert hreg.current_status(db, "H21") is None  # 零写入
+    registered = hreg.register_hypothesis(
+        db,
+        h_id="H21",
+        statement="人审注册（冻结措辞）",
+        judgement="n≥10",
+        data_face="面",
+        expected_n="n≥10",
+        ledger_ref="edge-ledger:E-01",
+        actor="human:cli",
+    )
+    assert registered > 0
+    assert hreg.current_status(db, "H21") is HypothesisState.REGISTERED
+    assert (
+        db.execute(
+            "SELECT status_actor FROM hypothesis_registry WHERE h_id='H21'"
+        ).fetchone()["status_actor"]
+        == "human:cli"
+    )
+
+
 # ---- 扫描器挂钩（交付 4：S1→H1 示范；其余按数据面点亮留缝）----
 
 
