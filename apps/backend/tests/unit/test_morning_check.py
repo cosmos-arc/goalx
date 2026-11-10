@@ -527,3 +527,23 @@ def test_check_runtime_fingerprint_dirty_is_yellow(tmp_path: Path) -> None:
     assert item.status == mc.OK
     assert "healthz 不可读" in item.detail
     assert "指纹行缺" in item.detail
+
+
+def test_check_prematch_snapshots_observation(store: CorpusStore) -> None:
+    """项 18 观察（autoresearch 票 14）：未开始如实报零；有拍报计数不判红。"""
+    from goalx_backend.data.ingest import srct_prematch
+    from goalx_backend.morning_check import check_prematch_snapshots
+
+    item = check_prematch_snapshots(store, now=NOW)
+    assert item.status == OK
+    assert "未开始" in item.detail
+    store.ingest_raw(
+        "srct",
+        srct_prematch.PREMATCH_DATASET,
+        srct_prematch.prematch_key("4012345", 150, NOW),
+        b"x",
+        ext=".html",
+    )
+    item = check_prematch_snapshots(store, now=NOW)
+    assert item.status == OK
+    assert "累计 1 拍" in item.detail

@@ -1040,6 +1040,38 @@ class CorpusStore:
         )
         return int(row["n"]) if row else 0
 
+    def prematch_snapshot_face(self, since_iso: str) -> dict[str, object]:
+        """
+        赛前拍快照计数面（autoresearch 票 14 晨检项数源）。
+
+        只认源T match_detail_prematch 数据集（独立复核 W1 分表）的
+        ``@pre-`` 拍键（ingest.srct_prematch.prematch_key 同源——LIKE
+        模式由 test_ingest_srct_prematch 钉死防漂移）；recent=水线
+        fetched_at ≥ since_iso 的拍数；空面如实零。
+        """
+        row = (
+            self._checkpoint()
+            .execute(
+                """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN fetched_at >= ? THEN 1 ELSE 0 END) AS recent,
+                   MAX(fetched_at) AS latest
+            FROM raw_artifacts
+            WHERE provider='srct' AND dataset='match_detail_prematch'
+              AND key LIKE '%@pre-%'
+            """,
+                (since_iso,),
+            )
+            .fetchone()
+        )
+        if row is None or row["total"] == 0:
+            return {"total": 0, "recent": 0, "latest_fetched_at": None}
+        return {
+            "total": int(row["total"]),
+            "recent": int(row["recent"] or 0),
+            "latest_fetched_at": str(row["latest"]) if row["latest"] else None,
+        }
+
     def remat_state(self) -> dict[str, object] | None:
         """增量物化状态行（无行=从未跑过，调用方走全量兜底）。"""
         row = (
