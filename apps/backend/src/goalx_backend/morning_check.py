@@ -1,10 +1,11 @@
 """
-09:05 晨检代码化：21 项只读红绿面。
+09:05 晨检代码化：22 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
 autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
-票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项。）
+票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项；
+vision-build 票 05 加第 22 项教训库复审到期。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -51,7 +52,7 @@ from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.ingest import zucai_official
 from goalx_backend.data.ingest.shell import browser_ssl_context
 from goalx_backend.data.ingest.srct_shift import GAP_HORIZON
-from goalx_backend.evaluation import anchor_sentinel, edge_scan
+from goalx_backend.evaluation import anchor_sentinel, edge_scan, lessons
 from goalx_backend.modelling import forecast
 
 OK = "ok"
@@ -637,6 +638,46 @@ def check_news_pit_beats(store: CorpusStore, *, now: datetime) -> CheckItem:
     )
 
 
+def check_lessons_review_due(
+    lessons_dir: Path | None = None, *, now: datetime | None = None
+) -> CheckItem:
+    """
+    项 22 教训库复审到期（vision-build 票 05；只报不改，到期=黄不红）。
+
+    读 git 内受控 markdown（docs/plans/lessons/，evaluation.lessons）——
+    晨检首个非库数据源形态（读的是版本库文件而非 sqlite/语料）。到期
+    清单=人裁输入面（12 月未复现→建议降置信；置信翻转/归档=status/
+    confidence 人改，脚本零写入）。目录缺席/条目破损=黄（受控文档
+    可见性，不绿冒充，也不炸整检）。
+    """
+    resolved = now or datetime.now(UTC)
+    today = resolved.astimezone(fx_store.CST).date()
+    try:
+        loaded = lessons.load_lessons(lessons_dir)
+    except (lessons.LessonFormatError, OSError, RuntimeError) as exc:
+        return CheckItem("lessons_review_due", DEGRADED, f"教训库不可读：{exc}")
+    active_n = sum(1 for lesson in loaded if lesson.status == "active")
+    due = [
+        lesson
+        for lesson in loaded
+        if lesson.status != "archived"
+        and lesson.review_due is not None
+        and lesson.review_due <= today
+    ]
+    if due:
+        ids = "、".join(lesson.id for lesson in due)
+        detail = (
+            f"复审到期 {len(due)} 条：{ids}"
+            + "（只报不改；12 月未复现→建议降置信，翻转/归档=人改）"
+        )
+        return CheckItem("lessons_review_due", DEGRADED, detail)
+    return CheckItem(
+        "lessons_review_due",
+        OK,
+        f"{len(loaded)} 条在库 · active {active_n} · 复审到期 0",
+    )
+
+
 def check_pool_drift(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -692,7 +733,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 21 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 22 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -723,6 +764,7 @@ def run_morning_check(
                 check_prematch_snapshots(store, now=resolved_now),
                 check_anchor_sentinel(conn, now=resolved_now),
                 check_news_pit_beats(store, now=resolved_now),
+                check_lessons_review_due(now=resolved_now),
                 check_jc_waiting(
                     conn,
                     now=resolved_now,
