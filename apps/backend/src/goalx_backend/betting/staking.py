@@ -19,9 +19,10 @@
   "整注"口径计算——注额=单关口径（单注一个 Kelly，不分腿）。
 
 票 12 加税感知单票注额帽（``tax_free_stake_cap``）：单票奖金 ≤¥1 万永处
-免税桶——策略参数层（``auto_strategy.AutoV1Params``）的确定性 sizing 规则，
-引擎注码在 Kelly 帽/预算帽之外再压免税帽；``suggest_stake`` 是人选注篮的
-只读建议（人裁决收口），不加帽。
+免税桶——引擎 sizing 的确定性规则（现役宿主=probes 落注的
+``min(stake, tax_free_stake_cap(odds))`` 守卫；auto-v1 宿主随引擎
+2026-11-11 退役），引擎注码在预算帽之外再压免税帽；``suggest_stake``
+是人选注篮的只读建议（人裁决收口），不加帽。
 """
 
 from __future__ import annotations
@@ -226,8 +227,8 @@ def tax_free_stake_cap(odds: float, *, prize_cap: float = TAX_FREE_THRESHOLD) ->
 
     Args:
         odds: decimal 赔率（串关传联合赔率；须 >1）。
-        prize_cap: 免税桶奖金上限（元）——引擎按策略参数
-            ``AutoV1Params.tax_free_prize_cap`` 透传（与 tax 视图同源常量）。
+        prize_cap: 免税桶奖金上限（元）——调用方按策略参数透传
+            （与 tax 视图同源常量）。
 
     """
     if odds <= 1:

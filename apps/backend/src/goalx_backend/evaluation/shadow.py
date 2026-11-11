@@ -33,7 +33,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from goalx_backend.betting import auto_strategy, versioning
+from goalx_backend.betting import auto_strategy, probes, versioning
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic, utc_now_iso
@@ -317,7 +317,10 @@ def run_shadow_retrain_beat(
     - 同流量=champion 当日已覆盖 fixture 集（读口按业务日取），键一致由
       构造保证；幂等重跑：三元组 UNIQUE+内容哈希吸收+事件账吸收三重。
     """
-    resolved_params = auto_strategy.AUTO_V1_PARAMS if params is None else params
+    # challenger 参数面基座=现役引擎（auto-v1 退役 2026-11-11 人裁，v2
+    # 唯一现役）：影子版本的策略身份与现役下注闸同源，史行 v1 指纹不再
+    # 作为新 challenger 的基座（已注册 shadow 版本的三元组不受影响）。
+    resolved_params = probes.AUTO_V2_PARAMS if params is None else params
     resolved = now or datetime.now(UTC)
     run_date = business_date or fx_store.beijing_business_date(resolved)
     period = run_date[:7]

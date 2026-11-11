@@ -194,7 +194,7 @@ def paper_ev_realization_rows(
     actual_stake/odds，与本面 profit/建议 stake 单位不符）。两处有意收窄：
     ① 只取 purchased=0——回录锁定价重绑（record_purchase）会刷 locked_odds
     而快照不刷新，重绑行的实现差跨条款配对失真（correctness F1）；未回录
-    注（auto-v1 系统纸面）建注即决策，条款自建后未变。② void 不进（本金
+    注（auto 系统纸面）建注即决策，条款自建后未变。② void 不进（本金
     退回无实现信号）；EV 快照缺席（非 had 面/快照上线前旧行）非模型口径
     可判面，不硬凑。窗=settled_at 日期。
     """

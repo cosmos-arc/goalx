@@ -96,7 +96,7 @@ def forecast_daily_flow(business_date: str | None = None) -> dict[str, int]:
 
 @flow(name="auto-paper", log_prints=True)
 def auto_paper_flow() -> dict[str, int]:
-    """auto-v1 策略落注（auto-paper 票 03）：锚后 1 分钟跑当前锚。"""
+    """auto-v2 探针落注（票 03/票 01）：锚后 1 分钟跑当前锚（v1 已退役）。"""
     stats = tasks.auto_paper()
     logger.info("auto-paper: {}", stats)
     return stats

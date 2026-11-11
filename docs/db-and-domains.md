@@ -73,7 +73,7 @@
 | `bet_slips` / `bet_legs` / `combinations` / `pool_picks` | 票/腿/复式物化/池票选场 | 腿引用锁定 OddsSnapshot；combinations=任9 笛卡尔积落行 | append |
 | `settlements` / `settlement_revisions` | 结算与更正留痕 | 单关返本、串关无效腿按 1 继续 | append / append |
 | `bankroll_events` | 资金事件 | balance_after 链式核对；**只真金记录进 Bankroll** | append |
-| `auto_paper_runs` | auto-v1 锚执行台账（票 03） | 每锚一行 upsert：行存在=跑过；zero_note 区分 no_candidates/no_positive_ev/price_drift/gate_rejected（没跑≠没得买） | upsert（bets/candidates 首写保真 MAX 合并） |
+| `auto_paper_runs` | auto 锚执行台账（票 03；现役写口=auto-v2） | 每锚一行 upsert：行存在=跑过；zero_note 区分 no_candidates/no_positive_ev/price_drift/gate_rejected（没跑≠没得买）。auto-v1 引擎 2026-11-11 人裁退役（v2 唯一现役），v1 史行结算/台账照读不改写 | upsert（bets/candidates 首写保真 MAX 合并） |
 
 ### evaluation 域
 

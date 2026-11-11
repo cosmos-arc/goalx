@@ -134,6 +134,12 @@ def test_live_small_bankroll_min_stake_note() -> None:
     # ¼Kelly 0.25% < 1% → 最低注 ¥2 已越 5% 上限（¥1.5）→ 兜底并说明
     assert tiny.stake == MIN_STAKE_CNY
     assert "超出上限" in tiny.reason
+    # 区间内比例（2.5% ≥ 1%）但比例注额 ¥0.875 < ¥2 → 最低注 ¥2 仍越
+    # 5% 上限（¥1.75）——同款越限说明（非小 edge 分支）
+    mid = suggest_stake(BetMode.LIVE, bankroll=35, ev=0.10, odds=2.0)
+    assert mid.stake == MIN_STAKE_CNY
+    assert mid.fraction == pytest.approx(2.0 / 35)
+    assert "超出上限" in mid.reason
 
 
 def test_parlay_input_is_whole_bet_caliber() -> None:
@@ -190,9 +196,25 @@ def test_tax_free_cap_prize_confirmed_free_via_tax_view() -> None:
 
 
 def test_tax_free_cap_prize_cap_passthrough() -> None:
-    """prize_cap 透传：引擎按策略参数（AutoV1Params.tax_free_prize_cap）压帽。"""
+    """prize_cap 透传：调用方按策略参数压帽（默认与 tax 视图同源常量）。"""
     assert tax_free_stake_cap(2.0, prize_cap=5000.0) == 2500.0
     assert tax_free_stake_cap(4.0, prize_cap=12_000.0) == 3000.0
+
+
+def test_tax_free_cap_joint_odds_and_tax_view_boundary() -> None:
+    """串关联合赔率口径+税视图跨界（票 12；自 auto-v1 引擎测试迁层）。
+
+    整注语义：串关传联合赔率——两腿各 9.68 → 联合 93.7024 → 帽
+    floor(10000/93.7024)=¥106（奖金 ¥9,932.45 免征）。跨界两侧：奖金
+    ¥9,999 桶内直过、¥10,001 越线全额 20% 计税（税墙即帽的存在理由）。
+    """
+    joint = 9.68 * 9.68
+    assert tax_free_stake_cap(joint) == 106.0
+    assert tax_free_stake_cap(joint) * joint <= 10_000.0
+    # 跨界两侧（odds 2.0，帽 ¥5,000）：压帽前越线、压帽后免征
+    assert tax.tax_on_prize(5000.5 * 2.0) == (2000.2, 8000.8)
+    capped = tax_free_stake_cap(2.0)
+    assert tax.tax_on_prize(capped * 2.0) == (0.0, 10_000.0)
 
 
 def test_tax_free_cap_rejects_invalid_odds() -> None:

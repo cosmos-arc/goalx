@@ -322,7 +322,7 @@ def check_paper_account(conn: sqlite3.Connection) -> CheckItem:
     """
     项 15 纸面账户观察（auto-paper 票 04；只报数不判红）。
 
-    当日新注数/账户行数/最近落注锚——auto-v1 换栈前台账可能为空，
+    当日新注数/账户行数/最近落注锚——首锚落注前台账可能为空，
     无行=「未开始」，不绿冒充。
     """
     face = account.paper_account_face(conn)

@@ -3,9 +3,9 @@ auto-v2 探针阵列引擎 + 每注 CLV 回填（edge-program-20261107 票 01）
 
 纸面账户从「EV 集中注」重构为「带来源标签的分布式探针阵列」（prereg
 修订⑤）：每注带 edge_source 标签，分来源结算 P&L 与 CLV——哪个方向真
-有边际一目了然。auto-v2 接管锚拍落注槽位（auto-v1 冻结版代码与其历史
-账面保留不改写，报告分列）；台账 auto_paper_runs 沿用（换栈日=分界，
-v1/v2 不共享同日同锚行）。
+有边际一目了然。auto-v2 是唯一现役引擎（auto-v1 已于 2026-11-11 人裁
+退役，执行件移至 auto_strategy 共享层；史行与台账照读不改写，报告分
+列）；台账 auto_paper_runs 沿用（换栈日=分界，v1/v2 不共享同日同锚行）。
 
 - 校准探针（calibration_probe，常亮）：claimed-EV 注——每场最优 EV
   （修订①去相关）top-3、全四玩法（had 面使每注 CLV 有覆盖）、平注
@@ -32,6 +32,7 @@ import duckdb
 
 from goalx_backend import odds_math as om
 from goalx_backend.betting import auto_strategy as au
+from goalx_backend.betting import staking
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.quote_evidence import QuoteReads
@@ -65,9 +66,10 @@ class AutoV2Params:
     auto-v2 探针口径（prereg 修订⑤冻结）。
 
     校准 ¥6/晚=平注 ¥2×top-3；三条件探针各 ¥2 熄灯待扫描器晋升；
-    池面 ¥20/晚测量帽。可购判定与 auto-v1 同口径（sale_buffer+
-    kickoff_guard 近似，语义见 AutoV1Params docstring）。改参数=升版本
-    （prereg C 节纪律）。
+    池面 ¥20/晚测量帽。可购判定=锚时在售且开球晚于锚+sale_buffer 缓冲
+    +kickoff_guard 开球前置（JC 逐场停售时刻不可查的近似：停售≈开球，
+    凌晨场有高估风险，台账可见；在售/单关按玩法行分别判——票 14 起
+    market_eligibility_problem 单源）。改参数=升版本（prereg C 节纪律）。
     """
 
     single_markets: tuple[str, ...] = ("had", "hhad", "crs", "ttg")
@@ -145,7 +147,11 @@ def _run_calibration_probe(
         outcome = au.place_single(
             conn,
             pick,
-            stake=spec.stake,
+            # 税帽守卫（票 12 规则；auto-v1 退役迁宿 v2，2026-11-11 人裁）：
+            # sizing=min(注码, staking.tax_free_stake_cap(odds))——今日 flat ¥2
+            # 恒不触帽（帽 <¥2 须 odds>5000，竞彩无此价=无行为变化），探针
+            # 点亮升注码时规则已在链上（奖金 ≤¥1 万永处免税桶）。
+            stake=min(spec.stake, staking.tax_free_stake_cap(pick.odds)),
             request_id=request_id,
             run_iso=run_iso,
             reads=reads,
@@ -282,8 +288,8 @@ def backfill_bet_clv(
     """
     已结算 auto 纸面注的 CLV 回填（幂等：只补 clv IS NULL 行）。
 
-    范围=mode=paper 且 strategy_version 非空（auto-v1/auto-v2 系统决策；
-    人工纸面/回录注不属探针仪器面）。全腿 had 且选择码在三向闭集内才可
+    范围=mode=paper 且 strategy_version 非空（auto-v2 系统决策与已退役
+    auto-v1 史行；人工纸面/回录注不属探针仪器面）。全腿 had 且选择码在三向闭集内才可
     算——源T 收盘锚是 1x2，非 had 腿/闭集外选择码记 skipped_non_had，
     无锚（语料缺席/CorpusScope 外/匹配不中）记 skipped_no_anchor，列保持
     NULL 待下次 wrap 重试（correctness F1：闭集外选择码按无锚降级不炸

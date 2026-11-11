@@ -309,6 +309,60 @@ def test_calibration_probe_no_had_candidate_no_slot(db: sqlite3.Connection) -> N
     assert rows[0]["market_code"] == "ttg"
 
 
+def test_backfill_clv_fixture_row_absent_degrades(
+    db: sqlite3.Connection, monkeypatch
+) -> None:
+    """correctness：场次档案缺席（fixture 行被删的史行）=无锚降级，不炸 wrap。"""
+    fixture = _seed_fixture(db, "亥", code="周五021")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture)
+    had = _matrix(1.3, 1.1).had()
+    for sel, prob in had.items():
+        _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
+    db.commit()
+    _make_v2_live(db)
+    probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    _settle_bets(db, [fixture])
+    monkeypatch.setattr(
+        probes.fx_store, "get_fixture", lambda *args, **kwargs: None
+    )  # 档案面缺席（史行 fixture 行不存在的等价态）
+    monkeypatch.setattr(
+        probes.quote_evidence,
+        "srct_pinnacle_closing_triplet",
+        lambda *args, **kwargs: (2.0, 3.4, 3.6),
+    )
+    filled = probes.backfill_bet_clv(db, duckdb.connect(":memory:"))
+    assert filled == {"filled": 0, "skipped_non_had": 0, "skipped_no_anchor": 1}
+    assert all(row["clv"] is None for row in _v2_rows(db))
+
+
+def test_calibration_probe_stake_pressed_into_tax_free_cap(
+    db: sqlite3.Connection,
+) -> None:
+    """税帽守卫（auto-v1 退役迁宿，2026-11-11）：平注压免税帽在 v2 活宿主。
+
+    sizing 规则=min(注码, staking.tax_free_stake_cap(odds))——今日口径
+    flat ¥2 恒不触帽（帽 <¥2 须 odds>5000，竞彩无此价=无行为变化）；本测
+    用极端价 6000 证明规则在链上：stake=min(2, floor(10000/6000))=¥1，
+    奖金 ≤¥1 万永处免税桶（票 12 规则，引擎层实现=tax_free_stake_cap）。
+    """
+    from goalx_backend.betting.staking import tax_free_stake_cap
+
+    fixture = _seed_fixture(db, "戌", code="周二011")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture)
+    _snap(db, fixture, "ttg", "2", 6000.0)  # 极端正 EV 价：帽 floor(10000/6000)=¥1
+    db.commit()
+
+    _make_v2_live(db)
+    stats = probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    assert stats["bets"] == 1
+    rows = _v2_rows(db)
+    assert rows[0]["stake"] == pytest.approx(min(2.0, tax_free_stake_cap(6000.0)))
+    assert rows[0]["stake"] == 1.0
+    assert rows[0]["stake"] * float(rows[0]["locked_odds"]) <= 10_000.0
+
+
 def test_zero_signal_day_ledger(db: sqlite3.Connection) -> None:
     """无候选日：台账留痕 no_candidates，熄灯探针在 detail_json 可见。"""
     import json
@@ -416,7 +470,14 @@ def test_backfill_clv_skips_non_had_and_missing_anchor(
 
 
 def test_backfill_clv_two_leg_parlay_joint(db: sqlite3.Connection, monkeypatch) -> None:
-    """auto-v1 史行（had 两腿串关）也回填：票级=Π收盘 − Π隐含。"""
+    """auto-v1 史行（had 两腿串关）也回填：票级=Π收盘 − Π隐含。
+
+    v1 引擎已退役（2026-11-11）——史行经 store 建库口直造（退役兼容面：
+    CLV 回填范围按 strategy_version 非空判，不按引擎分叉）。
+    """
+    from goalx_backend.betting import store as bt_store
+    from goalx_backend.models import BetMode, LegInput, MarketKind
+
     fixtures = [
         _seed_fixture(db, tag, code=f"周五00{i}")
         for i, tag in enumerate(("壬", "癸"), 1)
@@ -429,9 +490,29 @@ def test_backfill_clv_two_leg_parlay_joint(db: sqlite3.Connection, monkeypatch) 
             _snap(db, fixture, "had", sel, round(1.5 / prob, 2))
         _snap(db, fixture, "ttg", "2", 1.2)  # 单关面负 EV
     db.commit()
-    _make_engine_live(db, params=au.AUTO_V1_PARAMS, label=au.AUTO_V1)
-    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
-    assert stats["bets"] == 1  # 一张 had 2串1（v1 面）
+    bet_id = bt_store.create_bet(
+        db,
+        BetMode.PAPER,
+        MarketKind.FIXED,
+        2.0,
+        strategy_version=au.AUTO_V1,
+        price_source="system_paper",
+        client_request_id=(
+            f"auto-v1:{BUSINESS_DATE}:{ANCHOR}:p:{min(fixtures)}-{max(fixtures)}"
+        ),
+    )
+    for fixture in fixtures:
+        bt_store.add_leg(
+            db,
+            bet_id,
+            LegInput(
+                fixture_id=fixture,
+                market_code="had",
+                selection_code="h",
+                locked_odds=round(1.5 / matrix.had()["h"], 2),
+            ),
+        )
+    db.commit()
     _settle_bets(db, fixtures)
 
     triplets = {fixtures[0]: (2.0, 3.4, 3.6), fixtures[1]: (2.2, 3.2, 3.4)}
@@ -634,7 +715,11 @@ def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
 
 
 def test_cutover_day_ledger_rows_per_engine(db: sqlite3.Connection) -> None:
-    """correctness F2：换栈日 v1/v2 同日同锚重跑——台账分行不混账。"""
+    """correctness F2：换栈日 v1/v2 同日同锚——台账分行不混账。
+
+    v1 引擎已退役（2026-11-11）：v1 行经共享台账写口直建（史行形态），
+    v2 行走现役引擎——同日同锚两行各账的语义不变。
+    """
     import json
 
     fixture = _seed_fixture(db, "巳", code="周一010")
@@ -642,8 +727,13 @@ def test_cutover_day_ledger_rows_per_engine(db: sqlite3.Connection) -> None:
     _seed_forecast(db, fixture)
     _seed_positive_ev_boards(db, fixture)
     db.commit()
-    _make_engine_live(db, params=au.AUTO_V1_PARAMS, label=au.AUTO_V1)
-    au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR)
+    au.record_anchor_run(
+        db,
+        BUSINESS_DATE,
+        ANCHOR,
+        stats={"candidates": 1, "bets": 1, "slips": 0},
+        strategy=au.AUTO_V1,
+    )
     _make_v2_live(db)
     probes.run_auto_v2(db, run_at=RUN_AT, anchor_label=ANCHOR)
 
