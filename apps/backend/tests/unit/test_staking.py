@@ -1,9 +1,13 @@
-"""建议仓位领域函数（票 wb-06）：flat 红线 / ¼Kelly / 截断 / EV≤0 / 整注口径。"""
+"""建议仓位领域函数（票 wb-06）：flat 红线 / ¼Kelly / 截断 / EV≤0 / 整注口径。
+
+票 12 加税感知单票注额帽（tax_free_stake_cap）：奖金 ≤¥1 万永处免税桶。
+"""
 
 from __future__ import annotations
 
 import pytest
 
+from goalx_backend.betting import tax
 from goalx_backend.betting.staking import (
     FLAT_FRACTION,
     KELLY_FRACTION,
@@ -11,6 +15,7 @@ from goalx_backend.betting.staking import (
     MIN_STAKE_CNY,
     StakeTier,
     suggest_stake,
+    tax_free_stake_cap,
 )
 from goalx_backend.models import BetMode
 
@@ -157,3 +162,53 @@ def test_invalid_inputs_raise() -> None:
 def test_kelly_fraction_constant_is_quarter() -> None:
     """红线常量自检：fraction 系数 = 1/4（调研推荐起步，不引入 progression）。"""
     assert KELLY_FRACTION == 0.25
+
+
+# ---- 税感知单票注额帽（vision-build 票 12：奖金 ≤¥1 万永处免税桶）----
+
+
+def test_tax_free_cap_is_floor_to_yuan() -> None:
+    """帽=floor(¥10,000/赔率)，取整规则=向下取整到元（票面两选一写死）。"""
+    assert tax_free_stake_cap(2.0) == 5000.0
+    # 整除：10000/2.5=4000 → 帽上奖金恰 ¥10,000（税口径"不超过 1 万"免）
+    assert tax_free_stake_cap(2.5) == 4000.0
+    # 元位向下取整（分位取整会给 4999.75——被否：竞彩注额元的整数倍+保守）
+    assert tax_free_stake_cap(2.0001) == 4999.0
+    # 非整除：10000/3.7=2702.70 → 2702（奖金 9997.4 < 1 万）
+    assert tax_free_stake_cap(3.7) == 2702.0
+    # 高赔端：10000/5.74=1742.16 → 1742（奖金 9999.08）
+    assert tax_free_stake_cap(5.74) == 1742.0
+
+
+def test_tax_free_cap_prize_confirmed_free_via_tax_view() -> None:
+    """帽上奖金经现有 tax 视图逐例复核：免征（接 betting/tax 现有件）。"""
+    for odds in (1.5, 2.0, 2.5, 3.7, 5.74, 33.0):
+        cap = tax_free_stake_cap(odds)
+        tax_amount, net = tax.tax_on_prize(cap * odds)
+        assert tax_amount == 0.0
+        assert net == pytest.approx(cap * odds)
+
+
+def test_tax_free_cap_prize_cap_passthrough() -> None:
+    """prize_cap 透传：引擎按策略参数（AutoV1Params.tax_free_prize_cap）压帽。"""
+    assert tax_free_stake_cap(2.0, prize_cap=5000.0) == 2500.0
+    assert tax_free_stake_cap(4.0, prize_cap=12_000.0) == 3000.0
+
+
+def test_tax_free_cap_rejects_invalid_odds() -> None:
+    """odds ≤ 1 拒绝（与 suggest_stake 领域防线同口径）。"""
+    with pytest.raises(ValueError, match="odds"):
+        tax_free_stake_cap(1.0)
+    with pytest.raises(ValueError, match="odds"):
+        tax_free_stake_cap(0.5)
+
+
+def test_pool_face_big_prize_post_tax_caliber() -> None:
+    """H7 池面口径一例：大奖越线=税后读数（tax 视图复用），帽不适用池面。
+
+    奖池奖金额由奖池瓜分决定、不由赔率决定——固定赔率面的免税帽在池面
+    无处着力，越线大奖按税后净到账入账（¥5 万 → 税 ¥1 万、净 ¥4 万）。
+    """
+    tax_amount, net = tax.tax_on_prize(50_000.0)
+    assert tax_amount == 10_000.0
+    assert net == 40_000.0

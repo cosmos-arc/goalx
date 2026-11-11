@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 
-from goalx_backend.betting import pool_strategy, versioning
+from goalx_backend.betting import pool_strategy, staking, versioning
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     BetDraft,
@@ -40,6 +40,7 @@ from goalx_backend.betting.bets import (
     market_eligibility_problem,
     validate_selections,
 )
+from goalx_backend.betting.tax import TAX_FREE_THRESHOLD
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data.pool import PoolMatchView
@@ -83,6 +84,14 @@ class AutoV1Params:
     sale_buffer_minutes: int = 30
     kickoff_guard_minutes: int = 10
     stake_per_combination: float = 2.0  # 池票每组合 ¥2（帽内单注）
+    # 票 12 税感知 sizing：单票（单关+串关，联合赔率口径）注额压免税帽——
+    # 奖金 ≤ 本参数（与 tax.TAX_FREE_THRESHOLD 同源，2024-09-01 口径
+    # "不超过 1 万元暂免"）永处免税桶；越线全额 20%（+2% EV 越线即净
+    # -18.4%，税墙裁定）。帽=floor(本参数/赔率)，取整规则=向下取整到元
+    # （写死于 staking.tax_free_stake_cap，不参数化：元位比分位保守）。
+    # 池面不压帽——大奖越线口径=税后（betting/tax 视图，H7）。
+    # 加本参数=改参数指纹=升版本（prereg C 节纪律，票 01 同链生效）。
+    tax_free_prize_cap: float = TAX_FREE_THRESHOLD
 
 
 AUTO_V1_PARAMS = AutoV1Params()
@@ -148,10 +157,11 @@ class Pick:
 def quarter_kelly_stake(
     prob: float, odds: float, bankroll: float, params: AutoV1Params
 ) -> float:
-    """quarter-Kelly 注码（prereg：基准=账户现值，单注封顶）。"""
+    """quarter-Kelly 注码（prereg：账户现值基准，单注封顶+税感知免税帽）。"""
     kelly = (prob * odds - 1.0) / (odds - 1.0)
     sized = params.kelly_fraction * kelly * bankroll
-    return round(max(0.0, min(params.stake_cap, sized)), 2)
+    tax_cap = staking.tax_free_stake_cap(odds, prize_cap=params.tax_free_prize_cap)
+    return round(max(0.0, min(params.stake_cap, tax_cap, sized)), 2)
 
 
 def select_singles(candidates: list[Pick], params: CandidateScope) -> list[Pick]:
@@ -470,16 +480,18 @@ def _place(
     edge_source: str | None = None,
 ) -> bool:
     """经 create 闸门落一注；闸门拒绝（资格/价）返回 False 由调用方留痕。"""
-    draft = BetDraft(
-        mode=BetMode.PAPER,
-        stake=stake,
-        legs=legs,
-        strategy_version=strategy_version,
-        edge_source=edge_source,
-        client_request_id=request_id,
-        intent_fingerprint=intent_fingerprint(BetMode.PAPER, stake, legs),
-    )
     try:
+        # correctness F1③：BetDraft 构造同入 try——非法注额（如压帽塌负）
+        # 的 ValidationError 归入 rejected 留痕，不裸冒泡炸整锚
+        draft = BetDraft(
+            mode=BetMode.PAPER,
+            stake=stake,
+            legs=legs,
+            strategy_version=strategy_version,
+            edge_source=edge_source,
+            client_request_id=request_id,
+            intent_fingerprint=intent_fingerprint(BetMode.PAPER, stake, legs),
+        )
         # 资格闸全腿无条件过（票 14）：had 腿深链 + 非 had 腿玩法级
         # （market_eligibility_problem）——原「仅 had/hhad 在场才验」跳过
         # 了纯 ttg/crs 注。与预筛同源，前向生效（历史注不追溯改判）。
@@ -501,7 +513,15 @@ def _place(
         return False
 
 
-def place_anchor_bets(
+def _tax_cap_collapsed(odds: float, params: AutoV1Params) -> bool:
+    """税帽压塌判定（correctness F1）：帽 <¥2 竞彩最低注——该注不可下。"""
+    return (
+        staking.tax_free_stake_cap(odds, prize_cap=params.tax_free_prize_cap)
+        < staking.MIN_STAKE_CNY
+    )
+
+
+def place_anchor_bets(  # noqa: C901 落注分支随 prereg 修订/票 12 压帽/批修 F1 留痕累加
     conn: sqlite3.Connection,
     *,
     anchor_label: str,
@@ -517,9 +537,15 @@ def place_anchor_bets(
     run_iso = run_at.astimezone(UTC).isoformat()
     bankroll = account_bankroll(conn, params)
     prior_parlay_per_match = _parlay_counts_for_day(conn, business_date)
-    created = drift = rejected = replayed = 0
+    created = drift = rejected = replayed = tax_cap_skipped = 0
 
     for pick in select_singles(singles_pool, params):
+        # correctness F1②：税帽压塌（帽 <¥2 最低注）→ 跳过留痕不下残注
+        # （Kelly 有机小注不受影响——只在帽本身低于最低注时触发）
+        if _tax_cap_collapsed(pick.odds, params):
+            rejected += 1
+            tax_cap_skipped += 1
+            continue
         stake = quarter_kelly_stake(pick.prob, pick.odds, bankroll, params)
         request_id = (
             f"{AUTO_V1}:{business_date}:{anchor_label}:"
@@ -547,12 +573,28 @@ def place_anchor_bets(
         # 同对串关仍撞同键，不双注不漏注
         pair_key = "-".join(str(fid) for fid in sorted(p.fixture_id for p in pair))
         request_id = f"{AUTO_V1}:{business_date}:{anchor_label}:p:{pair_key}"
+        # 票 12 税感知帽（串关=联合赔率整注口径）：parlay_stake 越免税线压帽。
+        # correctness F1①：钳位 max(0,·) 防负 cap 塌负注额；压塌 0/<¥2 最低注
+        # 跳过留痕（rejected+tax_cap_skipped），不下残注不裸崩。
+        joint_odds = pair[0].odds * pair[1].odds
+        parlay_stake = max(
+            0.0,
+            min(
+                params.parlay_stake,
+                staking.tax_free_stake_cap(
+                    joint_odds, prize_cap=params.tax_free_prize_cap
+                ),
+            ),
+        )
         if _request_exists(conn, request_id):
             replayed += 1
+        elif parlay_stake < staking.MIN_STAKE_CNY:
+            rejected += 1
+            tax_cap_skipped += 1
         elif _place(
             conn,
             [leg for leg in legs if leg is not None],
-            stake=params.parlay_stake,
+            stake=parlay_stake,
             request_id=request_id,
             reads=reads,
         ):
@@ -565,6 +607,7 @@ def place_anchor_bets(
         "price_drift": drift,
         "gate_rejected": rejected,
         "replayed": replayed,
+        "tax_cap_skipped": tax_cap_skipped,
     }
     stats.update({f"excluded_{key}": value for key, value in excluded.items()})
     return stats
@@ -722,13 +765,16 @@ def record_anchor_run(
     行存在=跑了；zero_note 可区分零注原因（票验收）。同引擎同锚重跑才
     MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。zero_note
     显式入参=调用方已定案的零注原因（票 01 版本闸 version_not_live），
-    优先于下方推断链。
+    优先于下方推断链（含票 12 批修 F1 的 tax_cap_skipped：税帽压塌
+    跳过——先于 gate_rejected，更具体的诊断优先）。
     """
     if zero_note is None and stats.get("bets", 0) == 0 and stats.get("slips", 0) == 0:
         if stats.get("candidates", 0) == 0:
             zero_note = "no_candidates"
         elif stats.get("price_drift", 0) > 0:
             zero_note = "price_drift"
+        elif stats.get("tax_cap_skipped", 0) > 0:
+            zero_note = "tax_cap_skipped"
         elif stats.get("gate_rejected", 0) > 0:
             zero_note = "gate_rejected"
         else:
@@ -772,8 +818,9 @@ def zero_note_counts(
 
     窗=[date_from, date_to]（business_date 闭端含）内 zero_note 非空行
     计数——no_candidates/price_drift/gate_rejected/no_positive_ev 外，票 01
-    版本闸留痕（version_not_live/version_unregistered）同面入账。有注日
-    （zero_note NULL）不进失败分布。
+    版本闸留痕（version_not_live/version_unregistered）与票 12 批修 F1 的
+    tax_cap_skipped（税帽压塌跳过）同面入账。有注日（zero_note NULL）
+    不进失败分布。
     """
     rows = conn.execute(
         """

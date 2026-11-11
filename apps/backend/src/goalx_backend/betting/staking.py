@@ -17,14 +17,21 @@
   不再抬到 1% 比例，抬底会放大微小优势至数倍满 Kelly）；
 - 串关由调用方传**联合赔率/联合 EV**（腿间独立性假设在前），本函数按
   "整注"口径计算——注额=单关口径（单注一个 Kelly，不分腿）。
+
+票 12 加税感知单票注额帽（``tax_free_stake_cap``）：单票奖金 ≤¥1 万永处
+免税桶——策略参数层（``auto_strategy.AutoV1Params``）的确定性 sizing 规则，
+引擎注码在 Kelly 帽/预算帽之外再压免税帽；``suggest_stake`` 是人选注篮的
+只读建议（人裁决收口），不加帽。
 """
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 
 from pydantic import BaseModel
 
+from goalx_backend.betting.tax import TAX_FREE_THRESHOLD
 from goalx_backend.models import BetMode
 
 FLAT_FRACTION = 0.02  # flat 档目标比例（组合引擎 StakeProfile.flatFraction 同值）
@@ -199,3 +206,30 @@ def _quarter_kelly_stake(
         capped=capped,
         reason=reason,
     )
+
+
+def tax_free_stake_cap(odds: float, *, prize_cap: float = TAX_FREE_THRESHOLD) -> float:
+    """
+    税感知单票注额帽（vision-build 票 12）：``floor(prize_cap / odds)``。
+
+    使单票奖金 = stake×odds ≤ ``prize_cap``（缺省 ¥1 万）永处免税桶——
+    超限按**全额** 20% 计税（偶然所得，2024-09-01 口径，见 betting/tax.py），
+    +2% EV 越线即净 -18.4%，故帽是确定性 sizing 规则非人裁量。
+
+    取整规则=向下取整到元（票面两选一写死，勿改参数化）：竞彩注额为元
+    的整数倍，且元位向下取整比分位（0.01）保守——高赔端不把奖金顶到
+    桶沿（分位取整 10000/2.0001 会给出 4999.75，元位取整给 4999）。
+
+    池面（H7）不适用：奖池奖金额由瓜分决定不由赔率决定，大奖越线口径
+    =税后（tax 视图），见 tax.tax_on_prize。串关传联合赔率（整注口径，
+    与 suggest_stake 同语义）。
+
+    Args:
+        odds: decimal 赔率（串关传联合赔率；须 >1）。
+        prize_cap: 免税桶奖金上限（元）——引擎按策略参数
+            ``AutoV1Params.tax_free_prize_cap`` 透传（与 tax 视图同源常量）。
+
+    """
+    if odds <= 1:
+        raise ValueError(f"odds 须 > 1（decimal 口径），得到 {odds}")
+    return float(math.floor(prize_cap / odds))
