@@ -33,6 +33,7 @@ import pyarrow as pa
 from goalx_backend.data import mapping
 from goalx_backend.data import results as rs_store
 from goalx_backend.data.corpus_store import CorpusStore
+from goalx_backend.data.leagues import FD_TO_LEAGUE as FD_LEAGUE_ZH
 from goalx_backend.data.silver import write_dataset_meta, write_partition
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling import elo
@@ -41,20 +42,6 @@ PROVIDER = "elo"  # 自算派生层身份（语料树独立目录，不挂在采
 DATASET = "elo_self"
 
 # fd 联赛代码 → 源T 联赛中文名（票 78 静态桥；CorpusScope 交集 11 项）
-FD_LEAGUE_ZH: dict[str, str] = {
-    "E0": "英超",
-    "E1": "英冠",
-    "D1": "德甲",
-    "I1": "意甲",
-    "SP1": "西甲",
-    "F1": "法甲",
-    "N1": "荷甲",
-    "P1": "葡超",
-    "T1": "土超",
-    "SC0": "苏超",
-    "B1": "比甲",
-}
-
 # 1X2 基准概率（RPS 对照用常数；文献主场胜/平/客胜典型带）
 _BASELINE_PROBS = (0.45, 0.26, 0.29)
 

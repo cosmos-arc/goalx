@@ -34,6 +34,9 @@
   as-of 视图（青铜重放注入缝，payload 口径注记 sharp_source）。
 - **s5 滚存回看**（票 04）：池期次兑付后回看奖池结构（滚存标记/池规模/
   派彩分布）；按缺席自补（近 7 日发布期次夜刷保鲜），首跑即历史回放。
+- **s7 六轴搜索窗读数**（mining-loop 票 06）：六轴联结读缝在搜索窗
+  1617–2122 的特征重要性/分层读数（LdP 中间层——描述统计，不进发现门
+  不出结论）；research 定拍不进日扫（窗冻结，重跑同窗幂等 REPLACE）。
 """
 
 from __future__ import annotations
@@ -58,7 +61,7 @@ from goalx_backend.data import results as rs_store
 from goalx_backend.data import silver
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
-from goalx_backend.evaluation import accuracy, hypothesis_registry
+from goalx_backend.evaluation import accuracy, hypothesis_registry, six_axes
 
 REPORTS_DIR = "reports"
 REPORT_BASENAME = "edge-scan-digest"
@@ -1056,6 +1059,31 @@ def run_s5(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
 
 # ---- 注册表 + 日扫编排（wrap 挂步/CLI 共用） ----
 
+
+def run_s7(conn: sqlite3.Connection, ctx: ScanContext) -> dict[str, Any]:
+    """
+    S7 六轴搜索窗读数（mining-loop 票 06）：一次性研究读面，不进日扫。
+
+    窗冻结（1617–2122）→ window_key 恒定，观测 REPLACE 幂等；三窗/embargo
+    纪律在 evaluation/six_axes（构造层）+ 单测钉。SCANNER_LINKS 挂钩在
+    首批六轴假设注册后生效（票 07 人审），未注册前空挂不记尝试。
+    """
+    window_key = f"search:{six_axes.SEARCH_WINDOW[0]}-{six_axes.SEARCH_WINDOW[1]}"
+    payload = six_axes.search_window_reading(conn)
+    _record_observation(conn, "s7", window_key, payload)
+    conn.commit()
+    links = hypothesis_registry.link_scanner_run(
+        conn, scanner="s7", window_key=window_key
+    )
+    return {
+        "scanner": "s7",
+        "window": f"{six_axes.SEARCH_WINDOW[0]}-{six_axes.SEARCH_WINDOW[1]}",
+        "linkage": payload["linkage"],
+        "feature_families": sorted(cast("dict[str, object]", payload["features"])),
+        "linked": links,
+    }
+
+
 _S1_SPEC = ScannerSpec(
     name="s1",
     cadence="daily",
@@ -1080,11 +1108,17 @@ _S5_SPEC = ScannerSpec(
     description="池期次滚存回看（奖池结构/滚存标注，缺席自补）",
     run=run_s5,
 )
+_S7_SPEC = ScannerSpec(
+    name="s7",
+    cadence="research",
+    description="六轴搜索窗特征重要性读数（LdP 中间层；窗冻结幂等，不进日扫）",
+    run=run_s7,
+)
 
 SCANNERS: dict[str, ScannerSpec] = {
-    spec.name: spec for spec in (_S1_SPEC, _S2_SPEC, _S4_SPEC, _S5_SPEC)
+    spec.name: spec for spec in (_S1_SPEC, _S2_SPEC, _S4_SPEC, _S5_SPEC, _S7_SPEC)
 }
-#: 日扫定拍序（wrap 23:30 收尾后；S3 点亮后追加）
+#: 日扫定拍序（wrap 23:30 收尾后；S3 点亮后追加；s7=research 定拍不入）
 ACTIVE_SCANNERS: tuple[str, ...] = ("s1", "s2", "s4", "s5")
 
 

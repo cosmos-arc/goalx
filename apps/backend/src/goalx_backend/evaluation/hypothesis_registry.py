@@ -277,9 +277,12 @@ def record_attempt(
 #: TODO(票02 数据面点亮)：s4→H4（s4 现面=决策时点陈盘观测，非滞后案例率）
 #: TODO(票02 数据面点亮)：s5→H2/H3（份额校准扩展面"源B 849 行份额"未点亮）
 #: TODO(票02 数据面点亮)：s3→H5（S3 未建）、s6→H6（S6 待建）
+#: TODO(mining-loop 票07 人审注册)：s7→首批六轴假设（C1-C4/P1-P4 裁定后
+#:   落 h_id；注册恒人审，未注册前空挂——link_scanner_run 零尝试不炸）
 SCANNER_LINKS: dict[str, tuple[str, ...]] = {
     "s1": ("H1", "H8"),
     "s5": ("H7",),
+    "s7": (),
 }
 
 

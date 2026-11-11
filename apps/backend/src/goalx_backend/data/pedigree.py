@@ -36,7 +36,7 @@ import json
 import sqlite3
 
 from goalx_backend.data.coach_changes import resolve_season_club_hist_names
-from goalx_backend.data.ingest.tm_coach import TM_LEAGUES
+from goalx_backend.data.leagues import TM_LEAGUES
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.modelling.team_align import normalize_team_name
 
@@ -682,6 +682,27 @@ def derive_club_pedigree(
             (FACE_NAME, rebuilt_at, json.dumps(stats, ensure_ascii=False)),
         )
     return stats
+
+
+def pedigree_by_team_season(
+    conn: sqlite3.Connection,
+) -> dict[tuple[str, str], sqlite3.Row]:
+    """
+    (hist 英文队名, 季码) → 底蕴四因子行（包外只读口，ADR-0008）。
+
+    六轴联结读缝消费（mining-loop 票 06）：as-of-season 直键——行即当季
+    前可知口径（derive 的 PIT 契约），缺行=该队该季无底蕴面（诚实缺）。
+    """
+    return {
+        (str(row["team"]), str(row["season"])): row
+        for row in conn.execute(
+            """
+            SELECT team, season, top_flight_streak, points_pct_l5,
+                   tier1_titles, major_honours
+            FROM club_pedigree
+            """
+        ).fetchall()
+    }
 
 
 def derive_state(conn: sqlite3.Connection) -> dict[str, object] | None:

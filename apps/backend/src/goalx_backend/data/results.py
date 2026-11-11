@@ -227,6 +227,36 @@ def hist_result_rows(
     return conn.execute(base + " WHERE match_date <= ?" + order, (as_of,)).fetchall()
 
 
+def hist_rows_in_season_window(
+    conn: sqlite3.Connection,
+    *,
+    season_from: str,
+    season_to: str,
+    competitions: tuple[str, ...],
+) -> list[sqlite3.Row]:
+    """
+    季窗×联赛域的联结读缝行（mining-loop 票 06：六轴 S7 消费）。
+
+    带 id/进球/裁判/psc 收盘——特征联结全列一次取齐；match_date 升序
+    （裁判生涯先验单遍累计依赖此序）。包外读口（ADR-0008）。空联赛域
+    fail-loud——SQLite 对 ``IN ()`` 合法解析为恒假，静默零行会顶掉好观测。
+    """
+    if not competitions:
+        msg = "hist_rows_in_season_window: 空联赛域（静默零行=读缝静默归零）"
+        raise ValueError(msg)
+    comps_sql = ", ".join("?" * len(competitions))
+    return conn.execute(
+        f"""
+        SELECT id, season, competition, match_date, home_team, away_team,
+               fthg, ftag, referee, psc_home, psc_away
+        FROM hist_matches
+        WHERE season BETWEEN ? AND ? AND competition IN ({comps_sql})
+        ORDER BY match_date, id
+        """,  # noqa: S608 — 表/列名常量，占位符=联赛域
+        (season_from, season_to, *competitions),
+    ).fetchall()
+
+
 def voided_fixture_ids(conn: sqlite3.Connection) -> set[int]:
     """
     当前 void 的场次集合（票 02 报告侧剔除用）。

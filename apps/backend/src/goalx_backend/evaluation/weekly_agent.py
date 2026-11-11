@@ -55,6 +55,7 @@ from goalx_backend.evaluation import (
     hypothesis_registry,
     lessons,
     rag,
+    six_axes,
 )
 
 #: 每次周拍提案上限（票面：≤5 条/次，不收裸想法）
@@ -203,12 +204,15 @@ def read_faces(conn: sqlite3.Connection, *, lessons_dir: Path | None) -> dict[st
             SELECT id, scanner, segment_key, metric_value, n, se, window, status
             FROM edge_findings ORDER BY id
             """
-        )
+        ).fetchall()
     ]
     injection = lessons.weekly_injection(lessons_dir)
     digest = edge_scan.build_edge_digest(
         conn, week_end=edge_scan.yesterday_business_date()
     )
+    # 票 06：S7 搜索窗特征重要性读数进周批阅读面（LdP 中间层只产读数；
+    # 窗冻结 → 每周同一份，最新观测幂等 REPLACE 不膨胀）
+    s7_reading = six_axes.latest_observation(conn)
     return {
         "edge_findings": findings,
         "hypothesis_registry": hypothesis_registry.registry_view(conn),
@@ -216,6 +220,7 @@ def read_faces(conn: sqlite3.Connection, *, lessons_dir: Path | None) -> dict[st
         # ——丢 id 则 LLM 无从引用实存教训，refs 校验必拒
         "lessons_injection": lessons.render_injection(injection).splitlines(),
         "digest": digest,
+        "s7_feature_reading": s7_reading,
     }
 
 
@@ -225,6 +230,7 @@ def build_generate_prompt(faces: dict[str, Any]) -> str:
     registry = faces["hypothesis_registry"]
     injection = faces["lessons_injection"]
     digest = faces["digest"]
+    s7 = faces.get("s7_feature_reading")
     return (
         "你是量化研究的方法学假设生成器。下面是本系统上周的探索台账与注册表读面。\n"
         "任务：从这些**已有证据**出发，提出至多 5 条新的可证伪研究假设提案。\n\n"
@@ -249,6 +255,9 @@ def build_generate_prompt(faces: dict[str, Any]) -> str:
         f"{json.dumps(registry, ensure_ascii=False)}\n\n"
         f"== 教训库注入（别再死一次清单）==\n"
         f"{json.dumps(injection, ensure_ascii=False)}\n\n"
+        f"== 六轴搜索窗特征重要性读数（S7，样本内描述统计不出结论；"
+        "可作提案的上下文证据，但 refs 仍须台账行/教训/假设 id）==\n"
+        f"{json.dumps(s7, ensure_ascii=False)}\n\n"
         f"== 周报 digest（摘要）==\n{json.dumps(digest, ensure_ascii=False)}\n"
     )
 

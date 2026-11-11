@@ -457,7 +457,8 @@ def test_scanner_links_pin_the_wired_face() -> None:
     """挂钩钉死：s1→(H1,H8)、s5→(H7)；未点亮面不硬造。"""
     assert hreg.SCANNER_LINKS["s1"] == ("H1", "H8")
     assert hreg.SCANNER_LINKS["s5"] == ("H7",)
-    assert set(hreg.SCANNER_LINKS) == {"s1", "s5"}  # s4/s3/s6=TODO 缝不入表
+    assert set(hreg.SCANNER_LINKS) == {"s1", "s5", "s7"}  # s4/s3/s6=TODO 缝不入表
+    assert hreg.SCANNER_LINKS["s7"] == ()  # 票 06：注册前空挂（票 07 人审落 h_id）
 
 
 def test_link_scanner_run_counts_each_active_hypothesis(db: sqlite3.Connection) -> None:
