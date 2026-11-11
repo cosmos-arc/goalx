@@ -907,7 +907,7 @@ class CurvePointView(BaseModel):
 
 
 class StrategyFaceView(BaseModel):
-    """一个策略面（auto-v1/人工）的账户行（票 04；ROI 双栏=票 13）。"""
+    """一个策略面（auto 引擎/人工，史行含已退役 v1）的账户行（票 04）。"""
 
     strategy: str
     bets_n: int
@@ -984,7 +984,8 @@ def paper_account(db: DbDep) -> PaperAccountView:
     EV 实现差（实现 ROI vs 决策 EV 均值）为主指标；ROI 双栏=等注口径与
     按场口径（票 13 资金规则一致性）；独立暴露（已结算、非 void、按场
     独立）<200 时 sample_sufficient=false（前端挂「样本不足，不判盈亏」
-    横幅）；auto-v1 与人工纸面分列；税后=同人+同期+同游戏归集计税口径
+    横幅）；auto 引擎（v2 现役，史行含已退役 v1）与人工纸面分列；
+    税后=同人+同期+同游戏归集计税口径
     （2024 年第 12 号公告，竞彩期=票内最晚比赛编号日期）。
     """
     face = account.paper_account_face(db)

@@ -70,8 +70,8 @@ schema——执行单是不可变的纸面产物，回执是另行录入的事�
 ## 4. 生命周期与票 10 接口
 
 - 生成（票 10）：live-real 版本 × 候选 → 执行单；`order_id` 幂等（同锚
-  重跑不双单）；生成时点的 sizing 已过税感知帽（票 12 参数
-  `AutoV1Params.tax_free_prize_cap`），schema 再校验一次（防生成器外的
+  重跑不双单）；生成时点的 sizing 已过税感知帽（票 12 规则
+  `staking.tax_free_stake_cap`），schema 再校验一次（防生成器外的
   手工单越线）。
 - 回执（票 10）：成交价/部分成交/拒单因由——另行录入，不改写执行单。
 - 对账（票 10）：逐注/周/月三级；月并入 CLV 审计按 `strategy_version_id`

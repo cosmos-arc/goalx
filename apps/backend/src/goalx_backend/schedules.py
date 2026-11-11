@@ -160,9 +160,10 @@ def build_deployments() -> dict[str, RunnerDeployment]:
             schedule=Schedule(cron="33 12,16,21 * * *", timezone="Asia/Shanghai"),
         ),
     )
-    # auto-paper 票 03：三锚（12:30/16:30/21:00）后 1 分钟跑 auto-v1 落注。
-    # Prefect 单 deployment 单 cron → 12:31/16:31 与 21:01 双面（与
-    # baseline-freeze 的 +3min 错拍，冻结先于决策读数落地）。
+    # auto-paper 票 03：三锚（12:30/16:30/21:00）后 1 分钟跑 auto-v2 探针
+    # 落注（auto-v1 引擎 2026-11-11 人裁退役）。Prefect 单 deployment 单
+    # cron → 12:31/16:31 与 21:01 双面（与 baseline-freeze 的 +3min 错拍，
+    # 冻结先于决策读数落地）。
     auto_day = cast(
         RunnerDeployment,
         auto_paper_flow.to_deployment(

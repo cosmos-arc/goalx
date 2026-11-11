@@ -290,7 +290,9 @@ def baseline_freeze() -> dict[str, int]:
 
 def auto_paper() -> dict[str, int]:
     """
-    auto-v2 探针阵列落注（edge-program 票 01；auto-v1 冻结版自换栈起停新注）。
+    auto-v2 探针阵列落注（edge-program 票 01）。
+
+    auto-v1 引擎已于 2026-11-11 人裁退役（v2 唯一现役——史行结算/台账照读）。
 
     锚后 1 分钟跑当前锚的探针组合+落注。校准探针（常亮）：claimed-EV
     每场最优 top-3 全四玩法平注 ¥2（¥6/晚），edge_source=calibration_probe；

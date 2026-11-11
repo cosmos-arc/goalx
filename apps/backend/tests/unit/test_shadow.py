@@ -427,9 +427,9 @@ def test_forecast_output_drift_insufficient_only_reports(
 def test_challenger_triple_is_content_addressed() -> None:
     """三元组=engine_version_triple 的基座 + 重训工件摘要：工件变=版本变，
     参数变=版本变（params 指纹同源）；工件不变=三元组不变（幂等注册前提）。"""
-    from goalx_backend.betting import auto_strategy
+    from goalx_backend.betting import auto_strategy, probes
 
-    params = auto_strategy.AUTO_V1_PARAMS
+    params = probes.AUTO_V2_PARAMS  # challenger 参数面基座=现役引擎（v1 已退役）
     base = shadow.challenger_triple(params, {"E0": "art-a", "N1": "art-n"})
     same = shadow.challenger_triple(params, {"N1": "art-n", "E0": "art-a"})
     changed = shadow.challenger_triple(params, {"E0": "art-b", "N1": "art-n"})

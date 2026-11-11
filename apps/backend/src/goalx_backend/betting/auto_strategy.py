@@ -1,15 +1,28 @@
 """
-auto-v1 策略落注引擎（auto-paper 票 03）：prereg B 节冻结口径的执行体。
+auto 引擎共享执行件（源自 auto-v1 落注引擎，auto-paper 票 03）。
 
-参数全部来自 prereg（修订①-④），代码不内嵌裸常数——改参数=升版本。
+auto-v1 引擎已于 2026-11-11 人裁退役（最终目标 v2，v1 历史遗留直接
+下线）：run_auto_v1/AutoV1Params/串关选票与 quarter-Kelly 注码随引擎
+移除；本模块保留两引擎共用的执行基础设施，现役消费方=probes（auto-v2
+探针阵列）与台账/晨检查读面——
+
+- 候选面：anchor_candidates/select_singles（每场一注 top-N）；
+- 落注通道：place_single（官方性同比对+建注闸）、place_pool_slips
+  （彩池期次一票，source 幂等分账）；
+- 台账与版本闸：record_anchor_run/zero_note_counts、
+  refuse_if_version_not_live/engine_version_triple（注册与下注闸共用）。
+
+兼容面保留：AUTO_V1 常量与 auto-v1 史行（结算/台账/CLV 回填）照读
+不改写——结算范围不按引擎分叉，账户面史行显式成面。
+
 官方性通道（2026-11-08 冲突裁定的推荐案先行，PR 评审可推翻）：auto
 通道内逐腿对 sporttery 快照 as-of 运行时刻同比对——价一致→
 system_paper+腿级快照身份落库；锚后价漂→该注弃置留痕（price_drift，
 不按旧价下注）。web/API 路径的价绑定语义（仅 had）零变化。
 
-shortcut: ttg 相邻档复式（修订④）需组合选择码与结算判别支持，现行腿
-模型（每注腿必异场）不可表达——本版降级为单档，升级=腿模型支持组合
-码。池面 v2 反火锅结构（修订②③）同理降级为既有全稳/贪心底注。
+shortcut: ttg 相邻档复式（修订④）与池面 v2 反火锅结构（修订②③）需
+组合选择码支持，现行腿模型（每注腿必异场）不可表达——池面维持既有
+全稳/贪心底注，升级=腿模型支持组合码。
 
 玩法资格链（edge-audit-20261109 票 14）：预筛与下游建注闸共用
 bets.market_eligibility_problem 单源判定，按玩法（had/hhad/ttg/crs/
@@ -27,7 +40,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 
-from goalx_backend.betting import pool_strategy, staking, versioning
+from goalx_backend.betting import pool_strategy, versioning
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     BetDraft,
@@ -40,7 +53,6 @@ from goalx_backend.betting.bets import (
     market_eligibility_problem,
     validate_selections,
 )
-from goalx_backend.betting.tax import TAX_FREE_THRESHOLD
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data.pool import PoolMatchView
@@ -55,50 +67,17 @@ from goalx_backend.modelling.forecast import (
 from goalx_backend.modelling.score_matrix import ScoreMatrix
 from goalx_backend.models import PRICE_SOURCE_SYSTEM_PAPER, BetMode, LegInput
 
+#: 已退役引擎的策略标识（2026-11-11 人裁；v2 唯一现役）：保留供史行
+#: 读面（account 台账/晨检 pulse）与结算/CLV 兼容范围引用——不再有
+#: 新注以此标签落库。
 AUTO_V1 = "auto-v1"
 BJ = timezone(timedelta(hours=8))
 _SPORTTERY = "sporttery"
 _ODDS_EPSILON = 1e-9
 
 
-@dataclass(frozen=True)
-class AutoV1Params:
-    """
-    prereg B 节冻结参数（修订①-④，2026-11-07/08）。
-
-    可购判定=锚时在售且开球晚于锚+30min 缓冲+10min 开球前置（JC 逐场
-    停售时刻不可查的近似：停售≈开球，凌晨场有高估风险，台账可见）。
-    在售/单关按玩法行分别判（票 14 起，market_eligibility_problem 单
-    源）：单关候选须该玩法池级单固在档，未知即拒。
-    """
-
-    initial_bankroll: float = 1000.0
-    kelly_fraction: float = 0.25
-    stake_cap: float = 2.0
-    parlay_stake: float = 2.0
-    top_singles: int = 3
-    parlays: int = 5
-    parlay_per_match: int = 2
-    single_markets: tuple[str, ...] = ("crs", "ttg")  # 修订④
-    parlay_markets: tuple[str, ...] = ("had", "hhad")  # 修订④
-    sale_buffer_minutes: int = 30
-    kickoff_guard_minutes: int = 10
-    stake_per_combination: float = 2.0  # 池票每组合 ¥2（帽内单注）
-    # 票 12 税感知 sizing：单票（单关+串关，联合赔率口径）注额压免税帽——
-    # 奖金 ≤ 本参数（与 tax.TAX_FREE_THRESHOLD 同源，2024-09-01 口径
-    # "不超过 1 万元暂免"）永处免税桶；越线全额 20%（+2% EV 越线即净
-    # -18.4%，税墙裁定）。帽=floor(本参数/赔率)，取整规则=向下取整到元
-    # （写死于 staking.tax_free_stake_cap，不参数化：元位比分位保守）。
-    # 池面不压帽——大奖越线口径=税后（betting/tax 视图，H7）。
-    # 加本参数=改参数指纹=升版本（prereg C 节纪律，票 01 同链生效）。
-    tax_free_prize_cap: float = TAX_FREE_THRESHOLD
-
-
-AUTO_V1_PARAMS = AutoV1Params()
-
-
 class CandidateScope(Protocol):
-    """锚候选构建所需参数面（auto-v1/auto-v2 参数共用的结构契约）。"""
+    """锚候选构建所需参数面（引擎参数的结构契约，现役=auto-v2）。"""
 
     @property
     def single_markets(self) -> tuple[str, ...]:
@@ -154,16 +133,6 @@ class Pick:
         return self.prob * self.odds - 1.0
 
 
-def quarter_kelly_stake(
-    prob: float, odds: float, bankroll: float, params: AutoV1Params
-) -> float:
-    """quarter-Kelly 注码（prereg：账户现值基准，单注封顶+税感知免税帽）。"""
-    kelly = (prob * odds - 1.0) / (odds - 1.0)
-    sized = params.kelly_fraction * kelly * bankroll
-    tax_cap = staking.tax_free_stake_cap(odds, prize_cap=params.tax_free_prize_cap)
-    return round(max(0.0, min(params.stake_cap, tax_cap, sized)), 2)
-
-
 def select_singles(candidates: list[Pick], params: CandidateScope) -> list[Pick]:
     """修订①：每场至多一注（取该场最优 EV），再 EV 降序 top-N。"""
     best: dict[int, Pick] = {}
@@ -173,43 +142,6 @@ def select_singles(candidates: list[Pick], params: CandidateScope) -> list[Pick]
             best[pick.fixture_id] = pick
     ranked = sorted(best.values(), key=lambda p: -p.ev)
     return [p for p in ranked if p.ev > 0][: params.top_singles]
-
-
-def select_parlays(
-    candidates: list[Pick],
-    params: AutoV1Params,
-    *,
-    prior_per_match: dict[int, int] | None = None,
-) -> list[tuple[Pick, Pick]]:
-    """
-    修订④：两腿不同场、联合 EV 降序取前 5，单场**全日**最多入 2 张串。
-
-    prior_per_match=当日先前锚已入串计数（跨锚累计，Spec 审查 Gap 1）。
-    """
-
-    def joint_ev(pair: tuple[Pick, Pick]) -> float:
-        a, b = pair
-        return (1.0 + a.ev) * (1.0 + b.ev) - 1.0
-
-    positive = [p for p in candidates if p.ev > 0]
-    pairs = [
-        (a, b)
-        for i, a in enumerate(positive)
-        for b in positive[i + 1 :]
-        if a.fixture_id != b.fixture_id
-    ]
-    pairs.sort(key=lambda pair: -joint_ev(pair))
-    chosen: list[tuple[Pick, Pick]] = []
-    per_match: dict[int, int] = dict(prior_per_match or {})
-    for pair in pairs:
-        if len(chosen) >= params.parlays or joint_ev(pair) <= 0:
-            break
-        if any(per_match.get(p.fixture_id, 0) >= params.parlay_per_match for p in pair):
-            continue
-        chosen.append(pair)
-        for p in pair:
-            per_match[p.fixture_id] = per_match.get(p.fixture_id, 0) + 1
-    return chosen
 
 
 def anchor_candidates(
@@ -337,7 +269,7 @@ def _roster_exclusion_reason(
     min_kickoff: datetime,
 ) -> str | None:
     """
-    锚时时间面预筛（可购判定近似口径见 AutoV1Params docstring）。
+    锚时时间面预筛（可购判定近似口径见 probes.AutoV2Params docstring）。
 
     只判开球可购窗口；在售/单关资格由 anchor_candidates 的玩法级闸
     （market_eligibility_problem，票 14）逐市场判定——原 had 硬编码
@@ -357,7 +289,7 @@ def place_single(  # noqa: PLR0913 - 引擎内单关落注，参数即通道
     request_id: str,
     run_iso: str,
     reads: QuoteReads | None,
-    strategy_version: str = AUTO_V1,
+    strategy_version: str,
     edge_source: str | None = None,
 ) -> str:
     """单关落注结果：placed/replayed/drift/rejected（correctness F1 零注入拒绝）。"""
@@ -381,27 +313,6 @@ def place_single(  # noqa: PLR0913 - 引擎内单关落注，参数即通道
         )
         else "rejected"
     )
-
-
-def _parlay_counts_for_day(
-    conn: sqlite3.Connection, business_date: str
-) -> dict[int, int]:
-    """
-    当日 auto-v1 串关已入腿计数（修订④ 全日口径的跨锚累计）。
-
-    串关注=client_request_id 形如 auto-v1:{business_date}:{anchor}:p:{i}。
-    """
-    rows = conn.execute(
-        """
-        SELECT l.fixture_id, COUNT(*) AS n FROM bets b
-        JOIN bet_legs l ON l.bet_id = b.id
-        WHERE b.strategy_version = ?
-          AND b.client_request_id LIKE ?
-        GROUP BY l.fixture_id
-        """,
-        (AUTO_V1, f"{AUTO_V1}:{business_date}:%:p:%"),
-    ).fetchall()
-    return {int(r["fixture_id"]): int(r["n"]) for r in rows}
 
 
 def _hhad_integer_line(evidence: dict[str, sqlite3.Row]) -> float | None:
@@ -436,17 +347,6 @@ def _parse_utc(raw: str) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def account_bankroll(conn: sqlite3.Connection, params: AutoV1Params) -> float:
-    """账户现值=初始+已结算 paper P&L（票 04 聚合未建前的票内口径）。"""
-    row = conn.execute(
-        """
-        SELECT COALESCE(SUM(profit), 0) AS settled FROM bets
-        WHERE mode = 'paper' AND profit IS NOT NULL
-        """
-    ).fetchone()
-    return params.initial_bankroll + float(row["settled"])
-
-
 def _verified_leg(
     conn: sqlite3.Connection, pick: Pick, run_at_iso: str
 ) -> LegInput | None:
@@ -476,7 +376,7 @@ def _place(
     stake: float,
     request_id: str,
     reads: QuoteReads | None,
-    strategy_version: str = AUTO_V1,
+    strategy_version: str,
     edge_source: str | None = None,
 ) -> bool:
     """经 create 闸门落一注；闸门拒绝（资格/价）返回 False 由调用方留痕。"""
@@ -513,120 +413,20 @@ def _place(
         return False
 
 
-def _tax_cap_collapsed(odds: float, params: AutoV1Params) -> bool:
-    """税帽压塌判定（correctness F1）：帽 <¥2 竞彩最低注——该注不可下。"""
-    return (
-        staking.tax_free_stake_cap(odds, prize_cap=params.tax_free_prize_cap)
-        < staking.MIN_STAKE_CNY
-    )
-
-
-def place_anchor_bets(  # noqa: C901 落注分支随 prereg 修订/票 12 压帽/批修 F1 留痕累加
-    conn: sqlite3.Connection,
-    *,
-    anchor_label: str,
-    business_date: str,
-    run_at: datetime,
-    params: AutoV1Params,
-    reads: QuoteReads | None = None,
-) -> dict[str, int]:
-    """一锚的选票与落注：单关 top-3（quarter-Kelly 封顶）+ 串关前 5（各 ¥2）。"""
-    singles_pool, parlay_pool, excluded = anchor_candidates(
-        conn, anchor_at=anchor_datetime(anchor_label, run_at), params=params
-    )
-    run_iso = run_at.astimezone(UTC).isoformat()
-    bankroll = account_bankroll(conn, params)
-    prior_parlay_per_match = _parlay_counts_for_day(conn, business_date)
-    created = drift = rejected = replayed = tax_cap_skipped = 0
-
-    for pick in select_singles(singles_pool, params):
-        # correctness F1②：税帽压塌（帽 <¥2 最低注）→ 跳过留痕不下残注
-        # （Kelly 有机小注不受影响——只在帽本身低于最低注时触发）
-        if _tax_cap_collapsed(pick.odds, params):
-            rejected += 1
-            tax_cap_skipped += 1
-            continue
-        stake = quarter_kelly_stake(pick.prob, pick.odds, bankroll, params)
-        request_id = (
-            f"{AUTO_V1}:{business_date}:{anchor_label}:"
-            f"s:{pick.fixture_id}:{pick.market_code}"
-        )
-        outcome = place_single(
-            conn, pick, stake=stake, request_id=request_id, run_iso=run_iso, reads=reads
-        )
-        if outcome == "placed":
-            created += 1
-        elif outcome == "replayed":
-            replayed += 1
-        elif outcome == "drift":
-            drift += 1
-        else:
-            rejected += 1
-    for pair in select_parlays(
-        parlay_pool, params, prior_per_match=prior_parlay_per_match
-    ):
-        legs = [_verified_leg(conn, p, run_iso) for p in pair]
-        if any(leg is None for leg in legs):
-            drift += 1
-            continue
-        # correctness F2：内容键（排序腿 id）——晚到观测重排候选后
-        # 同对串关仍撞同键，不双注不漏注
-        pair_key = "-".join(str(fid) for fid in sorted(p.fixture_id for p in pair))
-        request_id = f"{AUTO_V1}:{business_date}:{anchor_label}:p:{pair_key}"
-        # 票 12 税感知帽（串关=联合赔率整注口径）：parlay_stake 越免税线压帽。
-        # correctness F1①：钳位 max(0,·) 防负 cap 塌负注额；压塌 0/<¥2 最低注
-        # 跳过留痕（rejected+tax_cap_skipped），不下残注不裸崩。
-        joint_odds = pair[0].odds * pair[1].odds
-        parlay_stake = max(
-            0.0,
-            min(
-                params.parlay_stake,
-                staking.tax_free_stake_cap(
-                    joint_odds, prize_cap=params.tax_free_prize_cap
-                ),
-            ),
-        )
-        if _request_exists(conn, request_id):
-            replayed += 1
-        elif parlay_stake < staking.MIN_STAKE_CNY:
-            rejected += 1
-            tax_cap_skipped += 1
-        elif _place(
-            conn,
-            [leg for leg in legs if leg is not None],
-            stake=parlay_stake,
-            request_id=request_id,
-            reads=reads,
-        ):
-            created += 1
-        else:
-            rejected += 1
-    stats = {
-        "candidates": len(singles_pool) + len(parlay_pool),
-        "bets": created,
-        "price_drift": drift,
-        "gate_rejected": rejected,
-        "replayed": replayed,
-        "tax_cap_skipped": tax_cap_skipped,
-    }
-    stats.update({f"excluded_{key}": value for key, value in excluded.items()})
-    return stats
-
-
 def place_pool_slips(
     conn: sqlite3.Connection,
     *,
     run_at: datetime,
     params: PoolSlipScope,
-    source: str = AUTO_V1,
+    source: str,
     stake_budget: float | None = None,
 ) -> dict[str, int]:
     """
     彩池每期次一票（待结算）：既有策略底注，source 幂等分账。
 
-    v2 复用传 auto-v2（同 source 同期不双落）。stake_budget=剩余可落
-    金额（None=无帽，v1 冻结口径；auto-v2 传 ¥20/晚测量帽余量）——
-    不足一组合注额即整票跳过。
+    现役调用方=auto-v2（同 source 同期不双落；史行 source=auto-v1 的
+    既有票照读不改写）。stake_budget=剩余可落金额（None=无帽；
+    auto-v2 传 ¥20/晚测量帽余量）——不足一组合注额即整票跳过。
     shortcut: 帽按票粒度扣减（现结构每票恰 1 组合）；多组合复式票
     到来时须按物化后总额对账帽，升级=物化后回扣。
 
@@ -756,11 +556,11 @@ def record_anchor_run(
     anchor_label: str,
     *,
     stats: dict[str, int],
-    strategy: str = AUTO_V1,
+    strategy: str,
     zero_note: str | None = None,
 ) -> None:
     """
-    锚台账 upsert（v46 起按 strategy 分行）。
+    锚台账 upsert（v46 起按 strategy 分行；现役写口=auto-v2）。
 
     行存在=跑了；zero_note 可区分零注原因（票验收）。同引擎同锚重跑才
     MAX 合并；跨引擎分行，换栈日不混账（correctness F2）。zero_note
@@ -868,7 +668,7 @@ def refuse_if_version_not_live(
     strategy: str,
 ) -> dict[str, int] | None:
     """
-    版本闸（vision 票 01 消费端最小接线，v1/v2 引擎共用；fail-closed）。
+    版本闸（vision 票 01 消费端最小接线，现役消费方=auto-v2；fail-closed）。
 
     引擎实际三元组全维匹配的版本非 live-paper/live-real 态→整锚拒单
     留痕（zero_note=version_not_live），返回留痕 stats；未注册三元组
@@ -898,37 +698,4 @@ def refuse_if_version_not_live(
         strategy=strategy,
         zero_note=gate.reason,
     )
-    return stats
-
-
-def run_auto_v1(
-    conn: sqlite3.Connection,
-    *,
-    run_at: datetime,
-    anchor_label: str,
-    params: AutoV1Params = AUTO_V1_PARAMS,
-    reads: QuoteReads | None = None,
-) -> dict[str, int]:
-    """
-    一锚完整执行（task 入口）：版本闸→落注+池票+台账；返回统计。
-
-    锚标签由调用方解析（ADR-0008 分层：betting 不依赖 evaluation 的
-    锚工具，tasks 层解析后下传）。版本闸语义见 refuse_if_version_not_live。
-    """
-    business_date = fx_store.beijing_business_date(run_at)
-    refused = refuse_if_version_not_live(
-        conn, business_date, anchor_label, params=params, strategy=AUTO_V1
-    )
-    if refused is not None:
-        return refused
-    stats = place_anchor_bets(
-        conn,
-        anchor_label=anchor_label,
-        business_date=business_date,
-        run_at=run_at,
-        params=params,
-        reads=reads,
-    )
-    stats.update(place_pool_slips(conn, run_at=run_at, params=params))
-    record_anchor_run(conn, business_date, anchor_label, stats=stats)
     return stats

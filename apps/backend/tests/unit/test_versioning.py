@@ -627,11 +627,13 @@ def test_params_fingerprint_is_content_addressed() -> None:
     """参数指纹=内容寻址：同参同印；改参换印（改参数=升版本）。"""
     from dataclasses import replace
 
-    from goalx_backend.betting.auto_strategy import AUTO_V1_PARAMS
+    from goalx_backend.betting import probes
 
-    base = versioning.params_fingerprint(AUTO_V1_PARAMS)
-    assert base == versioning.params_fingerprint(AUTO_V1_PARAMS)
-    changed = replace(AUTO_V1_PARAMS, top_singles=AUTO_V1_PARAMS.top_singles + 1)
+    base = versioning.params_fingerprint(probes.AUTO_V2_PARAMS)
+    assert base == versioning.params_fingerprint(probes.AUTO_V2_PARAMS)
+    changed = replace(
+        probes.AUTO_V2_PARAMS, top_singles=probes.AUTO_V2_PARAMS.top_singles + 1
+    )
     assert versioning.params_fingerprint(changed) != base
 
 
