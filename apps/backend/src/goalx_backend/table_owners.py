@@ -138,6 +138,11 @@ OWNERS: dict[str, set[str]] = {
         # vision-build 票 07：影子重训触发台账（evaluation/shadow.py 属主：
         # 写口=run_shadow_retrain_beat；读口=月读⑤ retrain_event_counts）
         "shadow_retrain_events",
+        # vision-build 票 11：challenger 质量门两账（evaluation/quality_gate.py
+        # 属主：冻结面写口=freeze_gate_spec（注册拍）；门账写口=
+        # evaluate_quality_gate（人 CLI）；读口=promote 硬门+晨检 26 项+月读⑤）
+        "quality_gate_specs",
+        "quality_gate_events",
     },
     "betting": {
         "bets",

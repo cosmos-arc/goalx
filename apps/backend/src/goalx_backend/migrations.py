@@ -3029,6 +3029,97 @@ def _apply_v57(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _apply_v58(conn: sqlite3.Connection) -> None:
+    """
+    v58（vision-build 票 11）：challenger 质量门两表（evaluation 域）。
+
+    - quality_gate_specs：**prereg 冻结面**——challenger 注册时冻结门指标
+      名+阈值+评估窗（人裁 7② 不变量：门指标注册时冻结不得事后改）。
+      UNIQUE(challenger_version_id)+INSERT OR IGNORE=首写恒胜；append-only
+      触发器拒绝改写（v49/v57 先例）。
+    - quality_gate_events：门评估账 append-only——每跑一次 champion vs
+      challenger 校准对比落一行（数字全入行=可复算）；UNIQUE(challenger,
+      champion_run, challenger_run) 吸收同 run 对重跑。champion/challenger
+      run_id 是**研究库** backtest_runs 的逻辑外键（跨库不可 FK，回放窗
+      评估只读研究库——票 07② 分库先例）。
+
+    SQL 读写归 evaluation（evaluation/quality_gate.py 属主：写口=freeze_
+    gate_spec 注册拍 + evaluate_quality_gate CLI；读口=晨检 26 项连续门挂
+    告警 + 月读⑤ 门挂分布 + promote 硬门查账）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quality_gate_specs (
+            id INTEGER PRIMARY KEY,
+            challenger_version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+            metric_name TEXT NOT NULL,
+            alpha REAL NOT NULL,
+            min_paired INTEGER NOT NULL,
+            window_era TEXT NOT NULL,
+            frozen_at TEXT NOT NULL,
+            UNIQUE (challenger_version_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quality_gate_events (
+            id INTEGER PRIMARY KEY,
+            challenger_version_id INTEGER NOT NULL REFERENCES strategy_versions(id),
+            champion_version_id INTEGER REFERENCES strategy_versions(id),
+            metric_name TEXT NOT NULL,
+            champion_run_id INTEGER NOT NULL,
+            challenger_run_id INTEGER NOT NULL,
+            window_era TEXT NOT NULL,
+            n_paired INTEGER NOT NULL,
+            metric_champion REAL,
+            metric_challenger REAL,
+            diff REAL,
+            dm_stat REAL,
+            p_one_sided REAL,
+            passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
+            hang_reason TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            UNIQUE (challenger_version_id, champion_run_id, challenger_run_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_quality_gate_events_ts
+            ON quality_gate_events (ts)
+        """
+    )
+    for operation in ("UPDATE", "DELETE"):
+        for table in ("quality_gate_specs", "quality_gate_events"):
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END
+            """)
+
+
+def _apply_v59(conn: sqlite3.Connection) -> None:
+    """
+    v59（vision-build 票 11 correctness F4）：门账补覆盖率三列。
+
+    quality_gate_events 增 n_champion_window / n_challenger_window /
+    paired_ratio（均可空：insufficient 行与 v58 存量行无值）。动机：challenger
+    只覆盖 champion 窗内小切片（如重训联赛池缩水 220/5000）时，门在 4%
+    切片上的判定不可外推——行数与覆盖率必须入账可见，覆盖率 < 阈值
+    （GATE_MIN_PAIRED_RATIO=0.5，代码常数）挂 coverage_asymmetry。
+    ALTER 幂等守卫（_column_exists 先例，v47 同款）。
+    """
+    for column, ddl in (
+        ("n_champion_window", "INTEGER"),
+        ("n_challenger_window", "INTEGER"),
+        ("paired_ratio", "REAL"),
+    ):
+        if not _column_exists(conn, "quality_gate_events", column):
+            conn.execute(f"ALTER TABLE quality_gate_events ADD COLUMN {column} {ddl}")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3087,6 +3178,8 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (55, _apply_v55),
     (56, _apply_v56),
     (57, _apply_v57),
+    (58, _apply_v58),
+    (59, _apply_v59),
 )
 
 

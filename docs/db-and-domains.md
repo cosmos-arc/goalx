@@ -97,6 +97,8 @@
 | `rescan_signal_events` | 四信号触发史账（vision-build 票 04 缝回填，v55） | 月读时点信号面评估落账（odds_psi/jc_rules/league_mix/quarterly_sweep 四信号名 CHECK 钉死；B.3 计时器=读数不落账）；读口=B.3 到期读数/晨检信号面，写口=月读 record_rescan_signals（晨检只读红线） | append-only；UNIQUE(signal, period) 吸收同月重跑 |
 | `rag_embeddings` | RAG 向量表两索引共载（vision-build 票 06，v56） | 通用一张：namespace 隔离 `guardian_article`（卫报篇级 chunk，item_id=文章 sid）/`lesson`（教训条目 L-NN）；vec=JSON 数组文本（FLOAT[] 是 DuckDB 检索侧物化形态）；model_id 进主键=换模型旧口径原地保留（换模型=重嵌）；教训索引 active-only（archived/review_due 不进索引，检索按 active 快照过滤）；写口=embed_pending 增量管线（CLI rag-embed，content_hash 同跳幂等，--limit=最多嵌 N 条新条目），读口=DuckDB 暴力余弦 search + 晨检落后条数（只读红线；卫报 bronze 毒丸行/截断 gzip 逐行容错，计数进黄口） | upsert UNIQUE(namespace,item_id,model_id)（文本变更重嵌覆盖） |
 | `shadow_retrain_events` | 影子重训触发台账（vision-build 票 07，v57） | reason=drift\|monthly、outcome=registered/no_change/no_live_champion/no_traffic/skipped_contraction；写口=evaluation/shadow.run_shadow_retrain_beat（漂移即时+月度兜底双触发），读口=月读⑤ retrain_event_counts；幂等吸收两键：版本行 UNIQUE(period, reason, challenger_version_id)、skip 行部分唯一索引 UNIQUE(period, reason, outcome)（WHERE challenger_version_id IS NULL） | append-only；skip 行部分唯一索引吸收同月同因重拍 |
+| `quality_gate_specs` | challenger 质量门 prereg 冻结面（vision-build 票 11，v58） | UNIQUE(challenger_version_id)+INSERT OR IGNORE=首写恒胜（注册拍冻结：票 07 beat registered 分支/人 CLI version-register 调 freeze_gate_spec）；指标面=代码常数（rps/α=0.05 单侧/min_paired=200/评估窗 era=trajectory 现代窗留出）落账为审计证据 | append-only（触发器拒改写） |
+| `quality_gate_events` | 质量门评估账（vision-build 票 11，v58+v59） | 每跑一次 champion vs challenger 回放窗校准对比落一行（数字全入行=可复算）；champion/challenger_run_id=研究库 backtest_runs 逻辑外键（跨库不可 FK）；passed=0 时 hang_reason=rps_significantly_worse/insufficient_pairs（指标面 NULL 如实不伪造）；读口=promote 硬门（shadow→probe 需最新过门）+晨检 26 项连续门挂+月读⑤门挂分布；v59 补覆盖率三列（n_champion_window/n_challenger_window/paired_ratio，覆盖率<0.5 挂 coverage_asymmetry——correctness F4） | append-only；UNIQUE(challenger, champion_run, challenger_run) 吸收同 run 对重跑 |
 
 ### infra / 脚手架
 
@@ -309,6 +311,12 @@ erDiagram
     public_shares {
         INTEGER id PK
     }
+    quality_gate_events {
+        INTEGER id PK
+    }
+    quality_gate_specs {
+        INTEGER id PK
+    }
     quote_observations {
         INTEGER id PK
     }
@@ -429,6 +437,9 @@ erDiagram
     pool_picks }|--|| bet_slips : slip_id
     pool_states }o--|| pool_periods : pool_period_id
     public_shares }|--|| pool_periods : pool_period_id
+    quality_gate_events }o--|| strategy_versions : champion_version_id
+    quality_gate_events }|--|| strategy_versions : challenger_version_id
+    quality_gate_specs }|--|| strategy_versions : challenger_version_id
     review_items }|--|| fixtures : fixture_id
     sale_statuses }o--|| quote_observations : observation_id
     sale_statuses }|--|| fixtures : fixture_id
@@ -2040,6 +2051,55 @@ append-only 触发器：`rescan_signal_events_no_delete`、`rescan_signal_events
 
 append-only 触发器：`shadow_retrain_events_no_delete`、`shadow_retrain_events_no_update`
 <!-- schema-doc:END:table:shadow_retrain_events -->
+
+<!-- schema-doc:BEGIN:table:quality_gate_specs -->
+#### `quality_gate_specs`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `challenger_version_id` | INTEGER | NOT NULL，FK→strategy_versions.id |
+| `metric_name` | TEXT | NOT NULL |
+| `alpha` | REAL | NOT NULL |
+| `min_paired` | INTEGER | NOT NULL |
+| `window_era` | TEXT | NOT NULL |
+| `frozen_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`challenger_version_id`)`
+
+append-only 触发器：`quality_gate_specs_no_delete`、`quality_gate_specs_no_update`
+<!-- schema-doc:END:table:quality_gate_specs -->
+
+<!-- schema-doc:BEGIN:table:quality_gate_events -->
+#### `quality_gate_events`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `challenger_version_id` | INTEGER | NOT NULL，FK→strategy_versions.id |
+| `champion_version_id` | INTEGER | FK→strategy_versions.id |
+| `metric_name` | TEXT | NOT NULL |
+| `champion_run_id` | INTEGER | NOT NULL |
+| `challenger_run_id` | INTEGER | NOT NULL |
+| `window_era` | TEXT | NOT NULL |
+| `n_paired` | INTEGER | NOT NULL |
+| `metric_champion` | REAL | — |
+| `metric_challenger` | REAL | — |
+| `diff` | REAL | — |
+| `dm_stat` | REAL | — |
+| `p_one_sided` | REAL | — |
+| `passed` | INTEGER | NOT NULL |
+| `hang_reason` | TEXT | NOT NULL |
+| `detail` | TEXT | NOT NULL |
+| `ts` | TEXT | NOT NULL |
+| `n_champion_window` | INTEGER | — |
+| `n_challenger_window` | INTEGER | — |
+| `paired_ratio` | REAL | — |
+
+唯一键 `UNIQUE(`challenger_version_id`, `champion_run_id`, `challenger_run_id`)`
+
+append-only 触发器：`quality_gate_events_no_delete`、`quality_gate_events_no_update`
+<!-- schema-doc:END:table:quality_gate_events -->
 
 运维：增量=夜拍/晨检后 `goalx rag-embed --namespace lessons|guardian [--limit N]`（幂等；--limit=最多嵌 N 条**新**条目，同参重跑可推进分段回填）。查重阈 `rag.LESSON_SIMILAR_THRESHOLD`（0.85 先验值）：真分布校准测=`tests/unit/test_rag.py::test_fastembed_threshold_calibration`（@slow，模型缓存就绪即跑；红了=阈挪进实测窗）。
 

@@ -57,7 +57,13 @@ from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import mapping, quote_evidence
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.db import utc_now_iso
-from goalx_backend.evaluation import contraction, hypothesis_registry, lessons, shadow
+from goalx_backend.evaluation import (
+    contraction,
+    hypothesis_registry,
+    lessons,
+    quality_gate,
+    shadow,
+)
 from goalx_backend.evaluation.clv import BASIS_SRCT_PINNACLE
 from goalx_backend.evaluation.weekly_agent import MAX_PROPOSALS_PER_RUN
 from goalx_backend.modelling import forecast
@@ -469,6 +475,11 @@ def forced_failure(
         # F5 口径：按 period=报送月计数（与事件落账 period 同源，月首
         # 北京 0-8 点拍 ts 仍在上一 UTC 日，ts 窗会错收进上一月）
         "shadow_retrains": shadow.retrain_event_counts(conn, period=report_month),
+        # 票 11 门挂面：评估计数/过挂原因分布/连续失败与告警（ts 窗——
+        # 门评估是人 CLI 触发无业务日 period）
+        "quality_gate": quality_gate.gate_failure_face(
+            conn, ts_from=date_from, ts_to=next_first
+        ),
         "advice": "失败面观察项：异常聚集（门挂/拒收/失败率）由人裁决处置",
     }
 
