@@ -238,8 +238,12 @@ def hist_rows_in_season_window(
     季窗×联赛域的联结读缝行（mining-loop 票 06：六轴 S7 消费）。
 
     带 id/进球/裁判/psc 收盘——特征联结全列一次取齐；match_date 升序
-    （裁判生涯先验单遍累计依赖此序）。包外读口（ADR-0008）。
+    （裁判生涯先验单遍累计依赖此序）。包外读口（ADR-0008）。空联赛域
+    fail-loud——SQLite 对 ``IN ()`` 合法解析为恒假，静默零行会顶掉好观测。
     """
+    if not competitions:
+        msg = "hist_rows_in_season_window: 空联赛域（静默零行=读缝静默归零）"
+        raise ValueError(msg)
     comps_sql = ", ".join("?" * len(competitions))
     return conn.execute(
         f"""

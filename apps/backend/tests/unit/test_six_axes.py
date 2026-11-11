@@ -331,3 +331,30 @@ def test_referee_prior_same_day_invisible(seam_db: sqlite3.Connection) -> None:
     next_day = next(r for r in readings.values() if r.match_date == "2016-08-18")
     assert next_day.referee_prior_n == 2
     assert next_day.referee_prior_avg_goals == pytest.approx(1.5)  # (3+0)/2
+
+
+def test_empty_competitions_fail_loud(seam_db: sqlite3.Connection) -> None:
+    """correctness F1：空联赛域 fail-loud（SQLite IN () 恒假不静默零行）。"""
+    from goalx_backend.data import results as rs_store
+
+    with pytest.raises(ValueError, match="空联赛域"):
+        rs_store.hist_rows_in_season_window(
+            seam_db, season_from="1617", season_to="2122", competitions=()
+        )
+
+
+def test_coach_name_empty_string_predicates_consistent(
+    seam_db: sqlite3.Connection,
+) -> None:
+    """correctness F2：coach_name 空串下各映射率判定对称（恒 is not None）。"""
+    readings = six_axes.match_readings(seam_db)
+    for r in readings:
+        if r.home.coach_name == "":
+            r.home.coach_name = None  # 模拟空串入库形态
+    report = six_axes.linkage_report(readings)
+    any_side = sum(
+        1
+        for r in readings
+        if r.home.coach_name is not None or r.away.coach_name is not None
+    )
+    assert report["coach_any_side"] == round(any_side / len(readings), 4)

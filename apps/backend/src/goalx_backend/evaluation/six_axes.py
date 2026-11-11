@@ -262,7 +262,13 @@ def linkage_report(readings: list[MatchReading]) -> dict[str, object]:
             4,
         ),
         "coach_any_side": round(
-            sum(1 for r in readings if r.home.coach_name or r.away.coach_name) / n, 4
+            sum(
+                1
+                for r in readings
+                if r.home.coach_name is not None or r.away.coach_name is not None
+            )
+            / n,
+            4,
         ),
         "pedigree_home": round(
             sum(1 for r in readings if r.home.points_pct_l5 is not None) / n, 4
@@ -350,6 +356,8 @@ def feature_importance(readings: list[MatchReading]) -> dict[str, object]:
 
     侧级连续特征（特征 ↔ 该侧收盘残差）与阵型族（类别）四分位/逐族
     分层 + η²；裁判面场级（生涯场均进球 ↔ 总进球，无 OU 锚读原始值）。
+    口径注：η² 的组集排除单样本组（组内零方差不可估）——顶层 n 与
+    strata 含全部样本，η² 有效分母可小于 n（类别面尤其如此）。
     """
     sides = [(side, r) for r in readings for side in (r.home, r.away)]
     features: dict[str, object] = {}
