@@ -992,3 +992,101 @@ def test_coverage_report_marks_dead_zones_and_pre_hist(tmp_path: Path) -> None:
         str(k): v for k, v in dict(stats["seasons"]).items() if k == "2023-24"
     }
     assert season_stat["2023-24"] == {"sides": 20, "known": 5}
+
+
+def test_diff_write_updates_and_deletes_vanished_cells(tmp_path: Path) -> None:
+    """差分写另两路（correctness-review 补）：输入漂移→updated，输入消失→deleted。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_hist_bridge_face(conn)
+    store = CorpusStore(tmp_path / "corpus")
+
+    def bj(month: int, day: int) -> datetime:
+        return datetime(2023, month, day, 3, 0)
+
+    def utc_day(day: int) -> datetime:
+        return datetime(2023, 8, day, 19, 0, tzinfo=UTC)
+
+    fixture_rows = [
+        _fixture_row("h1", "英超", bj(8, 12), "甲队", "乙队")
+        | {"home_goals": 2, "away_goals": 1, "day": "2023-08-11"},
+        _fixture_row("h2", "英超", bj(8, 19), "甲队", "乙队")
+        | {"home_goals": 1, "away_goals": 0, "day": "2023-08-18"},
+        _fixture_row("h3", "英超", bj(8, 26), "乙队", "甲队")
+        | {"home_goals": 0, "away_goals": 3, "day": "2023-08-25"},
+        _fixture_row("L1", "英超", datetime(2024, 8, 1, 20, 0), "甲队", "乙队"),
+    ]
+    detail_rows = [
+        _detail_row("h1", bj(8, 12), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y")
+        | {"kickoff": utc_day(11)},
+        _detail_row("h2", bj(8, 19), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y")
+        | {"kickoff": utc_day(18)},
+        _detail_row("h3", bj(8, 26), "乙队", "甲队", "3-5-2", "4-4-2", "y", "x")
+        | {"kickoff": utc_day(25)},
+        _detail_row(
+            "L1",
+            datetime(2024, 8, 1, 20, 0),
+            "甲队",
+            "乙队",
+            "4-4-2",
+            "4-2-3-1",
+            "x",
+            "y",
+        )
+        | {"kickoff": datetime(2024, 8, 1, 19, 0, tzinfo=UTC)},
+    ]
+    _build_corpus(store, fixture_rows, detail_rows)
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+        old_before = conn.execute(
+            """
+            SELECT n_matches, rebuilt_at FROM formation_family_facet
+            WHERE coach_name = 'Old Manager'
+            """
+        ).fetchone()
+        # 漂移：换帅日提前到 08-16 → h2（08-18）改归 New Manager
+        conn.execute(
+            "UPDATE tm_coach_tenures SET date_to = '2023-08-15'"
+            " WHERE coach_name = 'Old Manager'"
+        )
+        conn.execute(
+            "UPDATE tm_coach_tenures SET date_from = '2023-08-16'"
+            " WHERE coach_name = 'New Manager'"
+        )
+        conn.commit()
+        drifted = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-12-01T00:00:00+00:00"
+        )
+        old_after = conn.execute(
+            """
+            SELECT n_matches, rebuilt_at FROM formation_family_facet
+            WHERE coach_name = 'Old Manager'
+            """
+        ).fetchone()
+        # 消失：hist 全清 → 桥空 → 历史格全灭
+        conn.execute("DELETE FROM hist_matches")
+        conn.commit()
+        emptied = formations.derive_formation_family_facet(
+            conn, duck_con, now="2027-01-01T00:00:00+00:00"
+        )
+        counts_after_empty = conn.execute(
+            "SELECT COUNT(*) FROM formation_family_facet"
+        ).fetchone()[0]
+    finally:
+        duck_con.close()
+        conn.close()
+    # 漂移拍：Old n 2→1（updated+rebuilt_at 换新），New n 1→2（updated）
+    assert old_before[0] == 2
+    assert old_after[0] == 1
+    assert old_after[1] == "2026-12-01T00:00:00+00:00"
+    assert drifted["updated"] == 2
+    assert drifted["preserved"] == 2  # Yi 两格不动
+    # 消失拍：4 格全删；再跑幂等
+    assert emptied["deleted"] == 4
+    assert counts_after_empty == 0

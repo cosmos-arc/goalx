@@ -117,8 +117,9 @@ def _corpus_sides(
     """
     语料侧观察面：match_detail × fixture_universe（sid 链）逐场两侧。
 
-    返回 (行列表〔票 05 起 derive 两遍消费：当季界+逐场归账，物化约 8 万
-    dict〕, 语料总场数, 开球缺失场数)。season 取 universe hive 分区
+    返回 (行列表〔票 05 起 derive 物化消费：当季界=detail 覆盖最大季 +
+    逐场归账，约 8 万 dict〕, 语料总场数, 开球缺失场数)。season 取
+    universe hive 分区
     （8 月界），league 取中文名（fd 映射在落库时折算）；day 取
     match_detail 开球 UTC 日期（duckdb 会话时区会影响 TIMESTAMPTZ 直
     CAST，须 AT TIME ZONE 'UTC' 归一——欧洲晚场 20:00Z 不漂日）。
@@ -314,7 +315,8 @@ def _bridge_zh_to_club(
     return zh_to_club, set(zh_to_fd), stats
 
 
-#: 差分写的业务列（id/rebuilt_at 除外）——键序=UNIQUE 约束列序
+#: 差分写的业务列（id/rebuilt_at 除外）；写键=(season, league_zh,
+#: club_tm_id, coach_name, family)=表 UNIQUE 约束列（_CELL_COLS 的子序）
 _CELL_COLS: tuple[str, ...] = (
     "season",
     "league_fd",
