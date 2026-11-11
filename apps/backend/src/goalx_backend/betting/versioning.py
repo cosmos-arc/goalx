@@ -630,17 +630,22 @@ def classify_transition(
     return "other"  # pragma: no cover - 谓词外的组合不可达（全表转移已受限）
 
 
-def any_ladder_version(conn: sqlite3.Connection) -> bool:
+def has_live_version(conn: sqlite3.Connection) -> bool:
     """
-    史上是否有版本到过 probe 及以上梯级（票 11 引导豁免判据，一次性）。
+    是否存在**现役** live-paper/live-real 版本（票 11 引导豁免判据）。
 
     属主读口：version_transitions 的 SQL 只能在本包（ADR-0008）——
-    evaluation/quality_gate 经此消费。
+    evaluation/quality_gate 经此消费。席位语义（2026-11-11 运维实录二修）：
+    门保护的是现役 champion——席位空缺（初次上岗/回滚全降后重升）时无
+    对照对象，人 CLI 全审；席位在场时一切 shadow→probe 恒过门。现行态
+    =各版本 transitions 最新行（current_state 逐版本判）。
     """
-    rows = conn.execute(
-        "SELECT 1 FROM version_transitions WHERE to_state IN (?,?,?,?) LIMIT 1",
-        ("probe", "candidate", "live-paper", "live-real"),
-    ).fetchall()
+    sql = (
+        "SELECT 1 FROM version_transitions AS cur WHERE cur.to_state IN (?,?)"
+        " AND cur.id = (SELECT MAX(id) FROM version_transitions t2"
+        " WHERE t2.version_id = cur.version_id) LIMIT 1"
+    )
+    rows = conn.execute(sql, ("live-paper", "live-real")).fetchall()
     return bool(rows)
 
 

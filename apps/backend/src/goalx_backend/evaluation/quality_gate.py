@@ -580,12 +580,13 @@ def require_gate_pass(conn: sqlite3.Connection, challenger_version_id: int) -> N
     无记录/最新挂=GateNotPassed（调用方 fail-loud；transitions 零写入，
     门账行即拒绝留痕的证据面）。永无自动晋升不变：本函数只拒绝不写。
 
-    引导豁免（2026-11-11 运维实录补）：门语义=防未验证挑战者替换**在位
-    champion**；史上无任何版本到过 probe+ 梯级时无在位者可保护，首版本
-    上岗走人 CLI 全审（--reason 必填落 transitions 即审计面）。豁免随首
-    个版本到 probe 而永久关闭——此后一切 shadow→probe 恒过门。
+    引导豁免（2026-11-11 运维实录补，席位语义二修）：门=防未验证挑战者
+    替换**现役 champion**；现役 live 席位空缺（初次上岗/回滚全降后重升）
+    时无对照对象，走人 CLI 全审（--reason 必填落 transitions 即审计面）；
+    席位在场时豁免关闭、一切 shadow→probe 恒过门（回滚后重升走 L2 人审
+    与 spec 一致）。
     """
-    if not versioning.any_ladder_version(conn):
+    if not versioning.has_live_version(conn):
         return
     latest = latest_evaluation(conn, challenger_version_id)
     if latest is None:
