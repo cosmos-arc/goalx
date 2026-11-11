@@ -153,7 +153,7 @@ class FastembedEmbedder:
                     providers=["CPUExecutionProvider"],
                     # fastembed 缺省缓存落系统临时目录（macOS 定期清空→静默重下
                     # 1.1GB）；钉持久目录（与测试缓存探测同路径）
-                    cache_dir=Path.home() / ".cache" / "fastembed",
+                    cache_dir=str(Path.home() / ".cache" / "fastembed"),
                 ),
             )
             self._model = model
