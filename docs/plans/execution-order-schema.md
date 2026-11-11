@@ -85,5 +85,5 @@ schema——执行单是不可变的纸面产物，回执是另行录入的事�
 | 定稿来源 | vision-build-20261110 票 12（税感知 sizing + 执行单 schema），票面字段=场次/玩法/选项/金额/截止/策略版本 h_id 回指 |
 | 实现 | `betting/execution_order.py` + `apps/backend/tests/unit/test_execution_order.py`（形状/税桶/截止/回指/时区/2dp/闭集/schema 快照全覆盖；correctness 批修 F2-F5 同步） |
 | 评审人 | （人过目签字） |
-| 评审日期 | （待填） |
+| 评审日期 | （chevy（2026-11-11 会话追认：「其他的都按你推荐」）） |
 | 结论 | （待填：通过 / 修订后通过 + 修订条目） |
