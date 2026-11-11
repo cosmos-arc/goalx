@@ -703,7 +703,7 @@ def test_history_chain_attributes_via_bridge(tmp_path: Path) -> None:
         # 桥没通的第三方队（历史链身份折缺口分桶）
         _fixture_row("h4", "英超", bj_kickoff(9, 2), "丙队", "乙队")
         | {"home_goals": 1, "away_goals": 1, "day": "2023-09-01"},
-        # 当季行：把 live 推到 2024-25（无 detail，不产格）
+        # 当季行：把当季界（=detail 覆盖最大季）推到 2024-25（未链 → 当季桶）
         _fixture_row("live", "英超", datetime(2024, 8, 1, 20, 0), "甲队", "乙队"),
     ]
     detail_rows = [
@@ -721,6 +721,18 @@ def test_history_chain_attributes_via_bridge(tmp_path: Path) -> None:
             "h4", bj_kickoff(9, 2), "丙队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
         )
         | {"kickoff": datetime(2023, 9, 1, 19, 0, tzinfo=UTC)},
+        # 当季 detail：season=2024-25（界由 detail 覆盖决定，universe 预挂不算）
+        _detail_row(
+            "live",
+            datetime(2024, 8, 1, 20, 0),
+            "甲队",
+            "乙队",
+            "4-4-2",
+            "4-2-3-1",
+            "x",
+            "y",
+        )
+        | {"kickoff": datetime(2024, 8, 1, 19, 0, tzinfo=UTC)},
     ]
     _build_corpus(store, fixture_rows, detail_rows)
     duck_con = corpus_duckdb.connect(
@@ -758,7 +770,7 @@ def test_history_chain_attributes_via_bridge(tmp_path: Path) -> None:
     assert stats["hist_no_bridge"] == 1
     assert stats["bridge_zh_to_club"] >= 2
     assert stats["live_season"] == "2024-25"
-    assert stats["live_season_unlinked"] == 0
+    assert stats["live_season_unlinked"] == 2  # 当季 live 行未链（当季桶）
 
 
 def test_backfill_preserves_linked_rows_byte_identical(tmp_path: Path) -> None:
@@ -823,3 +835,160 @@ def test_backfill_preserves_linked_rows_byte_identical(tmp_path: Path) -> None:
     assert before == after  # 含 rebuilt_at 逐字节不动
     assert report["preserved"] == len(before)
     assert report["inserted"] == 4  # Old×1 + New×1 + Yi×2（4-2-3-1 与 3-5-2）
+
+
+def test_coverage_report_marks_dead_zones_and_pre_hist(tmp_path: Path) -> None:
+    """票 05 验收③：死区季零行也要出场并如实标注；hist_no_club 桶有测试。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_hist_bridge_face(conn)
+    # 丙队/丁队：桥通（三票）但 hist 名无 TM 俱乐部认领 → hist_no_club
+    conn.executemany(
+        """
+        INSERT INTO hist_matches
+            (competition, season, match_date, home_team, away_team, fthg, ftag,
+             ftr, psc_home, psc_draw, psc_away)
+        VALUES ('E0', '2324', ?, 'Zeta FC', 'Omega FC', ?, ?, 'H', 2.0, 3.5, 4.0)
+        """,
+        [
+            # 欧洲日=universe 北京凌晨场 −8h（z_i 在 bj 9/16/23 03:00）
+            ("2023-09-08", 1, 1),
+            ("2023-09-15", 2, 0),
+            ("2023-09-22", 0, 2),
+        ],
+    )
+    conn.commit()
+    store = CorpusStore(tmp_path / "corpus")
+
+    def bj(day: datetime) -> datetime:
+        # 北京墙钟凌晨场 → detail 开球 UTC 前一日 19:00（桥语料侧日=UTC 日）
+        return day.replace(hour=3)
+
+    def utc_day(day: datetime) -> datetime:
+        return day.replace(hour=19, tzinfo=UTC)
+
+    aug = datetime(2023, 8, 12)
+    fixture_rows = [
+        # 2015-16：早于 hist 窗 → rows=0 → pre_hist_window 注记
+        _fixture_row("p1", "英超", bj(datetime(2015, 9, 12)), "甲队", "乙队")
+        | {"home_goals": 2, "away_goals": 1, "day": "2015-09-11"},
+        # 2023-24：一场阵型齐全（入面）+ 两场桥投票用（阵型缺）+ 四场全缺
+        # （formation_unknown）→ known/sides=5/20 < 0.5 → formation_dead_zone
+        _fixture_row("h1", "英超", bj(aug), "甲队", "乙队")
+        | {"home_goals": 2, "away_goals": 1, "day": "2023-08-11"},
+        _fixture_row("h2", "英超", bj(datetime(2023, 8, 19)), "甲队", "乙队")
+        | {"home_goals": 1, "away_goals": 0, "day": "2023-08-18"},
+        _fixture_row("h3", "英超", bj(datetime(2023, 8, 26)), "乙队", "甲队")
+        | {"home_goals": 0, "away_goals": 3, "day": "2023-08-25"},
+        *[
+            _fixture_row(f"n{i}", "英超", bj(datetime(2023, 8, 20 + i)), "甲队", "乙队")
+            | {"home_goals": 0, "away_goals": 0, "day": f"2023-08-2{i}"}
+            for i in range(4)
+        ],
+        # 丙丁场：桥通但无 TM 俱乐部 → hist_no_club（双侧）
+        *[
+            _fixture_row(
+                f"z{i}", "英超", bj(datetime(2023, 9, 9 + 7 * i)), "丙队", "丁队"
+            )
+            | {"home_goals": [1, 2, 0][i], "away_goals": [1, 0, 2][i]}
+            for i in range(3)
+        ],
+        # 2024-25 一场（有 detail）→ 当季界推到 2024-25
+        _fixture_row("L1", "英超", bj(datetime(2024, 8, 12)), "甲队", "乙队"),
+    ]
+    detail_rows = [
+        _detail_row(
+            "p1",
+            bj(datetime(2015, 9, 12)),
+            "甲队",
+            "乙队",
+            "4-4-2",
+            "4-2-3-1",
+            "x",
+            "y",
+        )
+        | {"kickoff": utc_day(datetime(2015, 9, 11))},
+        _detail_row("h1", bj(aug), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y")
+        | {"kickoff": utc_day(datetime(2023, 8, 11))},
+        _detail_row(
+            "h2", bj(datetime(2023, 8, 19)), "甲队", "乙队", None, None, "x", "y"
+        )
+        | {"kickoff": utc_day(datetime(2023, 8, 18))},
+        _detail_row(
+            "h3", bj(datetime(2023, 8, 26)), "乙队", "甲队", None, None, "y", "x"
+        )
+        | {"kickoff": utc_day(datetime(2023, 8, 25))},
+        *[
+            _detail_row(
+                f"n{i}",
+                bj(datetime(2023, 8, 20 + i)),
+                "甲队",
+                "乙队",
+                None,
+                None,
+                "x",
+                "y",
+            )
+            | {"kickoff": utc_day(datetime(2023, 8, 20 + i))}
+            for i in range(4)
+        ],
+        *[
+            # 丙丁场只主侧有阵型（known 计数压到 5/16，dead_zone 触发）
+            _detail_row(
+                f"z{i}",
+                bj(datetime(2023, 9, 9 + 7 * i)),
+                "丙队",
+                "丁队",
+                "4-4-2",
+                None,
+                "x",
+                "y",
+            )
+            | {"kickoff": utc_day(datetime(2023, 9, 9 + 7 * i))}
+            for i in range(3)
+        ],
+        _detail_row(
+            "L1",
+            bj(datetime(2024, 8, 12)),
+            "甲队",
+            "乙队",
+            "4-4-2",
+            "4-2-3-1",
+            "x",
+            "y",
+        )
+        | {"kickoff": utc_day(datetime(2024, 8, 11))},
+    ]
+    _build_corpus(store, fixture_rows, detail_rows)
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        stats = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+        report = formations.coverage_report(conn)
+    finally:
+        duck_con.close()
+        conn.close()
+    # 死区季零行也出场：2015-16（pre_hist）+ 2023-24（dead_zone）+ 2024-25
+    notes = {item["season"]: item.get("note") for item in report["seasons"]}
+    assert [item["season"] for item in report["seasons"]] == [
+        "2015-16",
+        "2023-24",
+        "2024-25",
+    ]
+    assert "pre_hist_window" in str(notes["2015-16"])
+    assert "formation_dead_zone" in str(notes["2023-24"])
+    assert notes["2024-25"] is None
+    by_season = {item["season"]: item for item in report["seasons"]}
+    assert by_season["2015-16"]["rows"] == 0
+    assert by_season["2023-24"]["rows"] > 0
+    # 丙丁三场 × 双侧：桥通但无 TM 俱乐部 → hist_no_club=6
+    assert stats["hist_no_club"] == 6
+    # 2023-24 known/sides=5/20（h1 双侧+z 三场主侧知；h2/h3/n0-n3 全缺）
+    season_stat = {
+        str(k): v for k, v in dict(stats["seasons"]).items() if k == "2023-24"
+    }
+    assert season_stat["2023-24"] == {"sides": 20, "known": 5}
