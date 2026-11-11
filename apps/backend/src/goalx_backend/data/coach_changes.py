@@ -217,6 +217,32 @@ def _bridge_matches(
     return found
 
 
+def tenures_by_club(conn: sqlite3.Connection) -> dict[int, list[Tenure]]:
+    """
+    club_tm_id → 任职行（date_from 升序；assign_manager_day 反向首见语义）。
+
+    包外读口（ADR-0008：evaluation 六轴读缝消费，mining-loop 票 06）；
+    ``assign_manager_day`` 同包消费同一升序口径。
+    """
+    out: dict[int, list[Tenure]] = {}
+    for row in conn.execute(
+        """
+        SELECT club_tm_id, role, coach_name, date_from, date_to
+        FROM tm_coach_tenures
+        ORDER BY club_tm_id, date_from, coach_name
+        """
+    ).fetchall():
+        out.setdefault(int(row["club_tm_id"]), []).append(
+            Tenure(
+                role=str(row["role"]),
+                coach_name=str(row["coach_name"]),
+                date_from=str(row["date_from"]),
+                date_to=str(row["date_to"]) if row["date_to"] is not None else None,
+            )
+        )
+    return out
+
+
 def resolve_club_hist_names(conn: sqlite3.Connection) -> dict[int, str]:
     """
     club_tm_id → hist 英文队名（票 09 复用缝：六轴④底蕴层的 TM 侧身份）。

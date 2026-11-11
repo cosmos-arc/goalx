@@ -684,6 +684,27 @@ def derive_club_pedigree(
     return stats
 
 
+def pedigree_by_team_season(
+    conn: sqlite3.Connection,
+) -> dict[tuple[str, str], sqlite3.Row]:
+    """
+    (hist 英文队名, 季码) → 底蕴四因子行（包外只读口，ADR-0008）。
+
+    六轴联结读缝消费（mining-loop 票 06）：as-of-season 直键——行即当季
+    前可知口径（derive 的 PIT 契约），缺行=该队该季无底蕴面（诚实缺）。
+    """
+    return {
+        (str(row["team"]), str(row["season"])): row
+        for row in conn.execute(
+            """
+            SELECT team, season, top_flight_streak, points_pct_l5,
+                   tier1_titles, major_honours
+            FROM club_pedigree
+            """
+        ).fetchall()
+    }
+
+
 def derive_state(conn: sqlite3.Connection) -> dict[str, object] | None:
     """最近一次派生现态（face_derive_state 的属主读口；从未派生=None）。"""
     row = conn.execute(

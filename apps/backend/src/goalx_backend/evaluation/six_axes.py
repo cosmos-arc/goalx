@@ -30,19 +30,23 @@ from datetime import date
 from pathlib import Path
 from typing import cast
 
+from goalx_backend.data import results as rs_store
 from goalx_backend.data.coach_changes import (
     Tenure,
     assign_manager_day,
     resolve_club_hist_names,
+    tenures_by_club,
 )
 from goalx_backend.data.formations import coach_family_prior
+from goalx_backend.data.pedigree import pedigree_by_team_season
 
 #: 搜索窗（特征读数唯一消费窗；E-32 EM 三窗同界，hist 季码）
 SEARCH_WINDOW: tuple[str, str] = ("1617", "2122")
 #: 验证/确认窗（本模块不读——窗口清单单点注册，票 07 注册时消费）
 VALIDATE_WINDOW: tuple[str, str] = ("2223", "2324")
 CONFIRM_WINDOW: tuple[str, str] = ("2425", "2526")
-#: 首批假设联赛域（设计 §1：英伦三联赛默认；裁判面仅此域有覆盖）
+#: 首批联赛域=E0+E1 切片（设计 §1 英伦域的裁判覆盖子集：英伦三联赛中
+#: 仅 E0/E1 裁判近满覆，SC0 阵型/底蕴面薄——二批扩）
 FIRST_BATCH_COMPETITIONS: tuple[str, ...] = ("E0", "E1")
 
 #: run_params 留痕（可复算口径；报告与观测 payload 同源携带）
@@ -93,29 +97,6 @@ class MatchReading:
     referee_prior_n: int = 0
     referee_prior_avg_goals: float | None = None
     total_goals: int | None = None
-
-
-def _tenures_by_club(
-    conn: sqlite3.Connection,
-) -> dict[int, list[Tenure]]:
-    """club_tm_id → 任职行（date_from 升序；assign_manager_day 反向首见）。"""
-    out: dict[int, list[Tenure]] = {}
-    for row in conn.execute(
-        """
-        SELECT club_tm_id, role, coach_name, date_from, date_to
-        FROM tm_coach_tenures
-        ORDER BY club_tm_id, date_from, coach_name
-        """
-    ).fetchall():
-        out.setdefault(int(row["club_tm_id"]), []).append(
-            Tenure(
-                role=str(row["role"]),
-                coach_name=str(row["coach_name"]),
-                date_from=str(row["date_from"]),
-                date_to=str(row["date_to"]) if row["date_to"] is not None else None,
-            )
-        )
-    return out
 
 
 @dataclass
@@ -192,43 +173,35 @@ def match_readings(
     """
     联结读缝主读口（只读）：窗内逐场 as-of 特征（PIT/embargo 见模块注释）。
 
-    referee 先验=同裁判在该场之前（match_date 严格早于）E0/E1 已完赛逐场
-    累计——生涯面受裁判覆盖域约束（英伦近满覆）。匹配序=match_date 升序
-    单遍累计，同日多场互不先验。
+    referee 先验=同裁判在该场之前（match_date **严格早于**，同日多场互不
+    先验）E0/E1 已完赛逐场累计——生涯面受裁判覆盖域约束（英伦近满覆）。
+    匹配序=match_date 升序；同日按日缓冲，当日全部装配完才入账。
     """
-    club_of_name = {
-        hist_name: club for club, hist_name in resolve_club_hist_names(conn).items()
-    }
     seam = _Seam(
         conn=conn,
-        club_of_name=club_of_name,
-        tenures=_tenures_by_club(conn),
-        pedigree={
-            (str(row["team"]), str(row["season"])): row
-            for row in conn.execute(
-                """
-                SELECT team, season, top_flight_streak, points_pct_l5,
-                       tier1_titles, major_honours
-                FROM club_pedigree
-                """
-            ).fetchall()
+        club_of_name={
+            hist_name: club for club, hist_name in resolve_club_hist_names(conn).items()
         },
+        tenures=tenures_by_club(conn),
+        pedigree=pedigree_by_team_season(conn),
     )
-    comps_sql = ", ".join("?" * len(competitions))
-    matches = conn.execute(
-        f"""
-        SELECT id, season, competition, match_date, home_team, away_team,
-               fthg, ftag, referee, psc_home, psc_away
-        FROM hist_matches
-        WHERE season BETWEEN ? AND ? AND competition IN ({comps_sql})
-        ORDER BY match_date, id
-        """,  # noqa: S608 — 表/列名常量，占位符动态联赛域
-        (season_from, season_to, *competitions),
-    ).fetchall()
+    matches = rs_store.hist_rows_in_season_window(
+        conn,
+        season_from=season_from,
+        season_to=season_to,
+        competitions=competitions,
+    )
     ref_goals: dict[str, list[int]] = {}
+    day_buffer: dict[str, list[tuple[str, int]]] = {}
     readings: list[MatchReading] = []
+    prev_date = ""
     for row in matches:
         mdate = str(row["match_date"])
+        if mdate != prev_date:
+            # 日界翻转：上一日的裁判进球入账（同日互不可见）
+            for referee, goals in day_buffer.pop(prev_date, []):
+                ref_goals.setdefault(referee, []).append(goals)
+            prev_date = mdate
         season = str(row["season"])
         referee = str(row["referee"]) if row["referee"] not in (None, "") else None
         hg, ag = int(row["fthg"]), int(row["ftag"])
@@ -241,10 +214,11 @@ def match_readings(
             total_goals=hg + ag,
         )
         if referee is not None:
-            seen = ref_goals.setdefault(referee, [])
+            seen = ref_goals.get(referee, [])
             reading.referee_prior_n = len(seen)
             if seen:
                 reading.referee_prior_avg_goals = round(sum(seen) / len(seen), 6)
+            day_buffer.setdefault(mdate, []).append((referee, hg + ag))
         psc_home = float(row["psc_home"]) if row["psc_home"] else None
         psc_away = float(row["psc_away"]) if row["psc_away"] else None
         reading.home = _side_features(
@@ -264,8 +238,6 @@ def match_readings(
             season,
         )
         readings.append(reading)
-        if referee is not None:
-            ref_goals[referee].append(hg + ag)
     return readings
 
 
@@ -363,6 +335,15 @@ _SIDE_CONTINUOUS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _quartile_groups(pairs: list[tuple[float, float]]) -> list[list[float]]:
+    """按特征值升序四分位切组（η² 与分层读数共口径，各出现一次）。"""
+    ordered = sorted(pairs, key=lambda p: p[0])
+    n = len(ordered)
+    return [
+        [value for _, value in ordered[q * n // 4 : (q + 1) * n // 4]] for q in range(4)
+    ]
+
+
 def feature_importance(readings: list[MatchReading]) -> dict[str, object]:
     """
     搜索窗特征重要性（LdP 中间层：样本内描述统计，不出结论不回测）。
@@ -380,17 +361,7 @@ def feature_importance(readings: list[MatchReading]) -> dict[str, object]:
         ]
         features[name] = {
             "n": len(pairs),
-            "eta_sq": _eta_sq(
-                [
-                    [
-                        r
-                        for _, r in pairs[
-                            q * len(pairs) // 4 : (q + 1) * len(pairs) // 4
-                        ]
-                    ]
-                    for q in range(4)
-                ]
-            ),
+            "eta_sq": _eta_sq(_quartile_groups(pairs)),
             "strata": _quartiles(pairs),
         }
     family_pairs = [
@@ -415,17 +386,7 @@ def feature_importance(readings: list[MatchReading]) -> dict[str, object]:
     ]
     features["referee_prior_avg_goals_vs_total_goals"] = {
         "n": len(ref_pairs),
-        "eta_sq": _eta_sq(
-            [
-                [
-                    g
-                    for _, g in ref_pairs[
-                        q * len(ref_pairs) // 4 : (q + 1) * len(ref_pairs) // 4
-                    ]
-                ]
-                for q in range(4)
-            ]
-        ),
+        "eta_sq": _eta_sq(_quartile_groups(ref_pairs)),
         "strata": _quartiles(ref_pairs),
     }
     return features
@@ -444,12 +405,23 @@ def search_window_reading(conn: sqlite3.Connection) -> dict[str, object]:
 REPORT_BASENAME = "six-axes-search-window"
 
 
-def write_search_report(conn: sqlite3.Connection, root: Path) -> dict[str, object]:
-    """
-    报告落档（可复算：run_params 随 payload 一体写盘）。
+def latest_observation(conn: sqlite3.Connection) -> dict[str, object] | None:
+    """最新 s7 观测 payload（窗冻结 → 恒为搜索窗那份；缺席=None）。"""
+    row = conn.execute(
+        """
+        SELECT payload FROM edge_observations
+        WHERE scanner = 's7' ORDER BY window_key DESC LIMIT 1
+        """
+    ).fetchone()
+    return json.loads(str(row[0])) if row is not None else None
 
-    读最新 s7 观测（窗冻结 → 恒为搜索窗那份）写语料树 reports/ 双视图
-    （JSON 全量 + MD 人读）。观测缺席=从未跑过 s7 → fail-loud 不造空报告。
+
+def write_search_report(conn: sqlite3.Connection, root: Path) -> Path:
+    """
+    报告落档（可复算：run_params 随 payload 一体写盘），返回 MD 落盘路径。
+
+    读最新 s7 观测写语料树 reports/ 双视图（JSON 全量 + MD 人读）。
+    观测缺席=从未跑过 s7 → fail-loud 不造空报告。
     """
     row = conn.execute(
         """
@@ -494,7 +466,6 @@ def write_search_report(conn: sqlite3.Connection, root: Path) -> dict[str, objec
             )
             lines.append(row)
         lines.append("")
-    (reports_dir / f"{REPORT_BASENAME}.md").write_text(
-        "\n".join(lines), encoding="utf-8"
-    )
-    return payload
+    md_path = reports_dir / f"{REPORT_BASENAME}.md"
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    return md_path

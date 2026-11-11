@@ -43,6 +43,7 @@ from goalx_backend.data.coach_changes import (
     Tenure,
     assign_manager_day,
     resolve_club_hist_names,
+    tenures_by_club,
 )
 from goalx_backend.data.ingest.elo_silver import FD_LEAGUE_ZH
 from goalx_backend.data.leagues import LEAGUE_TO_FD
@@ -208,27 +209,6 @@ def _tm_clubs(
     for name in club_conflicts:
         club_ids.pop(name, None)
     return aliases, club_ids
-
-
-def _tenures_by_club(conn: sqlite3.Connection) -> dict[int, list[Tenure]]:
-    """club_tm_id → 任职行（date_from 升序；assign_manager_day 反向首见语义）。"""
-    out: dict[int, list[Tenure]] = {}
-    for row in conn.execute(
-        """
-        SELECT club_tm_id, role, coach_name, date_from, date_to
-        FROM tm_coach_tenures
-        ORDER BY club_tm_id, date_from, coach_name
-        """
-    ).fetchall():
-        out.setdefault(int(row["club_tm_id"]), []).append(
-            Tenure(
-                role=str(row["role"]),
-                coach_name=str(row["coach_name"]),
-                date_from=str(row["date_from"]),
-                date_to=str(row["date_to"]) if row["date_to"] is not None else None,
-            )
-        )
-    return out
 
 
 def _bridge_zh_to_club(
@@ -589,7 +569,7 @@ def derive_formation_family_facet(
     match_rows, matches_seen, kickoff_missing = _corpus_sides(duck_con)
     links = _linked_sides(conn)
     aliases_by_team, club_ids = _tm_clubs(conn)
-    accum = _Accum.fresh(_tenures_by_club(conn))
+    accum = _Accum.fresh(tenures_by_club(conn))
     zh_club, zh_bridged, bridge_stats = _bridge_zh_to_club(conn, duck_con)
     live = max((str(m["season"]) for m in match_rows), default="")
     # 格子键=(season, league_zh, club_tm_id, coach, family) → 计数/首末日；

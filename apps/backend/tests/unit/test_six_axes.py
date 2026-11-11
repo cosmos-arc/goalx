@@ -281,12 +281,13 @@ def test_write_search_report_fail_loud_without_observation(
     with pytest.raises(RuntimeError, match="s7 观测缺席"):
         six_axes.write_search_report(seam_db, tmp_path)
     edge_scan.run_s7(seam_db, edge_scan.ScanContext(business_date="2026-11-11"))
-    payload = six_axes.write_search_report(seam_db, tmp_path)
+    md_path = six_axes.write_search_report(seam_db, tmp_path)
+    assert md_path == tmp_path / "reports" / f"{six_axes.REPORT_BASENAME}.md"
     assert (tmp_path / "reports" / f"{six_axes.REPORT_BASENAME}.json").exists()
     md = (tmp_path / "reports" / f"{six_axes.REPORT_BASENAME}.md").read_text()
     assert "六轴搜索窗特征重要性首报告" in md
     assert "run_params" in md
-    assert payload["linkage"]["matches"] == 3
+    assert six_axes.latest_observation(seam_db)["linkage"]["matches"] == 3
 
 
 def test_facet_season_conversion() -> None:
@@ -304,3 +305,29 @@ def test_coach_family_prior_still_importable(seam_db: sqlite3.Connection) -> Non
     )
     assert prior["dominant_family"] == "4-4-2"
     assert prior["n_known"] == 10
+
+
+def test_referee_prior_same_day_invisible(seam_db: sqlite3.Connection) -> None:
+    """PIT 断言（Spec 轴修）：同日同裁判多场互不先验（严格早于当日）。"""
+    seam_db.execute(
+        """
+        INSERT INTO hist_matches
+            (competition, season, match_date, home_team, away_team, fthg, ftag,
+             ftr, psc_home, psc_draw, psc_away, referee)
+        VALUES ('E0', '1617', '2016-08-11', 'Yi FC', 'Zeta FC', 0, 0, 'D',
+                2.2, 3.2, 3.2, 'Ref A')
+        """
+    )
+    seam_db.commit()
+    readings = {r.match_id: r for r in six_axes.match_readings(seam_db)}
+    same_day = [
+        r
+        for r in readings.values()
+        if r.match_date == "2016-08-11" and r.referee == "Ref A"
+    ]
+    # 同日两场 Ref A：先验都=0（当日互不可见）；次日 Ref A 场先验=2
+    assert len(same_day) == 2
+    assert all(r.referee_prior_n == 0 for r in same_day)
+    next_day = next(r for r in readings.values() if r.match_date == "2016-08-18")
+    assert next_day.referee_prior_n == 2
+    assert next_day.referee_prior_avg_goals == pytest.approx(1.5)  # (3+0)/2

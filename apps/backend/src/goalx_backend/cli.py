@@ -1478,9 +1478,8 @@ def _edge_scan_payload(
         }
         # 票 06：s7 跑完即落档报告（窗冻结读数，run_params 随写）
         if "s7" in payload:
-            six_axes.write_search_report(conn, resolved.corpus_root)
             payload["s7_report"] = str(
-                resolved.corpus_root / "reports" / f"{six_axes.REPORT_BASENAME}.md"
+                six_axes.write_search_report(conn, resolved.corpus_root)
             )
         return payload
     finally:
