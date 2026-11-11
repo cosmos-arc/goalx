@@ -801,7 +801,8 @@ def check_contraction_clocks(
         f"级={level.value}",
         f"主钟={'触发' if clv.fired else clv.status}({clv_face})",
         f"探索钟={'触发' if exploration.fired else exploration.status}"
-        + f"(幸存者={exploration.survivors},发现={exploration.new_findings})",
+        + f"(轮={exploration.rounds}/{contraction.EXPLORATION_WINDOW_ROUNDS},"
+        + f"幸存者={exploration.survivors},发现={exploration.new_findings})",
     ]
     pending: list[str] = []
     if clv.fired and contraction.level_rank(level) < contraction.level_rank(

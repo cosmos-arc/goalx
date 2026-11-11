@@ -305,6 +305,30 @@ def link_scanner_run(
     }
 
 
+# ---- 回放待排程面（2026-11-11 人裁 7① 升格：注册即验，介质=历史回放）----
+
+
+def replay_pending(conn: sqlite3.Connection) -> list[str]:
+    """
+    非终态且零评估留痕的 h_id 列表（h_id 序，只读）。
+
+    假设注册后应尽快在历史回放面上取得首次评估留痕（hypothesis_attempts
+    行）；本面=周报「回放待排程」读面——验证介质是十年回放而非前向数据
+    积累（mining-loop 票 03 人裁），长期滞留 pending 的假设即排程欠账。
+    """
+    rows = conn.execute(
+        """
+        SELECT r.h_id FROM hypothesis_registry r
+        WHERE r.status IN ('registered', 'running')
+          AND NOT EXISTS (
+              SELECT 1 FROM hypothesis_attempts a WHERE a.h_id = r.h_id
+          )
+        ORDER BY r.h_id
+        """
+    ).fetchall()
+    return [str(row["h_id"]) for row in rows]
+
+
 # ---- 周报视图（交付 3：程序算建议态落周报；人读面，只读）----
 
 

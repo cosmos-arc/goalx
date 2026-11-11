@@ -567,3 +567,22 @@ def test_cli_hypothesis_mark_terminal_e2e(
             argparse.Namespace(h_id="H4", to="running", reason="翻案尝试"),
             settings=settings,
         )
+
+
+def test_replay_pending_faces(db: sqlite3.Connection) -> None:
+    """回放待排程面（2026-11-11 人裁 7① 升格）：非终态零尝试在册，评估即出册。"""
+    # 种子 H1-H8（v51）：无 attempt 行 → 全部待排程
+    pending = hreg.replay_pending(db)
+    assert pending == ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8"]
+    # 首次评估留痕 → 出册
+    assert hreg.record_attempt(db, "H1", window_key="s1:w-1", scanner="s1") is True
+    assert "H1" not in hreg.replay_pending(db)
+    # 终态假设（supported/refuted）恒不在册（生死已判，无「待排程」语义）
+    hreg.transition_hypothesis(
+        db,
+        "H2",
+        hreg.HypothesisState.SUPPORTED,
+        actor="human:cli",
+        reason="人裁支持",
+    )
+    assert "H2" not in hreg.replay_pending(db)

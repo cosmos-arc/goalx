@@ -175,8 +175,10 @@ def test_paused_level_skips_generation(db: sqlite3.Connection, tmp_path: Any) ->
     assert report["level"] == "L2"
     assert chat.prompts == []  # 未烧 LLM
     assert not (tmp_path / "corpus" / "reports" / "proposals").exists()
-    # 暂停拍不写水位（解除后新料仍算新）
+    # 暂停拍不写水位（解除后新料仍算新）；不计轮（回路已停，止损钟不走）
     assert weekly_agent.read_watermark(db) is None
+    assert "round" not in report
+    assert contraction.weekly_rounds(db) == 0
 
 
 def test_idle_guard_heartbeat_on_no_new_material(
@@ -195,23 +197,26 @@ def test_idle_guard_heartbeat_on_no_new_material(
     )
     assert first["status"] == "generated"
     assert len(chat.prompts) == 1  # 首跑真跑：一次 generate
+    assert first["round"] == 1  # 轮次记账：首拍=轮 1（2026-11-11 人裁）
     assert weekly_agent.read_watermark(db) == {
         "edge_findings_max_id": 3,
         "lessons_count": 1,
     }
-    # 第二拍：无新发现无新教训 → 心跳，零 LLM 调用
+    # 第二拍：无新发现无新教训 → 心跳，零 LLM 调用（idle 也计轮——空转即回路运行）
     second = weekly_agent.run_weekly_batch(
         db, store=store, chat=chat, lessons_dir=tmp_path, run_date="2026-11-23"
     )
     assert second["status"] == "idle_heartbeat"
     assert len(chat.prompts) == 1
-    # 台账来了新发现 → 又是真跑
+    assert second["round"] == 2
+    # 台账来了新发现 → 又是真跑（同日重跑不重复计轮：按日幂等）
     _seed_finding(db, finding_id=4, found_at="2026-11-20T23:40:00+00:00")
     third = weekly_agent.run_weekly_batch(
         db, store=store, chat=chat, lessons_dir=tmp_path, run_date="2026-11-23"
     )
     assert third["status"] == "generated"
     assert len(chat.prompts) == 2
+    assert third["round"] == 2
 
 
 # ---- 生成全链：提案→拒收→对抗质疑 fresh-context→落盘→花费账 ----
@@ -322,6 +327,8 @@ def test_full_pass_validate_critique_files_costs(
     md_text = beat_md.read_text(encoding="utf-8")
     assert "人审 checklist" in md_text
     assert "数据面历史可算" in md_text
+    assert "注册即排历史回放验证" in md_text  # 7① 升格（2026-11-11 人裁）
+    assert "回放待排程假设" in md_text
     assert _CRITIQUE_TEXT in md_text
     # 花费账：generate 批次行 + critique 逐条行（append-only）
     rows = db.execute(
@@ -332,8 +339,9 @@ def test_full_pass_validate_critique_files_costs(
         ("P-20261116-01", "critique"),
     ]
     assert all(str(r["model"]) == "glm-5.3" for r in rows)
-    # 首跑钉锚（当天，一次性）
-    assert report["anchor"] == "2026-11-16"
+    # 首跑钉锚+记轮+回放待排程面（种子 H1-H8 零尝试在册）
+    assert (report["anchor"], report["round"]) == ("2026-11-16", 1)
+    assert "H1" in report["replay_pending"]
     row = db.execute("SELECT anchor_date FROM exploration_clock_anchor").fetchone()
     assert str(row["anchor_date"]) == "2026-11-16"
     assert Path(report["files"]["json"]).name == "weekly-proposals-2026-11-16.json"

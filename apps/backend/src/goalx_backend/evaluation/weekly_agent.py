@@ -9,8 +9,10 @@ agent=心跳内函数调用非长驻。一次周拍：
 2. 空转守卫：台账（edge_findings）无新发现且教训库无新条目（对比上次
    周拍水位，weekly_agent_state）→ 只报心跳不烧 LLM（反模式 7：$15/篇
    量产无自然刹车）；首跑无水位=真跑（人裁 6：历史台账即首批阅读面）；
-3. 真跑：钉探索钟锚点（一次性，contraction.ensure_exploration_anchor）→
-   读面（edge_findings 全量含 refuted/阴性 + hypothesis_registry +
+3. 非暂停拍统一记账（2026-11-11 人裁 mining-loop 票 03）：钉探索钟锚点
+   （一次性，contraction.ensure_exploration_anchor）+ 记一轮回路轮次
+   （contraction.record_weekly_round，按日幂等——idle 心跳也是轮）；
+4. 真跑：读面（edge_findings 全量含 refuted/阴性 + hypothesis_registry +
    教训库注入 lessons.weekly_injection + 周报 digest）→ LLM 产提案
    （≤5 条/次，引用 id 必带）→ 每条提案独立 fresh-context 对抗质疑
    （新会话，prompt 只含该提案与质疑指令，无生成上下文）→ 反驳意见
@@ -555,7 +557,9 @@ def run_weekly_batch(
 
     返回心跳/生成报告（status: paused_heartbeat | idle_heartbeat |
     generated）；真跑产提案文件（JSON+MD 双视图，受控目录 append-only）
-    并逐调用落 LLM 花费。首跑钉探索钟锚点（当天，一次性）。
+    并逐调用落 LLM 花费。非暂停拍钉探索钟锚点（当天，一次性）+ 记一轮
+    回路轮次（2026-11-11 人裁：探索钟=轮次止损，idle 心跳也计轮）；
+    报告附回放待排程假设面（hypothesis_registry.replay_pending）。
     lesson_deduper=票 06 语义查重缝（生产=tasks 适配件注入
     FastembedEmbedder+connect_rag；缺席/教训索引空=票 03 精确面）。
     """
@@ -580,15 +584,18 @@ def run_weekly_batch(
         return report
     watermark = current_watermark(conn, lessons_dir=lessons_dir)
     report["watermark"] = watermark
+    # 非暂停拍统一记账（2026-11-11 人裁）：锚=轮 0 标记；轮次按日幂等
+    report["anchor"] = contraction.ensure_exploration_anchor(
+        conn, resolved_date, actor=BATCH_ACTOR
+    )
+    report["round"] = contraction.record_weekly_round(conn, run_date=resolved_date)
+    report["replay_pending"] = hypothesis_registry.replay_pending(conn)
     previous = read_watermark(conn)
     if previous is not None and previous == watermark:
         report.update(
             {"status": "idle_heartbeat", "detail": "台账无新发现且教训库无新条目"}
         )
         return report
-    report["anchor"] = contraction.ensure_exploration_anchor(
-        conn, resolved_date, actor=BATCH_ACTOR
-    )
     # F5：拍名独占声明（O_EXCL 哨兵，常驻不删）——手动 CLI 与调度并发
     # 双跑各得不同拍次，append-only 不被同名互覆；F4：拍次进提案/批次
     # id（首拍无后缀，同日第二拍起 P-yyyymmdd-<拍>-NN / B-yyyymmdd-<拍>）
@@ -662,6 +669,9 @@ HUMAN_REVIEW_CHECKLIST: tuple[str, ...] = (
     "4. 可证伪措辞与判据读得懂、门可判定：冻结即 prereg，注册后不可改写"
     + "（改预测=新 h_id）。",
     "5. 对抗质疑的反驳意见已读并接受（反驳未答复的不得注册）。",
+    "6. 注册即排历史回放验证（2026-11-11 人裁 7① 升格）：判据验证介质="
+    + "十年历史回放（数据面历史可算才注册），注册后假设进 replay_pending"
+    + "面直至首次评估留痕——验证不等前向数据积累。",
 )
 
 
@@ -706,6 +716,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- 水位: `{json.dumps(report['watermark'], ensure_ascii=False)}`")
     if "anchor" in report:
         lines.append(f"- 探索钟锚点: {report['anchor']}")
+    if "round" in report:
+        lines.append(
+            f"- 回路轮次: {report['round']}/{contraction.EXPLORATION_WINDOW_ROUNDS}"
+            + "（轮次止损钟，2026-11-11 人裁）"
+        )
+    if report.get("replay_pending"):
+        lines.append(
+            "- 回放待排程假设（注册即验，历史回放为介质）: "
+            + ", ".join(str(h) for h in report["replay_pending"])
+        )
     if "costs" in report:
         lines.append(f"- LLM 花费: `{json.dumps(report['costs'], ensure_ascii=False)}`")
     proposals: list[dict[str, Any]] = report.get("proposals") or []

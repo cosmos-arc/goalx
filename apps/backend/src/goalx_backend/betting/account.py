@@ -1,11 +1,13 @@
 """
 纸面账户 P&L 聚合面（auto-paper 票 04）：只读派生，不复制结算引擎。
 
-口径全部来自 prereg B 节：账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列
-（彩池未开奖组合+未赛 open 注 stake）；EV 实现差（实现 ROI vs 决策 EV
-均值，snap_ev_model 口径）为主指标；独立暴露（已结算、合格、按场独立）
-<200 只报曲线不判盈亏。auto-v1 与人工纸面分列（handoff「不混成一个
-数字」纪律）。
+口径来自 prereg B 节（2026-11-11 修订⑦：定论门撤，测量仪定位）：
+账户=初始 ¥1000+Σ已结算 P&L；待结算浮仓单列（彩池未开奖组合+未赛
+open 注 stake）；EV 实现差（实现 ROI vs 决策 EV 均值，snap_ev_model
+口径）为**测量读数**——定论权=历史回放（mining-loop 票 03 人裁：
+策略 EV 历史已判，前向永不承担找机会/定论职能）；独立暴露（已结算、
+合格、按场独立）<200 只报曲线（小样本描述性标注，非门）。auto-v1 与
+人工纸面分列（handoff「不混成一个数字」纪律）。
 
 edge-audit-20261109 票 13 三修（外部审计反例转正）：
 - 税后视图复用 tax_on_prize 的**计税组归集**口径（同人+同期+同游戏合并
@@ -35,8 +37,9 @@ from goalx_backend.data.fixtures import beijing_business_date, jingcai_business_
 from goalx_backend.data.pool import pool_period_meta
 
 INITIAL_BANKROLL = 1000.0  # prereg B：账户=初始 ¥1000+已结算 P&L
-# prereg 判读规则（票 13 收窄语义）：独立暴露（已结算、合格、按场独立）
-# <200 只报曲线不判盈亏——非全部 paper 注数
+# 小样本描述性标注线（票 13 收窄语义；2026-11-11 修订⑦：定论门撤——
+# 不再承诺「满 200 即判盈亏」，定论权=历史回放）：独立暴露（已结算、
+# 合格、按场独立）<200 只报曲线——非全部 paper 注数
 SAMPLE_FLOOR = 200
 MANUAL = "manual"
 CLV_ROLLING_WINDOW = 50  # CLV 滚动窗=回滚触发器 A 窗（vision 票 03 人裁）
