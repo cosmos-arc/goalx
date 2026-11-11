@@ -1,5 +1,5 @@
 """
-09:05 晨检代码化：25 项只读红绿面。
+09:05 晨检代码化：26 项只读红绿面。
 
 （ingest-orchestration 票 01 起；票 08 加第 14 项；auto-paper 票 04 加第
 15 项；identity 票 02 加第 16 项；autoresearch 票 04 加第 17 项；
@@ -7,7 +7,7 @@ autoresearch 票 14 加第 18 项；autoresearch 票 19 加第 19 项；
 票 34 加第 20 项断点哨兵；autoresearch 票 17 加第 21 项；
 vision-build 票 05 加第 22 项教训库复审到期；vision-build 票 08 加第
 23 项收缩双钟与第 24 项四信号重扫唤醒；vision-build 票 06 加第 25 项
-RAG 两索引落后条数。）
+RAG 两索引落后条数；vision-build 票 11 加第 26 项质量门连续门挂告警。）
 
 goals4 断供 4 个月零痕迹的教训：日志全绿 ≠ 数据在进——护栏防错数据，
 晨检防缺数据。本模块只读不修（repair 各归其主）；网络面第 10 项漂移
@@ -59,6 +59,7 @@ from goalx_backend.evaluation import (
     contraction,
     edge_scan,
     lessons,
+    quality_gate,
     rag,
 )
 from goalx_backend.modelling import forecast
@@ -752,6 +753,28 @@ def check_rag_index_lag(
     return CheckItem("rag_index_lag", OK, detail)
 
 
+def check_quality_gate(conn: sqlite3.Connection) -> CheckItem:
+    """
+    项 26 质量门连续门挂告警（vision-build 票 11）：只读门账最新段读数。
+
+    连续 ≥GATE_CONSECUTIVE_FAIL_N（初始默认 3）→ 红（挂项告警：影子重训
+    连续产不出过门 challenger=系统性信号）；1..N−1 → 黄（观察）；零事件
+    （门未跑过）/最新过门 → 绿。只读红线——门账由人 CLI 评估写。
+    """
+    threshold = quality_gate.GATE_CONSECUTIVE_FAIL_N
+    consecutive = quality_gate.consecutive_gate_failures(conn)
+    total = quality_gate.event_count(conn)
+    detail = (
+        f"门账 {total} 行 · 连续门挂 {consecutive}（告警阈 {threshold}）"
+        "——门评估=人 CLI quality-gate-evaluate"
+    )
+    if consecutive >= threshold:
+        return CheckItem("quality_gate", FAIL, detail)
+    if consecutive > 0:
+        return CheckItem("quality_gate", DEGRADED, detail)
+    return CheckItem("quality_gate", OK, detail)
+
+
 def check_contraction_clocks(
     conn: sqlite3.Connection, *, now: datetime | None = None
 ) -> CheckItem:
@@ -865,7 +888,7 @@ def run_morning_check(
     now: datetime | None = None,
     serve_log: Path | None = None,
 ) -> list[CheckItem]:
-    """跑全部 25 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
+    """跑全部 26 项（只读；网络面第 10 项官方当期端点 + 第 13 项本机 /healthz）。"""
     resolved_now = now or datetime.now(UTC)
     log_path = serve_log or Path.cwd() / ".scratch" / "prefect-serve.log"
     items = [check_stack(), check_runtime_fingerprint(log_path)]
@@ -914,6 +937,7 @@ def run_morning_check(
                         )  # 含昨日业务日：昨夜深夜场残差（correctness F1）
                     ),
                 ),
+                check_quality_gate(conn),
             )
         )
         with httpx.Client(verify=browser_ssl_context()) as client:

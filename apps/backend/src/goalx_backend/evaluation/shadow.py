@@ -5,7 +5,8 @@
 窗=当前 30 日 vs 前 90 日参考，同四信号 league_mix 口径）越阈即时触发 +
 月度定拍兜底 → 重训缝（modelling.train_competition 写**独立 challenger
 模型目录**，生产 ml 轨工件不动）→ challenger 三元组自动注册 shadow 态
-（betting.versioning.register_version；注册≠晋升，晋升恒人审）→
+（betting.versioning.register_version；注册≠晋升，晋升恒人审）+ **注册即
+冻结质量门指标面**（票 11 prereg：quality_gate.freeze_gate_spec）→
 champion/challenger 同流量双算（同 fixture 集双写 forecasts，challenger
 行 track='shadow' 带版本标签；champion 行不动）→ 触发落账
 shadow_retrain_events（月读⑤消费）。
@@ -36,7 +37,7 @@ from goalx_backend.betting import auto_strategy, versioning
 from goalx_backend.config import get_settings
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.evaluation import contraction
+from goalx_backend.evaluation import contraction, quality_gate
 from goalx_backend.modelling import dc_model
 from goalx_backend.modelling import forecast as fc
 
@@ -407,6 +408,8 @@ def run_shadow_retrain_beat(
             initial_state=versioning.StrategyState.SHADOW,
             actor="trigger:shadow-retrain",
         )
+        # 票 11 prereg：注册即冻结门指标面（首写恒胜——评估不得先于冻结）
+        quality_gate.freeze_gate_spec(conn, version_id)
         outcome = "registered"
     else:
         version_id = existing

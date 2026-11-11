@@ -111,6 +111,7 @@ from goalx_backend.evaluation import (
     edge_scan,
     hypothesis_registry,
     market_lambda,
+    quality_gate,
     rag,
     unlock_report,
     weekly_agent,
@@ -183,6 +184,8 @@ def _cmd_version_register(
             params_version=args.params,
             label=args.label,
         )
+        # 票 11 prereg：注册即冻结门指标面（首写恒胜；幂等命中不重复冻结）
+        quality_gate.freeze_gate_spec(conn, version_id)
         state = versioning.current_state(conn, version_id)
         # 幂等命中回显库内首注册 label（correctness F4：三元组=身份，
         # 后到的 --label 不改写既有行，回显不得谎报）
@@ -210,6 +213,8 @@ def _cmd_version_promote(
     策略版本晋升/转移（vision-build 票 01，人 CLI）：写 transitions。
 
     晋升恒人审——agent 无该写路径；谓词拒绝（跳级/终态复出）fail-loud。
+    票 11 硬门：shadow→probe 晋升前查门账（最新门评估须通过记录，
+    不过=GateNotPassed 拒绝留痕——门账即证据面，transitions 零写入）。
     settings 注入口只服务测试接缝。
     """
     resolved = settings if settings is not None else get_settings()
@@ -220,6 +225,11 @@ def _cmd_version_promote(
     try:
         migrate(conn)
         from_state = versioning.current_state(conn, args.id)
+        if (
+            from_state is versioning.StrategyState.SHADOW
+            and target is versioning.StrategyState.PROBE
+        ):
+            quality_gate.require_gate_pass(conn, args.id)
         versioning.transition_version(
             conn,
             args.id,
@@ -238,6 +248,51 @@ def _cmd_version_promote(
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     logger.info("version transition: {}", payload)
+
+
+def _cmd_quality_gate_evaluate(
+    args: argparse.Namespace, *, settings: Settings | None = None
+) -> None:
+    """
+    Challenger 质量门评估（vision-build 票 11，人 CLI）：回放窗校准对比。
+
+    冻结指标（注册时）在十年语料 PIT 回放窗（现代窗留出只读）上评估
+    challenger 不劣于 champion 的显著水平；结果落门账（append-only，
+    可复算）+ 对比报告落语料树 reports/quality-gate.{json,md}。
+    shadow→probe 晋升（version-promote）读门账硬门。settings 注入口只
+    服务测试接缝。
+    """
+    resolved = settings if settings is not None else get_settings()
+    if not resolved.db_path.exists():
+        raise FileNotFoundError(f"运行面库不存在: {resolved.db_path}")
+    conn = connect(resolved.db_path)
+    store = CorpusStore(resolved.corpus_root)
+    research = connect_research(resolved.research_db_path)
+    try:
+        migrate(conn)
+        champion_version = args.champion_version or versioning.live_version_id(conn)
+        evaluation = quality_gate.evaluate_quality_gate(
+            research,
+            conn,
+            challenger_version_id=args.challenger_version,
+            champion_run_id=args.champion_run,
+            challenger_run_id=args.challenger_run,
+            champion_version_id=champion_version,
+        )
+        json_path, md_path = quality_gate.write_report(store, evaluation)
+    finally:
+        research.close()
+        store.close()
+        conn.close()
+    payload = quality_gate.evaluation_payload(evaluation)
+    payload["files"] = {"json": str(json_path), "md": str(md_path)}
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    logger.info(
+        "quality gate: challenger={} passed={} ({})",
+        args.challenger_version,
+        evaluation.passed,
+        evaluation.hang_reason or "过门",
+    )
 
 
 def _cmd_hypothesis_mark(
@@ -2629,6 +2684,28 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     version_promote_parser.add_argument(
         "--reason", required=True, help="转移理由(落 transitions 审计)"
     )
+    quality_gate_parser = sub.add_parser(
+        "quality-gate-evaluate",
+        help="challenger质量门评估(vision票11;回放窗校准对比,落账+报告)",
+    )
+    quality_gate_parser.add_argument(
+        "--challenger-version", type=int, required=True, help="challenger 策略版本 id"
+    )
+    quality_gate_parser.add_argument(
+        "--champion-run", type=int, required=True, help="champion 回放 run id(研究库)"
+    )
+    quality_gate_parser.add_argument(
+        "--challenger-run",
+        type=int,
+        required=True,
+        help="challenger 回放 run id(研究库)",
+    )
+    quality_gate_parser.add_argument(
+        "--champion-version",
+        type=int,
+        default=None,
+        help="champion 策略版本 id(缺省=当前 live 态版本)",
+    )
     hypothesis_mark_parser = sub.add_parser(
         "hypothesis-mark",
         help="假设注册表状态翻转(vision票02;终态恒人审,agent不自动定生死)",
@@ -2761,6 +2838,7 @@ def main(argv: list[str] | None = None) -> int:
         "e2e-corpus": _cmd_e2e_corpus,
         "version-register": lambda: _cmd_version_register(args),
         "version-promote": lambda: _cmd_version_promote(args),
+        "quality-gate-evaluate": lambda: _cmd_quality_gate_evaluate(args),
         "hypothesis-mark": lambda: _cmd_hypothesis_mark(args),
         "contraction-set": lambda: _cmd_contraction_set(args),
         "contraction-read": _cmd_contraction_read,

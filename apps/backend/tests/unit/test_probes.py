@@ -622,8 +622,8 @@ def test_edge_source_clv_se_clusters_by_fixture(db: sqlite3.Connection) -> None:
 def test_migration_v46_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 57
-    assert migrate(db) == 57
+    assert migrate(db) == 58
+    assert migrate(db) == 58
     cols = {row["name"] for row in db.execute("PRAGMA table_info(bets)").fetchall()}
     assert {"edge_source", "clv"} <= cols
     run_cols = {

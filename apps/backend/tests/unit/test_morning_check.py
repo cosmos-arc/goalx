@@ -868,7 +868,7 @@ def test_morning_check_survives_poison_guardian_bronze(tmp_path: Path) -> None:
         raw_fh.write(b"\x00\x01garbage-not-gzip")
 
     items = _mc.run_morning_check(settings, now=NOW, serve_log=tmp_path / "serve.log")
-    assert len(items) == 25  # 毒丸不废整检：25 项全产出
+    assert len(items) == 26  # 毒丸不废整检：26 项全产出（票 11 加质量门项）
     rag_item = next(item for item in items if item.name == "rag_index_lag")
     assert rag_item.status == DEGRADED
     assert "残行 1" in rag_item.detail
