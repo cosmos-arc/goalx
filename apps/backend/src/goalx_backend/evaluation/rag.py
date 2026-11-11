@@ -64,11 +64,12 @@ NAMESPACE_LESSON = "lesson"
 #: embed 批大小（增量管线逐批落库，中途崩溃已落批不回退）
 EMBED_BATCH = 64
 #: 教训语义近邻查重阈（周批 duplicate_reason 缝消费；高精度取向——
-#: 错拒一条提案的代价大于漏拒）。0.85 是**先验保守值未校准**（F4）：
-#: 真分布校准测=tests/unit/test_rag.py::test_fastembed_threshold_calibration
-#: （@slow+模型缓存 skipif——回填后机器一跑即知分不分得开；红了=把本
-#: 常量挪进实测窗 (far_max, near_min]，不猜阈值）
-LESSON_SIMILAR_THRESHOLD = 0.85
+#: 错拒一条提案的代价大于漏拒，阈取实测窗中偏下）。
+#: 2026-11-11 真分布校准（Qwen3-0.6B-Q，test_fastembed_threshold_calibration
+#: 实测）：near（复现死法重述）0.66–0.86 / far（跨域无关）0.26–0.37，
+#: 分离窗 (0.37, 0.66]——0.85 先验值过高（4 对近邻仅 1 对过阈）改 0.55。
+#: 换模型后本常量须随校准测重定。
+LESSON_SIMILAR_THRESHOLD = 0.55
 
 
 class Embedder(Protocol):
