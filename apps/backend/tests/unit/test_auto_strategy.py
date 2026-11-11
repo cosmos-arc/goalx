@@ -138,9 +138,9 @@ def _seed_positive_single(
 # ---- 纯选票规则（prereg 修订①-④）----
 
 
-def _make_v1_live(db: sqlite3.Connection) -> None:
-    """注册 auto-v1 引擎三元组并人审升 live-paper（票 01 闸 fail-closed）。"""
-    estimator, calibration, fingerprint = au.engine_version_triple(au.AUTO_V1_PARAMS)
+def _make_v1_live_with(db: sqlite3.Connection, params: au.AutoV1Params) -> None:
+    """注册指定参数集的引擎三元组并人审升 live-paper（票 01 闸同链）。"""
+    estimator, calibration, fingerprint = au.engine_version_triple(params)
     version_id = versioning.register_version(
         db,
         estimator_version=estimator,
@@ -157,6 +157,11 @@ def _make_v1_live(db: sqlite3.Connection) -> None:
         versioning.transition_version(
             db, version_id, target, actor="human:test", reason="测试晋升"
         )
+
+
+def _make_v1_live(db: sqlite3.Connection) -> None:
+    """注册 auto-v1 引擎三元组并人审升 live-paper（票 01 闸 fail-closed）。"""
+    _make_v1_live_with(db, au.AUTO_V1_PARAMS)
 
 
 def _pick(
@@ -216,6 +221,28 @@ def test_quarter_kelly_cap() -> None:
     assert au.quarter_kelly_stake(0.25, 5.0, 1000.0, params) == 2.0
     # 小 edge 小注：kelly=(p*o-1)/(o-1)=0.005 → quarter×¥1000=¥1.25
     assert au.quarter_kelly_stake((1 + 0.005 * 0.5) / 1.5, 1.5, 1000.0, params) == 1.25
+
+
+def test_quarter_kelly_tax_free_cap_boundary() -> None:
+    """票 12 税感知帽边界两侧：奖金 ¥9,999 直过、¥10,001 压帽。
+
+    odds=2.0、prob=0.75：kelly=(0.75×2−1)/1=0.5 → quarter×bankroll
+    =0.125×bankroll。stake_cap 放大使其不绑，只剩免税帽约束：
+    - bankroll 39,996 → 原始注额 ¥4,999.50，奖金 ¥9,999（免征桶内）→ 直过；
+    - bankroll 40,004 → 原始注额 ¥5,000.50，奖金 ¥10,001（越线全额 20%）
+      → 压帽 floor(10000/2)=¥5,000，奖金恰 ¥10,000（"不超过 1 万"免）。
+    """
+    from goalx_backend.betting import tax
+    from goalx_backend.betting.staking import tax_free_stake_cap
+
+    params = au.AutoV1Params(stake_cap=1_000_000.0)
+    under = au.quarter_kelly_stake(0.75, 2.0, 39_996.0, params)
+    assert under == 4999.5  # 奖金 9,999：桶内直过
+    over = au.quarter_kelly_stake(0.75, 2.0, 40_004.0, params)
+    assert over == tax_free_stake_cap(2.0) == 5000.0  # 压帽到元
+    # tax 视图复核：压帽前越线全额计税、压帽后免征（接 betting/tax 现有件）
+    assert tax.tax_on_prize(5000.5 * 2.0) == (2000.2, 8000.8)
+    assert tax.tax_on_prize(over * 2.0) == (0.0, 10_000.0)
 
 
 # ---- 锚整跑（隔离库 + 冻结时钟）----
@@ -395,6 +422,70 @@ def test_migration_v43_idempotent(db: sqlite3.Connection) -> None:
     assert version == 57
     assert migrate(db) == 57  # 同版本重跑零效果
     assert db.execute("SELECT COUNT(*) c FROM auto_paper_runs").fetchone()["c"] == 0
+
+
+def test_live_paper_singles_walk_tax_free_sizing(db: sqlite3.Connection) -> None:
+    """
+    票 12 参数层接线 e2e：live-paper 下单走税感知 sizing（票 01 状态消费同链）。
+
+    高注码参数（大资金+高单注帽）使 quarter-Kelly 原始注额越免税线：
+    注册**该参数指纹**的版本并人审逐级升 live-paper 后下单（票 01 闸同链
+    fail-closed），落库注额=免税帽 floor(¥10,000/赔率)——奖金 ≤¥1 万
+    永处免税桶。手算对照：prob(ttg=2)≈0.26129、odds=5.74 → 原始注额
+    ¥5,272.19（>帽）→ 压帽 ¥1,742（奖金 ¥9,999.08）。
+    """
+    from goalx_backend.betting import tax
+    from goalx_backend.betting.staking import tax_free_stake_cap
+
+    fixture = _seed_fixture(db, "巳", code="周六021")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture, 1.3, 1.1)
+    odds = _seed_positive_single(db, fixture, "2", ev=0.5)
+    db.commit()
+
+    params = au.AutoV1Params(initial_bankroll=200_000.0, stake_cap=10_000.0)
+    _make_v1_live_with(db, params)
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR, params=params)
+    assert stats["bets"] == 1
+    row = db.execute(
+        "SELECT stake FROM bets WHERE strategy_version = 'auto-v1'"
+    ).fetchone()
+    assert row["stake"] == pytest.approx(tax_free_stake_cap(odds))
+    assert row["stake"] == pytest.approx(1742.0)  # 手算：floor(10000/5.74)
+    assert row["stake"] * odds <= tax.TAX_FREE_THRESHOLD  # 免税桶不变量
+
+
+def test_parlay_stake_pressed_into_tax_free_bucket(db: sqlite3.Connection) -> None:
+    """票 12：串关同压免税帽——联合赔率口径（整注语义，与 suggest_stake 同）。
+
+    两腿 hhad 各 odds 9.68 → 联合 93.7024；parlay_stake 放大到 ¥50,000
+    越线 → 压帽 floor(10000/93.7024)=¥106（奖金 ¥9,932.45 免征）。
+    """
+    from goalx_backend.betting.staking import tax_free_stake_cap
+
+    f1 = _seed_fixture(db, "午", code="周日011")
+    f2 = _seed_fixture(db, "未", code="周日012")
+    matrix = _matrix(1.3, 1.1)
+    for fixture in (f1, f2):
+        _seed_on_sale(db, fixture)
+        _seed_forecast(db, fixture, 1.3, 1.1)
+        prob = matrix.hhad(-1.0)["h"]
+        odds = round(1.8 / prob, 2)
+        _snap(db, fixture, "hhad", "h", odds, meta={"goal_line": "-1"})
+        _snap(db, fixture, "ttg", "2", 1.2)  # 单关面负 EV → 只走串关路径
+    db.commit()
+    leg_odds = round(1.8 / matrix.hhad(-1.0)["h"], 2)
+
+    params = au.AutoV1Params(parlay_stake=50_000.0)
+    _make_v1_live_with(db, params)
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR, params=params)
+    assert stats["bets"] == 1  # 一张 2串1
+    stake = db.execute(
+        "SELECT stake FROM bets WHERE strategy_version = 'auto-v1'"
+    ).fetchone()["stake"]
+    assert stake == pytest.approx(tax_free_stake_cap(leg_odds * leg_odds))
+    assert stake == pytest.approx(106.0)
+    assert stake * leg_odds * leg_odds <= 10_000.0
 
 
 def test_shadow_version_refused_and_live_paper_places(db: sqlite3.Connection) -> None:

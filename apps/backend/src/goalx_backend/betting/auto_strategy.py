@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 
-from goalx_backend.betting import pool_strategy, versioning
+from goalx_backend.betting import pool_strategy, staking, versioning
 from goalx_backend.betting import store as bt_store
 from goalx_backend.betting.bets import (
     BetDraft,
@@ -40,6 +40,7 @@ from goalx_backend.betting.bets import (
     market_eligibility_problem,
     validate_selections,
 )
+from goalx_backend.betting.tax import TAX_FREE_THRESHOLD
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import pool as pool_store
 from goalx_backend.data.pool import PoolMatchView
@@ -83,6 +84,14 @@ class AutoV1Params:
     sale_buffer_minutes: int = 30
     kickoff_guard_minutes: int = 10
     stake_per_combination: float = 2.0  # 池票每组合 ¥2（帽内单注）
+    # 票 12 税感知 sizing：单票（单关+串关，联合赔率口径）注额压免税帽——
+    # 奖金 ≤ 本参数（与 tax.TAX_FREE_THRESHOLD 同源，2024-09-01 口径
+    # "不超过 1 万元暂免"）永处免税桶；越线全额 20%（+2% EV 越线即净
+    # -18.4%，税墙裁定）。帽=floor(本参数/赔率)，取整规则=向下取整到元
+    # （写死于 staking.tax_free_stake_cap，不参数化：元位比分位保守）。
+    # 池面不压帽——大奖越线口径=税后（betting/tax 视图，H7）。
+    # 加本参数=改参数指纹=升版本（prereg C 节纪律，票 01 同链生效）。
+    tax_free_prize_cap: float = TAX_FREE_THRESHOLD
 
 
 AUTO_V1_PARAMS = AutoV1Params()
@@ -148,10 +157,11 @@ class Pick:
 def quarter_kelly_stake(
     prob: float, odds: float, bankroll: float, params: AutoV1Params
 ) -> float:
-    """quarter-Kelly 注码（prereg：基准=账户现值，单注封顶）。"""
+    """quarter-Kelly 注码（prereg：账户现值基准，单注封顶+税感知免税帽）。"""
     kelly = (prob * odds - 1.0) / (odds - 1.0)
     sized = params.kelly_fraction * kelly * bankroll
-    return round(max(0.0, min(params.stake_cap, sized)), 2)
+    tax_cap = staking.tax_free_stake_cap(odds, prize_cap=params.tax_free_prize_cap)
+    return round(max(0.0, min(params.stake_cap, tax_cap, sized)), 2)
 
 
 def select_singles(candidates: list[Pick], params: CandidateScope) -> list[Pick]:
@@ -547,12 +557,18 @@ def place_anchor_bets(
         # 同对串关仍撞同键，不双注不漏注
         pair_key = "-".join(str(fid) for fid in sorted(p.fixture_id for p in pair))
         request_id = f"{AUTO_V1}:{business_date}:{anchor_label}:p:{pair_key}"
+        # 票 12 税感知帽（串关=联合赔率整注口径）：parlay_stake 越免税线压帽
+        joint_odds = pair[0].odds * pair[1].odds
+        parlay_stake = min(
+            params.parlay_stake,
+            staking.tax_free_stake_cap(joint_odds, prize_cap=params.tax_free_prize_cap),
+        )
         if _request_exists(conn, request_id):
             replayed += 1
         elif _place(
             conn,
             [leg for leg in legs if leg is not None],
-            stake=params.parlay_stake,
+            stake=parlay_stake,
             request_id=request_id,
             reads=reads,
         ):
