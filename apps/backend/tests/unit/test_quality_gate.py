@@ -439,14 +439,8 @@ def _establish_ladder(db: sqlite3.Connection) -> int:
         estimator_version="dc-prior",
         calibration_version="shin",
         params_version="fp-prior",
-        label="prior-probe-version",
-        initial_state=StrategyState.SHADOW,
-    )
-    db.execute(
-        "INSERT INTO version_transitions (version_id, from_state, to_state,"
-        " reason, actor, ts) VALUES (?, 'shadow', 'probe', '既有梯级演练',"
-        " 'human:cli', '2026-10-01T00:00:00+00:00')",
-        (prior_id,),
+        label="prior-live-version",
+        initial_state=StrategyState.LIVE_PAPER,
     )
     db.commit()
     return prior_id
@@ -535,15 +529,15 @@ def test_cli_promote_hard_gate_on_shadow_to_probe(
             settings=settings,
         )
         capsys.readouterr()
-        # 梯级已建立（豁免关闭前提——引导豁免只护史上首版本上岗）：
-        # 另立一个早先版本到过 probe，不动被测版本自身梯位
+        # 现役 live 席位在场（豁免关闭前提）：另立一个在位版本，
+        # 不动被测版本自身梯位
         prior = versioning.register_version(
             conn,
             estimator_version="dc-prior",
             calibration_version="shin",
             params_version="fp-prior",
-            label="prior-probe-version",
-            initial_state=StrategyState.PROBE,
+            label="prior-live-version",
+            initial_state=StrategyState.LIVE_PAPER,
         )
         assert prior > 0
         conn.commit()
@@ -1221,16 +1215,16 @@ def test_f6_promote_gate_and_transition_share_one_transaction(
 
 
 def test_require_gate_pass_bootstrap_exemption_once(db: sqlite3.Connection) -> None:
-    """引导豁免（2026-11-11 运维实录）：史上无版本到过 probe+ 梯级时，
-    首版本 shadow→probe 免门（无在位 champion 可保护，人 CLI --reason 即
-    审计面）；一旦任何版本到过 probe，豁免永久关闭、无记录照拒。"""
+    """引导豁免（席位语义）：现役 live 席位空缺时 shadow→probe 免门
+    （无在位 champion 可保护，人 CLI --reason 即审计面）；席位在场
+    （含自身升到 live-paper）→ 豁免关闭、无记录照拒。"""
     challenger_id = _challenger_with_spec(db)
-    # 豁免期：无任何门评估记录也不拒
+    # 豁免期：无任何门评估记录也不拒（席位空缺）
     quality_gate.require_gate_pass(db, challenger_id)
-    # 任何版本到过 probe（含自身早先转移）→ 豁免关闭
+    # 自身升到 live-paper 占席（最新转移行）→ 豁免关闭
     db.execute(
         "INSERT INTO version_transitions (version_id, from_state, to_state,"
-        " reason, actor, ts) VALUES (?, 'shadow', 'probe', '演练上岗',"
+        " reason, actor, ts) VALUES (?, 'shadow', 'live-paper', '演练上岗',"
         " 'human:cli', '2026-11-01T00:00:00+00:00')",
         (challenger_id,),
     )
