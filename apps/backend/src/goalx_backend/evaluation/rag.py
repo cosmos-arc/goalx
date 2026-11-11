@@ -7,21 +7,20 @@ RAG 两点（vision-build 票 06）：卫报语料检索 + 教训条目查重的
 一张通用表，namespace 隔离两索引），检索时 DuckDB ATTACH 主库只读、
 ``CAST vec AS FLOAT[N]`` 物化 FLOAT[] 后 ``array_cosine_similarity``
 list 函数暴力扫（确定性可复算，无近似索引）。查询全异步批处理：全库
-扫 203K×384 约 1-3 秒、过滤子集毫秒级，够用。
+扫 203K×1024 数秒级、过滤子集毫秒级，够用。
 shortcut（照票面）：若未来出现交互式延迟需求或语料量级×10，再升
 VSS/sidecar。
 
-embedding 模型（票面 fastembed+multilingual-e5-small 的落地铁律）：
-fastembed 0.9.1 的支持模型清单**没有** multilingual-e5-small（e5 线只有
--large，2.24GB/1024 维，无自定义模型加载缝），按票面选型理由（小模型
-+384 维+英文语料/中文教训一口径）取最近替身
-``sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2``（ONNX，
-384 维，多语对称）。e5 前缀约定照模型文档的本票形态：本模型卡**无**
-query:/passage: 前缀约定（对称嵌入）；Embedder 缝的 embed_passages/
-embed_query 两方法即前缀落点——未来 e5 家族换入时前缀责任在适配器内
-（passage→"passage: "，query→"query: "），调用方零改动。模型
-id/版本落账（``{模型名}@fastembed-{版本}`` 进主键），换模型=对新
-model_id 重嵌（增量管线幂等，旧口径行原地保留并行可查）。
+embedding 模型（2026-11-11 人裁终版：业界调研后弃票面 e5-small）：
+fastembed 0.9.1 清单**没有** multilingual-e5-small（e5 线仅 -large 2.24GB，
+无自定义加载缝）；过渡替身 MiniLM-L12（2020 年模型，跨语检索弱）亦被
+替换。现选 ``Qwen/Qwen3-Embedding-0.6B-Q``（fastembed 0.9.1 原生支持，
+ONNX int8 量化 1.12GB/1024 维/32k 上下文/Apache-2.0，2025 年发布，
+MTEB 多语跨语检索同档最强——中文提案/教训 ↔ 英文卫报语料的跨语命中
+正是本索引主用途）。Qwen3 前缀约定：query 侧 Instruct+Query 双行、文档侧无前缀——前缀在
+FastembedEmbedder 内自理（见该类 docstring），调用方零改动。模型 id/版本落账
+（``{模型名}@fastembed-{版本}`` 进主键），换模型=对新 model_id 重嵌
+（增量管线幂等，旧口径行原地保留并行可查）。
 
 纪律（票面）：
 - RAG 只做检索与查重，不做概率引擎；
@@ -108,16 +107,23 @@ class _TextEmbeddingModel(Protocol):
 
 class FastembedEmbedder:
     """
-    生产 embedder：fastembed（ONNX 运行时，不进 torch）+ 多语 384 维。
+    生产 embedder：fastembed（ONNX 运行时，不进 torch）+ Qwen3 多语 1024 维。
 
     模型惰性构建：构造零成本（晨检/管线装配不触发模型下载），首次
     embed 才拉模型（运行期下载，CI/测试不得依赖——测试注入假件）。
-    模型卡（paraphrase-multilingual-MiniLM）无 query/passage 前缀约定，
-    两方法同口径；e5 家族换入时前缀加在本类内（见模块 docstring）。
+    Qwen3-Embedding 前缀约定（模型卡）：query 侧 Instruct 行+Query 行、
+    文档侧无前缀——前缀在本类内自理（embed_query 拼 Instruct 后走
+    model.embed，不经 fastembed query_embed 的内建前缀，口径自控可复算）。
+    Instruct 文案是查询侧配方（改它不动文档索引，无需重嵌）。
     """
 
-    MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    DIM = 384
+    MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B-Q"
+    DIM = 1024
+    # 查询侧任务指令（Qwen3 官方配方；中文提问跨语命中英文语料是本索引的主用途）
+    QUERY_INSTRUCT = (
+        "Given a betting research query (Chinese or English), retrieve "
+        "relevant football betting lessons, hypotheses and news articles"
+    )
 
     def __init__(self) -> None:
         self._model: _TextEmbeddingModel | None = None
@@ -129,7 +135,7 @@ class FastembedEmbedder:
 
     @property
     def dim(self) -> int:
-        """输出维度（模型档案钉死 384）。"""
+        """输出维度（模型档案钉死 1024）。"""
         return self.DIM
 
     def _ensure(self) -> _TextEmbeddingModel:
@@ -150,14 +156,15 @@ class FastembedEmbedder:
         return self._model
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
-        """批量 passage 向量（fastembed embed：模型卡无前缀约定）。"""
+        """批量 passage 向量（文档侧无前缀，Qwen3 模型卡约定）。"""
         model = self._ensure()
         return [[float(x) for x in vec] for vec in model.embed(list(texts))]
 
     def embed_query(self, text: str) -> list[float]:
-        """单条 query 向量（fastembed query_embed：同模型卡口径）。"""
+        """单条 query 向量（拼 Instruct+Query 前缀后走 embed，口径自控）。"""
         model = self._ensure()
-        vec = next(iter(model.query_embed([text])))
+        prefixed = f"Instruct: {self.QUERY_INSTRUCT}\nQuery: {text}"
+        vec = next(iter(model.embed([prefixed])))
         return [float(x) for x in vec]
 
 

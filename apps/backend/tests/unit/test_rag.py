@@ -49,7 +49,7 @@ class HashEmbedder:
 
 _FASTEMBED_CACHE = Path.home() / ".cache" / "fastembed"
 _MODEL_CACHED = _FASTEMBED_CACHE.is_dir() and any(
-    _FASTEMBED_CACHE.glob("**/*paraphrase-multilingual-MiniLM*")
+    _FASTEMBED_CACHE.glob("**/*Qwen3-Embedding-0.6B*")
 )
 
 
@@ -494,7 +494,7 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 # F4 真分布校准语料：近邻对=教训摘要行 vs 措辞重述的提案 statement；
-# 无关对=不同研究域的死法面（阵型/底蕴 vs 口径/池面）。真 MiniLM 上
+# 无关对=不同研究域的死法面（阵型/底蕴 vs 口径/池面）。真 Qwen3 上
 # 两组应清晰分离；本测红了=LESSON_SIMILAR_THRESHOLD 该挪进实测窗。
 _CALIBRATION_NEAR: tuple[tuple[str, str], ...] = (
     (
@@ -571,10 +571,10 @@ def test_current_model_id_zero_download() -> None:
     """模型身份串（model_id）可零成本取用：晨检/运维只读口，不构造模型。"""
     identity = rag.current_model_id()
     assert identity.startswith(rag.FastembedEmbedder.MODEL_NAME + "@fastembed-")
-    # 实例身份与模块口一致；dim=384 落账（MiniLM 多语线）
+    # 实例身份与模块口一致；dim=1024 落账（Qwen3-0.6B-Q 量化线）
     embedder = rag.FastembedEmbedder()
     assert embedder.model_id == identity
-    assert embedder.dim == 384
+    assert embedder.dim == 1024
 
 
 # ---- 真 fastembed 路径冒烟（模型缓存缺席 skip，_CORPUS_DUCK 先例） ----
@@ -585,15 +585,15 @@ def test_current_model_id_zero_download() -> None:
     not _MODEL_CACHED, reason="本机 fastembed 模型缓存缺席（CI 跳过，不真下模型）"
 )
 def test_fastembed_real_smoke() -> None:
-    """真模型冒烟：384 维、同入同出（可复算）、passage/query 双面同口径。"""
+    """真模型冒烟：1024 维、同入同出（可复算）、query 前缀自理面。"""
     embedder = rag.FastembedEmbedder()
     first = embedder.embed_query("pool drift signal")
     second = embedder.embed_query("pool drift signal")
-    assert len(first) == 384
+    assert len(first) == 1024
     assert first == second  # 确定性（无前缀随机/归一漂移）
     passages = embedder.embed_passages(["早锁优于晚锁", "early lock beats late"])
     assert len(passages) == 2
-    assert all(len(vec) == 384 for vec in passages)
+    assert all(len(vec) == 1024 for vec in passages)
 
 
 def test_migration_v56_idempotent(db: sqlite3.Connection) -> None:
@@ -628,3 +628,30 @@ def _row(db: sqlite3.Connection, namespace: str, item_id: str, model_id: str) ->
         """,
         (namespace, item_id, model_id),
     ).fetchone()
+
+
+def test_embed_query_prefix_recipe_pinned() -> None:
+    """Qwen3 前缀配方钉死：query 走 model.embed 且拼 Instruct+Query 前缀
+    （不经 fastembed query_embed 的内建前缀——口径自控可复算），文档侧无前缀。"""
+
+    class _Capturing:
+        def __init__(self) -> None:
+            self.embedded: list[list[str]] = []
+
+        def embed(self, texts: list[str]) -> Iterator[list[float]]:  # type: ignore[name-defined]
+            self.embedded.append(list(texts))
+            dim = rag.FastembedEmbedder.DIM
+            return iter([[0.1] * dim for _ in texts])
+
+    embedder = rag.FastembedEmbedder()
+    capturing = _Capturing()
+    embedder._model = capturing
+
+    embedder.embed_query("池面份额偏差")
+    embedder.embed_passages(["pool share bias"])
+
+    (query_input,) = capturing.embedded[0]
+    assert query_input.startswith(
+        f"Instruct: {rag.FastembedEmbedder.QUERY_INSTRUCT}\nQuery: 池面份额偏差"
+    )
+    assert capturing.embedded[1] == ["pool share bias"]  # 文档侧无前缀
