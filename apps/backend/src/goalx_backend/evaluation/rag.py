@@ -61,8 +61,11 @@ from goalx_backend.evaluation import lessons
 NAMESPACE_GUARDIAN = "guardian_article"
 #: 命名空间②：教训条目（item_id=L-NN）
 NAMESPACE_LESSON = "lesson"
-#: embed 批大小（增量管线逐批落库，中途崩溃已落批不回退）
-EMBED_BATCH = 64
+#: embed 批大小（增量管线逐批落库，中途崩溃已落批不回退）。
+#: 2026-11-11 卫报全量回填实录：batch 64×长文（Qwen3 32k 不截断）在
+#: 16GB 机上峰值超限被 jetsam SIGKILL（exit 137）——16 篇/批+512 token
+#: 截断后模型常驻 ~2.6GB、批内峰值受控。
+EMBED_BATCH = 16
 #: 教训语义近邻查重阈（周批 duplicate_reason 缝消费；高精度取向——
 #: 错拒一条提案的代价大于漏拒，阈取实测窗中偏下）。
 #: 2026-11-11 真分布校准（Qwen3-0.6B-Q，test_fastembed_threshold_calibration
@@ -154,6 +157,12 @@ class FastembedEmbedder:
                     # fastembed 缺省缓存落系统临时目录（macOS 定期清空→静默重下
                     # 1.1GB）；钉持久目录（与测试缓存探测同路径）
                     cache_dir=str(Path.home() / ".cache" / "fastembed"),
+                    # 截断与批是嵌入配方的一部分（改动=换口径重嵌考量）：
+                    # 512 token=v0 篇级检索取头部（标题+导语承载语义主体，
+                    # 段级留缝）；batch_size 压内存（缺省 256 会在长文上
+                    # 撑爆 16GB 机——见 EMBED_BATCH 注释）。
+                    max_length=512,
+                    batch_size=EMBED_BATCH,
                 ),
             )
             self._model = model
