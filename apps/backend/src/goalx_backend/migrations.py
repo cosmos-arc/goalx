@@ -3122,6 +3122,63 @@ def _apply_v59(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE quality_gate_events ADD COLUMN {column} {ddl}")
 
 
+def _apply_v60(conn: sqlite3.Connection) -> None:
+    """
+    v60（mining-loop 票 05）：formation_family_facet.team_id 放开 NOT NULL。
+
+    历史回填链（universe 中文名 → elo 桥 → hist 英文名 → TM club）不经过
+    运行面 fixtures——历史行没有运行面 team 锚，team_id=NULL 是事实不是缺
+    （读缝 coach_family_prior 键=coach×season，不消费 team_id）。SQLite 无
+    ALTER COLUMN，走建新表→搬行→换名重建（事务内原子，id 保留）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE formation_family_facet_v60 (
+            id INTEGER PRIMARY KEY,
+            season TEXT NOT NULL,
+            league_fd TEXT,
+            league_zh TEXT NOT NULL,
+            team_id INTEGER,
+            club_tm_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            coach_name TEXT NOT NULL,
+            coach_role TEXT NOT NULL CHECK (coach_role IN ('manager', 'caretaker')),
+            family TEXT NOT NULL CHECK (family IN (
+                '4-4-2', '4-2-3-1', '4-3-3', '4-5-1', '3-5-2', '3-4-3',
+                'back-five', 'other')),
+            n_matches INTEGER NOT NULL,
+            n_known INTEGER NOT NULL,
+            first_match_date TEXT NOT NULL,
+            last_match_date TEXT NOT NULL,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (season, league_zh, club_tm_id, coach_name, family)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO formation_family_facet_v60
+            (id, season, league_fd, league_zh, team_id, club_tm_id, club_name,
+             coach_name, coach_role, family, n_matches, n_known,
+             first_match_date, last_match_date, rebuilt_at)
+        SELECT id, season, league_fd, league_zh, team_id, club_tm_id, club_name,
+               coach_name, coach_role, family, n_matches, n_known,
+               first_match_date, last_match_date, rebuilt_at
+        FROM formation_family_facet
+        """
+    )
+    conn.execute("DROP TABLE formation_family_facet")
+    conn.execute(
+        "ALTER TABLE formation_family_facet_v60 RENAME TO formation_family_facet"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_formation_facet_coach
+        ON formation_family_facet (coach_name, season)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3182,6 +3239,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (57, _apply_v57),
     (58, _apply_v58),
     (59, _apply_v59),
+    (60, _apply_v60),
 )
 
 

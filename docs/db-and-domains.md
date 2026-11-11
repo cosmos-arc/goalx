@@ -1164,7 +1164,7 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `season` | TEXT | NOT NULL |
 | `league_fd` | TEXT | — |
 | `league_zh` | TEXT | NOT NULL |
-| `team_id` | INTEGER | NOT NULL |
+| `team_id` | INTEGER | — |
 | `club_tm_id` | INTEGER | NOT NULL |
 | `club_name` | TEXT | NOT NULL |
 | `coach_name` | TEXT | NOT NULL |
