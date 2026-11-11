@@ -1420,8 +1420,10 @@ def edge_digest_week() -> dict[str, object]:
     return report
 
 
-# 周批提案层 LLM 预算：提案 JSON 5 条约 1K tokens + 质疑三段，给足余量
-_WEEKLY_MAX_TOKENS = 4000
+# 周批提案层 LLM 预算：analyst 档（glm-5.3）首跑实测推理面先吃满 4000 撞顶
+# 截断（2026-11-11 首拍 completion=4000 恰满帽、parse_note=无 JSON 数组），
+# 上限提到 16000 保 JSON 完整落地；短回文模型不受影响
+_WEEKLY_MAX_TOKENS = 16000
 _WEEKLY_TEMPERATURE = 0.4
 
 
