@@ -31,8 +31,8 @@ def test_migration_v58_idempotent(db: sqlite3.Connection) -> None:
     """v58 幂等：两表就位、重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 58
-    assert migrate(db) == 58  # 同版本重跑零效果
+    assert migrate(db) == 59
+    assert migrate(db) == 59  # 同版本重跑零效果
     for table in ("quality_gate_specs", "quality_gate_events"):
         assert (
             db.execute(
@@ -41,6 +41,20 @@ def test_migration_v58_idempotent(db: sqlite3.Connection) -> None:
             ).fetchone()["c"]
             == 1
         )
+
+
+def test_migration_v59_adds_coverage_columns_idempotent(
+    db: sqlite3.Connection,
+) -> None:
+    """F4/v59：门账覆盖率三列就位（可空）；重跑零效果。"""
+    from goalx_backend.db import migrate
+
+    assert migrate(db) == 59
+    columns = {
+        str(row["name"]) for row in db.execute("PRAGMA table_info(quality_gate_events)")
+    }
+    assert {"n_champion_window", "n_challenger_window", "paired_ratio"} <= columns
+    assert migrate(db) == 59  # ALTER 幂等守卫重入零效果
 
 
 def test_gate_tables_are_append_only(db: sqlite3.Connection) -> None:
@@ -98,9 +112,11 @@ def test_freeze_gate_spec_is_prereg(db: sqlite3.Connection) -> None:
         params_version="fp",
         label="challenger",
     )
-    quality_gate.freeze_gate_spec(db, version_id, frozen_at=_SPEC_FROZEN_AT)
     quality_gate.freeze_gate_spec(
-        db, version_id, frozen_at="2026-12-01T00:00:00+00:00"
+        db, version_id, newly_registered=True, frozen_at=_SPEC_FROZEN_AT
+    )
+    quality_gate.freeze_gate_spec(
+        db, version_id, newly_registered=True, frozen_at="2026-12-01T00:00:00+00:00"
     )  # 重复冻结：首写恒胜
     spec = quality_gate.frozen_spec(db, version_id)
     assert spec is not None
@@ -200,7 +216,9 @@ def _challenger_with_spec(db: sqlite3.Connection) -> int:
         label="shadow-challenger-2026-11",
         initial_state=StrategyState.SHADOW,
     )
-    quality_gate.freeze_gate_spec(db, version_id, frozen_at=_SPEC_FROZEN_AT)
+    quality_gate.freeze_gate_spec(
+        db, version_id, newly_registered=True, frozen_at=_SPEC_FROZEN_AT
+    )
     return version_id
 
 
@@ -231,16 +249,21 @@ def test_paired_replay_faces_pairs_window_and_filters(
             "UPDATE backtest_predictions SET ftr = NULL WHERE run_id=1"
             " AND match_key='sid-0000'"
         )
-        faces = quality_gate.paired_replay_faces(
+        pairing = quality_gate.paired_replay_faces(
             research,
             champion_run_id=1,
             challenger_run_id=2,
             window_era=ERA_TRAJECTORY,
         )
+        faces = pairing.faces
         assert [f.match_key for f in faces] == ["sid-0001"]
         assert faces[0].ftr == "D"
         assert faces[0].champion_probs == _probs_for("D")
         assert faces[0].challenger_probs == _probs_for("D")
+        # F4 行数面：ftr NULL 行不进窗行数；覆盖率=配对/max 窗内行数
+        assert pairing.n_champion_window == 2
+        assert pairing.n_challenger_window == 2
+        assert pairing.paired_ratio == pytest.approx(0.5)
     finally:
         research.close()
 
@@ -522,8 +545,8 @@ def test_cli_promote_hard_gate_on_shadow_to_probe(
 
 
 def test_consecutive_gate_failures_counts_and_resets(db: sqlite3.Connection) -> None:
-    """连续门挂计数：最新一段连续挂的长度；过门一行即断（影子重训连续
-    N 次门挂的 N 读数——系统级，跨 challenger 版本）。"""
+    """连续门挂计数（F5 版本迭代序口径）：同版本连续挂折叠 1 段；跨版本
+    递增；过门一行即断。"""
     challenger_a = _challenger_with_spec(db)
     challenger_b = versioning.register_version(
         db,
@@ -532,7 +555,6 @@ def test_consecutive_gate_failures_counts_and_resets(db: sqlite3.Connection) -> 
         params_version="fp",
         label="shadow-challenger-b",
     )
-    quality_gate.freeze_gate_spec(db, challenger_b)
     assert quality_gate.consecutive_gate_failures(db) == 0  # 零事件
     _seed_gate_event(
         db,
@@ -542,22 +564,21 @@ def test_consecutive_gate_failures_counts_and_resets(db: sqlite3.Connection) -> 
         ts="2026-11-01T00:00:00+00:00",
     )
     assert quality_gate.consecutive_gate_failures(db) == 0  # 最新=过门
-    for i, (owner, ts) in enumerate(
-        (
-            (challenger_a, "2026-11-02T00:00:00+00:00"),
-            (challenger_b, "2026-11-03T00:00:00+00:00"),
-            (challenger_b, "2026-11-04T00:00:00+00:00"),
-        )
+    for owner, reason, ts, runs in (
+        (challenger_a, "rps_significantly_worse", "2026-11-02T00:00:00+00:00", (1, 10)),
+        (challenger_a, "insufficient_pairs", "2026-11-03T00:00:00+00:00", (1, 11)),
     ):
-        _seed_gate_event(
-            db,
-            owner,
-            passed=False,
-            hang_reason="rps_significantly_worse",
-            ts=ts,
-            runs=(1, 10 + i),
-        )
-    assert quality_gate.consecutive_gate_failures(db) == 3  # 连续三次挂
+        _seed_gate_event(db, owner, passed=False, hang_reason=reason, ts=ts, runs=runs)
+    assert quality_gate.consecutive_gate_failures(db) == 1  # 同版本两挂=1 段
+    _seed_gate_event(
+        db,
+        challenger_b,
+        passed=False,
+        hang_reason="rps_significantly_worse",
+        ts="2026-11-04T00:00:00+00:00",
+        runs=(1, 12),
+    )
+    assert quality_gate.consecutive_gate_failures(db) == 2  # 跨版本挂=2 迭代
     _seed_gate_event(
         db,
         challenger_b,
@@ -580,30 +601,34 @@ def test_gate_failure_face_monthly_window(db: sqlite3.Connection) -> None:
         ts="2026-10-31T00:00:00+00:00",
         runs=(1, 13),
     )  # 窗外（10 月）不进 11 月计数面；且先落=早 id（连续段读数从最新 id 倒数）
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="rps_significantly_worse",
-        ts="2026-11-02T00:00:00+00:00",
-        runs=(1, 11),
-    )
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="insufficient_pairs",
-        ts="2026-11-03T00:00:00+00:00",
-        runs=(1, 12),
-    )
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="rps_significantly_worse",
-        ts="2026-11-04T00:00:00+00:00",
-        runs=(1, 14),
-    )
+    # F5 口径：三挂来自三个 challenger 版本迭代（同版本只算 1 段）
+    version_ids = [challenger_id]
+    for tag in ("v2", "v3"):
+        version_ids.append(
+            versioning.register_version(
+                db,
+                estimator_version=f"dc-gate-face-{tag}",
+                calibration_version="shin",
+                params_version="fp",
+                label=f"shadow-face-{tag}",
+            )
+        )
+    for owner, reason, ts, runs in (
+        (
+            version_ids[0],
+            "rps_significantly_worse",
+            "2026-11-02T00:00:00+00:00",
+            (1, 11),
+        ),
+        (version_ids[1], "insufficient_pairs", "2026-11-03T00:00:00+00:00", (1, 12)),
+        (
+            version_ids[2],
+            "rps_significantly_worse",
+            "2026-11-04T00:00:00+00:00",
+            (1, 14),
+        ),
+    ):
+        _seed_gate_event(db, owner, passed=False, hang_reason=reason, ts=ts, runs=runs)
     face = quality_gate.gate_failure_face(
         db, ts_from="2026-11-01T00:00:00+00:00", ts_to="2026-12-01T00:00:00+00:00"
     )
@@ -613,7 +638,7 @@ def test_gate_failure_face_monthly_window(db: sqlite3.Connection) -> None:
         "rps_significantly_worse": 2,
         "insufficient_pairs": 1,
     }
-    assert face["consecutive_failures"] == 3  # 最新 3 行连续挂（系统级读数）
+    assert face["consecutive_failures"] == 3  # 3 个版本迭代连续挂（F5 口径）
     assert face["alert"] is True  # 连续 ≥N=3 → 告警
     assert face["consecutive_fail_alert_n"] == quality_gate.GATE_CONSECUTIVE_FAIL_N
 
@@ -642,42 +667,46 @@ def test_monthly_forced_failure_includes_gate_face(
 
 
 def test_morning_check_quality_gate_item(db: sqlite3.Connection) -> None:
-    """晨检 26 项：连续 ≥N=3 → FAIL（挂项告警）；1..N−1 → DEGRADED；
-    零事件/最新过门 → OK。"""
+    """晨检 26 项：连续迭代 ≥N=3 → FAIL（挂项告警）；1..N−1 → DEGRADED；
+    零事件/最新过门 → OK；F5 口径=同版本多挂仍 1 迭代不红。"""
     from goalx_backend import morning_check as mc
 
     ok = mc.check_quality_gate(db)
     assert ok.status == mc.OK  # 零事件=门未跑过（观察面，绿）
     challenger_id = _challenger_with_spec(db)
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="rps_significantly_worse",
-        ts="2026-11-02T00:00:00+00:00",
-    )
-    degraded = mc.check_quality_gate(db)
-    assert degraded.status == mc.DEGRADED
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="insufficient_pairs",
-        ts="2026-11-03T00:00:00+00:00",
-        runs=(1, 12),
-    )
-    still = mc.check_quality_gate(db)
-    assert still.status == mc.DEGRADED  # 2 < 3 不红
-    _seed_gate_event(
-        db,
-        challenger_id,
-        passed=False,
-        hang_reason="rps_significantly_worse",
-        ts="2026-11-04T00:00:00+00:00",
-        runs=(1, 14),
-    )
+    for reason, ts, runs in (
+        ("rps_significantly_worse", "2026-11-02T00:00:00+00:00", (1, 11)),
+        ("insufficient_pairs", "2026-11-03T00:00:00+00:00", (1, 12)),
+        ("rps_significantly_worse", "2026-11-04T00:00:00+00:00", (1, 14)),
+    ):
+        _seed_gate_event(
+            db, challenger_id, passed=False, hang_reason=reason, ts=ts, runs=runs
+        )
+    # F5：同版本三 run 对挂=1 个失败迭代——黄不红
+    same_version = mc.check_quality_gate(db)
+    assert same_version.status == mc.DEGRADED
+    # 跨版本连续挂到 3 个迭代 → 红（挂项告警）
+    for tag, ts, runs in (
+        ("b", "2026-11-05T00:00:00+00:00", (1, 15)),
+        ("c", "2026-11-06T00:00:00+00:00", (1, 16)),
+    ):
+        version_id = versioning.register_version(
+            db,
+            estimator_version=f"dc-gate-mc-{tag}",
+            calibration_version="shin",
+            params_version="fp",
+            label=f"shadow-mc-{tag}",
+        )
+        _seed_gate_event(
+            db,
+            version_id,
+            passed=False,
+            hang_reason="rps_significantly_worse",
+            ts=ts,
+            runs=runs,
+        )
     failed = mc.check_quality_gate(db)
-    assert failed.status == mc.FAIL  # 连续 3 次门挂 → 挂项告警（红）
+    assert failed.status == mc.FAIL  # 3 个 challenger 迭代连续门挂 → 红告警
     assert "3" in failed.detail
 
 
@@ -834,3 +863,325 @@ def test_evaluate_gate_rejects_same_run_pair(db: sqlite3.Connection) -> None:
         )
     finally:
         research.close()
+
+
+# ---- correctness-review 批修 F1-F6 ----
+
+
+def test_f1_evaluate_rejects_incomplete_runs(db: sqlite3.Connection) -> None:
+    """F1：非 done run（running/failed，逐联赛 checkpoint 已提交局部行）的
+    局部判定会被 UNIQUE 永久固化→stale-pass——评估前查 status 拒绝
+    （backtest 生产者契约：读者判不完整）；run 缺席同拒；零落账。"""
+    research = _research_conn()
+    try:
+        _seed_run(research, 1, "champion")
+        # challenger run=2 置 running（≥200 行已提交=局部面足以假过门）
+        research.execute(
+            "INSERT INTO backtest_runs (id, label, params, status, created_at)"
+            " VALUES (2, 'challenger', '{}', 'running', '2026-11-11')"
+        )
+        _seed_predictions(research, run_id=1, n=quality_gate.GATE_MIN_PAIRED)
+        _seed_predictions(research, run_id=2, n=quality_gate.GATE_MIN_PAIRED)
+        challenger_id = _challenger_with_spec(db)
+        with pytest.raises(ValueError, match="running"):
+            quality_gate.evaluate_quality_gate(
+                research,
+                db,
+                challenger_version_id=challenger_id,
+                champion_run_id=1,
+                challenger_run_id=2,
+            )
+        # run 缺席同拒（清数据面后 champion run=99 不存在）
+        with pytest.raises(ValueError, match="不存在"):
+            quality_gate.evaluate_quality_gate(
+                research,
+                db,
+                challenger_version_id=challenger_id,
+                champion_run_id=99,
+                challenger_run_id=1,
+            )
+        assert (
+            db.execute("SELECT COUNT(*) c FROM quality_gate_events").fetchone()["c"]
+            == 0
+        )
+    finally:
+        research.close()
+
+
+def test_f2_degenerate_variance_hangs(db: sqlite3.Connection) -> None:
+    """F2：DM 方差退化（(0.0,1.0) 分支）不可读作不劣于——常数劣差与
+    交替劣差两形态逐场恒劣（均值>0）都挂 degenerate_variance。"""
+
+    def _seed_fixed(
+        research: sqlite3.Connection,
+        *,
+        run_id: int,
+        n: int,
+        probs_by_parity: tuple[dict[str, float], ...] | dict[str, float],
+    ) -> None:
+        for i in range(n):
+            pattern = (
+                probs_by_parity[i % len(probs_by_parity)]
+                if isinstance(probs_by_parity, tuple)
+                else probs_by_parity
+            )
+            research.execute(
+                """
+                INSERT INTO backtest_predictions
+                    (run_id, match_key, competition, season, match_date, home_team,
+                     away_team, era, ftr, had_probs, fair_probs, fair_source,
+                     model_fingerprint, train_window_end)
+                VALUES (?, ?, 'E0', '2526', '2025-09-01', 'h', 'a',
+                        'trajectory', 'H', ?, ?, 'traj_anchor', 'fp',
+                        '2025-08-31')
+                """,
+                (
+                    run_id,
+                    f"sid-{i:04d}",
+                    json.dumps(pattern),
+                    json.dumps({"h": 0.4, "d": 0.3, "a": 0.3}),
+                ),
+            )
+
+    n = quality_gate.GATE_MIN_PAIRED
+    champion_probs = {"h": 0.5, "d": 0.25, "a": 0.25}
+    for name, challenger in (
+        ("常数劣差", {"h": 0.4, "d": 0.3, "a": 0.3}),
+        (
+            "交替劣差",
+            ({"h": 0.45, "d": 0.275, "a": 0.275}, {"h": 0.35, "d": 0.325, "a": 0.325}),
+        ),
+    ):
+        research = _research_conn()
+        try:
+            _seed_run(research, 1, "champion")
+            _seed_run(research, 2, "challenger")
+            _seed_fixed(research, run_id=1, n=n, probs_by_parity=champion_probs)
+            _seed_fixed(research, run_id=2, n=n, probs_by_parity=challenger)
+            challenger_id = _challenger_with_spec(db)
+            evaluation = quality_gate.evaluate_quality_gate(
+                research,
+                db,
+                challenger_version_id=challenger_id,
+                champion_run_id=1,
+                challenger_run_id=2,
+            )
+            assert evaluation.passed is False, name
+            assert evaluation.hang_reason == "degenerate_variance", name
+            assert evaluation.metric_challenger > evaluation.metric_champion, name
+            assert evaluation.p_one_sided is None  # 退化面无有效 SE，p 不伪造
+        finally:
+            research.close()
+
+
+def test_f3_freeze_rejects_backfill_on_idempotent_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F3：幂等命中旧版本不得事后补冻结（prereg 击穿口）——重注册同三元组
+    且版本无冻结面时拒绝（文案与 evaluate 侧「不得事后补」一致）；新建
+    版本注册照常冻结。"""
+    import argparse
+
+    from goalx_backend.cli import _cmd_version_register
+    from goalx_backend.config import Settings
+    from goalx_backend.db import connect as db_connect
+    from goalx_backend.db import migrate
+
+    settings = Settings(db_path=tmp_path / "goalx.db")
+    conn = db_connect(settings.db_path)
+    try:
+        migrate(conn)
+        # 旧版本（票 11 前形态）：直接 versioning 注册，无冻结面
+        legacy = versioning.register_version(
+            conn,
+            estimator_version="dc-legacy",
+            calibration_version="shin",
+            params_version="fp-legacy",
+            label="legacy",
+        )
+        assert quality_gate.frozen_spec(conn, legacy) is None
+        # 常数漂移后的幂等重注册（同一三元组）→ 拒绝补冻结
+        monkeypatch.setattr(quality_gate, "GATE_ALPHA", 0.01)
+        with pytest.raises(LookupError, match="不得事后补"):
+            _cmd_version_register(
+                argparse.Namespace(
+                    estimator="dc-legacy",
+                    calibration="shin",
+                    params="fp-legacy",
+                    label="legacy-relabel",
+                ),
+                settings=settings,
+            )
+        assert quality_gate.frozen_spec(conn, legacy) is None  # 仍无冻结面
+        # 新建版本 → 随注册冻结（当前代码常数面）
+        _cmd_version_register(
+            argparse.Namespace(
+                estimator="dc-fresh",
+                calibration="shin",
+                params="fp-fresh",
+                label="fresh",
+            ),
+            settings=settings,
+        )
+        capsys.readouterr()
+        fresh = conn.execute(
+            "SELECT id FROM strategy_versions WHERE estimator_version='dc-fresh'"
+        ).fetchone()["id"]
+        spec = quality_gate.frozen_spec(conn, int(fresh))
+        assert spec is not None
+        assert spec.alpha == 0.01  # monkeypatch 面如实冻结（代码常数=当时值）
+    finally:
+        conn.close()
+
+
+def test_f4_coverage_asymmetry_hangs_and_records_counts(
+    db: sqlite3.Connection,
+) -> None:
+    """F4：challenger 窗内覆盖 220/5000（4%）——门不得在缩水面上过：
+    coverage_asymmetry 挂，两 run 窗内行数与配对覆盖率入账。"""
+    research = _research_conn()
+    try:
+        _seed_run(research, 1, "champion")
+        _seed_run(research, 2, "challenger")
+        _seed_predictions(research, run_id=1, n=5000)
+        _seed_predictions(research, run_id=2, n=220)  # 共享 sid 前缀
+        challenger_id = _challenger_with_spec(db)
+        evaluation = quality_gate.evaluate_quality_gate(
+            research,
+            db,
+            challenger_version_id=challenger_id,
+            champion_run_id=1,
+            challenger_run_id=2,
+        )
+        assert evaluation.n_paired == 220
+        assert evaluation.n_champion_window == 5000
+        assert evaluation.n_challenger_window == 220
+        assert evaluation.paired_ratio == pytest.approx(220 / 5000)
+        assert evaluation.passed is False
+        assert evaluation.hang_reason == "coverage_asymmetry"
+        row = db.execute(
+            """
+            SELECT n_champion_window, n_challenger_window, paired_ratio
+            FROM quality_gate_events
+            """
+        ).fetchone()
+        assert row["n_champion_window"] == 5000
+        assert row["n_challenger_window"] == 220
+    finally:
+        research.close()
+
+
+def test_f5_consecutive_failures_dedup_by_version(db: sqlite3.Connection) -> None:
+    """F5：连续门挂按 challenger 版本迭代序计数（票面「影子重训连续 N 次
+    门挂」）——同版本多 run 对复评挂算 1 段；跨版本各挂才递增。"""
+    v1 = _challenger_with_spec(db)
+
+    def _new_version(tag: str) -> int:
+        version_id = versioning.register_version(
+            db,
+            estimator_version=f"dc-gate-{tag}",
+            calibration_version="shin",
+            params_version="fp",
+            label=f"shadow-{tag}",
+        )
+        return version_id
+
+    # 同版本三 run 对全挂 → 1（一个失败迭代）
+    for runs in ((1, 11), (1, 12), (1, 13)):
+        _seed_gate_event(
+            db,
+            v1,
+            passed=False,
+            hang_reason="rps_significantly_worse",
+            ts="2026-11-01T00:00:00+00:00",
+            runs=runs,
+        )
+    assert quality_gate.consecutive_gate_failures(db) == 1
+    # 新版本 v2、v3 各挂 → 递增到 3（告警触发面）
+    v2 = _new_version("b")
+    v3 = _new_version("c")
+    _seed_gate_event(
+        db,
+        v2,
+        passed=False,
+        hang_reason="insufficient_pairs",
+        ts="2026-11-02T00:00:00+00:00",
+        runs=(1, 14),
+    )
+    _seed_gate_event(
+        db,
+        v3,
+        passed=False,
+        hang_reason="rps_significantly_worse",
+        ts="2026-11-03T00:00:00+00:00",
+        runs=(1, 15),
+    )
+    assert quality_gate.consecutive_gate_failures(db) == 3
+    # 过门（任意版本）→ 断
+    _seed_gate_event(
+        db,
+        v3,
+        passed=True,
+        hang_reason="",
+        ts="2026-11-04T00:00:00+00:00",
+        runs=(1, 16),
+    )
+    assert quality_gate.consecutive_gate_failures(db) == 0
+
+
+def test_f6_promote_gate_and_transition_share_one_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6：硬门查账与转移落账同事务（check-then-act 跨事务窗口闭合）——
+    spy 记录两者调用时的 conn.in_transaction，须同为 True（CLI 外层
+    atomic；weekly_agent F6 同款断言先例）。"""
+    import argparse
+
+    from goalx_backend.cli import _cmd_version_promote
+    from goalx_backend.config import Settings
+    from goalx_backend.db import connect as db_connect
+    from goalx_backend.db import migrate
+
+    settings = Settings(db_path=tmp_path / "goalx.db")
+    conn = db_connect(settings.db_path)
+    try:
+        migrate(conn)
+        challenger_id = versioning.register_version(
+            conn,
+            estimator_version="dc-f6",
+            calibration_version="shin",
+            params_version="fp",
+            label="f6",
+            initial_state=StrategyState.SHADOW,
+        )
+        _seed_gate_event(
+            conn,
+            challenger_id,
+            passed=True,
+            hang_reason="",
+            ts="2026-11-11T00:00:00+00:00",
+        )
+        seen: dict[str, bool] = {}
+        real_gate = quality_gate.require_gate_pass
+
+        def spy_gate(conn_arg: sqlite3.Connection, version_id: int) -> None:
+            seen["gate_in_txn"] = conn_arg.in_transaction
+            real_gate(conn_arg, version_id)
+
+        def spy_transition(
+            conn_arg: sqlite3.Connection,
+            version_id: int,
+            to_state: StrategyState,
+            **kwargs: object,
+        ) -> None:
+            seen["transition_in_txn"] = conn_arg.in_transaction
+
+        monkeypatch.setattr(quality_gate, "require_gate_pass", spy_gate)
+        monkeypatch.setattr(versioning, "transition_version", spy_transition)
+        _cmd_version_promote(
+            argparse.Namespace(id=challenger_id, to="probe", reason="F6 同事务"),
+            settings=settings,
+        )
+        assert seen == {"gate_in_txn": True, "transition_in_txn": True}
+    finally:
+        conn.close()

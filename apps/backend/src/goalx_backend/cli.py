@@ -103,7 +103,7 @@ from goalx_backend.data.ingest import (
 )
 from goalx_backend.data.ingest import guardian_silver as gs
 from goalx_backend.data.ingest.shell import browser_ssl_context
-from goalx_backend.db import connect, connect_research, migrate, table_exists
+from goalx_backend.db import atomic, connect, connect_research, migrate, table_exists
 from goalx_backend.evaluation import backtest as bt
 from goalx_backend.evaluation import (
     baseline,
@@ -177,6 +177,16 @@ def _cmd_version_register(
     conn = connect(resolved.db_path)
     try:
         migrate(conn)
+        # 新建判定在注册前（幂等命中=旧版本；F3：旧版本不得事后补冻结面）
+        was_new = (
+            versioning.find_version_id(
+                conn,
+                estimator_version=args.estimator,
+                calibration_version=args.calibration,
+                params_version=args.params,
+            )
+            is None
+        )
         version_id = versioning.register_version(
             conn,
             estimator_version=args.estimator,
@@ -184,8 +194,9 @@ def _cmd_version_register(
             params_version=args.params,
             label=args.label,
         )
-        # 票 11 prereg：注册即冻结门指标面（首写恒胜；幂等命中不重复冻结）
-        quality_gate.freeze_gate_spec(conn, version_id)
+        # 票 11 prereg：注册即冻结门指标面（首写恒胜；幂等命中旧版本且无
+        # 冻结面=事后补冻结，freeze_gate_spec 拒绝——correctness F3）
+        quality_gate.freeze_gate_spec(conn, version_id, newly_registered=was_new)
         state = versioning.current_state(conn, version_id)
         # 幂等命中回显库内首注册 label（correctness F4：三元组=身份，
         # 后到的 --label 不改写既有行，回显不得谎报）
@@ -229,14 +240,25 @@ def _cmd_version_promote(
             from_state is versioning.StrategyState.SHADOW
             and target is versioning.StrategyState.PROBE
         ):
-            quality_gate.require_gate_pass(conn, args.id)
-        versioning.transition_version(
-            conn,
-            args.id,
-            target,
-            actor="human:cli",
-            reason=args.reason,
-        )
+            # F6：查门账与落转移同一事务（atomic 嵌套=SAVEPOINT）——check
+            # 与 act 之间无窗口，复评翻挂不得溜进已开闸的转移
+            with atomic(conn):
+                quality_gate.require_gate_pass(conn, args.id)
+                versioning.transition_version(
+                    conn,
+                    args.id,
+                    target,
+                    actor="human:cli",
+                    reason=args.reason,
+                )
+        else:
+            versioning.transition_version(
+                conn,
+                args.id,
+                target,
+                actor="human:cli",
+                reason=args.reason,
+            )
         to_state = versioning.current_state(conn, args.id)
     finally:
         conn.close()

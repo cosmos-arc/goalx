@@ -408,8 +408,9 @@ def run_shadow_retrain_beat(
             initial_state=versioning.StrategyState.SHADOW,
             actor="trigger:shadow-retrain",
         )
-        # 票 11 prereg：注册即冻结门指标面（首写恒胜——评估不得先于冻结）
-        quality_gate.freeze_gate_spec(conn, version_id)
+        # 票 11 prereg：注册即冻结门指标面（首写恒胜——评估不得先于冻结；
+        # F3：新建分支才冻结，no_change 幂等命中不补面）
+        quality_gate.freeze_gate_spec(conn, version_id, newly_registered=True)
         outcome = "registered"
     else:
         version_id = existing

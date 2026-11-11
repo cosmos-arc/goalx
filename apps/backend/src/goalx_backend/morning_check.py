@@ -762,11 +762,11 @@ def check_quality_gate(conn: sqlite3.Connection) -> CheckItem:
     （门未跑过）/最新过门 → 绿。只读红线——门账由人 CLI 评估写。
     """
     threshold = quality_gate.GATE_CONSECUTIVE_FAIL_N
-    consecutive = quality_gate.consecutive_gate_failures(conn)
+    consecutive = quality_gate.consecutive_gate_failures(conn)  # 版本迭代数（F5）
     total = quality_gate.event_count(conn)
     detail = (
-        f"门账 {total} 行 · 连续门挂 {consecutive}（告警阈 {threshold}）"
-        "——门评估=人 CLI quality-gate-evaluate"
+        f"门账 {total} 行 · 连续门挂迭代 {consecutive}（告警阈 {threshold}；"
+        "同版本复评挂算 1 迭代）——门评估=人 CLI quality-gate-evaluate"
     )
     if consecutive >= threshold:
         return CheckItem("quality_gate", FAIL, detail)

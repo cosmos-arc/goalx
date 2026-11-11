@@ -3100,6 +3100,26 @@ def _apply_v58(conn: sqlite3.Connection) -> None:
             """)
 
 
+def _apply_v59(conn: sqlite3.Connection) -> None:
+    """
+    v59（vision-build 票 11 correctness F4）：门账补覆盖率三列。
+
+    quality_gate_events 增 n_champion_window / n_challenger_window /
+    paired_ratio（均可空：insufficient 行与 v58 存量行无值）。动机：challenger
+    只覆盖 champion 窗内小切片（如重训联赛池缩水 220/5000）时，门在 4%
+    切片上的判定不可外推——行数与覆盖率必须入账可见，覆盖率 < 阈值
+    （GATE_MIN_PAIRED_RATIO=0.5，代码常数）挂 coverage_asymmetry。
+    ALTER 幂等守卫（_column_exists 先例，v47 同款）。
+    """
+    for column, ddl in (
+        ("n_champion_window", "INTEGER"),
+        ("n_challenger_window", "INTEGER"),
+        ("paired_ratio", "REAL"),
+    ):
+        if not _column_exists(conn, "quality_gate_events", column):
+            conn.execute(f"ALTER TABLE quality_gate_events ADD COLUMN {column} {ddl}")
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3159,6 +3179,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (56, _apply_v56),
     (57, _apply_v57),
     (58, _apply_v58),
+    (59, _apply_v59),
 )
 
 
