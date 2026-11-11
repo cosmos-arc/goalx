@@ -96,14 +96,23 @@ def test_kind_shape_rules() -> None:
         )
     with pytest.raises(ValidationError, match="至少"):
         ExecutionOrder(**_order(kind="parlay", lines=[_line()], stake=100.0))
-    pool_lines = [_line(market_code="pick9", locked_odds=None) for _ in range(2)]
+    pool_lines = [
+        _line(market_code="pick9", selection_code="3", locked_odds=None),
+        _line(
+            fixture_id=2,
+            match_code="周六002",
+            market_code="pick9",
+            selection_code="1",
+            locked_odds=None,
+        ),
+    ]
     with pytest.raises(ValidationError, match="期次"):
         ExecutionOrder(**_order(kind="pool", lines=pool_lines, stake=4.0, h_id=None))
     with pytest.raises(ValidationError, match="锁价"):
         ExecutionOrder(
             **_order(
                 kind="pool",
-                lines=[_line(market_code="pick9")],
+                lines=[_line(market_code="pick9", selection_code="3")],
                 stake=4.0,
                 pool_period_id=77,
             )
@@ -119,11 +128,12 @@ def test_pool_order_exempts_tax_cap_and_deadline_rule() -> None:
         **_order(
             kind="pool",
             lines=[
-                _line(market_code="pick9", locked_odds=None),
+                _line(market_code="pick9", selection_code="3", locked_odds=None),
                 _line(
                     fixture_id=2,
                     match_code="周六002",
                     market_code="pick9",
+                    selection_code="1",
                     locked_odds=None,
                 ),
             ],
@@ -228,7 +238,7 @@ def test_joint_odds_derivation_and_schema_export() -> None:
     pool = ExecutionOrder(
         **_order(
             kind="pool",
-            lines=[_line(market_code="pick9", locked_odds=None)],
+            lines=[_line(market_code="pick9", selection_code="3", locked_odds=None)],
             stake=4.0,
             pool_period_id=7,
         )
@@ -236,3 +246,85 @@ def test_joint_odds_derivation_and_schema_export() -> None:
     assert pool.joint_odds() is None
     schema = eo.model_json_schema()
     assert set(schema) == {"ExecutionLine", "ExecutionOrder"}
+
+
+# ---- correctness 批修（票 12 review）：F2 时区 / F3 赔率 2dp / F4 闭集 / F5 快照 ----
+
+
+def test_naive_timestamps_rejected_offsets_compare_by_instant() -> None:
+    """correctness F2：naive 时刻拒收（防混比 TypeError 穿透 web 面）。
+
+    aware 异 offset 按绝对时刻比较：+08:00 的 22:50 == 14:50Z < 开球 15:00Z
+    → 合法；同瞬时相等（23:00+08:00 == 15:00Z 开球）→ 按截止哨拒。
+    """
+    with pytest.raises(ValidationError, match="时区"):
+        ExecutionOrder(**_order(deadline_utc="2026-11-08T14:50:00"))
+    with pytest.raises(ValidationError, match="时区"):
+        ExecutionOrder(**_order(lines=[_line(kickoff_utc="2026-11-08T15:00:00")]))
+    with pytest.raises(ValidationError, match="时区"):
+        ExecutionOrder(**_order(generated_at="2026-11-08T13:01:00"))
+    cross_offset = ExecutionOrder(
+        **_order(deadline_utc="2026-11-08T22:50:00+08:00")  # == 14:50Z
+    )
+    assert cross_offset.deadline_utc.endswith("+08:00")
+    with pytest.raises(ValidationError, match="截止"):
+        ExecutionOrder(**_order(deadline_utc="2026-11-08T23:00:00+08:00"))
+
+
+def test_odds_two_decimal_places_closes_tax_caliber_gap() -> None:
+    """correctness F3：赔率两位小数（竞彩报价口径）+eps 1e-9——与税视图无缝。
+
+    旧口径缝：odds 2.5000000001 × ¥4,000 → 奖金 10000.0000004，schema 的
+    1e-6 eps 放行而 tax 全额征 20%。2dp 闭集后该输入在锁价校验即拒；
+    真实分位粒度越线（4000.01×2.5=10000.025）照拒；恰 10000.0 放行
+    （见 test_single_boundary_prize_exactly_at_threshold_passes）。
+    """
+    with pytest.raises(ValidationError, match="两位小数"):
+        ExecutionOrder(**_order(lines=[_line(locked_odds=2.0000000001)], stake=100.0))
+    with pytest.raises(ValidationError, match="两位小数"):
+        ExecutionOrder(**_order(lines=[_line(locked_odds=2.5000000001)], stake=4000.0))
+    with pytest.raises(ValidationError, match="免税"):
+        ExecutionOrder(**_order(stake=4000.01, lines=[_line(locked_odds=2.5)]))
+
+
+def test_market_and_selection_closed_sets_pinned_to_markets_source() -> None:
+    """correctness F4：玩法/选项接 markets.LEG_MARKETS/LEG_SELECTIONS 单源闭集。"""
+    from goalx_backend.markets import LEG_MARKETS, LEG_SELECTIONS
+
+    # 大小写漂移/未知玩法拒（Literal 闭集）；闭集外选项拒（结算纪律）
+    with pytest.raises(ValidationError):
+        ExecutionOrder(
+            **_order(
+                lines=[_line(market_code="HHAD", selection_code="h", goal_line=-1.0)],
+                stake=4000.0,
+            )
+        )
+    with pytest.raises(ValidationError):
+        ExecutionOrder(**_order(lines=[_line(market_code="xyz")], stake=100.0))
+    with pytest.raises(ValidationError, match="闭集"):
+        ExecutionOrder(
+            **_order(
+                lines=[_line(market_code="had", selection_code="x", locked_odds=2.5)],
+                stake=4000.0,
+            )
+        )
+    # 合法枚举过：ttg "2"（TTG_SELECTIONS）、pick9 "3"（POOL_HAD_CODES）
+    ok = ExecutionOrder(**_order())
+    assert ok.lines[0].selection_code in LEG_SELECTIONS["ttg"]
+    assert set(LEG_MARKETS) >= {"had", "hhad", "crs", "ttg", "hafu", "htft6"}
+
+
+def test_json_schema_snapshot_key_constraints() -> None:
+    """correctness F5：schema 关键约束快照——stake 上下界/玩法枚举/锁价下界。"""
+    from goalx_backend.betting import execution_order as eo
+    from goalx_backend.markets import LEG_MARKETS
+
+    schema = eo.model_json_schema()
+    order_props = schema["ExecutionOrder"]["properties"]
+    assert order_props["stake"]["exclusiveMinimum"] == 0
+    assert order_props["stake"]["maximum"] == 1e9  # 文档口径：MoneyCny 上界
+    line_props = schema["ExecutionLine"]["properties"]
+    assert line_props["market_code"]["enum"] == sorted(LEG_MARKETS)
+    odds_branches = line_props["locked_odds"]["anyOf"]
+    number_branch = next(b for b in odds_branches if b.get("type") == "number")
+    assert number_branch["exclusiveMinimum"] == 1

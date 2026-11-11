@@ -23,6 +23,9 @@
   （``betting/tax.py`` 视图，H7）。
 - 截止：固定赔率面截止须早于最早开球（kickoff 前置的下界）；池面截止
   =期次销售截止语义，不做开球比对。
+- 口径钉死（correctness 批修）：时刻一律带时区（naive 拒——混比防
+  TypeError 穿透）；锁价两位小数（竞彩报价口径，eps 1e-9 闭死与税视图
+  的口径缝）；玩法/选项接 markets 单源闭集（闭集外拒收=结算纪律）。
 - 回指：策略版本三元组+版本 id（票 01 状态机，生成时版本须 live-real）
   必填非空；h_id（票 02 假设注册表）可空——池面既有策略底注等无假设
   归属。
@@ -36,17 +39,52 @@ from __future__ import annotations
 import math
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, model_validator
+from annotated_types import Gt
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from goalx_backend.betting.tax import TAX_FREE_THRESHOLD
+from goalx_backend.markets import LEG_MARKETS, LEG_SELECTIONS
 from goalx_backend.models import IsoTimestamp, MoneyCny
 
-# 浮点联合赔率乘积的容差（2dp 赔率连乘的表示误差；帽按元取整余量远大于此）
-_ODDS_PRODUCT_EPS = 1e-6
+# 浮点联合赔率乘积的容差（correctness F3 收紧至 1e-9：2dp 赔率×2dp 注额
+# 的连乘表示误差量级 ~1e-12，旧 1e-6 会放行 10000+5e-7 的口径缝——schema
+# 放行而 tax 视图全额计税）
+_ODDS_PRODUCT_EPS = 1e-9
 # 串关最少腿数（现行引擎=2串1；schema 不封上界，多腿过关到来时直接可表达）
 _MIN_PARLAY_LEGS = 2
+# 盘口线承载玩法（hhad 唯一；markets 单源未建模线承载，此处钉死——与
+# 引擎 _fixture_picks 的 hhad 整数线口径一致）
+_GOAL_LINE_MARKETS = frozenset({"hhad"})
+# 玩法枚举的 schema 附加面（dict[str, Any] 过 pydantic JsonDict 不变性）
+_MARKET_ENUM_SCHEMA_EXTRA: dict[str, Any] = {"enum": sorted(LEG_MARKETS)}
+
+
+def _check_tz_aware(value: str) -> str:
+    """
+    时区强制（correctness F2）：naive 时刻拒绝。
+
+    IsoTimestamp 只验可解析；deadline×kickoff 混 naive/aware 会裸抛
+    TypeError 穿透校验（票 10 web 面即 500）。schema 层从严：一律拒。
+    """
+    if datetime.fromisoformat(value).utcoffset() is None:
+        raise ValueError(f"时刻 {value!r} 必须带时区（UTC ISO-8601，±hh:mm）")
+    return value
+
+
+def _check_two_decimal_places(value: float) -> float:
+    """赔率两位小数校验（correctness F3）：竞彩报价 2dp 口径。"""
+    if round(value, 2) != value:
+        raise ValueError(f"赔率 {value} 须两位小数（竞彩报价口径）")
+    return value
+
+
+UtcIsoTimestamp = Annotated[IsoTimestamp, AfterValidator(_check_tz_aware)]
+"""带时区强制的 ISO 时刻（naive 拒——混比防 TypeError 穿透）。"""
+
+FixedOdds = Annotated[float, Gt(1.0), AfterValidator(_check_two_decimal_places)]
+"""固定赔率锁价（decimal >1、两位小数）。"""
 
 
 class OrderKind(StrEnum):
@@ -63,23 +101,38 @@ class ExecutionLine(BaseModel):
     fixture_id: int = Field(ge=1, description="库内场次 id（对账 join 键）")
     match_code: str = Field(min_length=1, description="JC 编号（周六001，人照单标识）")
     market_code: str = Field(
-        min_length=1, description="玩法（had/hhad/ttg/crs；池面=ttt14/pick9/goals4）"
+        # 枚举进 JSON schema（票 10 codegen 对照）；执行=下方闭集校验器，
+        # 两处同读 LEG_MARKETS 同序——零漂移（动态 Literal 过不了 strict）
+        json_schema_extra=_MARKET_ENUM_SCHEMA_EXTRA,
+        description="玩法（markets.LEG_MARKETS 闭集；池面=ttt14/pick9/goals4）",
     )
-    selection_code: str = Field(min_length=1, description="选项码")
+    selection_code: str = Field(
+        min_length=1, description="选项码（LEG_SELECTIONS 闭集）"
+    )
     goal_line: float | None = Field(
         default=None, description="hhad 盘口线（prereg 整数线）"
     )
-    kickoff_utc: IsoTimestamp = Field(description="开球时刻（UTC ISO-8601）")
-    locked_odds: float | None = Field(
+    kickoff_utc: UtcIsoTimestamp = Field(description="开球时刻（带时区 ISO-8601）")
+    locked_odds: FixedOdds | None = Field(
         default=None,
-        gt=1.0,
-        description="固定赔率面锁价（decimal）；池面=None（奖池无锁价）",
+        description="固定赔率面锁价（decimal >1、两位小数）；池面=None（奖池无锁价）",
     )
 
     @model_validator(mode="after")
-    def _hhad_requires_goal_line(self) -> ExecutionLine:
-        """盘口线必填（hhad 腿）：结算判别载荷，与引擎 hhad 整数线口径一致。"""
-        if self.market_code == "hhad" and self.goal_line is None:
+    def _closed_sets_and_goal_line(self) -> ExecutionLine:
+        """
+        闭集校验（correctness F4）+盘口线必填。
+
+        玩法/选项接 markets 单源（闭集外市场结算不收敛、闭集外选择静默
+        记输——入口拒收=结算纪律）；hhad 判定用常量集非字面量比较。
+        """
+        if self.market_code not in LEG_MARKETS:
+            raise ValueError(f"未知玩法 {self.market_code!r}（markets 闭集外拒收）")
+        if self.selection_code not in LEG_SELECTIONS[self.market_code]:
+            raise ValueError(
+                f"玩法 {self.market_code} 选项 {self.selection_code!r} 不在闭集"
+            )
+        if self.market_code in _GOAL_LINE_MARKETS and self.goal_line is None:
             raise ValueError("hhad 腿必须带 goal_line（盘口线）")
         return self
 
@@ -93,7 +146,7 @@ class ExecutionOrder(BaseModel):
     kind: OrderKind
     lines: list[ExecutionLine] = Field(min_length=1)
     stake: MoneyCny = Field(description="注额（元，分位精度；税感知 sizing 后）")
-    deadline_utc: IsoTimestamp = Field(
+    deadline_utc: UtcIsoTimestamp = Field(
         description="截止（固定赔率=最早开球−前置；池面=期次销售截止）",
     )
     strategy_version_id: int = Field(
@@ -111,7 +164,7 @@ class ExecutionOrder(BaseModel):
     pool_period_id: int | None = Field(
         default=None, ge=1, description="彩池期次 id 回指（仅 kind=pool）"
     )
-    generated_at: IsoTimestamp = Field(description="生成时刻（UTC ISO-8601）")
+    generated_at: UtcIsoTimestamp = Field(description="生成时刻（带时区 ISO-8601）")
 
     @model_validator(mode="after")
     def _check_kind_shape(self) -> ExecutionOrder:

@@ -488,6 +488,68 @@ def test_parlay_stake_pressed_into_tax_free_bucket(db: sqlite3.Connection) -> No
     assert stake * leg_odds * leg_odds <= 10_000.0
 
 
+def test_parlay_tax_cap_collapse_skips_with_trace(db: sqlite3.Connection) -> None:
+    """correctness F1：串关压帽塌残注/负注额——跳过留痕不裸崩，台账可分。
+
+    cap ¥100：floor(100/93.70)=¥1 残注（<¥2 竞彩最低注）→ 跳过计
+    rejected+tax_cap_skipped；cap 负值 → 帽为负钳 0 同跳过（BetDraft
+    校验不得裸冒泡——构造已挪进 _place 的 try，ValidationError 归入
+    rejected 而非整锚崩）。全跳过日 zero_note=tax_cap_skipped。
+    """
+    f1 = _seed_fixture(db, "申", code="周一011")
+    f2 = _seed_fixture(db, "酉", code="周一012")
+    matrix = _matrix(1.3, 1.1)
+    for fixture in (f1, f2):
+        _seed_on_sale(db, fixture)
+        _seed_forecast(db, fixture, 1.3, 1.1)
+        prob = matrix.hhad(-1.0)["h"]
+        odds = round(1.8 / prob, 2)
+        _snap(db, fixture, "hhad", "h", odds, meta={"goal_line": "-1"})
+        _snap(db, fixture, "ttg", "2", 1.2)  # 单关面负 EV → 只走串关路径
+    db.commit()
+    leg_odds = round(1.8 / matrix.hhad(-1.0)["h"], 2)
+    assert leg_odds * leg_odds > 93.0  # 联合赔率量级钉住（93.70）
+
+    for cap, anchor in ((100.0, "21:00"), (-50.0, "21:30")):
+        params = au.AutoV1Params(parlay_stake=50_000.0, tax_free_prize_cap=cap)
+        _make_v1_live_with(db, params)
+        stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=anchor, params=params)
+        assert stats["bets"] == 0
+        assert stats["tax_cap_skipped"] == 1
+        assert stats["gate_rejected"] >= 1  # 跳过计 rejected 语义（票 12 批修 F1）
+        assert (
+            db.execute(
+                "SELECT COUNT(*) c FROM bets WHERE strategy_version='auto-v1'"
+            ).fetchone()["c"]
+            == 0
+        )
+        note = db.execute(
+            "SELECT zero_note FROM auto_paper_runs"
+            " WHERE business_date=? AND anchor_label=?",
+            (BUSINESS_DATE, anchor),
+        ).fetchone()["zero_note"]
+        assert note == "tax_cap_skipped"
+
+
+def test_single_tax_cap_residual_skips_not_places(db: sqlite3.Connection) -> None:
+    """correctness F1 单关同款：cap ¥6 → floor(6/5.74)=¥1 残注——跳过留痕不下残注。"""
+    fixture = _seed_fixture(db, "戌", code="周一021")
+    _seed_on_sale(db, fixture)
+    _seed_forecast(db, fixture, 1.3, 1.1)
+    _seed_positive_single(db, fixture, "2", ev=0.5)  # odds 5.74
+    db.commit()
+
+    params = au.AutoV1Params(tax_free_prize_cap=6.0)
+    _make_v1_live_with(db, params)
+    stats = au.run_auto_v1(db, run_at=RUN_AT, anchor_label=ANCHOR, params=params)
+    assert stats["bets"] == 0
+    assert stats["tax_cap_skipped"] == 1
+    stakes = db.execute(
+        "SELECT COUNT(*) c FROM bets WHERE strategy_version='auto-v1'"
+    ).fetchone()["c"]
+    assert stakes == 0  # 残注路径：跳过（无 ¥1 注落库）
+
+
 def test_shadow_version_refused_and_live_paper_places(db: sqlite3.Connection) -> None:
     """
     vision-build 票 01 e2e：shadow 态版本被引擎拒单且留痕；人审升
