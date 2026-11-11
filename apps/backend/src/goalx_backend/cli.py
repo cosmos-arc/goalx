@@ -113,6 +113,7 @@ from goalx_backend.evaluation import (
     market_lambda,
     quality_gate,
     rag,
+    six_axes,
     unlock_report,
     weekly_agent,
 )
@@ -1471,10 +1472,17 @@ def _edge_scan_payload(
             ),
         )
         names = edge_scan.ACTIVE_SCANNERS if args.scanner == "all" else (args.scanner,)
-        return {
+        payload = {
             "business_date": business_date,
             **{name: edge_scan.SCANNERS[name].run(conn, ctx) for name in names},
         }
+        # 票 06：s7 跑完即落档报告（窗冻结读数，run_params 随写）
+        if "s7" in payload:
+            six_axes.write_search_report(conn, resolved.corpus_root)
+            payload["s7_report"] = str(
+                resolved.corpus_root / "reports" / f"{six_axes.REPORT_BASENAME}.md"
+            )
+        return payload
     finally:
         if store is not None:
             store.close()
