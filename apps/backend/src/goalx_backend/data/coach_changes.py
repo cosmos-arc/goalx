@@ -27,7 +27,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from goalx_backend.data.ingest.tm_coach import TM_LEAGUES
+from goalx_backend.data.leagues import TM_LEAGUES
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.modelling.team_align import NameIndex, alias_index
 

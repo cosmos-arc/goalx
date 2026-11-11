@@ -26,6 +26,23 @@ LEAGUE_TO_FD: dict[str, str] = {
 }
 FD_TO_LEAGUE = {code: name for name, code in LEAGUE_TO_FD.items()}
 
+# fd 联赛码 → Transfermarkt 联赛码（票 18 TM 采集范围，CorpusScope 重叠
+# 11 项；常量唯一落点在此——data 主链消费（coach_changes/pedigree）不得
+# 传递依赖 data.ingest，importlinter 分层契约）
+TM_LEAGUES: dict[str, str] = {
+    "E0": "GB1",
+    "E1": "GB2",
+    "SP1": "ES1",
+    "D1": "L1",
+    "I1": "IT1",
+    "F1": "FR1",
+    "N1": "NL1",
+    "P1": "PO1",
+    "T1": "TR1",
+    "B1": "BE1",
+    "SC0": "SC1",
+}
+
 # gold 时代分层断点（backtest-decade spec 实现决策：集中一处，下游只读
 # era 字段）。断点 = 1x2 轨迹起点季（实测 2023-24 起步 115 场/2024-25
 # 全季 4,491 场）；含该季起 = trajectory 时代。

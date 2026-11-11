@@ -45,6 +45,9 @@ from tenacity import (
 
 from goalx_backend.config import Settings
 from goalx_backend.data.ingest.shell import CHROME_129_UA
+from goalx_backend.data.leagues import (
+    TM_LEAGUES,
+)
 from goalx_backend.data.reconcile import upsert_source_coverage
 from goalx_backend.db import utc_now_iso
 from goalx_backend.rate_limit import default_limiter, throttle
@@ -53,20 +56,6 @@ SOURCE = "transfermarkt"
 PARSE_VERSION = "tm_coach_v1"
 
 #: CorpusScope fdhist 重叠 11 联赛 ↔ TM competition 码（2026-11-10 实测全 200）
-TM_LEAGUES: dict[str, str] = {
-    "E0": "GB1",
-    "E1": "GB2",
-    "SP1": "ES1",
-    "D1": "L1",
-    "I1": "IT1",
-    "F1": "FR1",
-    "N1": "NL1",
-    "P1": "PO1",
-    "T1": "TR1",
-    "B1": "BE1",
-    "SC0": "SC1",
-}
-
 MANAGER_ROLE = "manager"
 CARETAKER_ROLE = "caretaker"
 #: TM staff-history 角色过滤参数（页默认混排全部职员，必须显式选角色）

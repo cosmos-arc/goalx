@@ -36,7 +36,7 @@ import json
 import sqlite3
 
 from goalx_backend.data.coach_changes import resolve_season_club_hist_names
-from goalx_backend.data.ingest.tm_coach import TM_LEAGUES
+from goalx_backend.data.leagues import TM_LEAGUES
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.modelling.team_align import normalize_team_name
 

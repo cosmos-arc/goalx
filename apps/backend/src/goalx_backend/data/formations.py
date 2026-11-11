@@ -45,8 +45,7 @@ from goalx_backend.data.coach_changes import (
     resolve_club_hist_names,
     tenures_by_club,
 )
-from goalx_backend.data.ingest.elo_silver import FD_LEAGUE_ZH
-from goalx_backend.data.leagues import LEAGUE_TO_FD
+from goalx_backend.data.leagues import FD_TO_LEAGUE, LEAGUE_TO_FD
 from goalx_backend.data.mapping import load_universe_results
 from goalx_backend.data.silver import season_of
 from goalx_backend.db import atomic, utc_now_iso
@@ -254,7 +253,7 @@ def _bridge_zh_to_club(
             FROM hist_matches
             """
         ).fetchall()
-        if (league := FD_LEAGUE_ZH.get(str(row["competition"]))) is not None
+        if (league := FD_TO_LEAGUE.get(str(row["competition"]))) is not None
     ]
     fd_to_zh, bridge_report = elo.build_name_bridge(hist_rows, corpus_rows)
     fd_by_zh: dict[str, set[str]] = {}
