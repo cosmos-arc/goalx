@@ -1210,10 +1210,13 @@ TM 多别名逐名试解（F7）；开球缺失场独立分桶（F8）。
 独立列不合成：连续年限=截至上一赛季（tm_club_seasons，顶级口径=逐国
 顶级，F1）、近 5 季积分百分位=前 5 季均值（hist 逐场 3-1-0）、荣誉=
 HONOURS 受控常量（tier1_titles=as-of-season：全史总数 − 窗内后置赛季
-冠军数，F4；major_honours=静态先验——窗内年份带前视增量，消费方
-EM facet 签字可用）、升降级频谱=纯后视窗 tier1 出入计数。TM 未解析
-队年限/频谱=NULL；荣誉种子未命中/互撞两列 NULL 不写假 0（F2/F3/F6）。
-荣誉数字出处（F5 逐条复核）见 data/pedigree.py 常量注记。
+冠军数，F4；major_honours=as-of-season：全史总数 − 窗内决赛年 y≥起始
+年+1 的欧战 major 数——减数来自 MAJOR_HONOURS_WINNERS 受控表，欧战
+决赛 5-6 月=当季季末，时点规则与 titles 对齐）、升降级频谱=纯后视窗
+tier1 出入计数。TM 未解析队年限/频谱=NULL；荣誉种子未命中/互撞两列
+NULL 不写假 0（F2/F3/F6）。
+荣誉数字出处（F5 逐条复核 + 窗内 major 逐年核对）见 data/pedigree.py
+常量注记。
 <!-- schema-doc:BEGIN:table:face_derive_state -->
 #### `face_derive_state`
 

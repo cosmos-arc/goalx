@@ -13,12 +13,12 @@
 - 荣誉计数：``HONOURS`` 受控常量（免费静态源）：顶级联赛冠军数 +
   总重要荣誉数（=顶级冠军+欧战主要冠军[欧冠/欧联/欧洲超级杯/优胜者杯/
   洲际杯/世俱杯]；国内杯与 2024 起 FIFA 洲际杯新赛不计入，口径写死在
-  常量）。**tier1_titles 为 as-of-season 值**（F4）：全史总数 − 窗内
-  S'≥S 赛季冠军数（窗内冠军从 hist 派生 standings；2016 前的全史部分对
-  任何窗内赛季都是过去，PIT 干净）；**major_honours 是静态先验**——
-  无窗内逐年级免费源，窗内年份带前视增量，消费方（EM facet）签字可用
-  （correctness-review F4 裁定）。种子未命中/互撞 → 两列 NULL（不写
-  假 0，F2/F6）；
+  常量）。**两列均为 as-of-season 值**（F4；PIT 纪律一致性）：tier1_titles
+  =全史总数 − 窗内 S'≥S 赛季冠军数（窗内冠军从 hist 派生 standings）；
+  major_honours=全史总数 − 窗内决赛年 y≥S起始年+1 的欧战 major 数（减数
+  =``MAJOR_HONOURS_WINNERS`` 受控表，欧战决赛 5-6 月=当季季末，时点推导
+  见 ``_window_major_wins``）。2016 前的全史部分对任何窗内赛季都是过去，
+  PIT 干净。种子未命中/互撞 → 两列 NULL（不写假 0，F2/F6）；
 - 升降级频谱：``tm_club_seasons`` 派生——观察窗（库内 tm 赛季全局 min/
   max）内的 tier1 出入计数，**纯后视窗**（转换对 t→t+1 只计 t+1 ≤ 上一
   赛季者）：tier1→非 tier1（含离开受采面）=降级类，反向=升级类；升级进
@@ -268,6 +268,81 @@ _FD_SEASON_LEN = 4
 _FD_SEASON_YEAR_MIN = 2000
 _FD_SEASON_YEAR_MAX = 2099
 
+# ---------------------------------------------------------------------------
+# 窗内欧战 major 决赛胜者（受控常量；majors as-of 的减数）。
+#
+# 口径与上方 HONOURS majors 定义一致：UCL（欧洲冠军杯/欧冠）、UEL（联盟
+# 杯/欧联）、SC（欧洲超级杯）、CWC（FIFA 世俱杯旧版+2025 起 32 队新版）
+# 四项；优胜者杯 1999 停办（窗前，不入）；2024 起 FIFA 洲际杯新赛虽被
+# FIFA 定位为 CWC 年赛改制延续，但 HONOURS 冻结口径不计（RM=67 未含其
+# 2024 冠军）——本表同样不收（2024 RM、2025 PSG 两届），口径差异在此
+# 写明。CWC 无 2024 版（被上述新赛替代）与 2026 版（2025 起四年一届，
+# 下届 2029）；2020/2021/2022 三版因疫情/世界杯延期至次年 2 月决赛，
+# **按决赛历年入表**（2021/2022/2023 行）——决赛历年才是 as-of 减法的
+# 时点键（例：2020 版 2021-02-11 决赛，2020-21 季开球时未决，行年=2021）。
+#
+# 行 = (决赛年, 竞赛, 胜者)。胜者键用 HONOURS 同款规范化形态（守卫测试
+# 钉全部键可经 _honours_face 同一归一匹配）。数字逐项核对 2026-11-11
+# （WebFetch，决赛胜者不许凭记忆）：
+# - UCL/UEL：Wikipedia 决赛清单页逐年决赛行
+#   en.wikipedia.org/wiki/List_of_European_Cup_and_UEFA_Champions_League_finals
+#   en.wikipedia.org/wiki/List_of_UEFA_Cup_and_Europa_League_finals
+# - SC：en.wikipedia.org/wiki/UEFA_Super_Cup（winners 清单；页未给早年
+#   比分，行注只记对手/城市）
+# - CWC：en.wikipedia.org/wiki/FIFA_Club_World_Cup + 三届延期版专页钉
+#   决赛日（2020 版 2021-02-11 / 2021 版 2022-02-12 / 2022 版 2023-02-11）
+# - 2025-26 收官季决赛按 fetch 时点已赛毕：UCL 2026 PSG（点球胜
+#   Arsenal，队史第 2 冠）、UEL 2026 Aston Villa（3-0 弗赖堡）、
+#   SC 2026 PSG（2-1 Aston Villa）
+# 一致性交叉验证（窗内表 × HONOURS 静态冻结 2026-11-11，含 2026-08 SC）：
+# PSG (14,19)=14 联赛+CWC1996+UCL2025+UCL2026+SC2025+SC2026 ✓；
+# Aston Villa (7,10)=7+EC1982+SC1982+UEL2026 ✓。
+# ---------------------------------------------------------------------------
+MAJOR_HONOURS_WINNERS: tuple[tuple[int, str, str], ...] = (
+    (2016, "UCL", "Real Madrid"),  # 1-1 马竞（点球 5-3）
+    (2017, "UCL", "Real Madrid"),  # 4-1 尤文图斯
+    (2018, "UCL", "Real Madrid"),  # 3-1 利物浦
+    (2019, "UCL", "Liverpool"),  # 2-0 热刺
+    (2020, "UCL", "Bayern Munich"),  # 1-0 巴黎圣日耳曼
+    (2021, "UCL", "Chelsea"),  # 1-0 曼城
+    (2022, "UCL", "Real Madrid"),  # 1-0 利物浦
+    (2023, "UCL", "Manchester City"),  # 1-0 国际米兰
+    (2024, "UCL", "Real Madrid"),  # 2-0 多特蒙德
+    (2025, "UCL", "Paris Saint-Germain"),  # 5-0 国际米兰
+    (2026, "UCL", "Paris Saint-Germain"),  # 1-1 阿森纳（点球 4-3，队史第 2 冠）
+    (2016, "UEL", "Sevilla"),  # 3-1 利物浦
+    (2017, "UEL", "Manchester United"),  # 2-0 阿贾克斯
+    (2018, "UEL", "Atletico Madrid"),  # 3-0 马赛
+    (2019, "UEL", "Chelsea"),  # 4-1 阿森纳
+    (2020, "UEL", "Sevilla"),  # 3-2 国际米兰
+    (2021, "UEL", "Villarreal"),  # 1-1 曼联（点球 11-10）
+    (2022, "UEL", "Eintracht Frankfurt"),  # 1-1 流浪者（点球 5-4）
+    (2023, "UEL", "Sevilla"),  # 1-1 罗马（点球 4-1）
+    (2024, "UEL", "Atalanta"),  # 3-0 勒沃库森
+    (2025, "UEL", "Tottenham Hotspur"),  # 1-0 曼联
+    (2026, "UEL", "Aston Villa"),  # 3-0 弗赖堡，伊斯坦布尔
+    (2016, "SC", "Real Madrid"),  # 胜塞维利亚，特隆赫姆
+    (2017, "SC", "Real Madrid"),  # 胜曼联，斯科普里
+    (2018, "SC", "Atletico Madrid"),  # 胜皇马，塔林
+    (2019, "SC", "Liverpool"),  # 胜切尔西，伊斯坦布尔
+    (2020, "SC", "Bayern Munich"),  # 胜塞维利亚，布达佩斯
+    (2021, "SC", "Chelsea"),  # 胜比利亚雷亚尔，贝尔法斯特
+    (2022, "SC", "Real Madrid"),  # 胜法兰克福，赫尔辛基
+    (2023, "SC", "Manchester City"),  # 胜塞维利亚，比雷埃夫斯
+    (2024, "SC", "Real Madrid"),  # 胜亚特兰大，华沙
+    (2025, "SC", "Paris Saint-Germain"),  # 胜热刺（队史首冠），乌迪内
+    (2026, "SC", "Paris Saint-Germain"),  # 2-1 阿斯顿维拉，萨尔茨堡
+    (2016, "CWC", "Real Madrid"),  # 4-2 加时 鹿岛鹿角
+    (2017, "CWC", "Real Madrid"),  # 1-0 格雷米奥
+    (2018, "CWC", "Real Madrid"),  # 4-1 艾因
+    (2019, "CWC", "Liverpool"),  # 1-0 加时 弗拉门戈
+    (2021, "CWC", "Bayern Munich"),  # 2020 版（2021-02-11 决赛）：1-0 老虎大学
+    (2022, "CWC", "Chelsea"),  # 2021 版（2022-02-12 决赛）：2-1 加时 帕尔梅拉斯
+    (2023, "CWC", "Real Madrid"),  # 2022 版（2023-02-11 决赛）：5-3 利雅得新月
+    (2023, "CWC", "Manchester City"),  # 2023 版（2023-12-22 决赛）：4-0 弗鲁米嫩塞
+    (2025, "CWC", "Chelsea"),  # 32 队新版（美国）：3-0 巴黎圣日耳曼
+)
+
 
 def _fd_season_year(season: str) -> int | None:
     """Fd 赛季键 "2425" → 起始年 2024（tm_club_seasons 键同构）；非形态 None。"""
@@ -330,21 +405,13 @@ def _points_face(
     return share, appearances
 
 
-def _honours_face(
+def _hist_name_pool(
     hist: list[tuple[str, str, str, str, int, int]],
-) -> tuple[dict[str, tuple[int, int]], dict[str, list[str]], list[str]]:
+) -> dict[str, str]:
     """
-    **全局** hist 队名 → (冠军, 重要荣誉)（归一化精确匹配，不用词元子集）。
+    全局名池：normalize_team_name(hist 队名) → 规范 hist 名。
 
-    词元子集会跨俱乐部泄漏（hist 短名 "Rovers" ⊂ 种子 "Blackburn Rovers"），
-    故只做 normalize_team_name 后的精确等值——fd 缩写变体由种子的双键
-    （"Dortmund"/"Borussia Dortmund"/fd 真名形态等并列）+ ABBREVIATIONS
-    归一（"Man United"→"manchester united"）覆盖。**全局名池跨 comp 并查**
-    （correctness-review F3）：同一俱乐部的荣誉不随当季联赛跳变——
-    Blackburn 只在 E1 出现也拿得到 3 冠。名池内两 hist 名归一后相撞=歧义
-    名（弃用）；同一 hist 名被不同值命中=互撞，该名落 NULL 并入
-    conflicts（F6，与「不硬配」注释一致）；未解析键按种子 comp 列出
-    （覆盖报告消费，人工补键走 PR）。
+    名池内两 hist 名归一后相撞=歧义名（弃用——荣誉/major 减数都不配）。
     """
     norm_to_name: dict[str, str] = {}
     ambiguous: set[str] = set()
@@ -356,12 +423,31 @@ def _honours_face(
             norm_to_name.setdefault(norm, name)
     for norm in ambiguous:
         del norm_to_name[norm]
+    return norm_to_name
+
+
+def _honours_face(
+    pool: dict[str, str],
+) -> tuple[dict[str, tuple[int, int]], dict[str, list[str]], list[str]]:
+    """
+    **全局** hist 队名 → (冠军, 重要荣誉)（归一化精确匹配，不用词元子集）。
+
+    词元子集会跨俱乐部泄漏（hist 短名 "Rovers" ⊂ 种子 "Blackburn Rovers"），
+    故只做 normalize_team_name 后的精确等值——fd 缩写变体由种子的双键
+    （"Dortmund"/"Borussia Dortmund"/fd 真名形态等并列）+ ABBREVIATIONS
+    归一（"Man United"→"manchester united"）覆盖。**全局名池跨 comp 并查**
+    （correctness-review F3）：同一俱乐部的荣誉不随当季联赛跳变——
+    Blackburn 只在 E1 出现也拿得到 3 冠。名池（``_hist_name_pool``）内
+    歧义名已弃用；同一 hist 名被不同值命中=互撞，该名落 NULL 并入
+    conflicts（F6，与「不硬配」注释一致）；未解析键按种子 comp 列出
+    （覆盖报告消费，人工补键走 PR）。
+    """
     global_table: dict[str, tuple[int, int]] = {}
     conflicting: set[str] = set()
     unresolved: dict[str, list[str]] = {}
     for comp, seed in HONOURS.items():
         for key in sorted(seed):
-            target = norm_to_name.get(normalize_team_name(key))
+            target = pool.get(normalize_team_name(key))
             if target is None:
                 unresolved.setdefault(comp, []).append(key)
                 continue
@@ -374,6 +460,31 @@ def _honours_face(
                 continue
             global_table[target] = value  # 同值多键/多 comp 命中天然合并
     return global_table, unresolved, sorted(conflicting)
+
+
+def _window_major_wins(pool: dict[str, str]) -> dict[str, list[int]]:
+    """
+    窗内欧战 major 决赛年按 hist 队名分桶（majors as-of 的减数）。
+
+    时点规则（与 titles 的保守先例对齐——行值=该季开球时点已知数）：
+    titles 扣窗内 S'≥S 的冠军（当季联赛冠军 5 月季末才定，当季行也扣）；
+    欧战 major 决赛同样落在 5-6 月=所属赛季季末，故对赛季 S（起始年 t）
+    扣 **决赛年 y ≥ t+1** 的窗内 major：y=2017 的欧冠决赛属 1617 季末
+    （1617 行扣；1718 秋季开球前已知，不扣）。边缘：SC 8 月决赛在次季
+    开球前后同月、CWC 12 月决赛落在当季季中——统一按决赛历年判定
+    （确定性优先；季中 12 月 CWC 对当季行构成有界提前知，与 titles 季
+    末扣减同级的保守近似）。胜者键经与 ``_honours_face`` 同一名池归一
+    匹配（守卫测试钉键形态不漂移）；未入名池的胜者不减（该队无 hist
+    行则本就无可减之行）。
+    """
+    wins: dict[str, list[int]] = {}
+    for year, _comp, winner in MAJOR_HONOURS_WINNERS:
+        target = pool.get(normalize_team_name(winner))
+        if target is not None:
+            wins.setdefault(target, []).append(year)
+    for years in wins.values():
+        years.sort()
+    return wins
 
 
 def _window_champions(
@@ -473,7 +584,9 @@ def derive_club_pedigree(
     rebuilt_at = now or utc_now_iso()
     hist = _load_hist(conn)
     share, appearances = _points_face(hist)
-    honours, honours_unresolved, honours_conflicts = _honours_face(hist)
+    pool = _hist_name_pool(hist)
+    honours, honours_unresolved, honours_conflicts = _honours_face(pool)
+    major_wins = _window_major_wins(pool)
     champions = _window_champions(hist)
     club_by_name = {
         name: club for club, name in resolve_season_club_hist_names(conn).items()
@@ -515,13 +628,19 @@ def derive_club_pedigree(
                 majors: int | None = None
             else:
                 # titles as-of（F4）：全史总数 − 窗内 S'≥S 的冠军数（当季
-                # 冠军季末才定，季内行也不计——严格 PIT）；major_honours=
-                # 静态先验（无窗内逐年级免费源，窗内有前视增量，消费方
-                # EM facet 签字可用）
+                # 冠军季末才定，季内行也不计——严格 PIT）；majors as-of：
+                # 全史总数 − 窗内决赛年 y≥起始年+1 的 major 数（欧战决赛
+                # 5-6 月=当季季末，当季行也扣——与 titles 保守先例对齐，
+                # 时点推导见 _window_major_wins；season 键非形态则无法
+                # 定位时点不减）
                 titles = entry[0] - sum(
                     1 for won in champions.get(team, ()) if won >= season
                 )
-                majors = entry[1]
+                majors = entry[1] - (
+                    sum(1 for y in major_wins.get(team, ()) if y > season_year)
+                    if season_year is not None
+                    else 0
+                )
             conn.execute(
                 """
                 INSERT INTO club_pedigree
@@ -584,8 +703,8 @@ def pedigree_for(
 
     消费演示=EM facet 对 hist 场次按 (home_team|away_team, season) 联结；
     行缺席（队该季不在 fd 面）返回 None，由调用方决定缺省。荣誉列语义：
-    tier1_titles=as-of 该季（窗内冠军已扣减）；major_honours=静态先验，
-    窗内年份带前视增量，消费方签字可用（correctness-review F4）。
+    tier1_titles=as-of 该季（窗内冠军已扣减）；major_honours=as-of 该季
+    （窗内决赛年 y≥起始年+1 的欧战 major 已扣减，PIT 纪律与 titles 一致）。
     """
     row = conn.execute(
         """

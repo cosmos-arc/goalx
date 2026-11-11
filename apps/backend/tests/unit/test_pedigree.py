@@ -3,17 +3,20 @@
 
 四因子独立列不强行合成；PIT 断言=只用该赛季开始前可知的输入（近 5 季=
 该赛季前 5 季、连续年限=截至上一赛季、升降级=纯后视窗 t+1≤S-1；荣誉=
-全史静态任一时点可知）。合成 hist/TM 行走真实迁移库，真实语料不进测试。
+as-of-season——tier1_titles 扣窗内 S'≥S 冠军、major_honours 扣决赛年
+y≥起始年+1 的窗内 major）。合成 hist/TM 行走真实迁移库，真实语料不进测试。
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 
 import pytest
 
 from goalx_backend.data import pedigree
 from goalx_backend.db import connect, migrate
+from goalx_backend.modelling.team_align import normalize_team_name
 
 
 def _hist(
@@ -133,8 +136,8 @@ def test_derive_four_factors_with_pit_windows(hist_db: sqlite3.Connection) -> No
     assert (mu_2526["promo_to_tier1"], mu_2526["releg_from_tier1"]) == (0, 0)
     # ---- 荣誉计数（F4：titles=as-of，全史 20 − 窗内 S'≥S 冠军数；
     # 本场景窗内 MU 冠 2324 与 2526：2425 行扣 2526 冠军=19，2526 行扣
-    # 自季冠军=19；major_honours=静态先验（窗内前视增量，消费方签字可用）
-    # → 两季同值 28 ----
+    # 自季冠军=19；major_honours=as-of：MU 窗内 major 仅 2017 UEL
+    # （决赛年 2017 早于两行起始年+1）不扣 → 两季同值 28 ----
     assert (mu_2425["tier1_titles"], mu_2425["major_honours"]) == (19, 28)
     assert (mu_2526["tier1_titles"], mu_2526["major_honours"]) == (19, 28)
     # 种子外球队（Rovers/Wanderers/Veteran）= NULL/NULL（F2：未命中不写假 0）
@@ -254,7 +257,7 @@ def test_pedigree_read_seam_facet_scanner_demo(hist_db: sqlite3.Connection) -> N
     assert face["l5_seasons"] == 2
     assert face["points_pct_l5"] == pytest.approx(0.5)
     # titles as-of（F4）：2526 自季 MU 2-1 夺冠（季末才定，扣）→ 20−1=19；
-    # majors 静态先验 28
+    # majors as-of：MU 窗内 major 仅 2017 UEL，决赛年 2017 < 2026 → 不扣=28
     assert (face["tier1_titles"], face["major_honours"]) == (19, 28)
     missing = pedigree.pedigree_for(hist_db, "Nobody", "2526")
     assert missing is None
@@ -353,8 +356,10 @@ def test_titles_as_of_season_subtracts_window_champions(
     场景：City 静态 (10, 14)，窗内 1819/2425 夺冠、1617/2627 输——
     1617 行=10−2=8、1819 行=10−2=8（自季冠军季末才定也扣）、2425 行=
     10−1=9（kickoff 时点 9 冠，与史实一致）、2627 行=10−0=10；
-    majors 静态先验全行 14（窗内前视增量，消费方签字可用）。
-    Ajax 静态 (36, 46)，窗内 2122 夺冠、1617/2526 不夺冠——1617=35、2526=36。
+    majors=as-of：City 窗内 major 三个全在决赛年 2023（UCL/SC/CWC）——
+    1617/1819 行（y≥2017/2019 起扣）各扣 3 → 11，2425/2627 行不扣 → 14。
+    Ajax 静态 (36, 46)，窗内 2122 夺冠、1617/2526 不夺冠——1617=35、2526=36
+    （Ajax 窗内无 major，majors 全行 46）。
     """
     _seed_hist(
         hist_db,
@@ -378,10 +383,15 @@ def test_titles_as_of_season_subtracts_window_champions(
     assert city["1819"]["tier1_titles"] == 8  # 自季冠军季末才定，照扣
     assert city["2425"]["tier1_titles"] == 9  # kickoff 时点 9 冠（史实）
     assert city["2627"]["tier1_titles"] == 10  # 窗内再无后置冠军
-    assert all(row["major_honours"] == 14 for row in city.values())  # 静态先验
+    assert city["1617"]["major_honours"] == 11  # 14 −（2023 三 major 在后）
+    assert city["1819"]["major_honours"] == 11  # y≥2019 起扣，2023 三冠仍全扣
+    assert city["2425"]["major_honours"] == 14  # y≥2025 起扣 → 窗内无后置 major
+    assert city["2627"]["major_honours"] == 14
     ajax = {season: _row(hist_db, "Ajax", season) for season in ("1617", "2526")}
     assert ajax["1617"]["tier1_titles"] == 35  # 36 − 2122 一冠在后
     assert ajax["2526"]["tier1_titles"] == 36  # 无后置冠军 → 全史数
+    assert ajax["1617"]["major_honours"] == 46  # 窗内无 major → 全史数
+    assert ajax["2526"]["major_honours"] == 46
     # PIT 不变量：titles 随赛季单调不减（越晚的行扣得越少、窗前部分
     # 对一切窗内行都是过去）——四个赛季值手算钉死如上
     values = [city[s]["tier1_titles"] for s in ("1617", "1819", "2425", "2627")]
@@ -407,3 +417,90 @@ def test_honours_collision_drops_to_null_and_reports(
     row = _row(hist_db, "Man United", "2425")
     assert (row["tier1_titles"], row["major_honours"]) == (None, None)
     assert stats["honours_conflicts"] == ["Man United"]
+
+
+def test_majors_as_of_season_subtracts_window_majors(
+    hist_db: sqlite3.Connection,
+) -> None:
+    """majors=静态总数 − 窗内决赛年 y≥起始年+1 的 major 数（手算钉死）。
+
+    City 静态 (10, 14)，窗内 major=2023 三冠（UCL 6 月/SC 8 月/CWC 12 月）
+    ——1617 行（y≥2017）=14−3=11，1718 行（y≥2018）阈值后移一年但 City
+    三冠仍在扣区 → 11。RM 静态 67，窗内 13 major 按决赛年分布 2016×3、
+    2017×3、2018×2、2022×2、2023×1、2024×2——1617 行（y≥2017）扣 10=57
+    （2016 三冠属 1516 季末/1617 季中，y=2016 不扣）；1718 行（y≥2018）
+    扣 7=60（2017 决赛年 5-6 月=1617 季末，1718 开球前已知，不扣）。
+    未匹配俱乐部（Strangers 种子未覆盖）两列 NULL 不当 0（F2）。
+    """
+    _seed_hist(
+        hist_db,
+        [
+            _hist("1617", "2017-01-10", "Man City", "Others", 0, 2, comp="E0"),
+            _hist("1718", "2018-01-10", "Man City", "Others", 2, 0, comp="E0"),
+            _hist("1617", "2017-01-11", "Real Madrid", "Rival", 1, 1, comp="SP1"),
+            _hist("1718", "2018-01-11", "Real Madrid", "Rival", 1, 1, comp="SP1"),
+            _hist("1617", "2017-01-12", "Strangers", "Others", 1, 1, comp="E0"),
+        ],
+    )
+    pedigree.derive_club_pedigree(hist_db, now="2026-11-11T00:00:00+00:00")
+    city_1617 = _row(hist_db, "Man City", "1617")
+    city_1718 = _row(hist_db, "Man City", "1718")
+    assert city_1617["major_honours"] == 11  # 14 − 窗内 2017+ 的 2023 三冠
+    assert city_1718["major_honours"] == 11  # 阈值 y≥2018，三冠（2023）仍全扣
+    rm_1617 = _row(hist_db, "Real Madrid", "1617")
+    rm_1718 = _row(hist_db, "Real Madrid", "1718")
+    assert rm_1617["major_honours"] == 57  # 67 − 10（y≥2017 的十个窗内 major）
+    assert rm_1718["major_honours"] == 60  # 67 − 7（2017 三冠已为过去不扣）
+    # PIT 不变量：majors 随赛季单调不减（越晚的行扣得越少）
+    assert rm_1617["major_honours"] <= rm_1718["major_honours"]
+    strangers = _row(hist_db, "Strangers", "1617")
+    assert (strangers["tier1_titles"], strangers["major_honours"]) == (None, None)
+
+
+def test_major_honours_winners_table_shape_and_spot_values() -> None:
+    """窗内 major 胜者表守卫：形状/键可匹配/口径排除/抽查钉死（2026-11 核对值）。"""
+    rows = pedigree.MAJOR_HONOURS_WINNERS
+    # 形状：竞赛 ∈ 四项 major、决赛年 ∈ 观察窗 2016-2026、无重复行
+    comps = {comp for _year, comp, _winner in rows}
+    assert comps == {"UCL", "UEL", "SC", "CWC"}
+    assert all(2016 <= year <= 2026 for year, _comp, _winner in rows)
+    assert len(rows) == len(set(rows))
+    # 口径：与 HONOURS majors 定义一致——2024 起 FIFA 洲际杯新赛不入表
+    # （HONOURS 里 RM=67 未含 2024 新赛冠军），故无 2024/2026 CWC 行
+    assert (2024, "CWC") not in {(year, comp) for year, comp, _w in rows}
+    assert (2026, "CWC") not in {(year, comp) for year, comp, _w in rows}
+    # 键形态守卫：每个胜者键归一化后必落在 HONOURS 键空间（防漂移——
+    # 带 accent/缩写形态若与种子不同形即红）
+    honours_norms = {
+        normalize_team_name(key) for clubs in pedigree.HONOURS.values() for key in clubs
+    }
+    for _year, _comp, winner in rows:
+        assert normalize_team_name(winner) in honours_norms, winner
+    # 跨常量一致性守卫：每俱乐部窗内 major 夺冠数 ≤ 其静态欧战 major 数
+    # （majors−titles）——静态冻结若漏计窗内冠军（as-of 减法会透支成负
+    # 值）即红
+    honours_by_norm = {
+        normalize_team_name(key): value
+        for clubs in pedigree.HONOURS.values()
+        for key, value in clubs.items()
+    }
+    win_counts = Counter(normalize_team_name(w) for _y, _c, w in rows)
+    for norm, count in win_counts.items():
+        titles_static, majors_static = honours_by_norm[norm]
+        assert count <= majors_static - titles_static, norm
+    # 分项行数（延期届按决赛历年入表：CWC 无 2024 版、2026 无版、2023 两决赛）
+    per_comp = [comp for _year, comp, _winner in rows]
+    assert (per_comp.count("UCL"), per_comp.count("UEL")) == (11, 11)
+    assert (per_comp.count("SC"), per_comp.count("CWC")) == (11, 9)
+    # 抽查钉死（2026-11-11 WebFetch 核对值，出处见常量注记）
+    assert (2019, "UCL", "Liverpool") in rows
+    assert (2021, "CWC", "Bayern Munich") in rows  # 2020 版延期 2021-02-11
+    assert (2022, "CWC", "Chelsea") in rows  # 2021 版延期 2022-02-12
+    assert (2023, "CWC", "Real Madrid") in rows  # 2022 版延期 2023-02-11
+    assert (2023, "CWC", "Manchester City") in rows  # 2023 版 2023-12-22
+    assert (2024, "SC", "Real Madrid") in rows
+    assert (2025, "SC", "Paris Saint-Germain") in rows
+    assert (2025, "CWC", "Chelsea") in rows  # 32 队新版 2025-07-13
+    assert (2026, "UCL", "Paris Saint-Germain") in rows
+    assert (2026, "UEL", "Aston Villa") in rows
+    assert (2026, "SC", "Paris Saint-Germain") in rows
