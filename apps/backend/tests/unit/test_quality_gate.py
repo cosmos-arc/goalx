@@ -432,10 +432,31 @@ def _seed_gate_event(
     db.commit()  # CLI 测试开独立连接——未提交行对另一连接不可见
 
 
+def _establish_ladder(db: sqlite3.Connection) -> int:
+    """梯级已建立标记：一个早先到过 probe 的版本（豁免关闭前提）。"""
+    prior_id = versioning.register_version(
+        db,
+        estimator_version="dc-prior",
+        calibration_version="shin",
+        params_version="fp-prior",
+        label="prior-probe-version",
+        initial_state=StrategyState.SHADOW,
+    )
+    db.execute(
+        "INSERT INTO version_transitions (version_id, from_state, to_state,"
+        " reason, actor, ts) VALUES (?, 'shadow', 'probe', '既有梯级演练',"
+        " 'human:cli', '2026-10-01T00:00:00+00:00')",
+        (prior_id,),
+    )
+    db.commit()
+    return prior_id
+
+
 def test_require_gate_pass_latest_must_pass(db: sqlite3.Connection) -> None:
     """硬门语义：无记录/最新挂/先过后挂（最新非过）皆拒；最新过门放行。
     拒绝=raise（promote CLI fail-loud 留痕——门账即证据面）。"""
     challenger_id = _challenger_with_spec(db)
+    _establish_ladder(db)  # 梯级已建立：豁免关闭，硬门全量生效
     with pytest.raises(quality_gate.GateNotPassed, match="无门评估记录"):
         quality_gate.require_gate_pass(db, challenger_id)
     _seed_gate_event(
@@ -514,6 +535,18 @@ def test_cli_promote_hard_gate_on_shadow_to_probe(
             settings=settings,
         )
         capsys.readouterr()
+        # 梯级已建立（豁免关闭前提——引导豁免只护史上首版本上岗）：
+        # 另立一个早先版本到过 probe，不动被测版本自身梯位
+        prior = versioning.register_version(
+            conn,
+            estimator_version="dc-prior",
+            calibration_version="shin",
+            params_version="fp-prior",
+            label="prior-probe-version",
+            initial_state=StrategyState.PROBE,
+        )
+        assert prior > 0
+        conn.commit()
         # shadow→probe：无过门记录=拒绝留痕（零 transitions 写入）
         with pytest.raises(quality_gate.GateNotPassed, match="无门评估记录"):
             _cmd_version_promote(
@@ -1185,3 +1218,22 @@ def test_f6_promote_gate_and_transition_share_one_transaction(
         assert seen == {"gate_in_txn": True, "transition_in_txn": True}
     finally:
         conn.close()
+
+
+def test_require_gate_pass_bootstrap_exemption_once(db: sqlite3.Connection) -> None:
+    """引导豁免（2026-11-11 运维实录）：史上无版本到过 probe+ 梯级时，
+    首版本 shadow→probe 免门（无在位 champion 可保护，人 CLI --reason 即
+    审计面）；一旦任何版本到过 probe，豁免永久关闭、无记录照拒。"""
+    challenger_id = _challenger_with_spec(db)
+    # 豁免期：无任何门评估记录也不拒
+    quality_gate.require_gate_pass(db, challenger_id)
+    # 任何版本到过 probe（含自身早先转移）→ 豁免关闭
+    db.execute(
+        "INSERT INTO version_transitions (version_id, from_state, to_state,"
+        " reason, actor, ts) VALUES (?, 'shadow', 'probe', '演练上岗',"
+        " 'human:cli', '2026-11-01T00:00:00+00:00')",
+        (challenger_id,),
+    )
+    db.commit()
+    with pytest.raises(quality_gate.GateNotPassed, match="无门评估记录"):
+        quality_gate.require_gate_pass(db, challenger_id)
