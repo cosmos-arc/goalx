@@ -2101,7 +2101,7 @@ append-only 触发器：`quality_gate_specs_no_delete`、`quality_gate_specs_no_
 append-only 触发器：`quality_gate_events_no_delete`、`quality_gate_events_no_update`
 <!-- schema-doc:END:table:quality_gate_events -->
 
-运维：增量=夜拍/晨检后 `goalx rag-embed --namespace lessons|guardian [--limit N]`（幂等；--limit=最多嵌 N 条**新**条目，同参重跑可推进分段回填）。查重阈 `rag.LESSON_SIMILAR_THRESHOLD`（0.85 先验值）：真分布校准测=`tests/unit/test_rag.py::test_fastembed_threshold_calibration`（@slow，模型缓存就绪即跑；红了=阈挪进实测窗）。
+运维：增量=夜拍/晨检后 `goalx rag-embed --namespace lessons|guardian [--limit N]`（幂等；--limit=最多嵌 N 条**新**条目，同参重跑可推进分段回填）。查重阈 `rag.LESSON_SIMILAR_THRESHOLD`（0.55，2026-11-11 Qwen3-0.6B-Q 真分布校准值：near 0.66–0.86 / far 0.26–0.37）：复算测=`tests/unit/test_rag.py::test_fastembed_threshold_calibration`（@slow；换模型后重跑重定阈）。
 
 
 vision-build 票 03（v54）：周批 agent 循环三账——提案层 LLM 花费
