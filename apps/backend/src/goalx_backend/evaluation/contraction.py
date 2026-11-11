@@ -4,8 +4,9 @@
 prereg 附录（edge-program prereg 文件族 06-prereg-appendix-contraction-
 clocks，冻结 2026-11-10）的代码面：五级反向金丝雀（L0 全速→L1 停新注册
 →L2 停探针+自动选票→L3 采集缩监测最小集→L4 全停只留漂移监测）、双钟
-触发判据（CLV 主钟滚动 183 日 / 探索钟幸存者 365 日窗）、四信号重扫唤醒
-（PSI 越阈等）。
+触发判据、四信号重扫唤醒（PSI 越阈等）。双钟日历腿 2026-11-11 人裁改
+活动量（mining-loop 票 03 裁决二③：CLV 主钟=最近 50 注活动窗〔原 183
+日滚动〕；探索钟=52 周批轮止损窗〔原 365 日〕，验证介质=历史回放非钟）。
 
 不变量（票 08）：
 - 分级/触发/重扫全预注册在先；级别变更只能人 CLI（actor=human 前缀，
@@ -29,25 +30,28 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
 from statistics import fmean, median, pstdev, quantiles
+from typing import cast
 
-from goalx_backend.betting.versioning import settled_clvs_since
+from goalx_backend.betting.versioning import rolling_clv_window_rows
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.evaluation import edge_scan
 
 # ---- prereg 常数（附录 D 节冻结值；调整=改代码=PR 人审） ----
 
-CLV_CLOCK_WINDOW_DAYS = 183  # 滚动 6 月窗
 CLV_CLOCK_THRESHOLD = 0.03  # 3%（概率域）
-CLV_CLOCK_MIN_N = 50  # 票 01 触发器 A 滚动窗同数
+CLV_CLOCK_MIN_N = 50  # 票 01 触发器 A 滚动窗同数＝活动窗注数（2026-11-11 人裁）
 CLV_CLOCK_SE_GATE = 2.0  # 单侧 2SE（票 01 同门）
-EXPLORATION_WINDOW_DAYS = 365  # 12 月窗
+#: 探索钟止损窗=回路轮次（周拍活跃日计数；2026-11-11 人裁 mining-loop 票 03
+#: 裁决一 A/二③：原 365 日日历窗废止——验证介质=历史回放，钟量的是回路
+#: 产出率，剩余价值=LLM 费用止损；52 轮=原 12 月窗的周批等价）。
+EXPLORATION_WINDOW_ROUNDS = 52
 #: B.3 探针全停计时窗（prereg 附录 B.3：L2+ 满窗且四信号零触发→建议再降一级）
 B3_WINDOW_DAYS = 183
-#: 探索钟锚点=周批首跑日（prereg B.2：不折算历史段，只有前向能答）。
-#: 运行面真源=exploration_clock_anchor 账行（v54，周批首跑经
-#: ensure_exploration_anchor 一次性钉值）；本常量=无账行时的 prereg 兜底
-#: （票 08 冻结值 None，账行落值前读数恒 unanchored）。
+#: 探索钟锚点=周批首跑日（轮 0 标记；轮次真源=weekly_agent_state 的
+#: round_counter face 行）。运行面真源=exploration_clock_anchor 账行（v54，
+#: 周批首跑经 ensure_exploration_anchor 一次性钉值）；本常量=无账行时的
+#: 兜底（票 08 冻结值 None，账行落值前读数恒 unanchored）。
 EXPLORATION_CLOCK_ANCHOR: str | None = None
 EM_SWEEP_FRESH_HOURS = 26.0  # EM 阵列新鲜界（晨检同口径；s5 期次节奏不进）
 #: EM 日频阵列（新鲜度面）：与晨检项 17 同集合
@@ -285,17 +289,20 @@ def clv_clock_reading(
     conn: sqlite3.Connection, *, now: datetime | None = None
 ) -> CLVClockReading:
     """
-    主钟读数：探针注面（bets.clv，票 01 触发器 A 同源）滚动 183 日闭窗。
+    主钟读数：探针注面活动窗=最近 50 注已结算 auto 纸面 CLV（触发器 A 同窗）。
 
-    n<50=insufficient 只报不判（prereg B.1）。窗端点 ISO 串随读数返回
-    （读数账 window_start/window_end 落账口径）。
+    2026-11-11 人裁（mining-loop 票 03 裁决二③）：日历 183 日腿废止，
+    窗=注数活动量——探针注稀疏期不因日历流逝而虚耗窗。n<50=insufficient
+    只报不判（prereg B.1）。窗端点：window_start=窗内首注 settled_at
+    （数据跨度，无注=读数时刻）；window_end=**读数时刻**（F3 裁定的
+    读数账防重键口径——冻结窗下两次真实读各留一行，不可用末注
+    settled_at，否则 INSERT OR IGNORE 吞行断流）。
     """
     resolved = now or datetime.now(UTC)
-    window_start = (resolved - timedelta(days=CLV_CLOCK_WINDOW_DAYS)).isoformat(
-        timespec="seconds"
-    )
+    rows = rolling_clv_window_rows(conn)
+    clvs = [clv for _, clv in rows]
+    window_start = rows[0][0] if rows else resolved.isoformat(timespec="seconds")
     window_end = resolved.isoformat(timespec="seconds")
-    clvs = settled_clvs_since(conn, window_start=window_start)
     if len(clvs) < CLV_CLOCK_MIN_N:
         return CLVClockReading(
             window_start=window_start,
@@ -670,7 +677,7 @@ def record_rescan_signals(
     ]
 
 
-# ---- 探索钟（prereg B.2：365 日窗 / 锚点 / EM 全阴 + 零幸存者）----
+# ---- 探索钟（2026-11-11 人裁：轮次止损窗 / 锚点 / EM 全阴 + 零幸存者）----
 
 
 def ensure_exploration_anchor(
@@ -680,8 +687,8 @@ def ensure_exploration_anchor(
     探索钟锚点一次性钉值（票 03 周批首跑写口）：无锚=写入，有锚=返回既有。
 
     append-only（v54 账行 UPDATE/DELETE 库层拒绝）且一次性：幂等重跑
-    （同值）与后续周拍（异值）都不覆盖——锚量的是「新回路首跑日」，
-    只有第一次真跑算数。周批 flow 每次真跑前调用（幂等可常调）；
+    （同值）与后续周拍（异值）都不覆盖——锚=轮 0 标记（新回路首跑日），
+    只有第一次真跑算数。周批 flow 每次非暂停拍前调用（幂等可常调）；
     返回生效锚（ISO 日期串）供留痕。
     """
     with atomic(conn):
@@ -710,12 +717,76 @@ def _effective_anchor(conn: sqlite3.Connection) -> str | None:
     return EXPLORATION_CLOCK_ANCHOR
 
 
+#: 轮次计数 face 行（weekly_agent_state；write_watermark 同款 upsert 面，
+#: 属主=evaluation 域，锚账写口在 contraction 的先例同源）
+_ROUND_FACE = "round_counter"
+
+
+def _load_round_stats(conn: sqlite3.Connection) -> dict[str, object]:
+    """round_counter face 行 stats（行缺席/坏 JSON/非 dict=空 dict，不炸读数面）。"""
+    row = conn.execute(
+        "SELECT stats FROM weekly_agent_state WHERE face = ?", (_ROUND_FACE,)
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        loaded: object = json.loads(str(row["stats"]))
+    except ValueError:
+        return {}
+    return cast("dict[str, object]", loaded) if isinstance(loaded, dict) else {}
+
+
+def _rounds_value(stats: Mapping[str, object]) -> int:
+    """轮次计数读值（坏 JSON 类型如实读作 0，不炸读数面）。"""
+    raw = stats.get("rounds", 0)
+    # bool 是 int 子类：{"rounds": true} 是坏账不是 1 轮
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
+
+
+def weekly_rounds(conn: sqlite3.Connection) -> int:
+    """回路轮次读数（无 face 行=0；round_counter face 由周批非暂停拍记账）。"""
+    return _rounds_value(_load_round_stats(conn))
+
+
+def record_weekly_round(conn: sqlite3.Connection, *, run_date: str) -> int:
+    """
+    一个活跃周拍轮次记账（按日幂等：同日重跑不重复计轮）。
+
+    轮=非暂停周拍（idle 心跳与 generated 都算——空转也是回路运行）；
+    paused 拍不调本口（≥L2 周批已停，计轮无意义）。read-modify-write 在
+    BEGIN IMMEDIATE 事务内闭环（transition_hypothesis F1 同构）。
+    """
+    with atomic(conn):
+        stats = _load_round_stats(conn)
+        rounds = _rounds_value(stats)
+        if stats.get("last_round_date") != run_date:
+            rounds += 1
+        conn.execute(
+            """
+            INSERT INTO weekly_agent_state (face, updated_at, stats)
+            VALUES (?, ?, ?)
+            ON CONFLICT(face) DO UPDATE
+                SET updated_at = excluded.updated_at, stats = excluded.stats
+            """,
+            (
+                _ROUND_FACE,
+                utc_now_iso(),
+                json.dumps(
+                    {"rounds": rounds, "last_round_date": run_date},
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+    return rounds
+
+
 @dataclass(frozen=True)
 class ExplorationClockReading:
     """探索钟一次读数（幸存者计数面；unanchored/insufficient 只报不判）。"""
 
     window_start: str | None
     window_end: str
+    rounds: int
     new_findings: int
     survivors: int
     scanners_fresh: bool
@@ -724,7 +795,7 @@ class ExplorationClockReading:
 
     @property
     def fired(self) -> bool:
-        """触发建议 L2：满弦 ∧ 阵列新鲜 ∧ 窗内零越门发现 ∧ 零幸存者。"""
+        """触发建议 L2：满轮 ∧ 阵列新鲜 ∧ 锚后零越门发现 ∧ 零幸存者。"""
         return (
             self.status == "ok"
             and self.scanners_fresh
@@ -776,39 +847,45 @@ def exploration_clock_reading(
     conn: sqlite3.Connection, *, now: datetime | None = None
 ) -> ExplorationClockReading:
     """
-    探索钟读数：窗内越门发现计数 + 幸存者计数（prereg B.2 闭窗为凭）。
+    探索钟读数：锚后越门发现计数 + 幸存者计数 + 回路轮次。
+
+    2026-11-11 人裁（mining-loop 票 03 裁决一 A）：验证介质=历史回放
+    （回路产出假设数据面历史可算即当天可验），钟=回路产出率止损——满
+    ``EXPLORATION_WINDOW_ROUNDS`` 轮（周拍活跃日）且零幸存者→建议 L2，
+    剩余价值=LLM 费用止损，非发现验证门。
 
     幸存者=promoted 发现（found_at 为凭）∪ supported 假设
-    （status_changed_at 为凭）。锚点（周批首跑日）未钉=unanchored；
-    满弦（锚点 ≤ now−365 日，恰 365 日=满弦）前=insufficient；阵列停摆
-    =insufficient（缺数据的「全阴」不是全阴）——三者皆只报不判。
+    （status_changed_at 为凭），自锚（轮 0）起计。锚点未钉=unanchored；
+    轮次未满=insufficient；阵列停摆=insufficient（缺数据的「全阴」不是
+    全阴）——三者皆只报不判。
     """
     resolved = now or datetime.now(UTC)
     window_end = resolved.isoformat(timespec="seconds")
     fresh = _em_sweeps_fresh(conn, now=resolved)
+    rounds = weekly_rounds(conn)
     anchor_raw = _effective_anchor(conn)
     if anchor_raw is None:
         return ExplorationClockReading(
             window_start=None,
             window_end=window_end,
+            rounds=rounds,
             new_findings=0,
             survivors=0,
             scanners_fresh=fresh,
             status="unanchored",
         )
     anchor = _parse_iso_utc(anchor_raw)
-    if anchor > resolved - timedelta(days=EXPLORATION_WINDOW_DAYS):
+    window_start = anchor.isoformat(timespec="seconds")
+    if rounds < EXPLORATION_WINDOW_ROUNDS:
         return ExplorationClockReading(
-            window_start=anchor.isoformat(timespec="seconds"),
+            window_start=window_start,
             window_end=window_end,
+            rounds=rounds,
             new_findings=0,
             survivors=0,
             scanners_fresh=fresh,
             status="insufficient",
         )
-    window_start = (resolved - timedelta(days=EXPLORATION_WINDOW_DAYS)).isoformat(
-        timespec="seconds"
-    )
     new_findings = int(
         conn.execute(
             "SELECT COUNT(*) FROM edge_findings WHERE found_at >= ?",
@@ -837,6 +914,7 @@ def exploration_clock_reading(
     return ExplorationClockReading(
         window_start=window_start,
         window_end=window_end,
+        rounds=rounds,
         new_findings=new_findings,
         survivors=promoted + supported,
         scanners_fresh=fresh,
@@ -898,6 +976,7 @@ def record_clock_readings(
                 json.dumps(
                     {
                         "status": exploration.status,
+                        "rounds": exploration.rounds,
                         "survivors": exploration.survivors,
                         "new_findings": exploration.new_findings,
                         "scanners_fresh": exploration.scanners_fresh,

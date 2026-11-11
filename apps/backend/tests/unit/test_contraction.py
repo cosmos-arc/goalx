@@ -138,7 +138,7 @@ def test_drill_l0_l1_l0_e2e(db: sqlite3.Connection) -> None:
     assert ledger == ["L0", "L1", "L0"]
 
 
-# ---- CLV 主钟（B.1：滚动 183 日窗 / 3% 阈 / 2SE 单侧 / n≥50）----
+# ---- CLV 主钟（B.1：活动窗=最近 50 注 / 3% 阈 / 2SE 单侧；2026-11-11 人裁）----
 
 
 def test_clv_clock_boundaries() -> None:
@@ -179,24 +179,24 @@ def _seed_bet(
 
 
 def test_clv_clock_reading_window_and_face(db: sqlite3.Connection) -> None:
-    """主钟读数面：183 日闭窗 + 探针注准入（票 01 触发器 A 同源）。"""
+    """主钟读数面：活动窗=最近 50 注（日期无关）+ 探针注准入（触发器 A 同源）。"""
     from datetime import UTC, datetime
 
     now = datetime(2026, 11, 10, tzinfo=UTC)
-    # 窗内 50 注：恰窗起（闭端计入）+ 窗内 49 注，全负 CLV
-    _seed_bet(db, clv=-0.05, settled_at="2026-05-11T00:00:00+00:00")  # 恰窗起
-    for i in range(49):
-        _seed_bet(db, clv=-0.05, settled_at=f"2026-06-{i + 1:02d}T00:00:00+00:00")
-    # 窗外旧注不进窗
-    _seed_bet(db, clv=0.9, settled_at="2026-05-10T00:00:00+00:00")
+    # 51 注负 CLV：最早 1 注被活动窗挤出（LIMIT 50 语义，与日期新旧无关）
+    _seed_bet(db, clv=0.9, settled_at="2025-01-01T00:00:00+00:00")  # 最旧，出局
+    for i in range(50):
+        _seed_bet(
+            db, clv=-0.05, settled_at=f"2026-06-{(i % 28) + 1:02d}T00:00:00+00:00"
+        )
     # 干扰行不进窗：非 auto / live 模式
-    _seed_bet(db, clv=-0.9, settled_at="2026-06-01T00:00:00+00:00", strategy=None)
+    _seed_bet(db, clv=-0.9, settled_at="2026-07-01T00:00:00+00:00", strategy=None)
     db.execute(
         """
         INSERT INTO bets (mode, market_kind, stake, created_at, status, payout,
                           profit, settled_at, strategy_version, clv)
         VALUES ('live', 'fixed', 2.0, '2026-06-01', 'won', 0.0, 0.0,
-                '2026-06-01T00:00:00+00:00', 'auto-v1', -0.9)
+                '2026-07-02T00:00:00+00:00', 'auto-v1', -0.9)
         """
     )
     reading = contraction.clv_clock_reading(db, now=now)
@@ -204,6 +204,20 @@ def test_clv_clock_reading_window_and_face(db: sqlite3.Connection) -> None:
     assert reading.n == 50
     assert reading.mean == -0.05
     assert reading.fired is True
+    # 窗端点：start=窗内首注 settled_at（数据跨度）；end=读数时刻（读数账
+    # 防重键口径——correctness F1：冻结窗下两次真实读各留一行）
+    assert reading.window_start == "2026-06-01T00:00:00+00:00"
+    assert reading.window_end == now.isoformat(timespec="seconds")
+
+
+def test_clv_activity_window_covers_min_n() -> None:
+    """correctness F3：常数耦合钉死——活动窗上限≥最小 n（防 TRIGGER_A_WINDOW
+
+    被单独调低于 CLV_CLOCK_MIN_N 致主钟永久 insufficient 静默哑火）。
+    """
+    from goalx_backend.betting import versioning
+
+    assert contraction.CLV_CLOCK_MIN_N <= versioning.TRIGGER_A_WINDOW
 
 
 def test_clv_clock_reading_insufficient(db: sqlite3.Connection) -> None:
@@ -217,7 +231,55 @@ def test_clv_clock_reading_insufficient(db: sqlite3.Connection) -> None:
     assert reading.fired is False
 
 
-# ---- 探索钟（B.2：365 日窗 / 锚点=周批首跑日 / EM 全阴+零幸存者）----
+# ---- 探索钟（2026-11-11 人裁：52 轮止损窗 / 锚点=周批首跑日 / EM 全阴+零幸存者）----
+
+
+def _wind_rounds(db: sqlite3.Connection, rounds: int | None = None) -> None:
+    """上弦回路轮次（每轮一活跃日，日期互异）。"""
+    total = contraction.EXPLORATION_WINDOW_ROUNDS if rounds is None else rounds
+    for i in range(total):
+        contraction.record_weekly_round(
+            db, run_date=f"2026-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}"
+        )
+
+
+def test_record_weekly_round_daily_idempotent(db: sqlite3.Connection) -> None:
+    """轮次记账：同日重跑不重复计轮（水位守卫的幂等语义同款）。"""
+    assert contraction.weekly_rounds(db) == 0  # 无 face 行=0
+    assert contraction.record_weekly_round(db, run_date="2026-11-16") == 1
+    assert contraction.record_weekly_round(db, run_date="2026-11-16") == 1  # 同日
+    assert contraction.record_weekly_round(db, run_date="2026-11-23") == 2
+    assert contraction.weekly_rounds(db) == 2
+
+
+def test_round_counter_bad_json_degrades(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """correctness F2：round_counter 行坏 JSON/坏类型读作 0 轮，不炸读数面。"""
+    from datetime import UTC, datetime
+
+    db.execute(
+        """
+        INSERT INTO weekly_agent_state (face, updated_at, stats)
+        VALUES ('round_counter', '2026-11-10T06:00:00+00:00', 'not-json')
+        """
+    )
+    assert contraction.weekly_rounds(db) == 0
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    monkeypatch.setattr(
+        contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
+    )
+    reading = contraction.exploration_clock_reading(db, now=now)  # 不抛
+    assert reading.rounds == 0
+    assert reading.status == "insufficient"
+    # bool 是 int 子类：{"rounds": true} 是坏账不是 1 轮
+    db.execute(
+        """
+        UPDATE weekly_agent_state
+        SET stats='{"rounds": true}' WHERE face='round_counter'
+        """
+    )
+    assert contraction.weekly_rounds(db) == 0
 
 
 def _seed_observation(db: sqlite3.Connection, scanner: str, created_at: str) -> None:
@@ -257,7 +319,7 @@ def _fresh_sweeps(db: sqlite3.Connection, *, now_iso: str) -> None:
 def test_exploration_clock_unanchored_and_unwound(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """锚点未钉=unanchored；锚点未满 365 日=insufficient（只报不判）。"""
+    """锚点未钉=unanchored；已钉但轮次未满 52=insufficient（只报不判）。"""
     from datetime import UTC, datetime
 
     now = datetime(2026, 11, 10, tzinfo=UTC)
@@ -265,8 +327,9 @@ def test_exploration_clock_unanchored_and_unwound(
     # 锚点未钉（票 03 周批未首跑）
     reading = contraction.exploration_clock_reading(db, now=now)
     assert reading.status == "unanchored"
+    assert reading.rounds == 0
     assert reading.fired is False
-    # 锚点 200 日前：未满弦
+    # 锚点已钉但零轮：未上弦
     monkeypatch.setattr(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2026-04-24T00:00:00+00:00"
     )
@@ -275,19 +338,25 @@ def test_exploration_clock_unanchored_and_unwound(
     assert reading.fired is False
 
 
-def test_exploration_clock_fires_on_quiet_full_window(
+def test_exploration_clock_fires_on_quiet_full_rounds(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """满弦恰 365 日 + 阵列新鲜 + 零发现零幸存者 → 触发建议 L2。"""
+    """满 52 轮 + 阵列新鲜 + 零发现零幸存者 → 触发建议 L2；51 轮不触发。"""
     from datetime import UTC, datetime
 
     now = datetime(2026, 11, 10, tzinfo=UTC)
     monkeypatch.setattr(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
-    )  # 恰 365 日=满弦
+    )
     _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    _wind_rounds(db, rounds=contraction.EXPLORATION_WINDOW_ROUNDS - 1)
+    reading = contraction.exploration_clock_reading(db, now=now)
+    assert reading.status == "insufficient"  # 恰 51 轮=未满
+    assert reading.fired is False
+    _wind_rounds(db, rounds=1)
     reading = contraction.exploration_clock_reading(db, now=now)
     assert reading.status == "ok"
+    assert reading.rounds == contraction.EXPLORATION_WINDOW_ROUNDS
     assert (reading.new_findings, reading.survivors) == (0, 0)
     assert reading.fired is True
 
@@ -295,7 +364,7 @@ def test_exploration_clock_fires_on_quiet_full_window(
 def test_exploration_clock_blocked_by_survivor_or_new_finding(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """窗内幸存者（promoted 发现 / supported 假设）或越门发现阻断触发。"""
+    """锚后幸存者（promoted 发现 / supported 假设）或越门发现阻断触发。"""
     from datetime import UTC, datetime
 
     from goalx_backend.evaluation import hypothesis_registry
@@ -305,6 +374,7 @@ def test_exploration_clock_blocked_by_survivor_or_new_finding(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
     )
     _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    _wind_rounds(db)
     # promoted 发现（幸存者面①）
     _seed_finding(db, found_at="2026-06-01T00:00:00+00:00", status="promoted")
     reading = contraction.exploration_clock_reading(db, now=now)
@@ -351,6 +421,7 @@ def test_exploration_clock_stale_sweep_is_insufficient(
     monkeypatch.setattr(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
     )
+    _wind_rounds(db)
     stale = (now - timedelta(hours=30)).isoformat(timespec="seconds")
     for scanner in ("s1", "s2"):
         _seed_observation(db, scanner, stale)
@@ -363,7 +434,7 @@ def test_exploration_clock_stale_sweep_is_insufficient(
 def test_exploration_clock_window_excludes_old_survivor(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """窗端为凭（found_at 闭窗）：窗外旧发现/旧幸存者不计入。"""
+    """锚端为凭（found_at 闭窗）：锚前旧发现/旧幸存者不计入。"""
     from datetime import UTC, datetime
 
     now = datetime(2026, 11, 10, tzinfo=UTC)
@@ -371,6 +442,7 @@ def test_exploration_clock_window_excludes_old_survivor(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
     )
     _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    _wind_rounds(db)
     _seed_finding(db, found_at="2025-11-09T00:00:00+00:00", status="promoted")
     _seed_finding(
         db, found_at="2025-11-09T00:00:00+00:00", status="new", segment="seg-c"
@@ -399,6 +471,7 @@ def test_record_clock_readings_append_per_read(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
     )
     _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    _wind_rounds(db)
     recorded = contraction.record_clock_readings(db, now=now)
     assert {r.clock for r in recorded} == {"clv_main", "exploration"}
     assert (
@@ -425,7 +498,36 @@ def test_record_clock_readings_append_per_read(
     ).fetchone()
     assert row["n"] == 0  # 静默满弦窗：零幸存者触发
     assert row["fired"] == 1
-    assert "survivors" in str(row["detail"])
+    assert "survivors" in str(row["detail"])  # detail JSON 带幸存者/发现/轮次面
+
+
+def test_record_clock_readings_frozen_window_appends_per_read(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """correctness F1：冻结窗（末注 settled_at 不再前进）下两次真实读各留一行。
+
+    clv_main 防重键=window_end=读数时刻（非末注 settled_at）——若误用数据
+    跨度做键，暂停/稀疏期第二次月读被 INSERT OR IGNORE 吞行，主钟观测
+    流水断流。
+    """
+    from datetime import UTC, datetime
+
+    _seed_bet(db, clv=-0.05, settled_at="2026-06-01T00:00:00+00:00")  # 冻结窗
+    monkeypatch.setattr(
+        contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
+    )
+    contraction.record_clock_readings(db, now=datetime(2026, 11, 1, tzinfo=UTC))
+    contraction.record_clock_readings(db, now=datetime(2026, 12, 1, tzinfo=UTC))
+    rows = db.execute(
+        """
+        SELECT window_end FROM contraction_clock_readings WHERE clock='clv_main'
+        """
+    ).fetchall()
+    assert len(rows) == 2
+    assert {str(r["window_end"]) for r in rows} == {
+        "2026-11-01T00:00:00+00:00",
+        "2026-12-01T00:00:00+00:00",
+    }
 
 
 def test_clock_readings_ledger_append_only(db: sqlite3.Connection) -> None:
@@ -731,6 +833,7 @@ def test_exploration_clock_naive_freshness_stamp(
     monkeypatch.setattr(
         contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00+00:00"
     )
+    _wind_rounds(db)
     # s1/s2 aware 新鲜；s4 naive 陈旧（无 tz 后缀）→ 不新鲜 → 钟不误判全阴
     for scanner in ("s1", "s2"):
         _seed_observation(db, scanner, now.isoformat(timespec="seconds"))
@@ -766,6 +869,7 @@ def test_exploration_clock_naive_anchor(
     now = datetime(2026, 11, 10, tzinfo=UTC)
     monkeypatch.setattr(contraction, "EXPLORATION_CLOCK_ANCHOR", "2025-11-10T00:00:00")
     _fresh_sweeps(db, now_iso=now.isoformat(timespec="seconds"))
+    _wind_rounds(db)
     reading = contraction.exploration_clock_reading(db, now=now)
     assert reading.status == "ok"  # naive 2025-11-10T00:00 按 UTC 读=恰满弦
     assert reading.fired is True

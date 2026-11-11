@@ -300,25 +300,26 @@ def rolling_clv_window(conn: sqlite3.Connection) -> list[float]:
     return [float(row["clv"]) for row in reversed(rows)]
 
 
-def settled_clvs_since(conn: sqlite3.Connection, *, window_start: str) -> list[float]:
+def rolling_clv_window_rows(conn: sqlite3.Connection) -> list[tuple[str, float]]:
     """
-    window_start(ISO，闭端含) 以来已结算 auto 纸面注的每注 CLV（时间升序）。
+    最近 ``TRIGGER_A_WINDOW`` 注已结算 auto 纸面注的 (settled_at, clv)（升序）。
 
-    票 08 CLV 主钟的日期窗读数面（与 ``rolling_clv_window`` 的 LIMIT 50
-    读面同准入语义：mode=paper ∧ strategy_version 非空 ∧ 已结算 ∧ clv
-    非空——daily-wrap 回填面）。窗内如实返回短表（由钟的最小 n 判不足）。
+    收缩 CLV 主钟活动窗读数面（2026-11-11 人裁 mining-loop 票 03：日历
+    183 日腿废止，窗=注数活动量）——与 ``rolling_clv_window`` 同准入同窗
+    （mode=paper ∧ strategy_version 非空 ∧ 已结算 ∧ clv 非空——daily-wrap
+    回填面），另携 settled_at 供钟读数报真实数据跨度。
     """
     rows = conn.execute(
         """
-        SELECT clv FROM bets
+        SELECT settled_at, clv FROM bets
         WHERE mode = 'paper' AND strategy_version IS NOT NULL
           AND settled_at IS NOT NULL AND clv IS NOT NULL
-          AND settled_at >= ?
-        ORDER BY settled_at, id
+        ORDER BY settled_at DESC, id DESC
+        LIMIT ?
         """,
-        (window_start,),
+        (TRIGGER_A_WINDOW,),
     ).fetchall()
-    return [float(row["clv"]) for row in rows]
+    return [(str(row["settled_at"]), float(row["clv"])) for row in reversed(rows)]
 
 
 def settled_auto_bet_ids(
