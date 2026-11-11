@@ -630,6 +630,20 @@ def classify_transition(
     return "other"  # pragma: no cover - 谓词外的组合不可达（全表转移已受限）
 
 
+def any_ladder_version(conn: sqlite3.Connection) -> bool:
+    """
+    史上是否有版本到过 probe 及以上梯级（票 11 引导豁免判据，一次性）。
+
+    属主读口：version_transitions 的 SQL 只能在本包（ADR-0008）——
+    evaluation/quality_gate 经此消费。
+    """
+    rows = conn.execute(
+        "SELECT 1 FROM version_transitions WHERE to_state IN (?,?,?,?) LIMIT 1",
+        ("probe", "candidate", "live-paper", "live-real"),
+    ).fetchall()
+    return bool(rows)
+
+
 def transition_events(
     conn: sqlite3.Connection,
     *,

@@ -29,6 +29,7 @@ from pathlib import Path
 from statistics import NormalDist, fmean
 from typing import Any
 
+from goalx_backend.betting import versioning
 from goalx_backend.data.corpus_store import CorpusStore
 from goalx_backend.data.leagues import ERA_TRAJECTORY
 from goalx_backend.db import atomic, utc_now_iso
@@ -578,7 +579,14 @@ def require_gate_pass(conn: sqlite3.Connection, challenger_version_id: int) -> N
     **最新**门评估必须通过——先过后挂（复评更新一次失败）不粘滞放行。
     无记录/最新挂=GateNotPassed（调用方 fail-loud；transitions 零写入，
     门账行即拒绝留痕的证据面）。永无自动晋升不变：本函数只拒绝不写。
+
+    引导豁免（2026-11-11 运维实录补）：门语义=防未验证挑战者替换**在位
+    champion**；史上无任何版本到过 probe+ 梯级时无在位者可保护，首版本
+    上岗走人 CLI 全审（--reason 必填落 transitions 即审计面）。豁免随首
+    个版本到 probe 而永久关闭——此后一切 shadow→probe 恒过门。
     """
+    if not versioning.any_ladder_version(conn):
+        return
     latest = latest_evaluation(conn, challenger_version_id)
     if latest is None:
         raise GateNotPassed(
