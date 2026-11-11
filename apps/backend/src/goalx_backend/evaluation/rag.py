@@ -62,10 +62,12 @@ NAMESPACE_GUARDIAN = "guardian_article"
 #: 命名空间②：教训条目（item_id=L-NN）
 NAMESPACE_LESSON = "lesson"
 #: embed 批大小（增量管线逐批落库，中途崩溃已落批不回退）。
-#: 2026-11-11 卫报全量回填实录：batch 64×长文（Qwen3 32k 不截断）在
-#: 16GB 机上峰值超限被 jetsam SIGKILL（exit 137）——16 篇/批+512 token
-#: 截断后模型常驻 ~2.6GB、批内峰值受控。
-EMBED_BATCH = 16
+#: 2026-11-11 卫报全量回填实录：batch 64×长文不截断，0.6B 模型在 16GB
+#: 机上批内激活直接撑爆被 SIGKILL（exit 137）；批 8+字符截断后模型常驻
+#: ~2.6GB、批内峰值受控。注意 fastembed 0.9.1 的 TextEmbedding 签名
+#: **没有** max_length/batch_size 参数（kwargs 静默吞掉）——截断必须在
+#: 本层做（见 FastembedEmbedder.MAX_PASSAGE_CHARS）。
+EMBED_BATCH = 8
 #: 教训语义近邻查重阈（周批 duplicate_reason 缝消费；高精度取向——
 #: 错拒一条提案的代价大于漏拒，阈取实测窗中偏下）。
 #: 2026-11-11 真分布校准（Qwen3-0.6B-Q，test_fastembed_threshold_calibration
@@ -109,38 +111,69 @@ class _TextEmbeddingModel(Protocol):
         ...
 
 
+# 逐命名空间模型分治（2026-11-11 卫报全量回填吞吐实录）：
+# Qwen3-0.6B-Q 在本机 CPU 实测 0.4 篇/秒（210k 篇=150 小时不可行），
+# MiniLM-L12 实测 31.6 篇/秒、常驻 1.05GB（210k≈2 小时）。教训索引
+# （查重精度路）留 Qwen3；卫报索引（检索加成面）用 MiniLM。表 PK 含
+# model_id=本分治的设计前提；换模型=对新 model_id 重嵌（各自独立）。
+LESSON_MODEL = "Qwen/Qwen3-Embedding-0.6B-Q"
+LESSON_DIM = 1024
+GUARDIAN_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+GUARDIAN_DIM = 384
+# 命名空间 → 模型身份解析（晨检落后计数/检索按此对表，缺省回退教训口径）
+NAMESPACE_MODELS: dict[str, str] = {
+    "lesson": LESSON_MODEL,
+    "guardian_article": GUARDIAN_MODEL,
+}
+
+
+def namespace_model_id(namespace: str) -> str:
+    """命名空间的模型身份串（零模型下载零构造；晨检/检索只读口）。"""
+    version = importlib.metadata.version("fastembed")
+    name = NAMESPACE_MODELS.get(namespace, LESSON_MODEL)
+    return f"{name}@fastembed-{version}"
+
+
 class FastembedEmbedder:
     """
-    生产 embedder：fastembed（ONNX 运行时，不进 torch）+ Qwen3 多语 1024 维。
+    生产 embedder：fastembed（ONNX 运行时，不进 torch）。
 
     模型惰性构建：构造零成本（晨检/管线装配不触发模型下载），首次
     embed 才拉模型（运行期下载，CI/测试不得依赖——测试注入假件）。
-    Qwen3-Embedding 前缀约定（模型卡）：query 侧 Instruct 行+Query 行、
-    文档侧无前缀——前缀在本类内自理（embed_query 拼 Instruct 后走
-    model.embed，不经 fastembed query_embed 的内建前缀，口径自控可复算）。
-    Instruct 文案是查询侧配方（改它不动文档索引，无需重嵌）。
+    缺省=Qwen3（教训索引/查重精度路）：query 侧 Instruct+Query 双行、
+    文档侧无前缀（模型卡约定），前缀在本类内自理（embed_query 拼
+    Instruct 后走 model.embed，不经 fastembed query_embed 的内建前缀，
+    口径自控可复算）；Instruct 文案是查询侧配方（改它不动文档索引）。
+    卫报索引传 model_name=GUARDIAN_MODEL（对称嵌入无前缀约定）。
     """
 
-    MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B-Q"
-    DIM = 1024
+    MODEL_NAME = LESSON_MODEL
+    DIM = LESSON_DIM
+    # 文本截断（本层配方；fastembed 0.9.1 无 max_length 参数——kwargs 被
+    # 静默吞掉）：~2200 字符 ≈ 512 token——v0 篇级检索取头部（标题+导语
+    # 承载语义主体，段级留缝）；教训条目全在其内不受影响。
+    MAX_PASSAGE_CHARS = 2200
     # 查询侧任务指令（Qwen3 官方配方；中文提问跨语命中英文语料是本索引的主用途）
     QUERY_INSTRUCT = (
         "Given a betting research query (Chinese or English), retrieve "
         "relevant football betting lessons, hypotheses and news articles"
     )
 
-    def __init__(self) -> None:
+    def __init__(self, *, model_name: str = MODEL_NAME, dim: int = DIM) -> None:
+        self._model_name = model_name
+        self._dim = dim
         self._model: _TextEmbeddingModel | None = None
 
     @property
     def model_id(self) -> str:
         """``{模型名}@fastembed-{版本}``（importlib.metadata 落账，可复算）。"""
-        return current_model_id()
+        version = importlib.metadata.version("fastembed")
+        return f"{self._model_name}@fastembed-{version}"
 
     @property
     def dim(self) -> int:
-        """输出维度（模型档案钉死 1024）。"""
-        return self.DIM
+        """输出维度（构造时钉死；逐命名空间模型不同）。"""
+        return self._dim
 
     def _ensure(self) -> _TextEmbeddingModel:
         """惰性构建（首次 embed 拉模型；CPU provider 钉死，无 GPU 面）。"""
@@ -152,17 +185,11 @@ class FastembedEmbedder:
             model = cast(
                 "_TextEmbeddingModel",
                 TextEmbedding(
-                    model_name=self.MODEL_NAME,
+                    model_name=self._model_name,
                     providers=["CPUExecutionProvider"],
                     # fastembed 缺省缓存落系统临时目录（macOS 定期清空→静默重下
                     # 1.1GB）；钉持久目录（与测试缓存探测同路径）
                     cache_dir=str(Path.home() / ".cache" / "fastembed"),
-                    # 截断与批是嵌入配方的一部分（改动=换口径重嵌考量）：
-                    # 512 token=v0 篇级检索取头部（标题+导语承载语义主体，
-                    # 段级留缝）；batch_size 压内存（缺省 256 会在长文上
-                    # 撑爆 16GB 机——见 EMBED_BATCH 注释）。
-                    max_length=512,
-                    batch_size=EMBED_BATCH,
                 ),
             )
             self._model = model
@@ -170,22 +197,23 @@ class FastembedEmbedder:
         return self._model
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
-        """批量 passage 向量（文档侧无前缀，Qwen3 模型卡约定）。"""
+        """批量 passage 向量（文档侧无前缀，Qwen3 模型卡约定；超长截断）。"""
         model = self._ensure()
-        return [[float(x) for x in vec] for vec in model.embed(list(texts))]
+        capped = [text[: self.MAX_PASSAGE_CHARS] for text in texts]
+        return [[float(x) for x in vec] for vec in model.embed(capped)]
 
     def embed_query(self, text: str) -> list[float]:
         """单条 query 向量（拼 Instruct+Query 前缀后走 embed，口径自控）。"""
         model = self._ensure()
-        prefixed = f"Instruct: {self.QUERY_INSTRUCT}\nQuery: {text}"
+        capped = text[: self.MAX_PASSAGE_CHARS]
+        prefixed = f"Instruct: {self.QUERY_INSTRUCT}\nQuery: {capped}"
         vec = next(iter(model.embed([prefixed])))
         return [float(x) for x in vec]
 
 
 def current_model_id() -> str:
-    """当前 RAG 模型身份串（晨检/运维只读口——零模型下载零构造）。"""
-    version = importlib.metadata.version("fastembed")
-    return f"{FastembedEmbedder.MODEL_NAME}@fastembed-{version}"
+    """教训索引模型身份串（旧调用面兼容；新代码用 namespace_model_id）。"""
+    return namespace_model_id("lesson")
 
 
 @dataclass(frozen=True)

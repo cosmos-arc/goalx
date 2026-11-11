@@ -704,12 +704,12 @@ def check_rag_index_lag(
     未嵌条数=增量入口（CLI rag-embed）该跑的量。教训库小（>0 即黄）；
     卫报大库 >500 黄（真回填前的常态黄=待办可见）。教训库不可读=黄
     （项 22 同款兜底）。晨检只报不嵌（rag.pending_count 只数行；
-    模型身份串经 rag.current_model_id() 零成本取用，不构造模型）。
+    模型身份串经 rag.namespace_model_id() 逐命名空间取用（教训=Qwen3/
+    卫报=MiniLM 双模型分治），不构造模型）。
     成本注记：卫报计数=全量 bronze 流扫（21 万篇 gzip 解压+逐行
     sid/标题解析 ≈20-30s）——异步报告项容忍；真回填完成后常态绿，
     扫描成本再显贵时换 bronze_sids 索引近似计数（另裁）。
     """
-    model_id = rag.current_model_id()
     try:
         lesson_items = rag.lesson_texts(lessons_dir)
     except (lessons.LessonFormatError, OSError, RuntimeError) as exc:
@@ -718,7 +718,7 @@ def check_rag_index_lag(
         conn,
         namespace=rag.NAMESPACE_LESSON,
         items=lesson_items,
-        model_id=model_id,
+        model_id=rag.namespace_model_id(rag.NAMESPACE_LESSON),
     )
     # F2：bronze 毒丸行/截断 gzip 在流层逐行容错（GuardianArticleStream），
     # 卫报侧再兜读面异常——残数据不炸整检（黄口可见）
@@ -728,7 +728,7 @@ def check_rag_index_lag(
             conn,
             namespace=rag.NAMESPACE_GUARDIAN,
             items=stream,
-            model_id=model_id,
+            model_id=rag.namespace_model_id(rag.NAMESPACE_GUARDIAN),
         )
     except (sqlite3.Error, OSError, EOFError) as exc:
         return CheckItem(
@@ -740,7 +740,11 @@ def check_rag_index_lag(
     if stream.truncated:
         poison += "，gzip 截断"
     detail = (
-        f"落后条数（{model_id}）：教训 {lesson_lag} / 卫报 {guardian_lag}"
+        "落后条数（教训="
+        + rag.namespace_model_id(rag.NAMESPACE_LESSON)
+        + " / 卫报="
+        + rag.namespace_model_id(rag.NAMESPACE_GUARDIAN)
+        + f"）：教训 {lesson_lag} / 卫报 {guardian_lag}"
         + f"{poison}（增量入口：goalx rag-embed --namespace lessons|guardian）"
     )
     if (

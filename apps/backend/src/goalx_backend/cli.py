@@ -1384,7 +1384,12 @@ def _cmd_rag_embed(args: argparse.Namespace) -> None:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        embedder = rag.FastembedEmbedder()
+        if args.namespace == "guardian":
+            embedder = rag.FastembedEmbedder(
+                model_name=rag.GUARDIAN_MODEL, dim=rag.GUARDIAN_DIM
+            )
+        else:
+            embedder = rag.FastembedEmbedder()
         if args.namespace == "lessons":
             namespace = rag.NAMESPACE_LESSON
             items: Iterable[tuple[str, str]] = rag.lesson_texts()
