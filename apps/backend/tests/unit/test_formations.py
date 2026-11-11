@@ -318,10 +318,10 @@ def test_derive_builds_family_by_season_by_tenure_cells(facet_env) -> None:
         4,
         4,
     )
-    # s5 未链 → 不入面，报告计数
+    # s5 未链且在当季 → 不入面（当季单元格归链接链独占），按侧计数
     assert len(rows) == 4
     assert report["matches_seen"] == 5
-    assert report["unlinked"] == 1
+    assert report["live_season_unlinked"] == 2
     assert report["rows"] == 4
 
 
@@ -330,12 +330,22 @@ def test_derive_is_idempotent_rebuild(facet_env) -> None:
     formations.derive_formation_family_facet(
         conn, duck_con, now="2026-11-11T00:00:00+00:00"
     )
-    formations.derive_formation_family_facet(
+    report = formations.derive_formation_family_facet(
         conn, duck_con, now="2026-11-12T00:00:00+00:00"
     )
     assert (
         conn.execute("SELECT COUNT(*) FROM formation_family_facet").fetchone()[0] == 4
     )
+    # 差分写幂等：重跑零效果——全量 preserved、零插入/改写/删除，且既有行
+    # rebuilt_at 逐字节不动（票面验收：2026-27 既有行不得重写）
+    assert report["preserved"] == 4
+    assert report["inserted"] == 0
+    assert report["updated"] == 0
+    assert report["deleted"] == 0
+    rebuilt = {
+        row[0] for row in conn.execute("SELECT rebuilt_at FROM formation_family_facet")
+    }
+    assert rebuilt == {"2026-11-11T00:00:00+00:00"}
 
 
 def test_derive_drop_paths_are_counted_not_guessed(tmp_path: Path) -> None:
@@ -484,12 +494,15 @@ def test_coverage_report_slices_e0_e1(facet_env) -> None:
     assert leagues["E0"]["rows"] == 4
     assert leagues["E0"]["clubs"] == 2
     assert leagues["E0"]["coach_seasons"] == 3  # Old/New/Yi 各一
+    # 逐季行数（票 05 验收③）：全量行落在 2024-25
+    assert [item["season"] for item in report["seasons"]] == ["2024-25"]
+    assert report["seasons"][0]["rows"] == 4
     # 切片=票面英超+英冠（全联赛落库，报告切片单独成节；此处合成语料仅英超）
     assert report["slice"] == ["E0", "E1"]
     assert [item["league_fd"] for item in report["priority_slice"]] == ["E0"]
     assert report["priority_slice"][0]["rows"] == 4
     assert report["totals"]["matches_seen"] == 5
-    assert report["totals"]["unlinked"] == 1
+    assert report["totals"]["live_season_unlinked"] == 2
 
 
 def test_migration_v53_family_check_matches_controlled_constant(db) -> None:
@@ -617,4 +630,196 @@ def test_kickoff_null_buckets_separately(tmp_path: Path) -> None:
     assert stats["matches_seen"] == 2
     assert stats["kickoff_missing"] == 1  # 独立桶
     assert stats["universe_missing"] == 0  # 不再被 NULL 开球污染
-    assert stats["unlinked"] == 0
+    assert stats["live_season_unlinked"] == 0
+
+
+# ---- 历史链（mining-loop 票 05：zh→桥→hist 名→TM 俱乐部）----
+
+
+def _seed_hist_bridge_face(conn: sqlite3.Connection) -> None:
+    """历史链测试面：hist E0 三场（桥投票）+ TM 俱乐部/任期 + 成员面。"""
+    conn.executemany(
+        """
+        INSERT INTO hist_matches
+            (competition, season, match_date, home_team, away_team, fthg, ftag,
+             ftr, psc_home, psc_draw, psc_away)
+        VALUES ('E0', '2324', ?, ?, ?, ?, ?, 'H', 2.0, 3.5, 4.0)
+        """,
+        [
+            ("2023-08-11", "Jia FC", "Yi FC", 2, 1),
+            ("2023-08-18", "Jia FC", "Yi FC", 1, 0),
+            ("2023-08-25", "Yi FC", "Jia FC", 0, 3),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO tm_coach_tenures
+            (club_tm_id, club_name, role, coach_tm_id, coach_name, date_from,
+             date_to, games, first_seen_at, observed_at, parse_version)
+        VALUES (?, ?, 'manager', ?, ?, ?, ?, 10,
+                '2026-01-01', '2026-01-01', 'tm_coach_v1')
+        """,
+        [
+            # 甲队 2023-08-20 换帅：PIT 指派随 day 切换
+            (900, "Jia FC", 1, "Old Manager", "2023-06-01", "2023-08-19"),
+            (900, "Jia FC", 2, "New Manager", "2023-08-20", None),
+            (901, "Yi FC", 3, "Yi Coach", "2023-01-01", None),
+        ],
+    )
+    # 成员面（resolver 联赛域输入）
+    conn.executemany(
+        """
+        INSERT INTO tm_club_seasons
+            (league_tm_code, season, club_tm_id, club_name, first_seen_at,
+             observed_at)
+        VALUES ('GB1', '2324', ?, ?, '2026-01-01', '2026-01-01')
+        """,
+        [(900, "Jia FC"), (901, "Yi FC")],
+    )
+    conn.commit()
+
+
+def test_history_chain_attributes_via_bridge(tmp_path: Path) -> None:
+    """票 05 历史链：未链冻结季 sid 经 zh→桥→hist 名→TM 俱乐部入面，team 锚无。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_hist_bridge_face(conn)
+    store = CorpusStore(tmp_path / "corpus")
+
+    def bj_kickoff(month: int, day: int) -> datetime:
+        # 北京墙钟凌晨场（欧洲日前一天 20:00 开球）：桥语料侧日=UTC 日
+        return datetime(2023, month, day, 3, 0)
+
+    fixture_rows = [
+        # 三场历史（universe 中文名 甲队/乙队，赛果与 hist 对齐），sid 不落
+        # source_match_links → 走历史链
+        _fixture_row("h1", "英超", bj_kickoff(8, 12), "甲队", "乙队")
+        | {"home_goals": 2, "away_goals": 1, "day": "2023-08-11"},
+        _fixture_row("h2", "英超", bj_kickoff(8, 19), "甲队", "乙队")
+        | {"home_goals": 1, "away_goals": 0, "day": "2023-08-18"},
+        _fixture_row("h3", "英超", bj_kickoff(8, 26), "乙队", "甲队")
+        | {"home_goals": 0, "away_goals": 3, "day": "2023-08-25"},
+        # 桥没通的第三方队（历史链身份折缺口分桶）
+        _fixture_row("h4", "英超", bj_kickoff(9, 2), "丙队", "乙队")
+        | {"home_goals": 1, "away_goals": 1, "day": "2023-09-01"},
+        # 当季行：把 live 推到 2024-25（无 detail，不产格）
+        _fixture_row("live", "英超", datetime(2024, 8, 1, 20, 0), "甲队", "乙队"),
+    ]
+    detail_rows = [
+        _detail_row(
+            "h1", bj_kickoff(8, 12), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
+        )
+        | {"kickoff": datetime(2023, 8, 11, 19, 0, tzinfo=UTC)},
+        _detail_row(
+            "h2", bj_kickoff(8, 19), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
+        )
+        | {"kickoff": datetime(2023, 8, 18, 19, 0, tzinfo=UTC)},
+        _detail_row("h3", bj_kickoff(8, 26), "乙队", "甲队", "3-5-2", "4-4-2", "y", "x")
+        | {"kickoff": datetime(2023, 8, 25, 19, 0, tzinfo=UTC)},
+        _detail_row(
+            "h4", bj_kickoff(9, 2), "丙队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
+        )
+        | {"kickoff": datetime(2023, 9, 1, 19, 0, tzinfo=UTC)},
+    ]
+    _build_corpus(store, fixture_rows, detail_rows)
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        stats = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+        rows = conn.execute(
+            """
+            SELECT season, league_fd, team_id, club_tm_id, club_name, coach_name,
+                   family, n_matches, first_match_date, last_match_date
+            FROM formation_family_facet ORDER BY coach_name, family
+            """
+        ).fetchall()
+    finally:
+        duck_con.close()
+        conn.close()
+    # 三场历史 × 两侧全部入面：h1/h2 在 2023-08-19 前 → Old Manager，
+    # h3（08-25）→ New Manager（PIT：指派随当日任期态）
+    by_key = {(r["coach_name"], r["family"]): r for r in rows}
+    old = by_key[("Old Manager", "4-4-2")]
+    assert (old["season"], old["league_fd"]) == ("2023-24", "E0")
+    assert old["team_id"] is None  # 历史行无运行面 team 锚
+    assert (old["club_tm_id"], old["club_name"]) == (900, "Jia FC")
+    assert old["n_matches"] == 2  # h1/h2 主队
+    new = by_key[("New Manager", "4-4-2")]
+    assert new["n_matches"] == 1  # h3 客队（换帅后）
+    assert new["first_match_date"] == "2023-08-25"
+    yi = by_key[("Yi Coach", "4-2-3-1")]
+    assert yi["club_tm_id"] == 901
+    assert yi["n_matches"] == 3  # h1/h2/h4 客队
+    # 丙队桥没通 → hist_no_bridge 按侧计数；桥报告上抛
+    assert stats["hist_no_bridge"] == 1
+    assert stats["bridge_zh_to_club"] >= 2
+    assert stats["live_season"] == "2024-25"
+    assert stats["live_season_unlinked"] == 0
+
+
+def test_backfill_preserves_linked_rows_byte_identical(tmp_path: Path) -> None:
+    """票面验收：回填不重写已交付行——链接链行先落库，历史链后到逐字节不动。"""
+    db_path = tmp_path / "goalx.db"
+    conn = connect(db_path)
+    migrate(conn)
+    _seed_face(conn, ["s1"])  # 2024-25 链接链行
+    store = CorpusStore(tmp_path / "corpus")
+
+    def bj_kickoff(month: int, day: int) -> datetime:
+        return datetime(2023, month, day, 3, 0)
+
+    kickoff = datetime(2024, 8, 1, 20, 0, tzinfo=UTC)
+    fixture_rows = [
+        _fixture_row("s1", "英超", kickoff, "甲队", "乙队"),
+        # 历史 sid（2023-24，未链）从第一次 derive 就在语料里
+        _fixture_row("h1", "英超", bj_kickoff(8, 12), "甲队", "乙队")
+        | {"home_goals": 2, "away_goals": 1, "day": "2023-08-11"},
+        _fixture_row("h2", "英超", bj_kickoff(8, 19), "甲队", "乙队")
+        | {"home_goals": 1, "away_goals": 0, "day": "2023-08-18"},
+        _fixture_row("h3", "英超", bj_kickoff(8, 26), "乙队", "甲队")
+        | {"home_goals": 0, "away_goals": 3, "day": "2023-08-25"},
+    ]
+    detail_rows = [
+        _detail_row("s1", kickoff, "甲队", "乙队", "4-4-2", "4-2-3-1", "奥帅", "伊帅"),
+        _detail_row(
+            "h1", bj_kickoff(8, 12), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
+        )
+        | {"kickoff": datetime(2023, 8, 11, 19, 0, tzinfo=UTC)},
+        _detail_row(
+            "h2", bj_kickoff(8, 19), "甲队", "乙队", "4-4-2", "4-2-3-1", "x", "y"
+        )
+        | {"kickoff": datetime(2023, 8, 18, 19, 0, tzinfo=UTC)},
+        _detail_row("h3", bj_kickoff(8, 26), "乙队", "甲队", "3-5-2", "4-4-2", "y", "x")
+        | {"kickoff": datetime(2023, 8, 25, 19, 0, tzinfo=UTC)},
+    ]
+    _build_corpus(store, fixture_rows, detail_rows)
+    duck_con = corpus_duckdb.connect(
+        Settings(corpus_root=tmp_path / "corpus", db_path=db_path)
+    )
+    try:
+        # 第一拍：hist 侧空 → 历史链全 drop，只有链接链两行落库
+        first = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-11-11T00:00:00+00:00"
+        )
+        assert first["hist_no_bridge"] == 6  # 三场 × 双侧
+        before = conn.execute(
+            "SELECT * FROM formation_family_facet WHERE team_id IS NOT NULL"
+        ).fetchall()
+        # 第二拍：hist 侧到位（等价于票 05 的历史链上线），历史行入面
+        _seed_hist_bridge_face(conn)
+        report = formations.derive_formation_family_facet(
+            conn, duck_con, now="2026-12-01T00:00:00+00:00"
+        )
+        after = conn.execute(
+            "SELECT * FROM formation_family_facet WHERE team_id IS NOT NULL"
+        ).fetchall()
+    finally:
+        duck_con.close()
+        conn.close()
+    assert before == after  # 含 rebuilt_at 逐字节不动
+    assert report["preserved"] == len(before)
+    assert report["inserted"] == 4  # Old×1 + New×1 + Yi×2（4-2-3-1 与 3-5-2）
