@@ -422,7 +422,9 @@ def test_tenure_shift_parser_bump_self_heals_from_raw(tmp_path: Path) -> None:
     seen.clear()
     bumped = {**srct_tenure.TENURE_BRONZE_VERSIONS, "coach_page": "srct_coach_page_v9"}
     monkey_version = bumped
-    original = srct_tenure.TENURE_BRONZE_VERSIONS
+    # 快照副本：finally 从 original 恢复——引用同 dict 会随 clear 一并清空，
+    # TENURE_BRONZE_VERSIONS 被永久置空（xdist 同 worker 后续测试连锁 KeyError）
+    original = dict(srct_tenure.TENURE_BRONZE_VERSIONS)
     srct_tenure.TENURE_BRONZE_VERSIONS.clear()
     srct_tenure.TENURE_BRONZE_VERSIONS.update(monkey_version)
     try:

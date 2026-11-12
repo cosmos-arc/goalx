@@ -76,6 +76,7 @@ from goalx_backend.data import (
     delay_survival,
     mapping,
     reconcile,
+    srct_tenure_reconcile,
 )
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
@@ -2448,13 +2449,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
     )
     tenure_replay.add_argument(
         "--season-from",
-        default="1617",
-        help="hist起始季码(默认1617=S7搜索窗)",
+        default=srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0],
+        help=f"hist起始季码(默认{srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0]}=S7搜索窗)",
     )
     tenure_replay.add_argument(
         "--season-to",
-        default="2122",
-        help="hist结束季码(默认2122=S7搜索窗)",
+        default=srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1],
+        help=f"hist结束季码(默认{srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1]}=S7搜索窗)",
     )
     tenure_replay.add_argument(
         "--competitions",

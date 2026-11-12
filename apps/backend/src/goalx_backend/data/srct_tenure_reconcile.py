@@ -47,9 +47,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from goalx_backend.data import results as results_store
 from goalx_backend.data import srct_tenure_silver
 from goalx_backend.data.coach_changes import Tenure, assign_manager_day
-from goalx_backend.data.ingest import srct, srct_tenure
-from goalx_backend.data.silver import latest_bronze_rows
-from goalx_backend.data.srct_identity import SrctHistNameIndex
+from goalx_backend.data.srct_identity import SrctHistNameIndex, fold_tenures_by_team
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling.team_align import (
     NameIndex,
@@ -504,7 +502,7 @@ def lexical_club_bridge(
     for club, team_id in raw.items():
         if team_id in claimed.values():
             collisions.add(club)
-            collisions.add(claimed_reverse(claimed, team_id))
+            collisions.add(_claimed_reverse(claimed, team_id))
         else:
             claimed[club] = team_id
     for club in collisions:
@@ -515,7 +513,7 @@ def lexical_club_bridge(
     return claimed, unmatched
 
 
-def claimed_reverse(claimed: Mapping[int, int], team_id: int) -> int:
+def _claimed_reverse(claimed: Mapping[int, int], team_id: int) -> int:
     """team_id 已占用的 club（collisions 标注用；单占前提下首个）。"""
     return next(c for c, t in claimed.items() if t == team_id)
 
@@ -747,33 +745,17 @@ def replay_inputs_from_bronze(
     与主库读缝（srct_identity.srct_tenures_by_team / srct_hist_name_index）
     同语义不同源：此处从 bronze 内存投影（silver 纯函数），供主库 srct 两表
     物化前的预估——幽灵教练守卫（同 coach_key 同区间双 playerInfo id 折叠
-    为一）与 date_from 升序契约照旧。
+    为一）与 date_from 升序契约照旧（折叠单属主=srct_identity.
+    fold_tenures_by_team，与主库读缝同一实现）。
     """
     tenure_rows = srct_tenure_silver.tenure_rows_from_bronze(careers, pages)
     season_rows = srct_tenure_silver.club_season_rows_from_bronze(leagues)
-    tenures: dict[int, list[Tenure]] = {}
-    seen: set[tuple[int, str, str, str | None]] = set()
-    for row in sorted(
-        tenure_rows, key=lambda r: (r["team_id"], r["date_from"], r["coach_key"])
-    ):
-        team_id = row["team_id"]
-        signature = (
-            team_id,
-            row["coach_key"],
-            row["date_from"],
-            row["date_to"],
+    tenures = fold_tenures_by_team(
+        (row["team_id"], row["coach_key"], row["date_from"], row["date_to"])
+        for row in sorted(
+            tenure_rows, key=lambda r: (r["team_id"], r["date_from"], r["coach_key"])
         )
-        if signature in seen:  # 双 id 现象：同一教练一条任期
-            continue
-        seen.add(signature)
-        tenures.setdefault(team_id, []).append(
-            Tenure(
-                role="manager",
-                coach_name=row["coach_key"],
-                date_from=row["date_from"],
-                date_to=row["date_to"],
-            )
-        )
+    )
     names: dict[str, int] = {}
     for row in season_rows:
         names.setdefault(row["team_name_en"], row["team_id"])
@@ -899,26 +881,11 @@ def load_srct_side(store: CorpusStore) -> SrctSide:
     比对域）。解析与 silver 物化同一纯函数（对账校验采集数据本身，
     非物化副本）。
     """
-    careers = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_CAREER_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_CAREER_DATASET],
+    bronze = srct_tenure_silver.load_tenure_bronze(store)
+    tenure_rows = srct_tenure_silver.tenure_rows_from_bronze(
+        bronze["careers"], bronze["pages"]
     )
-    pages = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_PAGE_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_PAGE_DATASET],
-    )
-    leagues = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.LEAGUE_SEASON_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.LEAGUE_SEASON_DATASET],
-    )
-    tenure_rows = srct_tenure_silver.tenure_rows_from_bronze(careers, pages)
-    season_rows = srct_tenure_silver.club_season_rows_from_bronze(leagues)
+    season_rows = srct_tenure_silver.club_season_rows_from_bronze(bronze["leagues"])
     teams: dict[int, tuple[str, str, str]] = {}
     for row in season_rows:
         teams.setdefault(
@@ -1095,25 +1062,10 @@ def coach_mapping_replay_report(
     srct_* 物化进度，合并前后同一命令可复算（数字随语料走）。run_params
     留窗/联赛域/语料计数（spec story 14：判定可审计）。
     """
-    careers = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_CAREER_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_CAREER_DATASET],
+    bronze = srct_tenure_silver.load_tenure_bronze(store)
+    tenures, index = replay_inputs_from_bronze(
+        bronze["careers"], bronze["pages"], bronze["leagues"]
     )
-    pages = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_PAGE_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_PAGE_DATASET],
-    )
-    leagues = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.LEAGUE_SEASON_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.LEAGUE_SEASON_DATASET],
-    )
-    tenures, index = replay_inputs_from_bronze(careers, pages, leagues)
     hist_rows = results_store.hist_rows_in_season_window(
         conn,
         season_from=season_from,
@@ -1136,9 +1088,9 @@ def coach_mapping_replay_report(
             "window": {"season_from": season_from, "season_to": season_to},
             "competitions": list(competitions),
             "corpus": {
-                "coach_career_rows": len(careers),
-                "coach_page_rows": len(pages),
-                "league_season_rows": len(leagues),
+                "coach_career_rows": len(bronze["careers"]),
+                "coach_page_rows": len(bronze["pages"]),
+                "league_season_rows": len(bronze["leagues"]),
                 "tenure_teams": len(tenures),
             },
             "silver_version": srct_tenure_silver.SILVER_VERSION,

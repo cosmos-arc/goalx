@@ -21,6 +21,8 @@ silver 表内建）。本模块是三件身份管道的唯一属主（data 域�
    （主教练/NULL，仅现任标主教练）无 caretaker 分类——一律折 manager。
    **幽灵教练守卫**：同一教练出现两个 playerInfo id（tdl coach 变量伪 id
    现象）时，同名同区间行折叠为一（coach_key 单键空间，换队保族不断裂）。
+   折叠谓词单属主=``fold_tenures_by_team``——主库读缝与票 09/11 内存重放
+   （srct_tenure_reconcile）共用同一实现。
 
 非 GB 面：源T 语料 GB 双联赛先行，非 GB 侧经 1/2 折不出 → None（诚实缺，
 消费方自分桶；批量扩域后零新基建回流，spec story 15）。
@@ -29,6 +31,7 @@ silver 表内建）。本模块是三件身份管道的唯一属主（data 域�
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from goalx_backend.data.coach_changes import Tenure
@@ -162,32 +165,54 @@ def srct_hist_name_index(conn: sqlite3.Connection) -> SrctHistNameIndex:
     return SrctHistNameIndex(_index=NameIndex.build(names))
 
 
+def fold_tenures_by_team(
+    rows: Iterable[tuple[int, str, str, str | None]],
+) -> dict[int, list[Tenure]]:
+    """
+    任期四元组 (team_id, coach_key, date_from, date_to) → team_id → 任职行。
+
+    幽灵教练守卫的**单属主折叠**：同签名行（= 同教练另一 playerInfo id，
+    tdl coach 变量伪 id 现象）只留首条——coach_key 单键空间，换队保族
+    不断裂。date_from 升序契约由调用方的输入序保证（主库读缝=SQL ORDER
+    BY，重放=内存 sort）；role 一律折 manager（源T 无 caretaker 分类）。
+    """
+    out: dict[int, list[Tenure]] = {}
+    seen: set[tuple[int, str, str, str | None]] = set()
+    for team_id, coach_key, date_from, date_to in rows:
+        signature = (team_id, coach_key, date_from, date_to)
+        if signature in seen:  # 双 id 现象：同一教练一条任期
+            continue
+        seen.add(signature)
+        out.setdefault(team_id, []).append(
+            Tenure(
+                role=_ROLE_MANAGER,
+                coach_name=coach_key,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        )
+    return out
+
+
 def srct_tenures_by_team(conn: sqlite3.Connection) -> dict[int, list[Tenure]]:
     """
     srct_coach_tenures → team_id → 任职行（date_from 升序，coach_key 平键）。
 
     ``assign_manager_day`` 的输入契约（coach_changes.tenures_by_club 同型）；
-    幽灵教练守卫：同 (coach_key, date_from, date_to) 双 id 行折叠为一。
+    幽灵教练守卫（同签名双 id 行折叠为一）由 ``fold_tenures_by_team`` 承载。
     """
-    out: dict[int, list[Tenure]] = {}
-    seen: set[tuple[int, str, str, str | None]] = set()
-    for row in conn.execute(
-        """
-        SELECT team_id, coach_key, date_from, date_to
-        FROM srct_coach_tenures
-        ORDER BY team_id, date_from, coach_key
-        """
-    ).fetchall():
-        team_id = int(row["team_id"])
-        tenure = Tenure(
-            role=_ROLE_MANAGER,
-            coach_name=str(row["coach_key"]),
-            date_from=str(row["date_from"]),
-            date_to=str(row["date_to"]) if row["date_to"] is not None else None,
+    return fold_tenures_by_team(
+        (
+            int(row["team_id"]),
+            str(row["coach_key"]),
+            str(row["date_from"]),
+            str(row["date_to"]) if row["date_to"] is not None else None,
         )
-        signature = (team_id, tenure.coach_name, tenure.date_from, tenure.date_to)
-        if signature in seen:  # 双 id 现象：同一教练一条任期
-            continue
-        seen.add(signature)
-        out.setdefault(team_id, []).append(tenure)
-    return out
+        for row in conn.execute(
+            """
+            SELECT team_id, coach_key, date_from, date_to
+            FROM srct_coach_tenures
+            ORDER BY team_id, date_from, coach_key
+            """
+        ).fetchall()
+    )

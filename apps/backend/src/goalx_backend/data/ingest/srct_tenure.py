@@ -322,6 +322,26 @@ def harvest_coach_anchors(detail_dir: Path) -> dict[str, dict[str, object]]:
     return {cid: {"name": names[cid], "teams": teams[cid]} for cid in names}
 
 
+def _bronze_envelope(
+    dataset: str, key: str, raw_sha: str | None, payload: dict[str, object]
+) -> dict[str, object]:
+    """
+    Bronze 行封皮（provider/dataset/sid/fetched_at/parser_version/raw_sha/payload）。
+
+    raw_sha 由调用方供：新抓=``ingest_raw`` 返回的 sha；缓存回补=checkpoint
+    的 ``store.raw_sha``（无记录 None，信封回溯对账口径）。
+    """
+    return {
+        "provider": srct.SRCT_PROVIDER,
+        "dataset": dataset,
+        "sid": key,
+        "fetched_at": srct.utc_now_iso(),
+        "parser_version": TENURE_BRONZE_VERSIONS[dataset],
+        "raw_sha": raw_sha,
+        "payload": payload,
+    }
+
+
 def _archive(  # noqa: PLR0913 一实体接缝集（raw/bronze 双写一路传参）
     store: CorpusStore,
     dataset: str,
@@ -338,22 +358,12 @@ def _archive(  # noqa: PLR0913 一实体接缝集（raw/bronze 双写一路传�
     store.append_bronze(
         srct.SRCT_PROVIDER,
         dataset,
-        [
-            {
-                "provider": srct.SRCT_PROVIDER,
-                "dataset": dataset,
-                "sid": key,
-                "fetched_at": srct.utc_now_iso(),
-                "parser_version": TENURE_BRONZE_VERSIONS[dataset],
-                "raw_sha": ref.sha256,
-                "payload": payload,
-            }
-        ],
+        [_bronze_envelope(dataset, key, ref.sha256, payload)],
     )
     setattr(stats, counter, getattr(stats, counter) + 1)
 
 
-def _fetch_and_archive(
+def _fetch_and_archive(  # noqa: PLR0913 一实体接缝集（拉取/判别/落盘一路传参）
     store: CorpusStore,
     dataset: str,
     key: str,
@@ -361,11 +371,11 @@ def _fetch_and_archive(
     parse: Callable[[bytes], dict[str, object]],
     stats: TenureStats,
     counter: str,
-    _get: Callable[[str], httpx.Response],
+    fetch: Callable[[str], httpx.Response],
 ) -> dict[str, object] | None:
     """一实体：拉取 → 内容判别 → 落盘 raw+bronze（失败留痕 None）。"""
     try:
-        body = _get(url).content
+        body = fetch(url).content
         payload = parse(body)
     except srct.NightStop:
         raise
@@ -403,15 +413,12 @@ def _reparse_bronze(
         srct.SRCT_PROVIDER,
         dataset,
         [
-            {
-                "provider": srct.SRCT_PROVIDER,
-                "dataset": dataset,
-                "sid": key,
-                "fetched_at": srct.utc_now_iso(),
-                "parser_version": TENURE_BRONZE_VERSIONS[dataset],
-                "raw_sha": store.raw_sha(srct.SRCT_PROVIDER, dataset, key),
-                "payload": payload,
-            }
+            _bronze_envelope(
+                dataset,
+                key,
+                store.raw_sha(srct.SRCT_PROVIDER, dataset, key),
+                payload,
+            )
         ],
     )
     return True

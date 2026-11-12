@@ -1096,8 +1096,8 @@ def srct_tenure_two_source_report(*, db_path: str | None = None) -> dict[str, ob
 def srct_tenure_coach_replay(
     *,
     db_path: str | None = None,
-    season_from: str = "1617",
-    season_to: str = "2122",
+    season_from: str = srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0],
+    season_to: str = srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1],
     competitions: tuple[str, ...] = ("E0", "E1"),
 ) -> dict[str, object]:
     """

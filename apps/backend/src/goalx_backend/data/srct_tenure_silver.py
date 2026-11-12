@@ -162,6 +162,43 @@ class ClubSeasonRow(TypedDict):
     materialized_at: str
 
 
+class TenureBronze(TypedDict):
+    """任期班 bronze 三族最新行（coach_career / coach_page / league_season）。"""
+
+    careers: dict[str, dict[str, object]]
+    pages: dict[str, dict[str, object]]
+    leagues: dict[str, dict[str, object]]
+
+
+def load_tenure_bronze(store: CorpusStore) -> TenureBronze:
+    """
+    语料 → 任期班三族最新 bronze 行（票 08 数据集 × ``TENURE_BRONZE_VERSIONS``）。
+
+    silver 物化（``rebuild_srct_tenure_silver``）与只读重放/对账
+    （srct_tenure_reconcile 两处）共用的唯一装载口——同一语料同一选取。
+    """
+    return TenureBronze(
+        careers=latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct_tenure.COACH_CAREER_DATASET,
+            srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_CAREER_DATASET],
+        ),
+        pages=latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct_tenure.COACH_PAGE_DATASET,
+            srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_PAGE_DATASET],
+        ),
+        leagues=latest_bronze_rows(
+            store,
+            srct.SRCT_PROVIDER,
+            srct_tenure.LEAGUE_SEASON_DATASET,
+            srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.LEAGUE_SEASON_DATASET],
+        ),
+    )
+
+
 def _payload(row: Mapping[str, object]) -> dict[str, object]:
     """Bronze 行 → 载荷 dict（缺失/非 dict 空 dict；形态由票 08 解析器保证）。"""
     payload = row.get("payload")
@@ -345,26 +382,9 @@ def rebuild_srct_tenure_silver(
     只读语料、只写运行面两表——采集班与本函数互不直写（表内容=语料的
     确定性投影，重放同语料字节级同结果）。
     """
-    careers = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_CAREER_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_CAREER_DATASET],
-    )
-    pages = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.COACH_PAGE_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_PAGE_DATASET],
-    )
-    leagues = latest_bronze_rows(
-        store,
-        srct.SRCT_PROVIDER,
-        srct_tenure.LEAGUE_SEASON_DATASET,
-        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.LEAGUE_SEASON_DATASET],
-    )
-    tenures = tenure_rows_from_bronze(careers, pages, now=now)
-    club_seasons = club_season_rows_from_bronze(leagues, now=now)
+    bronze = load_tenure_bronze(store)
+    tenures = tenure_rows_from_bronze(bronze["careers"], bronze["pages"], now=now)
+    club_seasons = club_season_rows_from_bronze(bronze["leagues"], now=now)
     stats_via = {"single": 0, "exact_sum": 0, "dominant": 0, "stats_null": 0}
     for row in tenures:
         stats_via[row["stats_via"]] += 1
