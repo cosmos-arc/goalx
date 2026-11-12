@@ -422,3 +422,60 @@ def test_rebuild_empty_corpus_no_crash(silver_db: sqlite3.Connection) -> None:
         silver_db.execute("SELECT COUNT(*) FROM srct_coach_tenures").fetchone()[0] == 0
     )
     store.close()
+
+
+def test_tenure_rows_group_sort_tolerates_open_ends() -> None:
+    """组键排序跨开/闭区间混合（真实语料 2026-11-12 实缴：None<str TypeError）。"""
+    career = {
+        "sid": "777",
+        "payload": {
+            "once_team": "",
+            "now_team": [],
+            "transfers": [],
+            "tenures": [
+                {
+                    "start": "2026-06-09",
+                    "end": None,
+                    "team_id": 1188,
+                    "name_cn": "林肯城",
+                    "name_tw": "林肯城",
+                    "name_en": "Lincoln City",
+                    "matches": 23,
+                    "wins": 7,
+                    "draws": 3,
+                    "losses": 13,
+                },
+                {
+                    "start": "2020-06-09",
+                    "end": "2021-06-30",
+                    "team_id": 1188,
+                    "name_cn": "林肯城",
+                    "name_tw": "林肯城",
+                    "name_en": "Lincoln City",
+                    "matches": 10,
+                    "wins": 4,
+                    "draws": 3,
+                    "losses": 3,
+                },
+                {
+                    "start": "2020-06-09",
+                    "end": None,
+                    "team_id": 1190,
+                    "name_cn": "他队",
+                    "name_tw": "他隊",
+                    "name_en": "Other FC",
+                    "matches": 8,
+                    "wins": 3,
+                    "draws": 2,
+                    "losses": 3,
+                },
+            ],
+            "last_update": "2026-11-12 09:21:11",
+        },
+    }
+    rows = srct_tenure_silver.tenure_rows_from_bronze(
+        {"777": career}, {}, now="2026-11-12T00:00:00+00:00"
+    )
+    assert len(rows) == 3
+    # 同 start 时开区间组（None→空串占位）先行：确定序可测
+    assert [r["date_to"] for r in rows] == [None, "2021-06-30", None]

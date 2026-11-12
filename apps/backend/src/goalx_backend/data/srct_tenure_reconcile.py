@@ -131,12 +131,31 @@ class DiffCounters:
     tm_only: int = 0
     matched_coaches: int = 0
     name_unmatched: int = 0
+    name_unmatched_in_window: int = 0
+    srct_only_in_window: int = 0
+    tm_only_in_window: int = 0
+    misaligned_open_mismatch: int = 0
+    matched_via_subset: int = 0
+    srct_only_names: list[dict[str, object]] = field(default_factory=list)
+    tm_only_in_window_names: list[str] = field(default_factory=list)
     start_dist: dict[str, int] = field(default_factory=_counter_dict)
     end_dist: dict[str, int] = field(default_factory=_counter_dict)
     review: list[dict[str, object]] = field(default_factory=list)
 
 
-def _pair_name_group(
+def _interval_in_window(interval: TenureInterval, window_from: str | None) -> bool:
+    """
+    区间是否与语料窗相交（window_from None=不限）。
+
+    相交口径=端点落窗内即算：2013→2019 的任期在 2015 窗内活动过，
+    只看起点会把「跨窗老帅」漏成窗外（2026-11-12 实缴修正）。
+    """
+    if window_from is None:
+        return True
+    return interval.date_to is None or interval.date_to >= window_from
+
+
+def _pair_name_group(  # noqa: PLR0913 一名组配对参数集（容差/人审阈值随报告参数走）
     srct_intervals: Sequence[TenureInterval],
     tm_intervals: Sequence[TenureInterval],
     club: int,
@@ -145,6 +164,7 @@ def _pair_name_group(
     *,
     tolerance_days: int,
     review_days: int,
+    window_from: str | None = None,
 ) -> None:
     """
     一名（规范化名双侧都在）区间配对：源T 逐段 vs TM 重叠段并集。
@@ -187,6 +207,9 @@ def _pair_name_group(
             counters.agree += 1
         else:
             counters.misaligned += 1
+            if srct_interval.date_to is None or tm_to is None:
+                # 源T 开区间（离任=下一任起点）vs TM 合同期末（含未来）语义差
+                counters.misaligned_open_mismatch += 1
         worst = max(abs(start_delta), abs(end_delta) if end_delta is not None else 0)
         if worst > review_days or (not end_ok and start_ok):
             counters.review.append(
@@ -202,7 +225,87 @@ def _pair_name_group(
                     "end_delta_days": end_delta,
                 }
             )
-    counters.tm_only += len(tm_intervals) - len(consumed)
+    leftovers = [
+        tm_interval
+        for pos, tm_interval in enumerate(tm_intervals)
+        if pos not in consumed
+    ]
+    counters.tm_only += len(leftovers)
+    counters.tm_only_in_window += sum(
+        1 for i in leftovers if _interval_in_window(i, window_from)
+    )
+
+
+def _bucket_leftover_name(
+    name: str,
+    by_name_srct: dict[str, list[TenureInterval]],
+    by_name_tm: dict[str, list[TenureInterval]],
+    club: int,
+    team: int,
+    counters: DiffCounters,
+    window_from: str | None,
+) -> None:
+    """配不上的残余名：单源区间桶 + 名字不可对齐计数 + 窗内分段 + 清单。"""
+    counters.name_unmatched += 1
+    srct_miss = by_name_srct.get(name, ())
+    tm_miss = by_name_tm.get(name, ())
+    if any(_interval_in_window(i, window_from) for i in (*srct_miss, *tm_miss)):
+        counters.name_unmatched_in_window += 1
+    counters.srct_only += len(srct_miss)
+    counters.tm_only += len(tm_miss)
+    counters.srct_only_in_window += sum(
+        1 for i in srct_miss if _interval_in_window(i, window_from)
+    )
+    counters.tm_only_in_window += sum(
+        1 for i in tm_miss if _interval_in_window(i, window_from)
+    )
+    if srct_miss:
+        counters.srct_only_names.append(
+            {"team_id": team, "club_tm_id": club, "name": srct_miss[0].coach}
+        )
+    if tm_miss and any(_interval_in_window(i, window_from) for i in tm_miss):
+        counters.tm_only_in_window_names.append(tm_miss[0].coach)
+
+
+def _subset_match_names(
+    misses_srct: set[str], misses_tm: set[str]
+) -> list[tuple[str, str]]:
+    """
+    未配名第二级匹配：词元子集（双向）且两侧均唯一命中才配（不硬配）。
+
+    词元=规范化名按空格切分；{mikel, arteta} ⊂ {amatriain, arteta, mikel}
+    → 同人常用名/全法定名桥。歧义（多对一/一对多）→ 留给单源桶。
+    """
+    tokens_srct = {
+        name: frozenset(name.split()) for name in misses_srct if name.split()
+    }
+    tokens_tm = {name: frozenset(name.split()) for name in misses_tm if name.split()}
+    pairs: list[tuple[str, str]] = []
+    used_tm: set[str] = set()
+    for name_srct, tokens in sorted(tokens_srct.items()):
+        hits = [
+            name_tm
+            for name_tm, other in tokens_tm.items()
+            if name_tm not in used_tm and (tokens < other or other < tokens)
+        ]
+        if len(hits) != 1:
+            continue
+        candidate = hits[0]
+        # 反向唯一：该 TM 名不得子集命中其他未配源T 名（防 Smith 类姓氏吞并）
+        back_hits = [
+            other_srct
+            for other_srct, other_tokens in tokens_srct.items()
+            if other_srct != name_srct
+            and (
+                other_tokens < tokens_tm[candidate]
+                or tokens_tm[candidate] < other_tokens
+            )
+        ]
+        if back_hits:
+            continue
+        used_tm.add(candidate)
+        pairs.append((name_srct, candidate))
+    return pairs
 
 
 def tenure_diff(
@@ -212,15 +315,19 @@ def tenure_diff(
     *,
     tolerance_days: int = DATE_TOLERANCE_DAYS,
     review_days: int = REVIEW_DELTA_DAYS,
+    window_from: str | None = None,
 ) -> dict[str, object]:
     """
     重叠俱乐部的任期日期 diff（纯函数；桶计数 + 人审清单 + delta 分布）。
 
     桶互斥：每条区间恰好落入 agree / misaligned / srct_only / tm_only 之
     一；name_unmatched 按教练计（其区间已计入单源桶，不重复计率）。
-    率只带分母（None=无分母不造率）。
+    率只带分母（None=无分母不造率）。window_from=语料窗起点（源T 逐季
+    文件最早季开球口径）：TM 侧俱乐部史横跨数十年，窗内分段计数把
+    「语料窗之外的 TM 历史教练」（构造性不可比）与窗内缺口分开。
     """
     counters = DiffCounters()
+
     for club, team in sorted(club_bridge.items()):
         by_name_srct: dict[str, list[TenureInterval]] = defaultdict(list)
         by_name_tm: dict[str, list[TenureInterval]] = defaultdict(list)
@@ -228,11 +335,11 @@ def tenure_diff(
             by_name_srct[normalize_coach_name(interval.coach)].append(interval)
         for interval in tm_by_club.get(club, ()):
             by_name_tm[normalize_coach_name(interval.coach)].append(interval)
+        misses_srct: set[str] = set()
+        misses_tm: set[str] = set()
         for name in set(by_name_srct) | set(by_name_tm):
             if name not in by_name_tm or name not in by_name_srct:
-                counters.name_unmatched += 1
-                counters.srct_only += len(by_name_srct.get(name, ()))
-                counters.tm_only += len(by_name_tm.get(name, ()))
+                misses_srct.add(name) if name in by_name_srct else misses_tm.add(name)
                 continue
             counters.matched_coaches += 1
             _pair_name_group(
@@ -243,23 +350,59 @@ def tenure_diff(
                 counters,
                 tolerance_days=tolerance_days,
                 review_days=review_days,
+                window_from=window_from,
+            )
+        # 第二级：词元子集唯一命中（源T 档案页英文名=全法定名，如
+        # "Amatriain Arteta Mikel"↔TM 常用名 "Mikel Arteta"）；唯一才配
+        matched_pairs = _subset_match_names(misses_srct, misses_tm)
+        for name_srct, name_tm in matched_pairs:
+            misses_srct.discard(name_srct)
+            misses_tm.discard(name_tm)
+            counters.matched_coaches += 1
+            counters.matched_via_subset += 1
+            _pair_name_group(
+                by_name_srct[name_srct],
+                by_name_tm[name_tm],
+                club,
+                team,
+                counters,
+                tolerance_days=tolerance_days,
+                review_days=review_days,
+                window_from=window_from,
+            )
+        # 残余名 → 单源缺 + 名字不可对齐
+        for name in misses_srct | misses_tm:
+            _bucket_leftover_name(
+                name, by_name_srct, by_name_tm, club, team, counters, window_from
             )
     agree, misaligned = counters.agree, counters.misaligned
     paired = agree + misaligned
     coaches = counters.matched_coaches
     unmatched_coaches = counters.name_unmatched
+    unmatched_in_window = counters.name_unmatched_in_window
     return {
         "clubs_compared": len(club_bridge),
+        "window_from": window_from,
         "agree_intervals": agree,
         "misaligned_intervals": misaligned,
+        "misaligned_open_mismatch": counters.misaligned_open_mismatch,
         "srct_only_intervals": counters.srct_only,
         "tm_only_intervals": counters.tm_only,
+        "srct_only_in_window": counters.srct_only_in_window,
+        "tm_only_in_window": counters.tm_only_in_window,
         "matched_coaches": coaches,
+        "matched_via_subset": counters.matched_via_subset,
         "name_unmatched_coaches": unmatched_coaches,
+        "name_unmatched_in_window": unmatched_in_window,
         "interval_agreement_rate": (agree / paired) if paired else None,
         "coach_name_match_rate": (
             coaches / (coaches + unmatched_coaches)
             if coaches + unmatched_coaches
+            else None
+        ),
+        "coach_name_match_rate_in_window": (
+            coaches / (coaches + unmatched_in_window)
+            if coaches + unmatched_in_window
             else None
         ),
         "tolerance_days": tolerance_days,
@@ -269,10 +412,14 @@ def tenure_diff(
             "end": dict(counters.end_dist),
         },
         "review_list": counters.review,
+        "srct_only_names": counters.srct_only_names,
+        "tm_only_in_window_names": sorted(set(counters.tm_only_in_window_names)),
         "method": (
             "同俱乐部教练按规范化名配对（NFKD去重音+casefold+分隔符归空格）；"
             "TM caretaker/manager 拆段按跨度并集与源T 单段比；"
-            "两端差均≤容差=吻合，任一端超=错位；一端开一端闭=端点错位"
+            "两端差均≤容差=吻合，任一端超=错位；一端开一端闭=端点错位；"
+            "第二级=词元子集唯一命中（全法定名↔常用名桥）；"
+            "window_from 分段把 TM 俱乐部史里语料窗外的教练与窗内缺口分开"
         ),
     }
 
@@ -287,6 +434,7 @@ def enumeration_gap(
     观测名与语料名均规范化后比对（同人异写 `·`/`.` 不误报）；缺口教练
     名无源T id → 暂不可采（补充种子候选，报告 only）。
     """
+    raw_observations = sum(1 for obs in observations if obs[2])
     cells: dict[tuple[int, str], dict[str, str]] = defaultdict(dict)
     for team_id, season, coach in observations:
         if coach:
@@ -305,7 +453,8 @@ def enumeration_gap(
             missing_names.update(missing)
     total = len(cells)
     return {
-        "observations": sum(len(names) for names in cells.values()),
+        "raw_observations": raw_observations,
+        "distinct_name_observations": sum(len(names) for names in cells.values()),
         "cells_total": total,
         "cells_with_gap": len(gap_cells),
         "gap_rate": (len(gap_cells) / total) if total else None,
@@ -461,12 +610,14 @@ def facet_club_coverage(
     交集。非 GB 联赛俱乐部=语料范围外（GB 语料先行，spec story 15）。
     """
     gb_clubs: dict[int, str] = {}
-    non_gb: set[int] = set()
+    maybe_non_gb: set[int] = set()
     for league_zh, club, name in facet_rows:
         if league_zh in gb_leagues:
             gb_clubs.setdefault(club, str(name))
         else:
-            non_gb.add(club)
+            maybe_non_gb.add(club)
+    # 同一俱乐部可兼有 GB 联赛行与欧战行：非 GB 桶只收纯非 GB 俱乐部
+    non_gb = maybe_non_gb - set(gb_clubs)
     mapped, _unmatched = lexical_club_bridge(gb_clubs, srct_teams)
     srct_tokens: dict[int, set[str]] = {
         team_id: set(_meaningful_tokens(names[2]))
@@ -575,6 +726,7 @@ class SrctSide(TypedDict):
     coaches_cn_by_team: dict[int, set[str]]
     tenure_rows: int
     club_season_rows: int
+    window_from: str | None
 
 
 class TmSide(TypedDict):
@@ -629,12 +781,16 @@ def load_srct_side(store: CorpusStore) -> SrctSide:
         intervals[row["team_id"]].append(
             TenureInterval(row["coach_key"], row["date_from"], row["date_to"])
         )
+    # 语料窗起点：源T 逐季文件最早季的开球月（GB 7 月开季）1 日
+    seasons = sorted({row["season"] for row in season_rows})
+    window_from = f"{seasons[0].split('-')[0]}-07-01" if seasons else None
     return SrctSide(
         teams=teams,
         intervals_by_team=dict(intervals),
         coaches_cn_by_team={k: set(v) for k, v in coaches_cn.items()},
         tenure_rows=len(tenure_rows),
         club_season_rows=len(season_rows),
+        window_from=window_from,
     )
 
 
@@ -713,7 +869,10 @@ def reconcile_report(
     bridge = cast("dict[int, int]", assembled["bridge"])
 
     diff = tenure_diff(
-        srct_side["intervals_by_team"], tm_side["tenures_by_club"], bridge
+        srct_side["intervals_by_team"],
+        tm_side["tenures_by_club"],
+        bridge,
+        window_from=srct_side["window_from"],
     )
     enumeration = enumeration_gap(observations, srct_side["coaches_cn_by_team"])
     facet_rows = [

@@ -265,7 +265,10 @@ def tenure_rows_from_bronze(
                 continue
             key = (tenure["start"], tenure["end"], tenure["team_id"])
             groups.setdefault(key, []).append(tenure)
-        for (_start, end, _team), group in sorted(groups.items()):
+        # 组键含开区间 end=None：显式排序键（None→空串占位），避免跨组比较
+        for (_start, end, _team), group in sorted(
+            groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "", kv[0][2])
+        ):
             picked, via = _select_tenure_row(group)
             rows.append(
                 {

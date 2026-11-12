@@ -464,3 +464,62 @@ def test_reconcile_report_degrades_without_corpus(tmp_path) -> None:  # type: ig
     assert report["club_bridge"]["bridged"] >= 0  # 词法路仍在
     conn.close()
     store.close()
+
+
+def test_tenure_diff_window_segmentation() -> None:
+    """window_from 分段：TM 俱乐部史窗外教练不吞窗内缺口率（真实面实缴）。"""
+    report = rec.tenure_diff(
+        {
+            19: [
+                rec.TenureInterval("Mikel Arteta", "2020-12-22", None),
+            ]
+        },
+        {
+            900: [
+                rec.TenureInterval("Mikel Arteta", "2020-12-20", None),
+                rec.TenureInterval("Old Coach", "1996-10-01", "2005-05-13"),
+                rec.TenureInterval("Unai Emery", "2018-07-01", "2019-11-29"),
+                # 跨窗老帅：起点在窗前、终点在窗内 → 相交口径=窗内
+                rec.TenureInterval("Spanning Boss", "2013-06-01", "2017-05-13"),
+            ]
+        },
+        BRIDGE,
+        window_from="2015-07-01",
+    )
+    # 窗内缺口：Emery + 跨窗老帅；1996-2005 老帅窗外
+    assert report["tm_only_intervals"] == 3
+    assert report["tm_only_in_window"] == 2
+    assert report["name_unmatched_coaches"] == 3
+    assert report["name_unmatched_in_window"] == 2
+    assert report["coach_name_match_rate"] == 1 / 4
+    assert report["coach_name_match_rate_in_window"] == 1 / 3
+    assert report["window_from"] == "2015-07-01"
+
+
+def test_tenure_diff_subset_name_matching() -> None:
+    """第二级词元子集：全法定名 ↔ TM 常用名（唯一命中才配，歧义不硬配）。"""
+    report = rec.tenure_diff(
+        {
+            19: [
+                # 源T 档案页全法定名 vs TM 常用名
+                rec.TenureInterval("Amatriain Arteta Mikel", "2020-12-22", None),
+                # 歧义词元（Smith 单词）不配
+                rec.TenureInterval("Alan Smith", "2015-01-01", "2015-06-30"),
+            ]
+        },
+        {
+            900: [
+                rec.TenureInterval("Mikel Arteta", "2020-12-20", None),
+                rec.TenureInterval("Smithy McSmith", "2014-01-01", "2015-12-31"),
+            ]
+        },
+        BRIDGE,
+    )
+    # Arteta 经子集桥配对（start 2 日差、双开 → 吻合）
+    assert report["matched_via_subset"] == 1
+    assert report["agree_intervals"] == 1
+    # Alan Smith vs Smithy McSmith：词元 {alan smith} 与 {smithy mcsmith}
+    # 无子集关系 → 不配，各入单源桶
+    assert report["name_unmatched_coaches"] == 2
+    assert report["srct_only_intervals"] == 1
+    assert report["tm_only_intervals"] == 1
