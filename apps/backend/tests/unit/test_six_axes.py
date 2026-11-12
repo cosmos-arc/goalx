@@ -22,7 +22,7 @@ from goalx_backend.evaluation import edge_scan, six_axes, weekly_agent
 
 @pytest.fixture
 def seam_db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """搜索窗读缝测试库：E0 三场（1617）+ 窗界外对照 + 四面身份层。"""
+    """搜索窗读缝测试库：E0 三场（1617）+ 窗界外对照 + 四面身份层（源T）。"""
     conn = connect(tmp_path / "goalx.db")
     migrate(conn)
     conn.executemany(
@@ -49,27 +49,31 @@ def seam_db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
                 2.0, 'Ref A')
         """
     )
-    # TM 任期：club 900=Jia FC（2016-01-01 起 Old Coach）；club 901=Yi FC
-    # （2017-02-01 才上任 → 1617 窗内空窗=unattributed 诚实缺）；Zeta 无任期
+    # 源T 任期（票 10）：team 900=Jia FC（2016-01-01 起 Old Coach）；
+    # team 901=Yi FC（2017-02-01 才上任 → 1617 窗内空窗=诚实缺）；Zeta 无
     conn.executemany(
         """
-        INSERT INTO tm_coach_tenures
-            (club_tm_id, club_name, role, coach_tm_id, coach_name, date_from,
-             date_to, games, first_seen_at, observed_at, parse_version)
-        VALUES (?, ?, 'manager', ?, ?, ?, NULL, 10, '2026-01-01', '2026-01-01',
-                'tm_coach_v1')
+        INSERT INTO srct_coach_tenures
+            (coach_id, coach_key, coach_name_cn, coach_name_en, team_id,
+             team_name_cn, team_name_en, date_from, date_to, role, games,
+             wins, draws, losses, parse_version, materialized_at)
+        VALUES (?, ?, ?, ?, ?, '名', ?, ?, NULL, '主教练', 10, 5, 3, 2, 'v',
+                '2026-01-01T00:00:00+00:00')
         """,
         [
-            (900, "Jia FC", 1, "Old Coach", "2016-01-01"),
-            (901, "Yi FC", 3, "Yi Coach", "2017-02-01"),
+            (1, "Old Coach", "老帅", "Old Coach", 900, "Jia FC", "2016-01-01"),
+            (3, "Yi Coach", "伊帅", "Yi Coach", 901, "Yi FC", "2017-02-01"),
         ],
     )
+    # 源T 队籍（hist 英文名 → 源T team 的三级词法折的枚举侧）
     conn.executemany(
         """
-        INSERT INTO tm_club_seasons
-            (league_tm_code, season, club_tm_id, club_name, first_seen_at,
-             observed_at)
-        VALUES ('GB1', '1617', ?, ?, '2026-01-01', '2026-01-01')
+        INSERT INTO srct_club_seasons
+            (league_id, season, team_id, team_name_cn, team_name_tw,
+             team_name_en, league_name_cn, league_name_en, source_key,
+             parse_version, materialized_at)
+        VALUES (36, '2016-2017', ?, '名', '名', ?, '英格兰超级联赛',
+                'English Premier League', 'k', 'v', '2026-01-01T00:00:00+00:00')
         """,
         [(900, "Jia FC"), (901, "Yi FC")],
     )
@@ -88,13 +92,13 @@ def seam_db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
             ("Yi FC", "2223", 4, 0.44, 0, 0),
         ],
     )
-    # 阵型族面（票 05 读缝）：Old Coach 上一季 4-4-2 为主 + 当季 09 月格
-    # （M1 的 08-11 视角必须看不到当季格）
+    # 阵型族面（票 05 读缝；票 10 换键 club_srct_id/coach_key）：Old Coach
+    # 上一季 4-4-2 为主 + 当季 09 月格（M1 的 08-11 视角必须看不到当季格）
     conn.executemany(
         """
         INSERT INTO formation_family_facet
-            (season, league_fd, league_zh, team_id, club_tm_id, club_name,
-             coach_name, coach_role, family, n_matches, n_known,
+            (season, league_fd, league_zh, team_id, club_srct_id, club_name,
+             coach_key, coach_role, family, n_matches, n_known,
              first_match_date, last_match_date, rebuilt_at)
         VALUES (?, 'E0', '英超', NULL, ?, ?, ?, 'manager', ?, ?, ?,
                 ?, ?, '2026-01-01T00:00:00+00:00')
@@ -145,14 +149,14 @@ def test_seam_assembles_all_four_faces(seam_db: sqlite3.Connection) -> None:
     readings = six_axes.match_readings(seam_db)
     by_date = {r.match_date: r for r in readings}
     m1 = by_date["2016-08-11"]
-    # 教练：Jia→club 900→Old Coach（上任 2016-01-01，08-11=223 天）
+    # 教练：Jia→源T team 900→Old Coach（上任 2016-01-01，08-11=223 天）
     assert m1.home.coach_name == "Old Coach"
     assert m1.home.tenure_days == 223
-    assert m1.home.club_tm_id == 900
+    assert m1.home.club_srct_id == 900
     # Yi FC 任期 2017-02 起 → 窗内空窗，诚实缺
     assert m1.away.coach_name is None
-    # Zeta FC：不在 TM 宇宙 → club=None
-    assert by_date["2016-08-18"].away.club_tm_id is None
+    # Zeta FC：不在源T 枚举 → club=None
+    assert by_date["2016-08-18"].away.club_srct_id is None
     # 底蕴：1617 行直键
     assert m1.home.top_flight_streak == 5
     assert m1.home.points_pct_l5 == pytest.approx(0.62)
@@ -197,8 +201,8 @@ def test_embargo_window_edge_invariance(seam_db: sqlite3.Connection) -> None:
     seam_db.execute(
         """
         INSERT INTO formation_family_facet
-            (season, league_fd, league_zh, team_id, club_tm_id, club_name,
-             coach_name, coach_role, family, n_matches, n_known,
+            (season, league_fd, league_zh, team_id, club_srct_id, club_name,
+             coach_key, coach_role, family, n_matches, n_known,
              first_match_date, last_match_date, rebuilt_at)
         VALUES ('2016-17', 'E0', '英超', NULL, 900, 'Jia FC', 'Old Coach',
                 'manager', '4-2-3-1', 5, 5, '2016-08-01', '2022-12-25',

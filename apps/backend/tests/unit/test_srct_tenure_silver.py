@@ -22,13 +22,13 @@ from goalx_backend.data.ingest import srct, srct_tenure
 def test_v61_creates_two_tables_idempotent() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    assert db.migrate(conn) == 61
+    assert db.migrate(conn) == 62
     tables = {
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert {"srct_coach_tenures", "srct_club_seasons"} <= tables
-    assert db.migrate(conn) == 61  # 重跑幂等（已应用版本跳过）
+    assert db.migrate(conn) == 62  # 重跑幂等（已应用版本跳过）
     # UNIQUE 键形状：任期 (coach_id, team_id, date_from)；
     # 队籍 (league_id, season, team_id)
     tenure_cols = {
