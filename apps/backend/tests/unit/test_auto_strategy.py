@@ -335,8 +335,8 @@ def test_migration_v43_idempotent(db: sqlite3.Connection) -> None:
     from goalx_backend.db import migrate
 
     version = migrate(db)
-    assert version == 61
-    assert migrate(db) == 61  # 同版本重跑零效果
+    assert version == 62
+    assert migrate(db) == 62  # 同版本重跑零效果
     assert db.execute("SELECT COUNT(*) c FROM auto_paper_runs").fetchone()["c"] == 0
 
 

@@ -598,8 +598,8 @@ def test_fastembed_real_smoke() -> None:
 
 def test_migration_v56_idempotent(db: sqlite3.Connection) -> None:
     """v56 幂等：rag_embeddings 就位、主键三键齐、重跑零效果。"""
-    assert migrate(db) == 61
-    assert migrate(db) == 61  # 同版本重跑零效果
+    assert migrate(db) == 62
+    assert migrate(db) == 62  # 同版本重跑零效果
     ddl = str(
         db.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='rag_embeddings'"

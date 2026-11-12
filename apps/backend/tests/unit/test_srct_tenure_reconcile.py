@@ -291,9 +291,9 @@ def _seed_synthetic_world(tmp_path):  # type: ignore[no-untyped-def]
     )
     conn.execute(
         "INSERT INTO formation_family_facet (season, league_fd, league_zh, team_id,"
-        " club_tm_id, club_name, coach_name, coach_role, family, n_matches, n_known,"
-        " first_match_date, last_match_date, rebuilt_at)"
-        " VALUES ('2025-26', 'E0', '英超', NULL, 900, 'Arsenal', 'Mikel Arteta',"
+        " club_srct_id, club_name, coach_key, coach_role, family, n_matches,"
+        " n_known, first_match_date, last_match_date, rebuilt_at)"
+        " VALUES ('2025-26', 'E0', '英超', NULL, 19, 'Arsenal', 'Mikel Arteta',"
         " 'manager', '4-3-3', 10, 8, '2025-08-01', '2025-10-01',"
         " '2026-11-12T00:00:00+00:00')"
     )
