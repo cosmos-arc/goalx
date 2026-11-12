@@ -75,6 +75,7 @@ from goalx_backend.data.ingest import (
     srct_remat,
     srct_results,
     srct_shift,
+    srct_tenure,
     tm_coach,
     understat,
     uniform,
@@ -1008,6 +1009,48 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
         else:
             stats = clubelo.sync_snapshot(conn, settings, client, date.today())
     return clubelo.stats_dict(stats)
+
+
+def srct_tenure_sync(
+    seasons: tuple[str, ...] | None = None,
+    *,
+    request_cap: int | None = None,
+    no_window: bool = False,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
+    """
+    源T 任期/队籍班（票 08）：matchResult 逐季 → tdl 现任 → coach 两步。
+
+    语料树 raw+bronze only（主库零触碰）；raw 键幂等，周末班只补增量。
+    seasons 显式传即回填指定季（一次性运维步）；no_window=True 供白天
+    手工回补（缺省让位 01:00-08:00 夜窗）。settings/client 注入口只服务
+    测试接缝（cli/flow 共用本函数，缺省真实装配）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with ExitStack() as stack:
+            run_client = (
+                client
+                if client is not None
+                else stack.enter_context(httpx.Client(verify=browser_ssl_context()))
+            )
+            stats = srct_tenure.run_tenure_shift(
+                store,
+                resolved,
+                run_client,
+                seasons=seasons if seasons else srct_tenure.TENURE_SEASONS,
+                request_cap=(
+                    srct_tenure.TENURE_REQUEST_CAP
+                    if request_cap is None
+                    else request_cap
+                ),
+                enforce_window=not no_window,
+            )
+    finally:
+        store.close()
+    return srct_tenure.stats_dict(stats)
 
 
 def tm_coach_sync(

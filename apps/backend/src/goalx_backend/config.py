@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     srct_basid_url: str = ""
     # 当日全量场次数据文件（票 05 发现面补缺）：行内嵌竞彩编号 → sid 直连
     srct_bfdata_url: str = ""
+    # 教练任期/队籍面（票 08，srct_tenure）：matchResult 逐季 / tdl 球队详情 /
+    # 教练档案页 / 履历 jsData——四端点代称同前，真值只进本地 .env
+    srct_league_season_url: str = ""
+    srct_team_detail_url: str = ""
+    srct_coach_page_url: str = ""
+    srct_coach_career_url: str = ""
 
     # --- ML 线（票 26/27：DC 工件与训练参数） ---
     models_dir: Path = Path("data/models")
