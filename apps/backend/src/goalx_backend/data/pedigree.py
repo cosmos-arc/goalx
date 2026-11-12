@@ -1,12 +1,13 @@
 """
-六轴数据 ④ 底蕴硬层四因子面（vision-build 票 09；人裁 5 两层拆分的硬层）。
+六轴数据 ④ 底蕴硬层四因子面（vision-build 票 09；票 10 频谱/年限源切源T）。
 
 四因子独立列不强行合成（合成与否留给 facet 读数）：
 
-- 顶级联赛连续年限：``tm_club_seasons`` 派生——**截至上一赛季**（PIT：
-  该赛季开始前可知；观察窗 2016 起，窗首连续段为下界，诚实有界口径）；
-  顶级口径=逐国顶级（fd 11 联赛除英格兰次级 E1 外均为本国顶级——
-  Ajax/Celtic/Benfica 照常计年限，correctness-review F1）；
+- 顶级联赛连续年限：``srct_club_seasons`` 派生（票 10 队籍源切——按构造
+  完整，TM 现役快照 18 队 NULL 缺口消除）——**截至上一赛季**（PIT：该
+  赛季开始前可知；观察窗 2015 起，窗首连续段为下界，诚实有界口径）；
+  顶级口径=源T league_id 受控词表（``srct_identity.SRCT_TIER1_LEAGUE_IDS``，
+  现含英超 36；批量扩域采集新联赛时补行）；
 - 近 5 季积分百分位：``hist_matches`` 派生（无 standings 表，逐场 3-1-0
   算积分分享率 = 积分/(3×场次)，跨联赛可比）——只用该赛季前 5 季，无
   前季 NULL 不造率；
@@ -19,15 +20,17 @@
   =``MAJOR_HONOURS_WINNERS`` 受控表，欧战决赛 5-6 月=当季季末，时点推导
   见 ``_window_major_wins``）。2016 前的全史部分对任何窗内赛季都是过去，
   PIT 干净。种子未命中/互撞 → 两列 NULL（不写假 0，F2/F6）；
-- 升降级频谱：``tm_club_seasons`` 派生——观察窗（库内 tm 赛季全局 min/
+- 升降级频谱：``srct_club_seasons`` 派生——观察窗（库内源T 赛季全局 min/
   max）内的 tier1 出入计数，**纯后视窗**（转换对 t→t+1 只计 t+1 ≤ 上一
   赛季者）：tier1→非 tier1（含离开受采面）=降级类，反向=升级类；升级进
   本季的信号落在下一季行上（保守口径，PIT 无歧义）。
 
 行触发 = (team, season) 在 hist 出现（fd 面键空间=hist 英文队名，backtest
-EM 扫描直读）；TM 侧身份经 ``coach_changes.resolve_season_club_hist_names``
-（三级直配+别名桥+互撞守卫）解析，未解析队年限/频谱=NULL（诚实缺，不当
-0 用），积分/荣誉照常。
+EM 扫描直读）；源T 侧身份经 ``srct_identity.srct_hist_name_index``（三级
+词法+受控别名）解析，未解析队年限/频谱=NULL（诚实缺，不当 0 用——非 GB
+联赛在源T GB 语料范围外，年限/频谱 NULL 直到批量扩域，spec story 15），
+积分/荣誉照常。``club_tm_id`` 列保留 TM 锚（ADR-0014 对账/备用语义，仅
+信息列——频谱/年限不再依赖它）。
 """
 
 from __future__ import annotations
@@ -37,6 +40,11 @@ import sqlite3
 
 from goalx_backend.data.coach_changes import resolve_season_club_hist_names
 from goalx_backend.data.leagues import TM_LEAGUES
+from goalx_backend.data.srct_identity import (
+    SRCT_TIER1_LEAGUE_IDS,
+    srct_hist_name_index,
+    srct_season_year,
+)
 from goalx_backend.db import atomic, utc_now_iso
 from goalx_backend.modelling.team_align import normalize_team_name
 
@@ -48,8 +56,6 @@ L5_WINDOW = 5
 #: correctness-review F1——顶级口径=逐国顶级而非 dc_model 的五大建模优先序，
 #: 荷/葡/土/比/苏俱乐部年限不再恒 0；data 域自建受控常量，不借 modelling）
 _TOP_FLIGHT_FD: frozenset[str] = frozenset(fd for fd in TM_LEAGUES if fd != "E1")
-#: 顶级联赛 TM 码（fd → TM 映射折算；tm_club_seasons.league_tm_code 键空间）
-_TIER1_TM: frozenset[str] = frozenset(TM_LEAGUES[fd] for fd in _TOP_FLIGHT_FD)
 
 # ---------------------------------------------------------------------------
 # 荣誉静态源（受控常量；markets/selections 种子先例）
@@ -524,47 +530,45 @@ def _window_champions(
     return champions
 
 
-def _tm_season_face(
+def _srct_season_face(
     conn: sqlite3.Connection,
-) -> dict[int, dict[int, str]]:
-    """club_tm_id → {tm 赛季年: league_tm_code}（成员面；年=int 化）。"""
-    face: dict[int, dict[int, str]] = {}
+) -> dict[int, dict[int, int]]:
+    """源T team_id → {起始年: league_id}（队籍面；年=源T 季码起始年）。"""
+    face: dict[int, dict[int, int]] = {}
     for row in conn.execute(
-        "SELECT club_tm_id, season, league_tm_code FROM tm_club_seasons"
+        "SELECT team_id, season, league_id FROM srct_club_seasons"
     ).fetchall():
-        try:
-            year = int(str(row["season"]))
-        except ValueError:
-            continue  # 非数形 tm 赛季键不参与（采集侧已 4 位钉死，防御）
-        face.setdefault(int(row["club_tm_id"]), {})[year] = str(row["league_tm_code"])
+        face.setdefault(int(row["team_id"]), {})[
+            srct_season_year(str(row["season"]))
+        ] = int(row["league_id"])
     return face
 
 
-def _streak(seasons: dict[int, str], prior_year: int) -> int:
+def _streak(seasons: dict[int, int], prior_year: int) -> int:
     """连续 tier1 年数，截至 prior_year（不在则 0；观察窗内连续段）。"""
     streak = 0
     year = prior_year
-    while seasons.get(year) in _TIER1_TM:
+    while seasons.get(year) in SRCT_TIER1_LEAGUE_IDS:
         streak += 1
         year -= 1
     return streak
 
 
 def _tier1_flux(
-    seasons: dict[int, str], prior_year: int, window: tuple[int, int]
+    seasons: dict[int, int], prior_year: int, window: tuple[int, int]
 ) -> tuple[int, int]:
     """
     观察窗内 tier1 出入计数（promo, releg）——纯后视窗 t+1 ≤ prior_year。
 
-    窗=库内 tm 赛季全局 [min, max]：窗内缺席季=离开受采面（tier1→缺席=
+    窗=库内源T 赛季全局 [min, max]：窗内缺席季=离开受采面（tier1→缺席=
     降级类、缺席→tier1=升级类；窗缘外的缺席不构成转换）。
     """
     lo, hi = window
     promo = 0
     releg = 0
     for step_to in range(lo + 1, min(prior_year, hi) + 1):
-        was = seasons.get(step_to - 1) in _TIER1_TM
-        now = seasons.get(step_to) in _TIER1_TM
+        was = seasons.get(step_to - 1) in SRCT_TIER1_LEAGUE_IDS
+        now = seasons.get(step_to) in SRCT_TIER1_LEAGUE_IDS
         if was and not now:
             releg += 1
         elif now and not was:
@@ -579,7 +583,8 @@ def derive_club_pedigree(
     重建底蕴硬层四因子面（幂等：DELETE+INSERT 全量重建，原子）。
 
     行=(team, season) hist 出现集；四因子 PIT 语义见模块 docstring。
-    空输入零行不炸；stats 附 tm 未解析队清单与种子未解析键（人工补线面）。
+    空输入零行不炸；stats 附源T 未解析队清单（非 GB 范围外/名缺口，人工
+    补线面）与种子未解析键。
     """
     rebuilt_at = now or utc_now_iso()
     hist = _load_hist(conn)
@@ -588,13 +593,17 @@ def derive_club_pedigree(
     honours, honours_unresolved, honours_conflicts = _honours_face(pool)
     major_wins = _window_major_wins(pool)
     champions = _window_champions(hist)
+    # club_tm_id 列 = TM 信息锚（ADR-0014 对账/备用；频谱/年限不再依赖它）
     club_by_name = {
         name: club for club, name in resolve_season_club_hist_names(conn).items()
     }
-    tm_seasons = _tm_season_face(conn)
-    tm_years = [year for seasons in tm_seasons.values() for year in seasons]
-    window = (min(tm_years), max(tm_years)) if tm_years else (0, -1)
-    tm_unresolved: set[str] = set()
+    # 频谱/年限身份与队籍面 = 源T（票 10：hist 英文名 → 源T team 三级词法
+    # + 受控别名 → srct_club_seasons 按构造完整队籍）
+    srct_index = srct_hist_name_index(conn)
+    srct_seasons = _srct_season_face(conn)
+    srct_years = [year for seasons in srct_seasons.values() for year in seasons]
+    window = (min(srct_years), max(srct_years)) if srct_years else (0, -1)
+    srct_unresolved: set[str] = set()
     prior_seasons_by_team: dict[str, list[tuple[int, str]]] = {}
     for team, season in appearances:
         year = _fd_season_year(season)
@@ -615,12 +624,13 @@ def derive_club_pedigree(
             streak: int | None = None
             promo: int | None = None
             releg: int | None = None
-            if club_tm_id is None:
-                tm_unresolved.add(team)
+            srct_team = srct_index.resolve(team)
+            if srct_team is None:
+                srct_unresolved.add(team)  # 源T 语料范围外（非 GB）或名缺口
             elif season_year is not None:
-                club_seasons = tm_seasons.get(club_tm_id, {})
-                streak = _streak(club_seasons, season_year - 1)
-                promo, releg = _tier1_flux(club_seasons, season_year - 1, window)
+                team_seasons = srct_seasons.get(srct_team, {})
+                streak = _streak(team_seasons, season_year - 1)
+                promo, releg = _tier1_flux(team_seasons, season_year - 1, window)
             entry = honours.get(team)
             if entry is None:
                 # 未命中=种子未覆盖或互撞（F2/F6）：NULL 诚实缺，不写假 0
@@ -667,7 +677,7 @@ def derive_club_pedigree(
             "rows": len(appearances),
             "teams": len({team for team, _season in appearances}),
             "seasons": len({season for _team, season in appearances}),
-            "tm_unresolved_teams": sorted(tm_unresolved),
+            "srct_unresolved_teams": sorted(srct_unresolved),
             "honours_unresolved_keys": honours_unresolved,
             "honours_conflicts": honours_conflicts,
             "rebuilt_at": rebuilt_at,

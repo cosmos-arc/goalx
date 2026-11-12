@@ -879,7 +879,7 @@ def reconcile_report(
         (str(r[0]), int(r[1]), str(r[2]))
         for r in conn.execute(
             """
-            SELECT league_zh, club_tm_id, club_name FROM formation_family_facet
+            SELECT league_zh, club_srct_id, club_name FROM formation_family_facet
             """
         )
     ]

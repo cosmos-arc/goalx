@@ -1,20 +1,22 @@
 """
-六轴数据 ② 阵型族条件面：vision-build 票 09 落库，mining-loop 票 05 历史回填。
+六轴数据 ② 阵型族条件面：vision-build 票 09 落库，票 10 身份键全切源T。
 
-条件面=族 × 赛季 × 教练任期联结：语料 ``match_detail`` 阵型（赛后面）按
-两条身份链折到 TM 俱乐部，指派为 manager-of-the-day（教练任期空间
-=tm_coach_tenures，autoresearch 票 18 已落）——中英文教练名无映射
-（coach_crosscheck 口径），故教练身份一律走 TM 英文名；源T 中文教练名
-不入面（PIT 前向的教练可知性=TM 任期现任，非赛后面）：
+（mining-loop 票 05 历史回填；spec-srct-cutover。）
 
-- 链接链（现行，运行面）：sid → ``source_match_links`` → fixture →
-  canonical team → ``team_aliases(transfermarkt)`` → TM 俱乐部。只有
-  运行面有 fixture（2026 起），当季行带 team 锚。
-- 历史链（票 05，冻结季）：universe 中文名 →（票 78 ``build_name_bridge``
-  配对桥，语料侧日=UTC 日）→ hist 英文名 →（``resolve_club_hist_names``
-  逆）→ TM 俱乐部。历史行 team_id=NULL 是事实不是缺（读缝键=coach×season）。
-  当季（universe 最大季）未链 sid 不走历史链（live_season_unlinked 计数），
-  冻结后自然并入——当季单元格继续由链接链独占，已交付行不被历史输入扰动。
+条件面=族 × 赛季 × 教练任期联结：语料 ``match_detail`` 阵型（赛后面）经
+**同站中文名折**（universe/match_detail 中文名 ↔ ``srct_club_seasons``
+matchResult 逐季枚举，同站同季同语——data/srct_identity）折到源T team_id，
+指派为 manager-of-the-day（任期空间=srct_coach_tenures，coach_key=英文名
+优先键）。TM 六跳链（票 05 时代）已拆——身份主空间=源T，ADR-0014：
+
+- 已链 sid（链接链，2026 起）仍带运行面 team 锚（``source_match_links`` →
+  fixture team_id，仅作 team_id 列，不参与俱乐部身份）；俱乐部身份一律
+  同站折。当季（detail 覆盖最大季）未链 sid 不入面（live_season_unlinked
+  计数），冻结后自然并入——当季单元格继续由链接链独占，已交付行不被
+  历史输入扰动。
+- 非 GB 诚实收缩：源T tenure 语料 GB 双联赛先行，非 GB 侧折不出 →
+  ``no_srct_identity`` 桶（facet 从全联赛面缩到 GB 覆盖面；批量扩域后
+  零新基建回流，spec story 15）。
 
 PIT 契约：本面来自赛后面 ``match_detail``（阵型赛后才知道），回答的问题
 是「该教练在该赛季惯用什么族」——作特征时 kickoff 前可知性=教练任期+
@@ -23,10 +25,8 @@ PIT 契约：本面来自赛后面 ``match_detail``（阵型赛后才知道）�
 
 写相=差分写（票 05）：逐格与库内行比对，业务字段全同的行原样保留
 （rebuilt_at 不动），新格插入、消失格删除、漂移格改写——幂等重跑零
-效果，回填不重写已交付行。
-
-全联赛落库（fd 11 项映射外 league_fd=NULL 照落），切片报告只出英超+英冠
-（票 08 人裁=全范围英超优先探索）。
+效果，回填不重写已交付行。票 10 换键（v62）后首次 derive 诚实报
+preserved=0/inserted=N（全量重派口径，不得粉饰）。
 """
 
 from __future__ import annotations
@@ -34,23 +34,19 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
 from typing import cast
 
 import duckdb
 
-from goalx_backend.data.coach_changes import (
-    Tenure,
-    assign_manager_day,
-    resolve_club_hist_names,
-    tenures_by_club,
+from goalx_backend.data.coach_changes import Tenure, assign_manager_day
+from goalx_backend.data.leagues import LEAGUE_TO_FD
+from goalx_backend.data.srct_identity import (
+    facet_season_of,
+    srct_club_index,
+    srct_season_of,
+    srct_tenures_by_team,
 )
-from goalx_backend.data.leagues import FD_TO_LEAGUE, LEAGUE_TO_FD
-from goalx_backend.data.mapping import load_universe_results
-from goalx_backend.data.silver import season_of
 from goalx_backend.db import atomic, utc_now_iso
-from goalx_backend.modelling import elo
-from goalx_backend.modelling.team_align import transfermarkt_aliases_by_team
 
 #: 受控族全集（迁移 v53 CHECK 字面同源；「other」只由兜底产生，不经映射）
 FAMILIES: tuple[str, ...] = (
@@ -184,126 +180,16 @@ def _linked_sides(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
     }
 
 
-def _tm_clubs(
-    conn: sqlite3.Connection,
-) -> tuple[dict[int, tuple[str, ...]], dict[str, int]]:
-    """
-    TM 身份两查（team→TM 俱乐部名全集 / 俱乐部名→club_tm_id）。
-
-    别名桥经 team_align 读口（transfermarkt，ADR-0008 属主）；club_name
-    撞多名俱乐部（TM 重命名窗口等）→ 不硬配，整名丢弃（计数）。team 的
-    多别名由派生侧逐名试解（correctness-review F7：旧名先落库但任期面
-    只挂新名时不再整队 no_club）。
-    """
-    aliases = transfermarkt_aliases_by_team(conn)
-    club_ids: dict[str, int] = {}
-    club_conflicts: set[str] = set()
-    for row in conn.execute(
-        "SELECT DISTINCT club_name, club_tm_id FROM tm_coach_tenures"
-    ).fetchall():
-        name = str(row["club_name"])
-        if name in club_ids and club_ids[name] != int(row["club_tm_id"]):
-            club_conflicts.add(name)
-        club_ids[name] = int(row["club_tm_id"])
-    for name in club_conflicts:
-        club_ids.pop(name, None)
-    return aliases, club_ids
-
-
-def _bridge_zh_to_club(
-    conn: sqlite3.Connection,
-    duck_con: DuckCon,
-) -> tuple[dict[str, tuple[int, str]], set[str], dict[str, object]]:
-    """
-    历史链身份折（票 05）：universe 中文名 → TM 俱乐部。
-
-    链=票 78 ``build_name_bridge``（配对键=联赛+日+比分，双侧唯一才投，
-    fd→zh 得票唯一）→ 逆折 zh→fd（fd 名撞多 zh 名者弃）→
-    ``resolve_club_hist_names`` 逆（hist 名 → club，互撞守卫同源）。
-    返回 (zh→club 映射, 桥通名集合〔=zh_to_fd 键域，供 hist_no_bridge/
-    hist_no_club 分桶〕, 桥报告)。语料侧日=**UTC 日**（kickoff 北京墙钟
-    −8h；票 78 桥原调用的语料侧北京日不与 hist 欧洲日配晚间场，此处按
-    欧洲日重投）。
-    """
-    universe_rows = load_universe_results(duck_con)
-    corpus_rows = [
-        elo.BridgeRow(
-            league=row.league,
-            day=(row.kickoff_bj - timedelta(hours=8)).date(),
-            home=row.home,
-            away=row.away,
-            home_goals=int(row.home_goals),
-            away_goals=int(row.away_goals),
-        )
-        for row in universe_rows
-        if row.home_goals is not None and row.away_goals is not None
-    ]
-    hist_rows = [
-        elo.BridgeRow(
-            league=league,
-            day=date.fromisoformat(str(row["match_date"])),
-            home=str(row["home_team"]),
-            away=str(row["away_team"]),
-            home_goals=int(row["fthg"]),
-            away_goals=int(row["ftag"]),
-        )
-        for row in conn.execute(
-            """
-            SELECT competition, match_date, home_team, away_team, fthg, ftag
-            FROM hist_matches
-            """
-        ).fetchall()
-        if (league := FD_TO_LEAGUE.get(str(row["competition"]))) is not None
-    ]
-    fd_to_zh, bridge_report = elo.build_name_bridge(hist_rows, corpus_rows)
-    fd_by_zh: dict[str, set[str]] = {}
-    for fd_name, zh_name in fd_to_zh.items():
-        fd_by_zh.setdefault(zh_name, set()).add(fd_name)
-    zh_to_fd = {
-        zh_name: next(iter(fd_names))
-        for zh_name, fd_names in fd_by_zh.items()
-        if len(fd_names) == 1
-    }
-    # hist 名 → (club_tm_id, club_name)：resolver 逆 + 任期面行数众数名
-    club_names: dict[int, str] = {}
-    name_votes: dict[int, dict[str, int]] = {}
-    for row in conn.execute(
-        """
-        SELECT club_tm_id, club_name, COUNT(*) AS n
-        FROM tm_coach_tenures GROUP BY 1, 2
-        """
-    ).fetchall():
-        club = int(row["club_tm_id"])
-        name_votes.setdefault(club, {})[str(row["club_name"])] = int(row["n"])
-    for club, votes in name_votes.items():
-        club_names[club] = sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-    zh_to_club: dict[str, tuple[int, str]] = {}
-    club_of_hist_name = {
-        hist_name: club for club, hist_name in resolve_club_hist_names(conn).items()
-    }
-    for zh_name, fd_name in zh_to_fd.items():
-        club = club_of_hist_name.get(fd_name)
-        if club is not None and club in club_names:
-            zh_to_club[zh_name] = (club, club_names[club])
-    stats: dict[str, object] = {
-        "fd_to_zh": len(fd_to_zh),
-        "zh_to_fd_unique": len(zh_to_fd),
-        "zh_to_club": len(zh_to_club),
-        **{k: v for k, v in bridge_report.items() if k != "vote_distribution"},
-    }
-    return zh_to_club, set(zh_to_fd), stats
-
-
 #: 差分写的业务列（id/rebuilt_at 除外）；写键=(season, league_zh,
-#: club_tm_id, coach_name, family)=表 UNIQUE 约束列（_CELL_COLS 的子序）
+#: club_srct_id, coach_key, family)=表 UNIQUE 约束列（_CELL_COLS 的子序）
 _CELL_COLS: tuple[str, ...] = (
     "season",
     "league_fd",
     "league_zh",
     "team_id",
-    "club_tm_id",
+    "club_srct_id",
     "club_name",
-    "coach_name",
+    "coach_key",
     "coach_role",
     "family",
     "n_matches",
@@ -326,7 +212,7 @@ def _write_facet(
     业务字段全同的行原样保留，新格插入、消失格删除、漂移格改写。返回
     {preserved, inserted, updated, deleted}——幂等重跑=preserved 全量、
     余三零；preserved 行 rebuilt_at 逐字节不动（票面验收：既有交付行
-    不得重写）。
+    不得重写）。票 10 换键后首拍 preserved≈0/inserted=N 是口径事实。
     """
     col_list = ", ".join(_CELL_COLS)
     existing: dict[tuple[str, str, int, str, str], sqlite3.Row] = {}
@@ -337,27 +223,27 @@ def _write_facet(
             (
                 str(row["season"]),
                 str(row["league_zh"]),
-                int(row["club_tm_id"]),
-                str(row["coach_name"]),
+                int(row["club_srct_id"]),
+                str(row["coach_key"]),
                 str(row["family"]),
             )
         ] = row
     counts = {"preserved": 0, "inserted": 0, "updated": 0, "deleted": 0}
     for key in sorted(cells):
-        season, league_zh, club_tm_id, coach, family = key
+        season, league_zh, club_srct_id, coach, family = key
         cell = cells[key]
         values = (
             season,
             _LEAGUE_FD.get(league_zh),
             league_zh,
             cell.team_id,
-            club_tm_id,
+            club_srct_id,
             cell.club_name,
             coach,
-            group_last[(season, league_zh, club_tm_id, coach)][1],
+            group_last[(season, league_zh, club_srct_id, coach)][1],
             family,
             cell.n,
-            group_known[(season, league_zh, club_tm_id, coach)],
+            group_known[(season, league_zh, club_srct_id, coach)],
             cell.first,
             cell.last,
         )
@@ -394,89 +280,26 @@ def _write_facet(
     return counts
 
 
-def _resolve_club(
-    team_id: int,
-    aliases: dict[int, tuple[str, ...]],
-    club_ids: dict[str, int],
-    cache: dict[int, tuple[int, str]],
-) -> tuple[str, tuple[int, str] | None]:
-    """
-    Team → TM 俱乐部（多别名逐名试解，correctness-review F7）。
-
-    返回 (drops 键, 结果)：``"ok"``+``(club_tm_id, 命中名)``——任一别名指
-    到唯一俱乐部即接通（TM 改名窗口内旧名先落库、任期面挂新名不再整队
-    no_club）；无别名=``no_alias``；全别名不中=``no_club``（键与 drops
-    桶同名，直接计数）。队级缓存——决议一场内不变。
-    """
-    cached = cache.get(team_id)
-    if cached is not None:
-        return ("ok", cached)
-    names = aliases.get(team_id)
-    if not names:
-        return ("no_alias", None)
-    for name in names:
-        if name in club_ids:
-            club = (club_ids[name], name)
-            cache[team_id] = club
-            return ("ok", club)
-    return ("no_club", None)
-
-
-def _side_club(
-    team_id: int | None,
-    zh_name: str | None,
-    hist_club: tuple[int, str] | None,
-    aliases_by_team: dict[int, tuple[str, ...]],
-    club_ids: dict[str, int],
-    resolved_club: dict[int, tuple[int, str]],
-    zh_bridged: set[str],
-) -> tuple[tuple[int, str] | None, str]:
-    """
-    单侧 → TM 俱乐部（两链合一）：返回 (俱乐部|None, 丢弃桶键)。
-
-    解析成功=(俱乐部, "")；失败=(None, 桶键)。链接链（team_id 有值）
-    失败桶=no_alias/no_club；历史链（team_id=None）失败桶=hist_no_bridge
-    （桥都没通）/hist_no_club（桥通但 hist 名无 TM 俱乐部认领——TM 宇宙
-    现役快照缺口，票 06 映射率报告同根因）。桶键恒非空字符串——不变量
-    若破，drops[空串] KeyError 炸响不静默错桶。
-    """
-    if team_id is not None:
-        status, club = _resolve_club(team_id, aliases_by_team, club_ids, resolved_club)
-        return (club if status == "ok" else None), ("" if status == "ok" else status)
-    if hist_club is None:
-        bridged = zh_name in zh_bridged if zh_name is not None else False
-        return None, ("hist_no_club" if bridged else "hist_no_bridge")
-    return hist_club, ""
-
-
-def _match_side_list(
+def _side_list(
     match: dict[str, object],
     linked: tuple[int, int] | None,
-    zh_club: dict[str, tuple[int, str]],
-) -> list[tuple[int | None, object, str | None, tuple[int, str] | None]]:
+) -> list[tuple[int | None, object, str]]:
     """
-    一场的两侧输入：(team_id|None, 阵型, universe 中文名, 历史链俱乐部|None)。
+    一场的两侧输入：(team_id fd 锚|None, 阵型, corpus 中文名)。
 
-    链接链（linked 有值）带 team 锚；历史链带 universe 中文名与其桥接
-    俱乐部（未通=None，由 ``_side_club`` 分桶）。
+    俱乐部身份对链接/未链一律走 corpus 中文名 → 同站折（票 10：不再有
+    TM 侧身份链）；team 锚只来自链接链。
     """
-    if linked is not None:
-        return [
-            (linked[0], match["home_formation"], None, None),
-            (linked[1], match["away_formation"], None, None),
-        ]
     return [
         (
-            None,
+            linked[0] if linked is not None else None,
             match["home_formation"],
             str(match["home"]),
-            zh_club.get(str(match["home"])),
         ),
         (
-            None,
+            linked[1] if linked is not None else None,
             match["away_formation"],
             str(match["away"]),
-            zh_club.get(str(match["away"])),
         ),
     ]
 
@@ -499,12 +322,9 @@ class _Accum:
             group_last={},
             tenures=tenures,
             drops={
-                "no_alias": 0,
-                "no_club": 0,
+                "no_srct_identity": 0,
                 "unattributed": 0,
                 "formation_unknown": 0,
-                "hist_no_bridge": 0,
-                "hist_no_club": 0,
                 "live_season_unlinked": 0,
             },
         )
@@ -520,7 +340,7 @@ def _absorb_side(
     formation: object,
     club: tuple[int, str],
 ) -> None:
-    """一侧已解析到俱乐部后的聚合：任期指派 → 族格累加（drop 就地计数）。"""
+    """一侧已同站折到源T 队后的聚合：任期指派 → 族格累加（drop 就地计数）。"""
     assigned = assign_manager_day(accum.tenures.get(club[0], []), day)
     if assigned is None:
         accum.drops["unattributed"] += 1
@@ -551,30 +371,29 @@ def derive_formation_family_facet(
     """
     重建阵型族条件面（差分写幂等：业务字段全同行保留，见 ``_write_facet``）。
 
-    粒度=(season, league_zh, club_tm_id, coach_name, family)。链接链（sid→
-    fixture→team→TM，现行）之外，未链 sid 在**冻结季**（season < 当季）走
-    历史链（zh→桥→hist 名→TM，票 05）。当季=detail 覆盖的最大季——universe
-    预挂下季赛程不会提前翻界（detail 由夜班赛后采，出现即季已开踢），当季
-    单元格归链接链独占，已交付行不被历史输入扰动。丢弃口径（进 stats，诚实
-    现态，除注明外均按**侧**计）：universe_missing=detail 场不在 universe
-    （无赛季轴，按场）；kickoff_missing=开球缺失（无日期轴，
-    correctness-review F8 独立分桶，按场）；live_season_unlinked=当季未链
-    sid（按侧）；hist_no_bridge=冻结季中文名不在配对桥；hist_no_club=桥通
-    但 hist 名无 TM 俱乐部认领；no_alias/no_club=链接链别名缺口（原口径）；
-    unattributed=当日无覆盖任期；formation_unknown=指派成功但阵型缺失
-    （不进任何族分母）。空输入零行不炸。
+    粒度=(season, league_zh, club_srct_id, coach_key, family)。俱乐部身份=
+    corpus 中文名同站折（``srct_club_seasons`` 逐季枚举，data/srct_identity）；
+    任期=``srct_coach_tenures`` manager-of-the-day。当季=detail 覆盖的最大季
+    ——universe 预挂下季赛程不会提前翻界（detail 由夜班赛后采，出现即季已
+    开踢），当季单元格归链接链独占（未链 sid 入 live_season_unlinked），
+    已交付行不被历史输入扰动。丢弃口径（进 stats，诚实现态，除注明外均按
+    **侧**计）：universe_missing=detail 场不在 universe（无赛季轴，按场）；
+    kickoff_missing=开球缺失（无日期轴，correctness-review F8 独立分桶，
+    按场）；live_season_unlinked=当季未链 sid（按侧）；no_srct_identity=
+    该季枚举折不出（非 GB 面=语料范围外，spec story 15 扩域回流；GB 内
+    为真缺口，人审线在 coverage report）；unattributed=当日无覆盖任期；
+    formation_unknown=指派成功但阵型缺失（不进任何族分母）。空输入零行
+    不炸。
     """
     rebuilt_at = now or utc_now_iso()
     match_rows, matches_seen, kickoff_missing = _corpus_sides(duck_con)
     links = _linked_sides(conn)
-    aliases_by_team, club_ids = _tm_clubs(conn)
-    accum = _Accum.fresh(tenures_by_club(conn))
-    zh_club, zh_bridged, bridge_stats = _bridge_zh_to_club(conn, duck_con)
+    club_index = srct_club_index(conn)
+    accum = _Accum.fresh(srct_tenures_by_team(conn))
     live = max((str(m["season"]) for m in match_rows), default="")
-    # 格子键=(season, league_zh, club_tm_id, coach, family) → 计数/首末日；
-    # 组键=(season, league_zh, club_tm_id, coach) → 分母（已知阵型场数）与
-    # 末场（角色取末场指派，同人转正口径与 coach_changes 一致）
-    resolved_club: dict[int, tuple[int, str]] = {}  # team_id → (club_tm_id, 名)
+    # 格子键=(season, league_zh, club_srct_id, coach, family) → 计数/首末日；
+    # 组键=(season, league_zh, club_srct_id, coach) → 分母（已知阵型场数）与
+    # 末场（角色取末场指派，源T role 域恒 manager——caretaker 分类随 TM 退役）
     season_sides: dict[str, dict[str, int]] = {}
     joined = 0
     for match in match_rows:
@@ -582,7 +401,7 @@ def derive_formation_family_facet(
         day = str(match["day"])
         season = str(match["season"])
         season_stat = season_sides.setdefault(season, {"sides": 0, "known": 0})
-        # 逐季计数按场前置：阵型可得性与身份链成败无关（当季未链不压低比率）
+        # 逐季计数按场前置：阵型可得性与身份折成败无关（当季未链不压低比率）
         season_stat["sides"] += 2
         season_stat["known"] += (1 if match["home_formation"] else 0) + (
             1 if match["away_formation"] else 0
@@ -591,20 +410,10 @@ def derive_formation_family_facet(
         if linked is None and season >= live:
             accum.drops["live_season_unlinked"] += 2
             continue
-        for team_id, formation, zh_name, hist_club in _match_side_list(
-            match, linked, zh_club
-        ):
-            club, drop_key = _side_club(
-                team_id,
-                zh_name,
-                hist_club,
-                aliases_by_team,
-                club_ids,
-                resolved_club,
-                zh_bridged,
-            )
+        for team_id, formation, zh_name in _side_list(match, linked):
+            club = club_index.resolve(srct_season_of(season), zh_name)
             if club is None:
-                accum.drops[drop_key] += 1
+                accum.drops["no_srct_identity"] += 1
                 continue
             _absorb_side(
                 accum,
@@ -623,9 +432,9 @@ def derive_formation_family_facet(
         "rows": len(accum.cells),
         "club_season_leagues": len(accum.group_known),
         "coach_club_pairs": len({(k[2], k[3]) for k in accum.group_known}),
+        "srct_name_conflicts": club_index.conflicts,
         "live_season": live or None,
         "seasons": season_sides,
-        **{f"bridge_{k}": v for k, v in bridge_stats.items()},
         "rebuilt_at": rebuilt_at,
     }
     with atomic(conn):
@@ -660,23 +469,25 @@ def coach_family_prior(
     ``season < upto_season`` 的整季格子（季首视角）——两种视角都不含
     查询当场的阵型（当场面赛后才知道）。n_known=窗口内该教练已知阵型
     场数（按 季×俱乐部 组去重后求和，避免组内族行重复计分母）；
-    dominant_family 并列取字典序稳定者。
+    dominant_family 并列取字典序稳定者。键空间（票 10 起）=源T
+    coach_key（英文名优先）——参数名 ``coach_name`` 沿用（零接口改动，
+    spec 缝策略）。
     """
     if on_day is not None:
         rows = conn.execute(
             """
-            SELECT season, league_zh, club_tm_id, family, n_matches, n_known
+            SELECT season, league_zh, club_srct_id, family, n_matches, n_known
             FROM formation_family_facet
-            WHERE coach_name = ? AND season <= ? AND last_match_date < ?
+            WHERE coach_key = ? AND season <= ? AND last_match_date < ?
             """,
             (coach_name, upto_season, on_day),
         ).fetchall()
     else:
         rows = conn.execute(
             """
-            SELECT season, league_zh, club_tm_id, family, n_matches, n_known
+            SELECT season, league_zh, club_srct_id, family, n_matches, n_known
             FROM formation_family_facet
-            WHERE coach_name = ? AND season < ?
+            WHERE coach_key = ? AND season < ?
             """,
             (coach_name, upto_season),
         ).fetchall()
@@ -686,7 +497,7 @@ def coach_family_prior(
         cells[str(row["family"])] = cells.get(str(row["family"]), 0) + int(
             row["n_matches"]
         )
-        group = (str(row["season"]), str(row["league_zh"]), int(row["club_tm_id"]))
+        group = (str(row["season"]), str(row["league_zh"]), int(row["club_srct_id"]))
         group_known[group] = max(group_known.get(group, 0), int(row["n_known"]))
     ordered = sorted(cells.items(), key=lambda item: (-item[1], item[0]))
     return {
@@ -705,9 +516,10 @@ def coverage_report(conn: sqlite3.Connection) -> dict[str, object]:
 
     leagues 按 (league_fd, league_zh) 分桶（fd 映射外 league_fd=NULL 照报）；
     seasons 逐季行数/场数 + 死区标注（known/sides < 0.5 = 源侧无名单死区段
-    ——零行不是缺口是事实；零行季若早于 hist 窗起点，注 pre_hist_window）；
+    ——零行不是缺口是事实；零行季若早于源T 队籍窗起点，注 pre_srct_window）；
     totals 的丢弃计数取最近一次派生现态（face_derive_state；从未派生=
-    derived_pending）。
+    derived_pending）。票 10 非 GB 收缩在 totals.no_srct_identity 显形
+    （128 家非 GB 俱乐部行随切换消失，扩域回流，spec story 15）。
     """
     leagues = [
         {
@@ -722,8 +534,8 @@ def coverage_report(conn: sqlite3.Connection) -> dict[str, object]:
         for row in conn.execute(
             """
             SELECT league_fd, league_zh, COUNT(*) AS rows,
-                   COUNT(DISTINCT club_tm_id) AS clubs,
-                   COUNT(DISTINCT coach_name || '|' || season) AS coach_seasons,
+                   COUNT(DISTINCT club_srct_id) AS clubs,
+                   COUNT(DISTINCT coach_key || '|' || season) AS coach_seasons,
                    SUM(n_matches) AS matches, SUM(n_known) AS known
             FROM formation_family_facet
             GROUP BY league_fd, league_zh
@@ -772,18 +584,20 @@ def coverage_report(conn: sqlite3.Connection) -> dict[str, object]:
         }
         for season_key in sorted({*by_season_rows, *season_sides})
     ]
-    hist_min_row = conn.execute("SELECT MIN(match_date) FROM hist_matches").fetchone()
-    hist_min = str(hist_min_row[0]) if hist_min_row and hist_min_row[0] else ""
-    # hist 窗起点折季标（8 月界，与 silver.season_of 同界）：起点季之前的
-    # universe 季按定义无 hist 对侧 → 历史链零行是窗前季，非死区
-    hist_min_season = season_of(datetime.fromisoformat(hist_min)) if hist_min else ""
+    srct_min_row = conn.execute(
+        "SELECT MIN(season) AS s FROM srct_club_seasons"
+    ).fetchone()
+    srct_min = str(srct_min_row["s"]) if srct_min_row and srct_min_row["s"] else ""
+    # 源T 队籍窗起点折季标（票 10：facet 身份链不再走 hist——窗前=同站
+    # 枚举不存在的季，零行是窗前季，非死区）
+    srct_min_season = facet_season_of(srct_min) if srct_min else ""
     for item in seasons:
         season_key = str(item["season"])
         sides_stat = season_sides.get(season_key, {})
         n_sides = sides_stat.get("sides", 0)
         ratio = sides_stat.get("known", 0) / n_sides if n_sides > 0 else None
-        if item["rows"] == 0 and hist_min_season and season_key < hist_min_season:
-            item["note"] = "pre_hist_window（hist 窗前季，历史链不适用）"
+        if item["rows"] == 0 and srct_min_season and season_key < srct_min_season:
+            item["note"] = "pre_srct_window（源T 队籍窗前季，同站枚举不适用）"
         elif ratio is not None and ratio < DEAD_ZONE_KNOWN_RATIO:
             item["note"] = "formation_dead_zone（源侧缺名单死区，零行是事实）"
     totals: dict[str, object] = {
@@ -793,10 +607,7 @@ def coverage_report(conn: sqlite3.Connection) -> dict[str, object]:
             for key in (
                 "matches_seen",
                 "live_season_unlinked",
-                "hist_no_bridge",
-                "hist_no_club",
-                "no_alias",
-                "no_club",
+                "no_srct_identity",
                 "unattributed",
                 "formation_unknown",
             )
