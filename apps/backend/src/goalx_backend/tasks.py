@@ -52,6 +52,8 @@ from goalx_backend.data import (
     pedigree,
     quote_evidence,
     reconcile,
+    srct_tenure_reconcile,
+    srct_tenure_silver,
     today,
 )
 from goalx_backend.data import fixtures as fx_store
@@ -1051,6 +1053,44 @@ def srct_tenure_sync(
     finally:
         store.close()
     return srct_tenure.stats_dict(stats)
+
+
+def srct_tenure_silver_rebuild() -> dict[str, object]:
+    """
+    源T 任期/队籍 silver 两表全量重建（票 09；运维步，不进调度）。
+
+    语料 bronze → srct_coach_tenures / srct_club_seasons（v61，DELETE+
+    INSERT 幂等）。采集班只写语料，本函数只写两表——互不直写。
+    """
+    store = CorpusStore(get_settings().corpus_root)
+    try:
+        with task_conn() as conn:
+            return srct_tenure_silver.rebuild_srct_tenure_silver(conn, store)
+    finally:
+        store.close()
+
+
+def srct_tenure_two_source_report(*, db_path: str | None = None) -> dict[str, object]:
+    """
+    两源对账报告（票 09；只读，ADR-0012：报告不硬配）。
+
+    源T 侧=语料 bronze 直接解析（对账校验采集数据本身，非物化副本）；
+    TM 侧=运行面库只读（db_path 覆盖供工作树指生产库，connect readonly
+    URI 模式永不写）。语料 duckdb 视图缺席 → 观测面降级 corpus_available=
+    False（不发请求，coach_crosscheck 先例）。
+    """
+    settings = get_settings()
+    resolved = db_path or str(settings.db_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        conn = connect(resolved, readonly=True)
+        try:
+            with corpus_duckdb.reader(settings) as duck_con:
+                return srct_tenure_reconcile.reconcile_report(conn, store, duck_con)
+        finally:
+            conn.close()
+    finally:
+        store.close()
 
 
 def tm_coach_sync(
