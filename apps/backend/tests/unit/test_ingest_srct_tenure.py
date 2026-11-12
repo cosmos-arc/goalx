@@ -440,3 +440,155 @@ def test_tenure_shift_parser_bump_self_heals_from_raw(tmp_path: Path) -> None:
         if row["parser_version"] == "srct_coach_page_v9"
     ]
     assert {row["sid"] for row in rows} == {"96203@19", "220708@19"}
+
+
+def test_tenure_shift_circuit_breaker_stops_waf_softblock(tmp_path: Path) -> None:
+    """F2 连败熔断接线：全 403（WAF 软封锁形态）→ 连续 FAILURE_STREAK_CAP
+    件失败即停（stopped='circuit'），不烧穿整晚 ~900 请求预算。"""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(403, text="blocked")
+
+    store_dir = tmp_path / "corpus403"
+    stats = srct_tenure.run_tenure_shift(
+        CorpusStore(store_dir),
+        _settings(store_dir),
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=lambda _s: None,
+        enforce_window=False,
+        now_fn=lambda: _FIXED_NOW,
+    )
+    assert stats.stopped == "circuit"
+    # 停在第 5 件失败（FAILURE_STREAK_CAP）——远小于 900 的班预算
+    assert stats.requests == srct.FAILURE_STREAK_CAP
+    assert len(stats.failed) == srct.FAILURE_STREAK_CAP
+
+
+def _preseed_mismatch_corpus(store_dir: Path) -> None:
+    """F3 夹具：锚点教练 777 的缓存档案页引用 coach555.js（≠ 种子 cid），
+    履历已在引用键 555 下——旧 resume 门 has(career, '777') 永假的形态。"""
+    store = CorpusStore(store_dir)
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        "league_season",
+        "2015-2016-s36",
+        SAMPLE_LEAGUE_SEASON.encode("utf-8"),
+        ext=".js",
+    )
+    for team in ("19", "20", "24"):
+        store.ingest_raw(
+            srct.SRCT_PROVIDER,
+            "team_detail",
+            team,
+            SAMPLE_TEAM_DETAIL.encode("utf-8"),
+            ext=".js",
+        )
+    # tdl 现任教练 220708 的两步工件（引用一致）
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        "coach_page",
+        "220708@19",
+        SAMPLE_COACH_PAGE.encode("utf-8"),
+        ext=".html",
+    )
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        "coach_career",
+        "220708",
+        SAMPLE_COACH_CAREER.encode("utf-8"),
+        ext=".js",
+    )
+    # 错位教练 777：档案页引用 coach555.js，履历在引用键下
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        "coach_page",
+        "777@19",
+        SAMPLE_COACH_PAGE_ALT.replace("coach96203.js", "coach555.js").encode("utf-8"),
+        ext=".html",
+    )
+    store.ingest_raw(
+        srct.SRCT_PROVIDER,
+        "coach_career",
+        "555",
+        SAMPLE_COACH_CAREER.encode("utf-8"),
+        ext=".js",
+    )
+    store.close()
+    detail_dir = store_dir / "raw" / srct.SRCT_PROVIDER / srct.DETAIL_DATASET
+    detail_dir.mkdir(parents=True)
+    anchor = (
+        "<a class='coach' href='//srct.test/coach/19/777.html' "
+        "title='锚教练'>(主教练: 锚教练)</a>"
+    )
+    (detail_dir / "100.html.gz").write_bytes(gzip.compress(anchor.encode("utf-8")))
+
+
+def _run_mismatch(
+    store_dir: Path, seen: list[httpx.Request]
+) -> srct_tenure.TenureStats:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(500, text=f"unrouted {request.url.path}")
+
+    return srct_tenure.run_tenure_shift(
+        CorpusStore(store_dir),
+        _settings(store_dir),
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        seasons=("2015-2016",),
+        leagues=(("英超", "36"),),
+        sleeper=lambda _s: None,
+        enforce_window=False,
+        now_fn=lambda: _FIXED_NOW,
+    )
+
+
+def test_tenure_shift_resume_key_uses_page_career_ref(tmp_path: Path) -> None:
+    """F3：resume 门用实际履历键（缓存页引用的 career_cid）——错位教练的
+    档案页不再每班重抓；两跑幂等（第二跑零请求）。"""
+    store_dir = tmp_path / "corpus_mismatch"
+    _preseed_mismatch_corpus(store_dir)
+    seen: list[httpx.Request] = []
+    stats = _run_mismatch(store_dir, seen)
+    # 旧门 has(career,'777') 永假 → 每班重抓 777 档案页；修后全缓存零网络
+    assert stats.requests == 0
+    assert seen == []
+    seen.clear()
+    stats2 = _run_mismatch(store_dir, seen)
+    assert stats2.requests == 0
+
+
+def test_tenure_shift_mismatch_page_self_heals_on_parser_bump(tmp_path: Path) -> None:
+    """F3：parser 升版自愈覆盖缓存档案页（不再只限首抓分支）——错位教练
+    777 的 coach_page 也能长出当前版 bronze 行（silver ename 不再因无当前
+    版页行回退 id 键）。"""
+    store_dir = tmp_path / "corpus_mismatch_bump"
+    _preseed_mismatch_corpus(store_dir)
+    seen: list[httpx.Request] = []
+    _run_mismatch(store_dir, seen)  # 首跑：零网络回补当前版 bronze 行
+    seen.clear()
+    original = dict(srct_tenure.TENURE_BRONZE_VERSIONS)
+    srct_tenure.TENURE_BRONZE_VERSIONS.clear()
+    srct_tenure.TENURE_BRONZE_VERSIONS.update(
+        {**original, "coach_page": "srct_coach_page_v9"}
+    )
+    try:
+        stats = _run_mismatch(store_dir, seen)
+    finally:
+        srct_tenure.TENURE_BRONZE_VERSIONS.clear()
+        srct_tenure.TENURE_BRONZE_VERSIONS.update(original)
+    assert stats.requests == 0
+    assert stats.bronze_repaired == 2  # 777@19 + 220708@19 两页升版回补
+    store = CorpusStore(store_dir)
+    try:
+        rows = [
+            row
+            for row in store.read_bronze(srct.SRCT_PROVIDER, "coach_page")
+            if row["parser_version"] == "srct_coach_page_v9"
+        ]
+    finally:
+        store.close()
+    assert {row["sid"] for row in rows} == {"777@19", "220708@19"}
+    page_777 = next(row for row in rows if row["sid"] == "777@19")
+    assert page_777["payload"]["career_cid"] == "555"

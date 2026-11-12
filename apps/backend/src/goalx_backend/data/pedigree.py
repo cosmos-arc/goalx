@@ -27,7 +27,8 @@
 
 行触发 = (team, season) 在 hist 出现（fd 面键空间=hist 英文队名，backtest
 EM 扫描直读）；源T 侧身份经 ``srct_identity.srct_hist_name_index``（三级
-词法+受控别名）解析，未解析队年限/频谱=NULL（诚实缺，不当 0 用——非 GB
+词法+受控别名，词法子集层带覆盖域门——hist 全联赛域的域外名不折，F1）
+解析，未解析队年限/频谱=NULL（诚实缺，不当 0 用——非 GB
 联赛在源T GB 语料范围外，年限/频谱 NULL 直到批量扩域，spec story 15），
 积分/荣誉照常。``club_tm_id`` 列保留 TM 锚（ADR-0014 对账/备用语义，仅
 信息列——频谱/年限不再依赖它）。
@@ -678,6 +679,7 @@ def derive_club_pedigree(
             "teams": len({team for team, _season in appearances}),
             "seasons": len({season for _team, season in appearances}),
             "srct_unresolved_teams": sorted(srct_unresolved),
+            "srct_hist_name_conflicts": srct_index.conflicts,
             "honours_unresolved_keys": honours_unresolved,
             "honours_conflicts": honours_conflicts,
             "rebuilt_at": rebuilt_at,

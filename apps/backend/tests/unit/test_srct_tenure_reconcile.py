@@ -466,6 +466,68 @@ def test_reconcile_report_degrades_without_corpus(tmp_path) -> None:  # type: ig
     store.close()
 
 
+def test_reconcile_report_counts_cn_name_conflicts(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """F4（对账双生 gb_cn_names）：同名中文队名撞两队弃键+计数入 srct_side
+    面——旧 dict 推导 last-wins 会把 match_detail 观测记到后到队。"""
+    import sqlite3
+
+    from goalx_backend import db
+    from goalx_backend.data.corpus_store import CorpusStore
+    from goalx_backend.data.ingest import srct, srct_tenure
+
+    db_path = tmp_path / "cn.db"
+    conn = db.connect(str(db_path))
+    db.migrate(conn)
+    conn.close()
+    store = CorpusStore(tmp_path / "corpus")
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        srct_tenure.LEAGUE_SEASON_DATASET,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": srct_tenure.LEAGUE_SEASON_DATASET,
+                "sid": "2024-2025-s36",
+                "fetched_at": "2026-11-12T01:30:00+00:00",
+                "parser_version": srct_tenure.TENURE_BRONZE_VERSIONS[
+                    srct_tenure.LEAGUE_SEASON_DATASET
+                ],
+                "raw_sha": "deadbeef",
+                "payload": {
+                    "league": {
+                        "league_id": 36,
+                        "name_cn": "英格兰超级联赛",
+                        "name_tw": "英格蘭超級聯賽",
+                        "name_en": "English Premier League",
+                        "season": "2024-2025",
+                    },
+                    "teams": [
+                        {
+                            "team_id": 90,
+                            "name_cn": "双生",
+                            "name_tw": "雙生",
+                            "name_en": "Twin A FC",
+                        },
+                        {
+                            "team_id": 91,
+                            "name_cn": "双生",
+                            "name_tw": "雙生",
+                            "name_en": "Twin B FC",
+                        },
+                    ],
+                },
+            }
+        ],
+    )
+    reader = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    reader.row_factory = sqlite3.Row
+    report = rec.reconcile_report(reader, store, None)
+    assert report["srct_side"]["cn_name_conflicts"] == 1
+    assert report["srct_side"]["club_season_rows"] == 2
+    reader.close()
+    store.close()
+
+
 def test_tenure_diff_window_segmentation() -> None:
     """window_from 分段：TM 俱乐部史窗外教练不吞窗内缺口率（真实面实缴）。"""
     report = rec.tenure_diff(
@@ -706,6 +768,68 @@ def test_replay_inputs_from_bronze() -> None:
     assert index.resolve("Arsenal") == 19
     assert index.resolve("West Brom") == 21
     assert index.resolve("Nowhere FC") is None
+
+
+def _league_bronze(teams: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    """一季一联赛的 league_season bronze 投影（F4/F1 重放守卫测试用）。"""
+    return {
+        "2024-2025-s36": {
+            "payload": {
+                "league": {
+                    "league_id": 36,
+                    "name_cn": "英格兰超级联赛",
+                    "name_tw": "英格蘭超級聯賽",
+                    "name_en": "English Premier League",
+                    "season": "2024-2025",
+                },
+                "teams": teams,
+                "table_rows": 0,
+                "last_update": None,
+            }
+        }
+    }
+
+
+def test_replay_inputs_name_collision_dropped() -> None:
+    """F4 双生守卫（重放折）：同英文名撞两队弃键+计数（不静默首到）。"""
+    leagues = _league_bronze(
+        [
+            {"team_id": 90, "name_cn": "甲", "name_tw": "甲", "name_en": "Twin FC"},
+            {"team_id": 91, "name_cn": "乙", "name_tw": "乙", "name_en": "Twin FC"},
+            {
+                "team_id": 19,
+                "name_cn": "阿森纳",
+                "name_tw": "阿仙奴",
+                "name_en": "Arsenal",
+            },
+        ]
+    )
+    _tenures, index = rec.replay_inputs_from_bronze({}, {}, leagues)
+    assert index.resolve("Twin FC") is None
+    assert index.conflicts == 1
+    assert index.resolve("Arsenal") == 19
+
+
+def test_replay_inputs_loose_domain_gate_injectable() -> None:
+    """F1 域门在重放面可注入：Rangers（SC0 域外）子集折 QPR 的假命中被拦，
+    域内实证名（QPR）松层照常。"""
+    leagues = _league_bronze(
+        [
+            {
+                "team_id": 50,
+                "name_cn": "女王公园巡游者",
+                "name_tw": "女王公園巡遊者",
+                "name_en": "Queens Park Rangers (QPR)",
+            }
+        ]
+    )
+    _tenures, ungated = rec.replay_inputs_from_bronze({}, {}, leagues)
+    assert ungated.resolve("Rangers") == 50  # 无门形态＝旧假命中行为（对照）
+    _tenures, gated = rec.replay_inputs_from_bronze(
+        {}, {}, leagues, loose_names=frozenset({"QPR"})
+    )
+    assert gated.resolve("Rangers") is None
+    assert gated.resolve("QPR") == 50
 
 
 def test_coach_mapping_replay_report_shell(tmp_path) -> None:  # type: ignore[no-untyped-def]

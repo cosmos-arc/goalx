@@ -23,7 +23,9 @@
 
 三相位一班：A matchResult（GB 双联赛逐季，球队并集）→ B tdl（逐队现任）
 → C coach 两步（种子并集，去重后逐教练）。礼貌三件套复用 srct 常量
-（共享滑窗 30/min 硬顶 + 2.4s±0.8s 抖动 + NightBudget 预算/连败熔断）；
+（共享滑窗 30/min 硬顶 + 2.4s±0.8s 抖动 + NightBudget 预算/连败熔断——
+逐工件 ``budget.note``：成功清零连败、失败计数，连续 FAILURE_STREAK_CAP
+件熔断 stopped="circuit"，WAF 软封锁不再烧穿整晚预算）；
 01:00-08:00 夜窗让位（复用 srct_shift 口径，手工回补 enforce_window=False）。
 """
 
@@ -372,8 +374,14 @@ def _fetch_and_archive(  # noqa: PLR0913 一实体接缝集（拉取/判别/落�
     stats: TenureStats,
     counter: str,
     fetch: Callable[[str], httpx.Response],
+    budget: srct.NightBudget,
 ) -> dict[str, object] | None:
-    """一实体：拉取 → 内容判别 → 落盘 raw+bronze（失败留痕 None）。"""
+    """
+    一实体：拉取 → 内容判别 → 落盘 raw+bronze（失败留痕 None）。
+
+    成败逐件入 ``budget.note``（F2）：成功清连败、失败计数——连败达
+    FAILURE_STREAK_CAP 抛 CircuitOpen（夜班停机信号，调用班循环接住）。
+    """
     try:
         body = fetch(url).content
         payload = parse(body)
@@ -382,12 +390,15 @@ def _fetch_and_archive(  # noqa: PLR0913 一实体接缝集（拉取/判别/落�
     except srct.SrctContentError as exc:
         stats.failed[f"{dataset}:{key}"] = f"SrctContentError: {exc}"[:120]
         logger.warning("tenure {} {} 坏体（{}）", dataset, key, exc)
+        budget.note(True)
         return None
     except httpx.HTTPError as exc:
         stats.failed[f"{dataset}:{key}"] = f"{type(exc).__name__}: {exc}"[:120]
         logger.warning("tenure {} {} 拉取失败（{}）", dataset, key, exc)
+        budget.note(True)
         return None
     _archive(store, dataset, key, body, payload, stats, ext=".js", counter=counter)
+    budget.note(False)
     return payload
 
 
@@ -523,6 +534,7 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
                         stats,
                         "league_new",
                         _get,
+                        budget,
                     )
                     if payload is None:
                         continue
@@ -556,6 +568,7 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
                     stats,
                     "team_new",
                     _get,
+                    budget,
                 )
                 if payload is None:
                     continue
@@ -591,20 +604,52 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
     try:
         for cid, team_ctx in sorted(coach_seeds.items()):
             page_key = f"{cid}@{team_ctx}"
-            if store.has(srct.SRCT_PROVIDER, COACH_CAREER_DATASET, cid):
-                # 履历 raw 在缓存：新版 bronze 行缺席即本地重解析回补（升版自愈）
-                if cid not in store.bronze_sids(
-                    srct.SRCT_PROVIDER, COACH_CAREER_DATASET, career_ver
-                ) and _reparse_bronze(
-                    store,
-                    COACH_CAREER_DATASET,
-                    cid,
-                    parse_coach_career,
-                    ext=".js",
-                ):
-                    stats.bronze_repaired += 1
+            # F3：resume 键=实际履历键。档案页在缓存时以其**原样引用的**
+            # career_cid 为准（种子 cid 与页引用 id 错位——site 改号/旧锚——
+            # 时旧门 has(career, cid) 永假：档案页每班重抓，且 page_new=False
+            # 永不落当前版 bronze 行，parser 升版自愈也够不着该页）
+            page_cached = store.has(srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_key)
+            page: dict[str, object] | None = None
+            if page_cached:
+                try:
+                    page = parse_coach_page(
+                        store.read_raw(
+                            srct.SRCT_PROVIDER,
+                            COACH_PAGE_DATASET,
+                            page_key,
+                            ext=".html",
+                        )
+                    )
+                except (srct.SrctContentError, OSError, EOFError):
+                    page = None  # 缓存页坏体：走重抓（page_new=False 不覆盖 raw）
+            career_cid = str(page.get("career_cid") or "") if page else ""
+            career_version = str(page.get("career_version") or "") if page else ""
+            career_keys = {key for key in (cid, career_cid) if key}
+            if any(
+                store.has(srct.SRCT_PROVIDER, COACH_CAREER_DATASET, key)
+                for key in career_keys
+            ):
+                # 履历 raw 在缓存（种子键或页引用键）：新版 bronze 行缺席即
+                # 本地重解析回补（升版自愈对两键与缓存档案页一律生效，不
+                # 依赖首抓分支）
+                for key in sorted(career_keys):
+                    if (
+                        store.has(srct.SRCT_PROVIDER, COACH_CAREER_DATASET, key)
+                        and key
+                        not in store.bronze_sids(
+                            srct.SRCT_PROVIDER, COACH_CAREER_DATASET, career_ver
+                        )
+                        and _reparse_bronze(
+                            store,
+                            COACH_CAREER_DATASET,
+                            key,
+                            parse_coach_career,
+                            ext=".js",
+                        )
+                    ):
+                        stats.bronze_repaired += 1
                 if (
-                    store.has(srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_key)
+                    page_cached
                     and page_key
                     not in store.bronze_sids(
                         srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_ver
@@ -619,33 +664,38 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
                 ):
                     stats.bronze_repaired += 1
                 continue
-            page_new = not store.has(srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_key)
-            try:
-                page_body = _get(
-                    settings.srct_coach_page_url.format(team_id=team_ctx, cid=cid)
-                ).content
-                page = parse_coach_page(page_body)
-            except srct.NightStop:
-                raise
-            except httpx.HTTPError as exc:
-                if _is_not_found(exc):
-                    stats.coaches_not_found += 1
-                stats.failed[f"coach:{cid}"] = f"{type(exc).__name__}: {exc}"[:120]
-                logger.warning("tenure coach {} 档案页失败（{}）", cid, exc)
-                continue
-            if page_new:
-                _archive(
-                    store,
-                    COACH_PAGE_DATASET,
-                    page_key,
-                    page_body,
-                    page,
-                    stats,
-                    ext=".html",
-                    counter="coach_page_new",
-                )
-            career_cid = str(page.get("career_cid") or "")
-            career_version = str(page.get("career_version") or "")
+            if page is None:
+                # 档案页缺/坏：两步第一步（抓页取名+履历引用串；page_new 仅
+                # 作 raw 落盘判据——缓存页在档即零网络复用其引用串）
+                page_new = not page_cached
+                try:
+                    page_body = _get(
+                        settings.srct_coach_page_url.format(team_id=team_ctx, cid=cid)
+                    ).content
+                    page = parse_coach_page(page_body)
+                except srct.NightStop:
+                    raise
+                except httpx.HTTPError as exc:
+                    if _is_not_found(exc):
+                        stats.coaches_not_found += 1
+                    stats.failed[f"coach:{cid}"] = f"{type(exc).__name__}: {exc}"[:120]
+                    budget.note(True)
+                    logger.warning("tenure coach {} 档案页失败（{}）", cid, exc)
+                    continue
+                budget.note(False)
+                if page_new:
+                    _archive(
+                        store,
+                        COACH_PAGE_DATASET,
+                        page_key,
+                        page_body,
+                        page,
+                        stats,
+                        ext=".html",
+                        counter="coach_page_new",
+                    )
+                career_cid = str(page.get("career_cid") or "")
+                career_version = str(page.get("career_version") or "")
             if not career_cid or not career_version:
                 stats.failed[f"coach:{cid}"] = "档案页无履历引用（改版或空档）"
                 continue
@@ -664,6 +714,7 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
                 stats,
                 "career_new",
                 _get,
+                budget,
             )
             if fetched is not None and career_cid != cid:
                 logger.info(

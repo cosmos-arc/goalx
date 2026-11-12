@@ -233,6 +233,78 @@ def test_hist_name_index_three_tier_plus_aliases(
     assert index.resolve("Zeta FC") is None
 
 
+def test_hist_name_index_subset_tier_gated_to_covered_domain(
+    identity_db: sqlite3.Connection,
+) -> None:
+    """F1：词法子集层只对覆盖域（E0/E1）实证名开放——域外名（SC0
+    Rangers）单词元子集命中 GB 长名队（QPR）＝跨域假命中，门关退精确
+    两级；域内实证名（E1 QPR）松层照常。"""
+    _seed_club_seasons(identity_db)
+    identity_db.execute(
+        """
+        INSERT INTO srct_club_seasons
+            (league_id, season, team_id, team_name_cn, team_name_tw,
+             team_name_en, league_name_cn, league_name_en, source_key,
+             parse_version, materialized_at)
+        VALUES (36, '2024-2025', 50, '女王公园巡游者', '女王公園巡遊者',
+                'Queens Park Rangers (QPR)', '英格兰超级联赛',
+                'English Premier League', 'k', 'v', '2026-11-12T00:00:00+00:00')
+        """
+    )
+    # hist 实证：Rangers 只在 SC0（域外）、QPR 在 E1（覆盖域内）
+    identity_db.executemany(
+        """
+        INSERT INTO hist_matches
+            (competition, season, match_date, home_team, away_team, fthg, ftag, ftr)
+        VALUES (?, '2425', '2025-02-01', ?, 'Other FC', 1, 0, 'H')
+        """,
+        [("SC0", "Rangers"), ("E1", "QPR")],
+    )
+    identity_db.commit()
+    index = srct_identity.srct_hist_name_index(identity_db)
+    # 域外名：{rangers} ⊂ {queens,park,rangers,qpr} 唯一子集的旧形态＝假
+    # 命中 → 域门关（精确两级也无可配 → None，诚实缺）
+    assert index.resolve("Rangers") is None
+    # 域内实证名：松层照常（QPR 是全名的缩写子集形态）
+    assert index.resolve("QPR") == 50
+    # 全名精确两级照常（域外名走全名仍可精确配——受控别名/精确不受门限）
+    assert index.resolve("Queens Park Rangers (QPR)") == 50
+
+
+def test_fold_name_ids_collision_drops_and_counts() -> None:
+    """F4 名折单属主：同名撞异 id → 弃键+计数（先到不独裁，后到不复活）。"""
+    names, conflicts = srct_identity.fold_name_ids(
+        [("Twin FC", 1), ("Twin FC", 2), ("Twin FC", 1), ("Solo FC", 3)]
+    )
+    assert names == {"Solo FC": 3}
+    assert conflicts == 1
+
+
+def test_hist_name_index_name_collision_counted_not_first_wins(
+    identity_db: sqlite3.Connection,
+) -> None:
+    """F4：srct 枚举英文名撞两队（站内改号形态）→ 弃键 + conflicts 计数，
+    不静默首到；非冲突键不受牵连。"""
+    _seed_club_seasons(identity_db)
+    identity_db.executemany(
+        """
+        INSERT INTO srct_club_seasons
+            (league_id, season, team_id, team_name_cn, team_name_tw,
+             team_name_en, league_name_cn, league_name_en, source_key,
+             parse_version, materialized_at)
+        VALUES (36, '2024-2025', ?, '双生队', '雙生隊', 'Twin FC',
+                '英格兰超级联赛', 'English Premier League', 'k', 'v',
+                '2026-11-12T00:00:00+00:00')
+        """,
+        [(60,), (61,)],
+    )
+    identity_db.commit()
+    index = srct_identity.srct_hist_name_index(identity_db)
+    assert index.resolve("Twin FC") is None
+    assert index.conflicts == 1
+    assert index.resolve("Leicester City") == 59
+
+
 # —— 任期装载（manager-of-the-day 输入形态） ——
 
 

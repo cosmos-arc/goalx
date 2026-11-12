@@ -361,6 +361,62 @@ def test_tier1_is_srct_league_vocab_non_gb_null(hist_db: sqlite3.Connection) -> 
     assert (ajax["promo_to_tier1"], ajax["releg_from_tier1"]) == (None, None)
 
 
+def test_derive_cross_domain_subset_name_null_and_reported(
+    hist_db: sqlite3.Connection,
+) -> None:
+    """F1：hist 全联赛域（derive 消费面）里 SC0 域外名（Rangers）不得经
+    词法子集层折进 GB 队（Queens Park Rangers (QPR)）——年限/频谱 NULL、
+    入 srct_unresolved_teams；域内实证名（E1 QPR）松层照常不回缩。"""
+    _seed_hist(
+        hist_db,
+        [
+            _hist("2425", "2025-02-01", "Celtic", "Rangers", 2, 0, comp="SC0"),
+            _hist("2425", "2025-02-08", "Rangers", "Celtic", 1, 1, comp="SC0"),
+            _hist("2425", "2025-03-01", "QPR", "Filler", 1, 0, comp="E1"),
+        ],
+    )
+    _seed_srct_seasons(
+        hist_db,
+        [
+            (36, "2023-2024", 50, "Queens Park Rangers (QPR)"),
+            (36, "2024-2025", 50, "Queens Park Rangers (QPR)"),
+        ],
+    )
+    stats = pedigree.derive_club_pedigree(hist_db, now="2026-11-12T00:00:00+00:00")
+    # 域外名：折不出 → NULL（不写 QPR 的英格兰年限/频谱）+ 入未解析面
+    rangers = _row(hist_db, "Rangers", "2425")
+    assert rangers["top_flight_streak"] is None
+    assert (rangers["promo_to_tier1"], rangers["releg_from_tier1"]) == (None, None)
+    assert "Rangers" in stats["srct_unresolved_teams"]
+    # 域内实证名（E1）：松层照常折到源T 队——截至 2024 前一季 2023 在英超
+    qpr = _row(hist_db, "QPR", "2425")
+    assert qpr["top_flight_streak"] == 1
+    assert "QPR" not in stats["srct_unresolved_teams"]
+    # F4 冲突账面：本夹具无同名撞队
+    assert stats["srct_hist_name_conflicts"] == 0
+
+
+def test_derive_reports_srct_name_conflicts(hist_db: sqlite3.Connection) -> None:
+    """F4：srct 枚举英文名撞两队 → 该名 NULL 入未解析面 + conflicts 计数
+    （站内改号不静默首到配错队）。"""
+    _seed_hist(hist_db, [_hist("2425", "2025-04-01", "Twin FC", "Filler", 1, 1)])
+    _seed_srct_seasons(
+        hist_db,
+        [
+            (36, "2024-2025", 60, "Twin FC"),
+            (36, "2024-2025", 61, "Twin FC"),
+            (36, "2024-2025", 70, "Filler"),
+        ],
+    )
+    stats = pedigree.derive_club_pedigree(hist_db, now="2026-11-12T00:00:00+00:00")
+    twin = _row(hist_db, "Twin FC", "2425")
+    assert twin["top_flight_streak"] is None  # 撞两队 → 弃键（不配 60 也不配 61）
+    assert stats["srct_hist_name_conflicts"] == 1
+    assert "Twin FC" in stats["srct_unresolved_teams"]
+    filler = _row(hist_db, "Filler", "2425")
+    assert filler["top_flight_streak"] == 0  # 非冲突键不受牵连（真 0：无前季）
+
+
 def test_honours_fd_name_forms_resolve_not_null(hist_db: sqlite3.Connection) -> None:
     """F2：fd 真名形态（Wolves/Sp Lisbon/St Gilloise/Buyuksehyr）命中种子。"""
     _seed_hist(

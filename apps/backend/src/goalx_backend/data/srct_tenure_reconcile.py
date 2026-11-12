@@ -47,7 +47,12 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from goalx_backend.data import results as results_store
 from goalx_backend.data import srct_tenure_silver
 from goalx_backend.data.coach_changes import Tenure, assign_manager_day
-from goalx_backend.data.srct_identity import SrctHistNameIndex, fold_tenures_by_team
+from goalx_backend.data.srct_identity import (
+    HIST_COVERED_COMPETITIONS,
+    SrctHistNameIndex,
+    fold_name_ids,
+    fold_tenures_by_team,
+)
 from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling.team_align import (
     NameIndex,
@@ -738,6 +743,8 @@ def replay_inputs_from_bronze(
     careers: Mapping[str, Mapping[str, object]],
     pages: Mapping[str, Mapping[str, object]],
     leagues: Mapping[str, Mapping[str, object]],
+    *,
+    loose_names: frozenset[str] | None = None,
 ) -> tuple[dict[int, list[Tenure]], SrctHistNameIndex]:
     """
     Bronze 三族 →（tenures_by_team, hist 名折索引）——重放的两件输入。
@@ -746,7 +753,10 @@ def replay_inputs_from_bronze(
     同语义不同源：此处从 bronze 内存投影（silver 纯函数），供主库 srct 两表
     物化前的预估——幽灵教练守卫（同 coach_key 同区间双 playerInfo id 折叠
     为一）与 date_from 升序契约照旧（折叠单属主=srct_identity.
-    fold_tenures_by_team，与主库读缝同一实现）。
+    fold_tenures_by_team，与主库读缝同一实现）；英文名折同名撞两队弃键
+    计数同单属主（fold_name_ids，F4）。loose_names=查询域门实证集（F1，
+    主库面由 srct_hist_name_index 自建；重放面由调用方从主库 hist 只读
+    供——None=不设门，仅限查询域按构造即覆盖域的场合）。
     """
     tenure_rows = srct_tenure_silver.tenure_rows_from_bronze(careers, pages)
     season_rows = srct_tenure_silver.club_season_rows_from_bronze(leagues)
@@ -756,10 +766,12 @@ def replay_inputs_from_bronze(
             tenure_rows, key=lambda r: (r["team_id"], r["date_from"], r["coach_key"])
         )
     )
-    names: dict[str, int] = {}
-    for row in season_rows:
-        names.setdefault(row["team_name_en"], row["team_id"])
-    return tenures, SrctHistNameIndex(_index=NameIndex.build(names))
+    names, conflicts = fold_name_ids(
+        (row["team_name_en"], row["team_id"]) for row in season_rows
+    )
+    return tenures, SrctHistNameIndex(
+        _index=NameIndex.build(names), _loose_domain=loose_names, conflicts=conflicts
+    )
 
 
 def replay_coach_mapping(
@@ -934,7 +946,11 @@ def reconcile_report(
     srct_side = load_srct_side(store)
     tm_side = load_tm_side(conn)
     srct_teams = srct_side["teams"]
-    gb_cn_names = {cn: team for team, (cn, _tw, _en) in srct_teams.items()}
+    # F4：中文名→team 折叠同守卫——同名撞两队弃键（旧 dict 推导 last-wins
+    # 会把观测记到后到队，站内改号静默错记）；冲突计数入 srct_side 面
+    gb_cn_names, cn_conflicts = fold_name_ids(
+        (cn, team) for team, (cn, _tw, _en) in srct_teams.items()
+    )
 
     structural: dict[int, int] = {}
     structural_collisions: dict[str, int] = {}
@@ -1041,6 +1057,7 @@ def reconcile_report(
         "srct_side": {
             "tenure_rows": srct_side["tenure_rows"],
             "club_season_rows": srct_side["club_season_rows"],
+            "cn_name_conflicts": cn_conflicts,
         },
         "adr": "ADR-0012：对账只产报告不硬配；无分母不造率",
     }
@@ -1063,8 +1080,16 @@ def coach_mapping_replay_report(
     留窗/联赛域/语料计数（spec story 14：判定可审计）。
     """
     bronze = srct_tenure_silver.load_tenure_bronze(store)
+    # 查询域门实证集（F1）：主库 hist 覆盖域（E0/E1 全季）名集——与
+    # srct_identity.srct_hist_name_index 同口径（不随重放窗缩水：域内名
+    # 在窗外的季节出现同样实证其域内身份）
+    loose_names = frozenset(
+        str(row["team"])
+        for row in results_store.hist_team_names(conn)
+        if str(row["competition"]) in HIST_COVERED_COMPETITIONS
+    )
     tenures, index = replay_inputs_from_bronze(
-        bronze["careers"], bronze["pages"], bronze["leagues"]
+        bronze["careers"], bronze["pages"], bronze["leagues"], loose_names=loose_names
     )
     hist_rows = results_store.hist_rows_in_season_window(
         conn,

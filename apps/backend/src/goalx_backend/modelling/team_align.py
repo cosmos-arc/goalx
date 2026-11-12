@@ -119,13 +119,23 @@ class NameIndex:
             token_index.setdefault(tuple(normalized.split()), target)
         return cls(entries=entries, _normalized=normalized_index, _tokens=token_index)
 
+    def resolve_exact(self, name: str) -> int | None:
+        """
+        前两级 only（exact → normalized）；词元子集层不开放。
+
+        供消费方做域门（correctness-review F1）：词元子集层是松配层，
+        单词元查询可唯一子集命中长名候选（Rangers ⊂ Queens Park Rangers）——
+        跨域消费面（查询名可能来自索引覆盖域之外）必须自证查询域后再走
+        ``resolve``，或退到本方法只许精确两级。
+        """
+        return self._normalized.get(normalize_team_name(name))
+
     def resolve(self, name: str) -> int | None:
         """Resolve a name to an id; ambiguity across teams yields None."""
-        normalized = normalize_team_name(name)
-        exact = self._normalized.get(normalized)
+        exact = self.resolve_exact(name)
         if exact is not None:
             return exact
-        key = set(normalized.split())
+        key = set(normalize_team_name(name).split())
         if not key:
             return None
         hits: set[int] = {
