@@ -31,8 +31,8 @@ def test_migration_v58_idempotent(db: sqlite3.Connection) -> None:
     """v58 幂等：两表就位、重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 60
-    assert migrate(db) == 60  # 同版本重跑零效果
+    assert migrate(db) == 61
+    assert migrate(db) == 61  # 同版本重跑零效果
     for table in ("quality_gate_specs", "quality_gate_events"):
         assert (
             db.execute(
@@ -49,12 +49,12 @@ def test_migration_v59_adds_coverage_columns_idempotent(
     """F4/v59：门账覆盖率三列就位（可空）；重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 60
+    assert migrate(db) == 61
     columns = {
         str(row["name"]) for row in db.execute("PRAGMA table_info(quality_gate_events)")
     }
     assert {"n_champion_window", "n_challenger_window", "paired_ratio"} <= columns
-    assert migrate(db) == 60  # ALTER 幂等守卫重入零效果
+    assert migrate(db) == 61  # ALTER 幂等守卫重入零效果
 
 
 def test_gate_tables_are_append_only(db: sqlite3.Connection) -> None:

@@ -3179,6 +3179,77 @@ def _apply_v60(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v61(conn: sqlite3.Connection) -> None:
+    """
+    v61（mining-loop 票 09）：源T 任期/队籍 silver 两表（spec-srct-cutover）。
+
+    - srct_coach_tenures：coach_career 语料解析出的教练任期行（coachCount
+      竞赛分行已折总分行；coach_id=canonical playerInfo id（钉①），coach_key
+      =英文名优先、缺则 id 串（钉②））。消费方=任期/队籍读缝（票 10 切换
+      对象，现缝读 tm_coach_tenures）；
+    - srct_club_seasons：matchResult 逐季球队枚举（队籍按构造完整——踢过
+      该季联赛的队必然在枚举里，无 TM 现役名单快照缺口）。
+
+    派生面纪律：表内容由 data/srct_tenure_silver.rebuild 全量重建
+    （DELETE+INSERT 一事务，幂等），采集永不直写。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srct_coach_tenures (
+            id INTEGER PRIMARY KEY,
+            coach_id INTEGER NOT NULL,
+            coach_key TEXT NOT NULL,
+            coach_name_cn TEXT,
+            coach_name_tw TEXT,
+            coach_name_en TEXT,
+            team_id INTEGER NOT NULL,
+            team_name_cn TEXT NOT NULL,
+            team_name_en TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT,
+            role TEXT,
+            games INTEGER,
+            wins INTEGER,
+            draws INTEGER,
+            losses INTEGER,
+            parse_version TEXT NOT NULL,
+            materialized_at TEXT NOT NULL,
+            UNIQUE (coach_id, team_id, date_from)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_srct_coach_tenures_team
+        ON srct_coach_tenures (team_id, date_from)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_srct_coach_tenures_key
+        ON srct_coach_tenures (coach_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srct_club_seasons (
+            league_id INTEGER NOT NULL,
+            season TEXT NOT NULL,
+            team_id INTEGER NOT NULL,
+            team_name_cn TEXT NOT NULL,
+            team_name_tw TEXT NOT NULL,
+            team_name_en TEXT NOT NULL,
+            league_name_cn TEXT NOT NULL,
+            league_name_en TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            materialized_at TEXT NOT NULL,
+            UNIQUE (league_id, season, team_id)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3240,6 +3311,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (58, _apply_v58),
     (59, _apply_v59),
     (60, _apply_v60),
+    (61, _apply_v61),
 )
 
 

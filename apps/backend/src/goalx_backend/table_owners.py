@@ -99,6 +99,10 @@ OWNERS: dict[str, set[str]] = {
         "formation_family_facet",
         "club_pedigree",
         "face_derive_state",
+        # mining-loop 票 09：源T 任期/队籍 silver 两表（data/srct_tenure_silver
+        # 全量重建；票 10 身份切换的读缝底座，v61）
+        "srct_coach_tenures",
+        "srct_club_seasons",
     },
     "modelling": {"forecasts", "team_aliases", "forecast_coverage"},
     "evaluation": {

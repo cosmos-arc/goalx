@@ -66,8 +66,8 @@ def test_migration_v50_idempotent(db: sqlite3.Connection) -> None:
     """v50 幂等：两表就位、重跑零效果（同版本重跑=不重复施用）。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 60
-    assert migrate(db) == 60  # 同版本重跑零效果
+    assert migrate(db) == 61
+    assert migrate(db) == 61  # 同版本重跑零效果
     for table in ("strategy_versions", "version_transitions"):
         assert (
             db.execute(

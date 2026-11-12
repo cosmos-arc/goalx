@@ -40,8 +40,8 @@ def test_migration_v57_idempotent(db: sqlite3.Connection) -> None:
     """v57 幂等：账表就位、forecasts 重建（shadow 轨道+版本标签列）、重跑零效果。"""
     from goalx_backend.db import migrate
 
-    assert migrate(db) == 60
-    assert migrate(db) == 60  # 同版本重跑零效果
+    assert migrate(db) == 61
+    assert migrate(db) == 61  # 同版本重跑零效果
     assert (
         db.execute(
             "SELECT COUNT(*) c FROM sqlite_master WHERE type='table'"
@@ -879,7 +879,7 @@ def test_v57_upgrade_rehearsal_preserves_forecast_rows() -> None:
             (fid,),
         )
         conn.commit()
-    assert db_mod.migrate(conn) == 60  # v57 施行：重建 forecasts（全链恢复后）
+    assert db_mod.migrate(conn) == 61  # v57 施行：重建 forecasts（全链恢复后）
     # F3：全七列逐一保行（id 序/track/model_version/issued_at/content_hash/
     # payload 逐字）+ strategy_version_id 不回溯打标
     rows = conn.execute(
@@ -909,7 +909,7 @@ def test_v57_upgrade_rehearsal_preserves_forecast_rows() -> None:
         " 'h-new', '{}')",
         (fid,),
     )
-    assert db_mod.migrate(conn) == 60  # 重入幂等
+    assert db_mod.migrate(conn) == 61  # 重入幂等
     # 两存量行 + 一新影子行；重入不重复重建不丢行
     assert conn.execute("SELECT COUNT(*) c FROM forecasts").fetchone()["c"] == 3
     conn.close()
