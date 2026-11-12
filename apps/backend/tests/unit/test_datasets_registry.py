@@ -5,7 +5,8 @@
 RESUME/DEAD 推导、checkpoint 表核对钉进字面量，任一漂移即红。新数据集
 入列（或撤采翻 resume）必须同步改本文件——这就是"改表"动作的测试面。
 
-钉死时点：vision-build 票 07 = 21 条注册（含判死面 eu-odds-closing/
+钉死时点：vision-build 票 07 = 21 条注册（srct-cutover 票 08 加
+srct-tenure-sync 成 22 条）（含判死面 eu-odds-closing/
 srcb-collect resume=False；票 04 monthly-read 开月定拍先例 cron 日-of-月位；
 票 07 shadow-retrain 日拍承载漂移即时+月度兜底双触发面）
 + 手写 5 面（daily-capture、draw-results 双 cron、weekly、daily-wrap）；
@@ -44,6 +45,7 @@ _RECORD_NAMES = (
     "scout-line",
     "srct-shift",
     "srct-remat",
+    "srct-tenure-sync",
     "gold-rebuild",
     "anchor-sentinel-capture",
     "anchor-sentinel-weekly",
@@ -72,6 +74,7 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["scout-line"].task is tasks.scout_line
     assert by_name["srct-shift"].task is tasks.srct_shift_run
     assert by_name["srct-remat"].task is tasks.srct_remat_run
+    assert by_name["srct-tenure-sync"].task is tasks.srct_tenure_sync
     assert by_name["gold-rebuild"].task is tasks.gold_rebuild
     assert by_name["anchor-sentinel-capture"].task is tasks.anchor_sentinel_capture
     assert by_name["anchor-sentinel-weekly"].task is tasks.anchor_sentinel_weekly
@@ -89,6 +92,8 @@ def test_registry_pinned_to_full_batch() -> None:
     assert by_name["scout-line"].cron == "50 10,22 * * *"
     assert by_name["srct-shift"].cron == "*/30 8-23,0 * * *"
     assert by_name["srct-remat"].cron == "10 8 * * *"
+    # 票 08：周一 08:05（srct-shift 08:00 拍尾后、remat 08:10 前，夜窗外）
+    assert by_name["srct-tenure-sync"].cron == "5 8 * * 1"
     assert by_name["gold-rebuild"].cron == "40 8 * * *"
     assert by_name["anchor-sentinel-capture"].cron == "*/30 * * * *"
     assert by_name["anchor-sentinel-weekly"].cron == "50 8 * * 1"
@@ -109,6 +114,7 @@ def test_registry_pinned_to_full_batch() -> None:
         "closing-snapshot",
         "srct-shift",
         "srct-remat",
+        "srct-tenure-sync",
         "anchor-sentinel",
         "weekly-agent",
         "monthly-read",
@@ -169,6 +175,7 @@ def test_schedules_serve_list_pinned_golden() -> None:
         "srct-night": "0 1 * * *",
         "srct-shift": "*/30 8-23,0 * * *",
         "srct-remat": "10 8 * * *",
+        "srct-tenure-sync": "5 8 * * 1",
         "gold-rebuild": "40 8 * * *",
         "weekly-refresh": "10 6 * * 1",
         "daily-wrap": "30 23 * * *",

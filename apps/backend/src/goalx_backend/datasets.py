@@ -38,7 +38,7 @@ from prefect.flows import Flow
 from prefect.schedules import Schedule
 
 from goalx_backend import tasks
-from goalx_backend.data.ingest import srct, srct_shift
+from goalx_backend.data.ingest import srct, srct_shift, srct_tenure
 
 _DEPLOYMENT_NAME = "protocol-v1"
 _TIMEZONE = "Asia/Shanghai"
@@ -236,6 +236,41 @@ _TM_COACH = DatasetSpec(
             nargs="*",
             default=[],
             transform=_tuple_or_none,
+        ),
+    ),
+)
+
+_SRCT_TENURE = DatasetSpec(
+    name="srct-tenure-sync",
+    cron="5 8 * * 1",
+    task=tasks.srct_tenure_sync,
+    cli_help=(
+        "源T任期/队籍班(票08;matchResult逐季+tdl现任+coach两步,raw键幂等"
+        "--seasons回填指定季)"
+    ),
+    flow_help=(
+        "源T 任期/队语料班（票 08，spec-srct-cutover）：周一 08:05 一班，\n"
+        "三相位 matchResult→tdl→coach 两步（锚点种子离线重放零网络）。\n"
+        "GB 双联赛 12 季；首班回填 ≈450-700 请求，其后周末班纯增量。\n"
+        "语料 raw+bronze only；TM 既有面不动（对账源保留）。"
+    ),
+    cli_args=(
+        CliArg(
+            "--seasons",
+            help="回填赛季(如 2015-2016 2016-2017 …,默认全窗 2015-16→)",
+            nargs="*",
+            transform=_tuple_or_none,
+        ),
+        CliArg(
+            "--request-cap",
+            help=f"当次请求预算上限(默认 {srct_tenure.TENURE_REQUEST_CAP})",
+            type=int,
+            default=srct_tenure.TENURE_REQUEST_CAP,
+        ),
+        CliArg(
+            "--no-window",
+            help="跳过 01:00-08:00 夜窗让位判断(白天手工回补用)",
+            action="store_true",
         ),
     ),
 )
@@ -474,6 +509,7 @@ DATASETS: tuple[DatasetSpec, ...] = (
     _SCOUT,
     _SRCT_SHIFT,
     _SRCT_REMAT,
+    _SRCT_TENURE,
     _GOLD_REBUILD,
     _ANCHOR_SENTINEL_CAPTURE,
     _ANCHOR_SENTINEL_WEEKLY,
