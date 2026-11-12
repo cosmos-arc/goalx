@@ -148,7 +148,7 @@ _Avoid_: 缺数据（口语）、缺口（单独使用）
 _Avoid_: 模糊匹配（指物化层）、join（口语）
 
 **TeamAlias / 别名供给**:
-一个 team 的跨源名字登记行（per-source provenance：srct 中文变体、srct_en 英文活水、manual 人工、clubelo 英文桥、odds_api/propline 停采历史）。供给不灭定则：凡活源携带队名必须登记或进未匹配清单（ADR-0013）；英文域互通走三级 NameIndex 确定性匹配，同名异队冲突进人工队列不硬配。
+一个 team 的跨源名字登记行（per-source provenance：srct 中文变体、srct_en 英文活水、manual 人工、clubelo 英文桥、odds_api/propline 停采历史）。供给不灭定则：凡活源携带队名必须登记或进未匹配清单（ADR-0013）；英文域互通走三级 NameIndex 确定性匹配，同名异队冲突进人工队列不硬配。边界：任期/队籍身份不在此链上——主空间=源T 原生键（ADR-0014），transfermarkt 别名桥只作对账锚。
 _Avoid_: 别名回填（无 provenance 的泛称）、映射（那是场次层，见 SourceMatchLink）
 
 **srct_en**:

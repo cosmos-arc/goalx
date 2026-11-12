@@ -1,10 +1,13 @@
 """
 六轴联结读缝 + 搜索窗特征重要性读数（mining-loop 票 06；LdP 中间层首产物）。
 
+（票 10 身份管道切源T——外部行为零变化。）
+
 联结读缝=match-level as-of 特征联结（只读，不建新表）：hist_matches 为
-锚（EM 扫描同空间），教练侧经 ``resolve_club_hist_names`` 逆（hist 英文名
-→ TM club）→ tm_coach_tenures as-of 开球日指派（date_from/to 重叠消歧=
-assign_manager_day 语义）；底蕴侧 club_pedigree 按 (hist 队名, season) 直键
+锚（EM 扫描同空间），教练侧 hist 英文名 →（``srct_identity.srct_hist_name_index``
+三级词法+受控别名）→ 源T team_id → srct_coach_tenures as-of 开球日指派
+（date_from/to 重叠消歧=assign_manager_day 语义，open-end=现任；教练键=
+coach_key 英文名优先）；底蕴侧 club_pedigree 按 (hist 队名, season) 直键
 （fd 面键空间同源）；裁判列直读 + 生涯 as-of 先验；阵型族经票 05 回填面
 的 ``coach_family_prior`` 读缝（coach×season 键，不含当场面）。
 
@@ -16,9 +19,10 @@ on_day），embargo=窗末特征不跨入下一窗首季——由单测钉（窗
 
 **中间层只产读数不产结论**：特征重要性/分层读数是样本内描述统计，不做
 假设检验结论、不回测、不进发现门；假设注册恒人审（票 07）。2026-11-11
-映射率人裁决项触发实测：教练双侧 62.3%（E0/E1 搜索窗）——根因=TM 任期
-宇宙现役快照（历史降级队无任期行，非别名可修），未解析侧特征 NULL 按
-特征各自分母诚实缺。
+映射率人裁决项触发实测：教练双侧 62.2%（E0/E1 搜索窗，基线存
+research/06）——根因=TM 任期宇宙现役快照（历史降级队无任期行，非别名可
+修）；票 10 切源T 后重测对读该基线。未解析侧特征 NULL 按特征各自分母
+诚实缺。
 """
 
 from __future__ import annotations
@@ -31,14 +35,13 @@ from pathlib import Path
 from typing import cast
 
 from goalx_backend.data import results as rs_store
-from goalx_backend.data.coach_changes import (
-    Tenure,
-    assign_manager_day,
-    resolve_club_hist_names,
-    tenures_by_club,
-)
+from goalx_backend.data.coach_changes import Tenure, assign_manager_day
 from goalx_backend.data.formations import coach_family_prior
 from goalx_backend.data.pedigree import pedigree_by_team_season
+from goalx_backend.data.srct_identity import (
+    srct_hist_name_index,
+    srct_tenures_by_team,
+)
 
 #: 搜索窗（特征读数唯一消费窗；E-32 EM 三窗同界，hist 季码）
 SEARCH_WINDOW: tuple[str, str] = ("1617", "2122")
@@ -71,7 +74,7 @@ class SideReading:
 
     team: str
     residual: float | None = None  # 1{该侧胜} − 1/psc_该侧（psc 缺=None）
-    club_tm_id: int | None = None
+    club_srct_id: int | None = None
     coach_name: str | None = None
     coach_role: str | None = None
     tenure_days: int | None = None
@@ -125,7 +128,7 @@ def _side_features(
     club = seam.club_of_name.get(team)
     if club is None:
         return side
-    side.club_tm_id = club
+    side.club_srct_id = club
     ped = seam.pedigree.get((team, hist_season))
     if ped is not None:
         for column in ("top_flight_streak", "tier1_titles", "major_honours"):
@@ -177,12 +180,18 @@ def match_readings(
     先验）E0/E1 已完赛逐场累计——生涯面受裁判覆盖域约束（英伦近满覆）。
     匹配序=match_date 升序；同日按日缓冲，当日全部装配完才入账。
     """
+    # hist 英文名 → 源T team（三级词法+受控别名，一次构建全场复用）；
+    # 未解析名不入表 → 该侧教练段 NULL（诚实缺，不硬配）
+    hist_index = srct_hist_name_index(conn)
+    club_of_name = {
+        str(row["team"]): team_id
+        for row in rs_store.hist_team_names(conn)
+        if (team_id := hist_index.resolve(str(row["team"]))) is not None
+    }
     seam = _Seam(
         conn=conn,
-        club_of_name={
-            hist_name: club for club, hist_name in resolve_club_hist_names(conn).items()
-        },
-        tenures=tenures_by_club(conn),
+        club_of_name=club_of_name,
+        tenures=srct_tenures_by_team(conn),
         pedigree=pedigree_by_team_season(conn),
     )
     matches = rs_store.hist_rows_in_season_window(

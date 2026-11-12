@@ -76,6 +76,7 @@ from goalx_backend.data import (
     delay_survival,
     mapping,
     reconcile,
+    srct_tenure_reconcile,
 )
 from goalx_backend.data import fixtures as fx_store
 from goalx_backend.data import results as rs_store
@@ -148,6 +149,9 @@ from goalx_backend.tasks import (
     mapping_sync,
     six_axes_derive,
     six_axes_report,
+    srct_tenure_coach_replay,
+    srct_tenure_silver_rebuild,
+    srct_tenure_two_source_report,
     task_conn,
     tm_coach_crosscheck,
     tm_coach_report,
@@ -1896,6 +1900,29 @@ def _cmd_tm_coach_crosscheck(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_tenure_silver() -> None:
+    """源T 任期/队籍 silver 两表重建（票 09；语料→v61 两表，幂等）。"""
+    report = srct_tenure_silver_rebuild()
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_srct_tenure_reconcile(args: argparse.Namespace) -> None:
+    """两源对账报告（票 09；只读，ADR-0012 报告不硬配）。"""
+    report = srct_tenure_two_source_report(db_path=args.db_path)
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _cmd_srct_tenure_replay(args: argparse.Namespace) -> None:
+    """教练面映射率内存重放（票 11；只读，run_params 留痕）。"""
+    report = srct_tenure_coach_replay(
+        db_path=args.db_path,
+        season_from=args.season_from,
+        season_to=args.season_to,
+        competitions=tuple(args.competitions),
+    )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_six_axes_derive() -> None:
     """六轴 ②④ 两面重建（vision-build 票 09 运维步；幂等全量）。"""
     report = six_axes_derive()
@@ -2399,6 +2426,44 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         "--window-days", type=int, default=45, help="边界前后观察窗(默认 45 日)"
     )
     sub.add_parser(
+        "srct-tenure-silver",
+        help="源T任期/队籍silver两表重建(mining-loop票09;语料→v61,幂等)",
+    )
+    tenure_recon = sub.add_parser(
+        "srct-tenure-reconcile",
+        help="源T×TM任期两源对账(mining-loop票09;只读,报告不硬配)",
+    )
+    tenure_recon.add_argument(
+        "--db-path",
+        default=None,
+        help="TM侧库路径覆盖(缺省settings.db_path;只读URI打开)",
+    )
+    tenure_replay = sub.add_parser(
+        "srct-tenure-replay",
+        help=("教练面映射率内存重放(mining-loop票11;只读,hist窗→双侧/任一侧率)"),
+    )
+    tenure_replay.add_argument(
+        "--db-path",
+        default=None,
+        help="hist侧库路径覆盖(缺省settings.db_path;只读URI打开)",
+    )
+    tenure_replay.add_argument(
+        "--season-from",
+        default=srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0],
+        help=f"hist起始季码(默认{srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0]}=S7搜索窗)",
+    )
+    tenure_replay.add_argument(
+        "--season-to",
+        default=srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1],
+        help=f"hist结束季码(默认{srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1]}=S7搜索窗)",
+    )
+    tenure_replay.add_argument(
+        "--competitions",
+        nargs="*",
+        default=["E0", "E1"],
+        help="fd联赛域(默认E0 E1=GB双联赛)",
+    )
+    sub.add_parser(
         "six-axes-derive",
         help="六轴②阵型族条件面+④底蕴硬层重建(vision-build票09;幂等)",
     )
@@ -2865,6 +2930,9 @@ def main(argv: list[str] | None = None) -> int:
         "clubelo-elo": lambda: _cmd_clubelo_elo(args),
         "tm-coach-report": _cmd_tm_coach_report,
         "tm-coach-crosscheck": lambda: _cmd_tm_coach_crosscheck(args),
+        "srct-tenure-silver": _cmd_srct_tenure_silver,
+        "srct-tenure-reconcile": lambda: _cmd_srct_tenure_reconcile(args),
+        "srct-tenure-replay": lambda: _cmd_srct_tenure_replay(args),
         "six-axes-derive": _cmd_six_axes_derive,
         "six-axes-report": _cmd_six_axes_report,
         "archive-538": lambda: _cmd_archive_538(args),

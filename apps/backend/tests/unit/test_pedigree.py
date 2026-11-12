@@ -51,12 +51,38 @@ def _seed_hist(
 def _seed_tm_seasons(
     conn: sqlite3.Connection, rows: list[tuple[str, str, int, str]]
 ) -> None:
-    """tm_club_seasons 行 (league_tm_code, season, club_tm_id, club_name)。"""
+    """tm_club_seasons 行 (league_tm_code, season, club_tm_id, club_name)。
+
+    票 10 起仅喂 ``club_tm_id`` 信息锚列（TM=对账/备用，ADR-0014）——频谱/
+    年限的源已切 srct_club_seasons（见 ``_seed_srct_seasons``）。
+    """
     conn.executemany(
         """
         INSERT INTO tm_club_seasons
             (league_tm_code, season, club_tm_id, club_name, first_seen_at, observed_at)
         VALUES (?, ?, ?, ?, '2026-01-01', '2026-01-01')
+        """,
+        rows,
+    )
+    conn.commit()
+
+
+def _seed_srct_seasons(
+    conn: sqlite3.Connection, rows: list[tuple[int, str, int, str]]
+) -> None:
+    """srct_club_seasons 行 (league_id, season, team_id, name_en)。
+
+    频谱/年限队籍源（票 10）：36=英超（tier1）、37=英冠（二级）——顶级
+    口径=league_id 受控词表（srct_identity.SRCT_TIER1_LEAGUE_IDS）。
+    """
+    conn.executemany(
+        """
+        INSERT INTO srct_club_seasons
+            (league_id, season, team_id, team_name_cn, team_name_tw,
+             team_name_en, league_name_cn, league_name_en, source_key,
+             parse_version, materialized_at)
+        VALUES (?, ?, ?, '名', '名', ?, '联赛', 'League', 'k', 'v',
+                '2026-01-01T00:00:00+00:00')
         """,
         rows,
     )
@@ -95,17 +121,26 @@ def test_derive_four_factors_with_pit_windows(hist_db: sqlite3.Connection) -> No
             _hist("2626", "2026-09-12", "Rovers", "Filler", 1, 1),
         ],
     )
+    # 频谱/年限队籍源（票 10 切源T）：36=英超（tier1）/37=英冠（二级）
+    _seed_srct_seasons(
+        hist_db,
+        [
+            (36, "2023-2024", 100, "Man United"),
+            (36, "2024-2025", 100, "Man United"),
+            (36, "2023-2024", 200, "Rovers"),
+            (37, "2024-2025", 200, "Rovers"),
+            (36, "2025-2026", 200, "Rovers"),
+            (36, "2023-2024", 300, "Wanderers"),
+            (36, "2025-2026", 300, "Wanderers"),
+            (36, "2025-2026", 100, "Man United"),
+        ],
+    )
+    # club_tm_id 信息锚列仍走 TM 解析（ADR-0014 对账/备用）
     _seed_tm_seasons(
         hist_db,
         [
             ("GB1", "2023", 100, "Man United"),
-            ("GB1", "2024", 100, "Man United"),
             ("GB1", "2023", 200, "Rovers"),
-            ("GB2", "2024", 200, "Rovers"),
-            ("GB1", "2025", 200, "Rovers"),
-            ("GB1", "2023", 300, "Wanderers"),
-            ("GB1", "2025", 300, "Wanderers"),
-            ("GB1", "2025", 100, "Man United"),
         ],
     )
     stats = pedigree.derive_club_pedigree(hist_db, now="2026-11-11T00:00:00+00:00")
@@ -182,12 +217,13 @@ def test_tm_unresolved_team_degrades_to_null_not_zero(
 
 def test_first_observed_season_row_has_no_prior(hist_db: sqlite3.Connection) -> None:
     _seed_hist(hist_db, [_hist("2425", "2025-04-01", "Newcomers", "Filler", 2, 2)])
+    _seed_srct_seasons(hist_db, [(36, "2024-2025", 400, "Newcomers")])
     _seed_tm_seasons(hist_db, [("GB1", "2024", 400, "Newcomers")])
     pedigree.derive_club_pedigree(hist_db, now="2026-11-11T00:00:00+00:00")
     row = _row(hist_db, "Newcomers", "2425")
     assert row["points_pct_l5"] is None
     assert row["l5_seasons"] == 0
-    assert row["top_flight_streak"] == 0  # 已解析：S-1=2023 无 GB1 → 真 0
+    assert row["top_flight_streak"] == 0  # 已解析：S-1=2023 无 tier1 → 真 0
     assert row["club_tm_id"] == 400
 
 
@@ -286,27 +322,99 @@ def test_six_axes_task_wiring_degrades_without_corpus() -> None:
     assert report["pedigree"]["rows"] == 0
 
 
-def test_top_flight_is_per_country_not_big_five(hist_db: sqlite3.Connection) -> None:
-    """F1：顶级口径=逐国顶级——Ajax 在 NL1 连续 11 季照常计年限（旧实现恒 0）。"""
+def test_tier1_is_srct_league_vocab_non_gb_null(hist_db: sqlite3.Connection) -> None:
+    """顶级口径=源T league_id 受控词表（票 10 重定域）：tier1 联赛照常计
+    年限、二级联赛断段；非 GB 联赛（源T GB 语料范围外）年限/频谱诚实 NULL
+    ——逐国顶级面随批量扩域回流（spec story 15，词表补行即得，F1 语义
+    由 SRCT_TIER1_LEAGUE_IDS 按逐国逐联赛键天然保持）。"""
+    from goalx_backend.data.srct_identity import SRCT_TIER1_LEAGUE_IDS
+
+    assert frozenset({36}) == SRCT_TIER1_LEAGUE_IDS  # 英超=36（英冠 37 二级）
     _seed_hist(
         hist_db,
         [
-            _hist("2727", "2027-08-14", "Ajax", "Twente", 1, 0, comp="N1"),
-            _hist("2627", "2026-09-12", "Celtic", "Rangers", 1, 0, comp="SC0"),
+            _hist("2727", "2027-08-14", "Rovers", "Twente", 1, 0, comp="E0"),
+            _hist("2627", "2026-09-12", "Wanderers", "Rangers", 1, 0, comp="E0"),
+            _hist("2627", "2026-09-13", "Ajax", "Filler", 1, 0, comp="N1"),
         ],
     )
-    _seed_tm_seasons(
+    # Rovers 2016-2026 连续英超（11 季）；Wanderers 2024 英冠后 2025 回英超
+    _seed_srct_seasons(
         hist_db,
-        [("NL1", str(year), 500, "Ajax") for year in range(2016, 2027)]
-        + [("SC1", str(year), 501, "Celtic") for year in range(2024, 2027)],
+        [(36, f"{year}-{year + 1}", 500, "Rovers") for year in range(2016, 2027)]
+        + [
+            (37, "2024-2025", 501, "Wanderers"),
+            (36, "2025-2026", 501, "Wanderers"),
+        ],
     )
     pedigree.derive_club_pedigree(hist_db, now="2026-11-11T00:00:00+00:00")
-    ajax = _row(hist_db, "Ajax", "2727")
-    assert ajax["club_tm_id"] == 500
-    assert ajax["top_flight_streak"] == 11  # 2016-2026 连续荷甲顶级
-    assert (ajax["promo_to_tier1"], ajax["releg_from_tier1"]) == (0, 0)
-    celtic = _row(hist_db, "Celtic", "2627")
-    assert celtic["top_flight_streak"] == 2  # 苏超同口径（SC1 亦顶级）
+    rovers = _row(hist_db, "Rovers", "2727")
+    assert rovers["top_flight_streak"] == 11  # 2016-2026 连续 tier1
+    assert (rovers["promo_to_tier1"], rovers["releg_from_tier1"]) == (0, 0)
+    wanderers = _row(hist_db, "Wanderers", "2627")
+    assert wanderers["top_flight_streak"] == 1  # 2024 二级断段，2025 回 tier1
+    # 频谱：2024 前不在受采面（非 tier1→tier2 转换），2024→2025 升级计 1
+    assert (wanderers["promo_to_tier1"], wanderers["releg_from_tier1"]) == (1, 0)
+    # Ajax（荷甲）：源T GB 范围外 → srct_unresolved + NULL（不写假 0）
+    ajax = _row(hist_db, "Ajax", "2627")
+    assert ajax["top_flight_streak"] is None
+    assert (ajax["promo_to_tier1"], ajax["releg_from_tier1"]) == (None, None)
+
+
+def test_derive_cross_domain_subset_name_null_and_reported(
+    hist_db: sqlite3.Connection,
+) -> None:
+    """F1：hist 全联赛域（derive 消费面）里 SC0 域外名（Rangers）不得经
+    词法子集层折进 GB 队（Queens Park Rangers (QPR)）——年限/频谱 NULL、
+    入 srct_unresolved_teams；域内实证名（E1 QPR）松层照常不回缩。"""
+    _seed_hist(
+        hist_db,
+        [
+            _hist("2425", "2025-02-01", "Celtic", "Rangers", 2, 0, comp="SC0"),
+            _hist("2425", "2025-02-08", "Rangers", "Celtic", 1, 1, comp="SC0"),
+            _hist("2425", "2025-03-01", "QPR", "Filler", 1, 0, comp="E1"),
+        ],
+    )
+    _seed_srct_seasons(
+        hist_db,
+        [
+            (36, "2023-2024", 50, "Queens Park Rangers (QPR)"),
+            (36, "2024-2025", 50, "Queens Park Rangers (QPR)"),
+        ],
+    )
+    stats = pedigree.derive_club_pedigree(hist_db, now="2026-11-12T00:00:00+00:00")
+    # 域外名：折不出 → NULL（不写 QPR 的英格兰年限/频谱）+ 入未解析面
+    rangers = _row(hist_db, "Rangers", "2425")
+    assert rangers["top_flight_streak"] is None
+    assert (rangers["promo_to_tier1"], rangers["releg_from_tier1"]) == (None, None)
+    assert "Rangers" in stats["srct_unresolved_teams"]
+    # 域内实证名（E1）：松层照常折到源T 队——截至 2024 前一季 2023 在英超
+    qpr = _row(hist_db, "QPR", "2425")
+    assert qpr["top_flight_streak"] == 1
+    assert "QPR" not in stats["srct_unresolved_teams"]
+    # F4 冲突账面：本夹具无同名撞队
+    assert stats["srct_hist_name_conflicts"] == 0
+
+
+def test_derive_reports_srct_name_conflicts(hist_db: sqlite3.Connection) -> None:
+    """F4：srct 枚举英文名撞两队 → 该名 NULL 入未解析面 + conflicts 计数
+    （站内改号不静默首到配错队）。"""
+    _seed_hist(hist_db, [_hist("2425", "2025-04-01", "Twin FC", "Filler", 1, 1)])
+    _seed_srct_seasons(
+        hist_db,
+        [
+            (36, "2024-2025", 60, "Twin FC"),
+            (36, "2024-2025", 61, "Twin FC"),
+            (36, "2024-2025", 70, "Filler"),
+        ],
+    )
+    stats = pedigree.derive_club_pedigree(hist_db, now="2026-11-12T00:00:00+00:00")
+    twin = _row(hist_db, "Twin FC", "2425")
+    assert twin["top_flight_streak"] is None  # 撞两队 → 弃键（不配 60 也不配 61）
+    assert stats["srct_hist_name_conflicts"] == 1
+    assert "Twin FC" in stats["srct_unresolved_teams"]
+    filler = _row(hist_db, "Filler", "2425")
+    assert filler["top_flight_streak"] == 0  # 非冲突键不受牵连（真 0：无前季）
 
 
 def test_honours_fd_name_forms_resolve_not_null(hist_db: sqlite3.Connection) -> None:

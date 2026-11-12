@@ -52,6 +52,8 @@ from goalx_backend.data import (
     pedigree,
     quote_evidence,
     reconcile,
+    srct_tenure_reconcile,
+    srct_tenure_silver,
     today,
 )
 from goalx_backend.data import fixtures as fx_store
@@ -75,6 +77,7 @@ from goalx_backend.data.ingest import (
     srct_remat,
     srct_results,
     srct_shift,
+    srct_tenure,
     tm_coach,
     understat,
     uniform,
@@ -1008,6 +1011,119 @@ def clubelo_sync(*, backfill: bool = False) -> dict[str, object]:
         else:
             stats = clubelo.sync_snapshot(conn, settings, client, date.today())
     return clubelo.stats_dict(stats)
+
+
+def srct_tenure_sync(
+    seasons: tuple[str, ...] | None = None,
+    *,
+    request_cap: int | None = None,
+    no_window: bool = False,
+    settings: Settings | None = None,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
+    """
+    源T 任期/队籍班（票 08）：matchResult 逐季 → tdl 现任 → coach 两步。
+
+    语料树 raw+bronze only（主库零触碰）；raw 键幂等，周末班只补增量。
+    seasons 显式传即回填指定季（一次性运维步）；no_window=True 供白天
+    手工回补（缺省让位 01:00-08:00 夜窗）。settings/client 注入口只服务
+    测试接缝（cli/flow 共用本函数，缺省真实装配）。
+    """
+    resolved = settings if settings is not None else get_settings()
+    store = CorpusStore(resolved.corpus_root)
+    try:
+        with ExitStack() as stack:
+            run_client = (
+                client
+                if client is not None
+                else stack.enter_context(httpx.Client(verify=browser_ssl_context()))
+            )
+            stats = srct_tenure.run_tenure_shift(
+                store,
+                resolved,
+                run_client,
+                seasons=seasons if seasons else srct_tenure.TENURE_SEASONS,
+                request_cap=(
+                    srct_tenure.TENURE_REQUEST_CAP
+                    if request_cap is None
+                    else request_cap
+                ),
+                enforce_window=not no_window,
+            )
+    finally:
+        store.close()
+    return srct_tenure.stats_dict(stats)
+
+
+def srct_tenure_silver_rebuild() -> dict[str, object]:
+    """
+    源T 任期/队籍 silver 两表全量重建（票 09；运维步，不进调度）。
+
+    语料 bronze → srct_coach_tenures / srct_club_seasons（v61，DELETE+
+    INSERT 幂等）。采集班只写语料，本函数只写两表——互不直写。
+    """
+    store = CorpusStore(get_settings().corpus_root)
+    try:
+        with task_conn() as conn:
+            return srct_tenure_silver.rebuild_srct_tenure_silver(conn, store)
+    finally:
+        store.close()
+
+
+def srct_tenure_two_source_report(*, db_path: str | None = None) -> dict[str, object]:
+    """
+    两源对账报告（票 09；只读，ADR-0012：报告不硬配）。
+
+    源T 侧=语料 bronze 直接解析（对账校验采集数据本身，非物化副本）；
+    TM 侧=运行面库只读（db_path 覆盖供工作树指生产库，connect readonly
+    URI 模式永不写）。语料 duckdb 视图缺席 → 观测面降级 corpus_available=
+    False（不发请求，coach_crosscheck 先例）。
+    """
+    settings = get_settings()
+    resolved = db_path or str(settings.db_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        conn = connect(resolved, readonly=True)
+        try:
+            with corpus_duckdb.reader(settings) as duck_con:
+                return srct_tenure_reconcile.reconcile_report(conn, store, duck_con)
+        finally:
+            conn.close()
+    finally:
+        store.close()
+
+
+def srct_tenure_coach_replay(
+    *,
+    db_path: str | None = None,
+    season_from: str = srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[0],
+    season_to: str = srct_tenure_reconcile.REPLAY_DEFAULT_WINDOW[1],
+    competitions: tuple[str, ...] = ("E0", "E1"),
+) -> dict[str, object]:
+    """
+    教练面映射率内存重放（票 11；只读，零请求零主库写）。
+
+    语料 bronze → silver 纯函数 → 六轴教练缝逻辑重放 hist 季窗——主库
+    srct 两表物化前后的同一可复算读数（research/10 §3 面的 CLI 化；
+    run_params 留痕，spec story 14）。
+    """
+    settings = get_settings()
+    resolved = db_path or str(settings.db_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        conn = connect(resolved, readonly=True)
+        try:
+            return srct_tenure_reconcile.coach_mapping_replay_report(
+                conn,
+                store,
+                season_from=season_from,
+                season_to=season_to,
+                competitions=competitions,
+            )
+        finally:
+            conn.close()
+    finally:
+        store.close()
 
 
 def tm_coach_sync(

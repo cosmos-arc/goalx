@@ -3179,6 +3179,127 @@ def _apply_v60(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v61(conn: sqlite3.Connection) -> None:
+    """
+    v61（mining-loop 票 09）：源T 任期/队籍 silver 两表（spec-srct-cutover）。
+
+    - srct_coach_tenures：coach_career 语料解析出的教练任期行（coachCount
+      竞赛分行已折总分行；coach_id=canonical playerInfo id（钉①），coach_key
+      =英文名优先、缺则 id 串（钉②））。消费方=任期/队籍读缝（票 10 切换
+      对象，现缝读 tm_coach_tenures）；
+    - srct_club_seasons：matchResult 逐季球队枚举（队籍按构造完整——踢过
+      该季联赛的队必然在枚举里，无 TM 现役名单快照缺口）。
+
+    派生面纪律：表内容由 data/srct_tenure_silver.rebuild 全量重建
+    （DELETE+INSERT 一事务，幂等），采集永不直写。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srct_coach_tenures (
+            id INTEGER PRIMARY KEY,
+            coach_id INTEGER NOT NULL,
+            coach_key TEXT NOT NULL,
+            coach_name_cn TEXT,
+            coach_name_tw TEXT,
+            coach_name_en TEXT,
+            team_id INTEGER NOT NULL,
+            team_name_cn TEXT NOT NULL,
+            team_name_en TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT,
+            role TEXT,
+            games INTEGER,
+            wins INTEGER,
+            draws INTEGER,
+            losses INTEGER,
+            parse_version TEXT NOT NULL,
+            materialized_at TEXT NOT NULL,
+            UNIQUE (coach_id, team_id, date_from)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_srct_coach_tenures_team
+        ON srct_coach_tenures (team_id, date_from)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_srct_coach_tenures_key
+        ON srct_coach_tenures (coach_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS srct_club_seasons (
+            league_id INTEGER NOT NULL,
+            season TEXT NOT NULL,
+            team_id INTEGER NOT NULL,
+            team_name_cn TEXT NOT NULL,
+            team_name_tw TEXT NOT NULL,
+            team_name_en TEXT NOT NULL,
+            league_name_cn TEXT NOT NULL,
+            league_name_en TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            parse_version TEXT NOT NULL,
+            materialized_at TEXT NOT NULL,
+            UNIQUE (league_id, season, team_id)
+        )
+        """
+    )
+
+
+def _apply_v62(conn: sqlite3.Connection) -> None:
+    """
+    v62（mining-loop 票 10，spec-srct-cutover）：facet 身份键全切源T。
+
+    formation_family_facet 换键重建（v60 先例：建新表→弃旧行→换名，SQLite
+    无 ALTER COLUMN）：club_tm_id→club_srct_id（源T team_id）、coach_name→
+    coach_key（源T 英文名优先键）。**单一键空间，无双键兼容列**（spec 人裁
+    缝策略：不建身份兼容层）。TM 键旧行（全表）在迁移内整表弃——迁移不
+    import data 域做键翻译，行由 ``six-axes-derive`` 全量重派（差分写诚实
+    报 preserved=0/inserted=N；迁移前主库快照=运维步回滚锚，票面纪律）。
+    team_id 列保留 v60 nullable 语义（链接链 fd 锚，历史行 NULL 是事实）。
+    """
+    # 受控族清单与 data/formations.FAMILIES 同源（迁移不 import data 域，
+    # 字面双写；formations 测试钉两者一致——v53 纪律沿用）
+    conn.execute(
+        """
+        CREATE TABLE formation_family_facet_v62 (
+            id INTEGER PRIMARY KEY,
+            season TEXT NOT NULL,
+            league_fd TEXT,
+            league_zh TEXT NOT NULL,
+            team_id INTEGER,
+            club_srct_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            coach_key TEXT NOT NULL,
+            coach_role TEXT NOT NULL CHECK (coach_role IN ('manager', 'caretaker')),
+            family TEXT NOT NULL CHECK (family IN (
+                '4-4-2', '4-2-3-1', '4-3-3', '4-5-1', '3-5-2', '3-4-3',
+                'back-five', 'other')),
+            n_matches INTEGER NOT NULL,
+            n_known INTEGER NOT NULL,
+            first_match_date TEXT NOT NULL,
+            last_match_date TEXT NOT NULL,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (season, league_zh, club_srct_id, coach_key, family)
+        )
+        """
+    )
+    conn.execute("DROP TABLE formation_family_facet")
+    conn.execute(
+        "ALTER TABLE formation_family_facet_v62 RENAME TO formation_family_facet"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_formation_facet_coach
+        ON formation_family_facet (coach_key, season)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3240,6 +3361,8 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (58, _apply_v58),
     (59, _apply_v59),
     (60, _apply_v60),
+    (61, _apply_v61),
+    (62, _apply_v62),
 )
 
 

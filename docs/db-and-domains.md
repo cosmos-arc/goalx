@@ -47,6 +47,8 @@
 | `hist_matches` | fd.co.uk 历史底座 | 五大+N1+扩五联（票 46）含 PSC/AvgC 收盘价——DC 训练与回测分母；开球<6 个月收盘列视为暂定（A5 纪律，data/hygiene.psc_mature） | append+幂等 |
 | `admin_match_exclusions` | 行政判赛排除表（A4） | 联赛×队×日期窗——"比分真、比赛假"场次训练集与对账集统一剔除（data/hygiene 单一取数口）；种子=土超 2023 地震两队+2025 阿达纳弃赛 | append（续添只 INSERT） |
 | `cost_ledger` | 成本台账 | category+note 是口径维度（llm_call 的 note=model/surface/purpose） | append |
+| `srct_coach_tenures` | 源T 教练任期 silver（票 09） | coach_id=playerInfo id（钉①）；coach_key=英文名优先缺则 id（钉②）；coachCount 竞赛分行折总分行；表内容=语料确定性投影 | 幂等（DELETE+INSERT 全量重建） |
+| `srct_club_seasons` | 源T 逐季队籍枚举 silver（票 09） | matchResult arrTeam=当季全枚举，按构造完整（无 TM 现役名单快照缺口） | 幂等（DELETE+INSERT 全量重建） |
 
 ### modelling 域
 
@@ -354,6 +356,11 @@ erDiagram
         INTEGER id PK
     }
     srcb_change_runs {
+        INTEGER id PK
+    }
+    srct_club_seasons {
+    }
+    srct_coach_tenures {
         INTEGER id PK
     }
     strategy_versions {
@@ -1165,9 +1172,9 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `league_fd` | TEXT | — |
 | `league_zh` | TEXT | NOT NULL |
 | `team_id` | INTEGER | — |
-| `club_tm_id` | INTEGER | NOT NULL |
+| `club_srct_id` | INTEGER | NOT NULL |
 | `club_name` | TEXT | NOT NULL |
-| `coach_name` | TEXT | NOT NULL |
+| `coach_key` | TEXT | NOT NULL |
 | `coach_role` | TEXT | NOT NULL |
 | `family` | TEXT | NOT NULL |
 | `n_matches` | INTEGER | NOT NULL |
@@ -1176,7 +1183,7 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `last_match_date` | TEXT | NOT NULL |
 | `rebuilt_at` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`season`, `league_zh`, `club_tm_id`, `coach_name`, `family`)`
+唯一键 `UNIQUE(`season`, `league_zh`, `club_srct_id`, `coach_key`, `family`)`
 <!-- schema-doc:END:table:formation_family_facet -->
 
 六轴 ② 阵型族条件面（票 09；data/formations.py 派生重建，DELETE+INSERT
@@ -1228,6 +1235,52 @@ NULL 不写假 0（F2/F3/F6）。
 
 唯一键 `UNIQUE(`face`)`
 <!-- schema-doc:END:table:face_derive_state -->
+
+<!-- schema-doc:BEGIN:table:srct_coach_tenures -->
+#### `srct_coach_tenures`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | INTEGER | PK |
+| `coach_id` | INTEGER | NOT NULL |
+| `coach_key` | TEXT | NOT NULL |
+| `coach_name_cn` | TEXT | — |
+| `coach_name_tw` | TEXT | — |
+| `coach_name_en` | TEXT | — |
+| `team_id` | INTEGER | NOT NULL |
+| `team_name_cn` | TEXT | NOT NULL |
+| `team_name_en` | TEXT | NOT NULL |
+| `date_from` | TEXT | NOT NULL |
+| `date_to` | TEXT | — |
+| `role` | TEXT | — |
+| `games` | INTEGER | — |
+| `wins` | INTEGER | — |
+| `draws` | INTEGER | — |
+| `losses` | INTEGER | — |
+| `parse_version` | TEXT | NOT NULL |
+| `materialized_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`coach_id`, `team_id`, `date_from`)`
+<!-- schema-doc:END:table:srct_coach_tenures -->
+<!-- schema-doc:BEGIN:table:srct_club_seasons -->
+#### `srct_club_seasons`
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `league_id` | INTEGER | NOT NULL |
+| `season` | TEXT | NOT NULL |
+| `team_id` | INTEGER | NOT NULL |
+| `team_name_cn` | TEXT | NOT NULL |
+| `team_name_tw` | TEXT | NOT NULL |
+| `team_name_en` | TEXT | NOT NULL |
+| `league_name_cn` | TEXT | NOT NULL |
+| `league_name_en` | TEXT | NOT NULL |
+| `source_key` | TEXT | NOT NULL |
+| `parse_version` | TEXT | NOT NULL |
+| `materialized_at` | TEXT | NOT NULL |
+
+唯一键 `UNIQUE(`league_id`, `season`, `team_id`)`
+<!-- schema-doc:END:table:srct_club_seasons -->
 ### modelling 域
 
 <!-- schema-doc:BEGIN:table:forecasts -->
