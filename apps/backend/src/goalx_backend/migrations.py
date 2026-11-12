@@ -3250,6 +3250,56 @@ def _apply_v61(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_v62(conn: sqlite3.Connection) -> None:
+    """
+    v62（mining-loop 票 10，spec-srct-cutover）：facet 身份键全切源T。
+
+    formation_family_facet 换键重建（v60 先例：建新表→弃旧行→换名，SQLite
+    无 ALTER COLUMN）：club_tm_id→club_srct_id（源T team_id）、coach_name→
+    coach_key（源T 英文名优先键）。**单一键空间，无双键兼容列**（spec 人裁
+    缝策略：不建身份兼容层）。TM 键旧行（全表）在迁移内整表弃——迁移不
+    import data 域做键翻译，行由 ``six-axes-derive`` 全量重派（差分写诚实
+    报 preserved=0/inserted=N；迁移前主库快照=运维步回滚锚，票面纪律）。
+    team_id 列保留 v60 nullable 语义（链接链 fd 锚，历史行 NULL 是事实）。
+    """
+    # 受控族清单与 data/formations.FAMILIES 同源（迁移不 import data 域，
+    # 字面双写；formations 测试钉两者一致——v53 纪律沿用）
+    conn.execute(
+        """
+        CREATE TABLE formation_family_facet_v62 (
+            id INTEGER PRIMARY KEY,
+            season TEXT NOT NULL,
+            league_fd TEXT,
+            league_zh TEXT NOT NULL,
+            team_id INTEGER,
+            club_srct_id INTEGER NOT NULL,
+            club_name TEXT NOT NULL,
+            coach_key TEXT NOT NULL,
+            coach_role TEXT NOT NULL CHECK (coach_role IN ('manager', 'caretaker')),
+            family TEXT NOT NULL CHECK (family IN (
+                '4-4-2', '4-2-3-1', '4-3-3', '4-5-1', '3-5-2', '3-4-3',
+                'back-five', 'other')),
+            n_matches INTEGER NOT NULL,
+            n_known INTEGER NOT NULL,
+            first_match_date TEXT NOT NULL,
+            last_match_date TEXT NOT NULL,
+            rebuilt_at TEXT NOT NULL,
+            UNIQUE (season, league_zh, club_srct_id, coach_key, family)
+        )
+        """
+    )
+    conn.execute("DROP TABLE formation_family_facet")
+    conn.execute(
+        "ALTER TABLE formation_family_facet_v62 RENAME TO formation_family_facet"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_formation_facet_coach
+        ON formation_family_facet (coach_key, season)
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (1, _apply_v1),
     (2, _apply_v2),
@@ -3312,6 +3362,7 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (59, _apply_v59),
     (60, _apply_v60),
     (61, _apply_v61),
+    (62, _apply_v62),
 )
 
 

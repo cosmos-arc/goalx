@@ -1172,9 +1172,9 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `league_fd` | TEXT | — |
 | `league_zh` | TEXT | NOT NULL |
 | `team_id` | INTEGER | — |
-| `club_tm_id` | INTEGER | NOT NULL |
+| `club_srct_id` | INTEGER | NOT NULL |
 | `club_name` | TEXT | NOT NULL |
-| `coach_name` | TEXT | NOT NULL |
+| `coach_key` | TEXT | NOT NULL |
 | `coach_role` | TEXT | NOT NULL |
 | `family` | TEXT | NOT NULL |
 | `n_matches` | INTEGER | NOT NULL |
@@ -1183,7 +1183,7 @@ append-only 触发器：`tm_coach_sync_runs_no_delete`、`tm_coach_sync_runs_no_
 | `last_match_date` | TEXT | NOT NULL |
 | `rebuilt_at` | TEXT | NOT NULL |
 
-唯一键 `UNIQUE(`season`, `league_zh`, `club_tm_id`, `coach_name`, `family`)`
+唯一键 `UNIQUE(`season`, `league_zh`, `club_srct_id`, `coach_key`, `family`)`
 <!-- schema-doc:END:table:formation_family_facet -->
 
 六轴 ② 阵型族条件面（票 09；data/formations.py 派生重建，DELETE+INSERT
