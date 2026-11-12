@@ -148,6 +148,7 @@ from goalx_backend.tasks import (
     mapping_sync,
     six_axes_derive,
     six_axes_report,
+    srct_tenure_coach_replay,
     srct_tenure_silver_rebuild,
     srct_tenure_two_source_report,
     task_conn,
@@ -1910,6 +1911,17 @@ def _cmd_srct_tenure_reconcile(args: argparse.Namespace) -> None:
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def _cmd_srct_tenure_replay(args: argparse.Namespace) -> None:
+    """教练面映射率内存重放（票 11；只读，run_params 留痕）。"""
+    report = srct_tenure_coach_replay(
+        db_path=args.db_path,
+        season_from=args.season_from,
+        season_to=args.season_to,
+        competitions=tuple(args.competitions),
+    )
+    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
 def _cmd_six_axes_derive() -> None:
     """六轴 ②④ 两面重建（vision-build 票 09 运维步；幂等全量）。"""
     report = six_axes_derive()
@@ -2425,6 +2437,31 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 随票累加的�
         default=None,
         help="TM侧库路径覆盖(缺省settings.db_path;只读URI打开)",
     )
+    tenure_replay = sub.add_parser(
+        "srct-tenure-replay",
+        help=("教练面映射率内存重放(mining-loop票11;只读,hist窗→双侧/任一侧率)"),
+    )
+    tenure_replay.add_argument(
+        "--db-path",
+        default=None,
+        help="hist侧库路径覆盖(缺省settings.db_path;只读URI打开)",
+    )
+    tenure_replay.add_argument(
+        "--season-from",
+        default="1617",
+        help="hist起始季码(默认1617=S7搜索窗)",
+    )
+    tenure_replay.add_argument(
+        "--season-to",
+        default="2122",
+        help="hist结束季码(默认2122=S7搜索窗)",
+    )
+    tenure_replay.add_argument(
+        "--competitions",
+        nargs="*",
+        default=["E0", "E1"],
+        help="fd联赛域(默认E0 E1=GB双联赛)",
+    )
     sub.add_parser(
         "six-axes-derive",
         help="六轴②阵型族条件面+④底蕴硬层重建(vision-build票09;幂等)",
@@ -2894,6 +2931,7 @@ def main(argv: list[str] | None = None) -> int:
         "tm-coach-crosscheck": lambda: _cmd_tm_coach_crosscheck(args),
         "srct-tenure-silver": _cmd_srct_tenure_silver,
         "srct-tenure-reconcile": lambda: _cmd_srct_tenure_reconcile(args),
+        "srct-tenure-replay": lambda: _cmd_srct_tenure_replay(args),
         "six-axes-derive": _cmd_six_axes_derive,
         "six-axes-report": _cmd_six_axes_report,
         "archive-538": lambda: _cmd_archive_538(args),

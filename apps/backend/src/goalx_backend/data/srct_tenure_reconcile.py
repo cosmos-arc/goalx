@@ -8,7 +8,7 @@ TM 降级为对账/备用源后的第一次全量对账，四张面：
      modelling/team_align 三级匹配，coach_changes 同款消费）对源T
      matchResult 枚举英文名；
    - 结构路：corpus match_detail × source_match_links × fixtures 的已链
-     场按侧投票（源T中文名→fd team），fd team 经 team_aliases
+     场按侧投票（源T中文名→fd team，fd team 经 team_aliases
      （transfermarkt）→ TM 俱乐部名 → club_tm_id（formations._tm_clubs
      先例）。任一跳撞多名 → 弃双侧并计数（不硬配）；双路对同一俱乐部
      结论冲突 → 弃并计数。
@@ -26,6 +26,12 @@ TM 降级为对账/备用源后的第一次全量对账，四张面：
 只读纪律：源T 侧=bronze 语料直接内存解析（对账校验采集数据本身）；
 TM 侧=运行面库只读连接；语料 duckdb 缺席 → 结构路与观测面降级
 （不发请求）。
+
+另承 **教练面映射率内存重放**（票 11，research/10 §3 面的可复算化）：
+语料 bronze → silver 纯函数 → 六轴教练缝逻辑（hist 英文名折 +
+``assign_manager_day`` 当日指派）在内存重放一个 hist 季窗——主库
+srct 两表物化前（合并后运维步）的预估读数，判定可审计（run_params
+留痕，spec story 14）。
 """
 
 from __future__ import annotations
@@ -33,14 +39,18 @@ from __future__ import annotations
 import sqlite3
 import unicodedata
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from goalx_backend.data import results as results_store
 from goalx_backend.data import srct_tenure_silver
+from goalx_backend.data.coach_changes import Tenure, assign_manager_day
 from goalx_backend.data.ingest import srct, srct_tenure
 from goalx_backend.data.silver import latest_bronze_rows
+from goalx_backend.data.srct_identity import SrctHistNameIndex
+from goalx_backend.db import utc_now_iso
 from goalx_backend.modelling.team_align import (
     NameIndex,
     normalize_team_name,
@@ -715,7 +725,149 @@ def load_tm_side(conn: sqlite3.Connection) -> TmSide:
     )
 
 
-# —— 源T 侧（bronze 语料内存解析）与整装入口 ———
+# —— 教练面映射率内存重放（票 11，research/10 §3 面可复算化） ——
+
+#: 重放缺省窗=S7 搜索窗（six_axes.SEARCH_WINDOW 同界；data 域不 import
+#: evaluation，值在此钉面并由测试钉住）
+REPLAY_DEFAULT_WINDOW: tuple[str, str] = ("1617", "2122")
+#: 重放缺省联赛域=GB 双联赛（fd E0/E1；six_axes 联结面同域）
+REPLAY_DEFAULT_COMPETITIONS: tuple[str, ...] = ("E0", "E1")
+#: 重放面标识（run_params.replay；区别于主库物化后的 edge-scan s7 读数）
+REPLAY_METHOD = "in_memory_bronze"
+
+
+def replay_inputs_from_bronze(
+    careers: Mapping[str, Mapping[str, object]],
+    pages: Mapping[str, Mapping[str, object]],
+    leagues: Mapping[str, Mapping[str, object]],
+) -> tuple[dict[int, list[Tenure]], SrctHistNameIndex]:
+    """
+    Bronze 三族 →（tenures_by_team, hist 名折索引）——重放的两件输入。
+
+    与主库读缝（srct_identity.srct_tenures_by_team / srct_hist_name_index）
+    同语义不同源：此处从 bronze 内存投影（silver 纯函数），供主库 srct 两表
+    物化前的预估——幽灵教练守卫（同 coach_key 同区间双 playerInfo id 折叠
+    为一）与 date_from 升序契约照旧。
+    """
+    tenure_rows = srct_tenure_silver.tenure_rows_from_bronze(careers, pages)
+    season_rows = srct_tenure_silver.club_season_rows_from_bronze(leagues)
+    tenures: dict[int, list[Tenure]] = {}
+    seen: set[tuple[int, str, str, str | None]] = set()
+    for row in sorted(
+        tenure_rows, key=lambda r: (r["team_id"], r["date_from"], r["coach_key"])
+    ):
+        team_id = row["team_id"]
+        signature = (
+            team_id,
+            row["coach_key"],
+            row["date_from"],
+            row["date_to"],
+        )
+        if signature in seen:  # 双 id 现象：同一教练一条任期
+            continue
+        seen.add(signature)
+        tenures.setdefault(team_id, []).append(
+            Tenure(
+                role="manager",
+                coach_name=row["coach_key"],
+                date_from=row["date_from"],
+                date_to=row["date_to"],
+            )
+        )
+    names: dict[str, int] = {}
+    for row in season_rows:
+        names.setdefault(row["team_name_en"], row["team_id"])
+    return tenures, SrctHistNameIndex(_index=NameIndex.build(names))
+
+
+def replay_coach_mapping(
+    matches: Sequence[tuple[str, str, str, str]],
+    tenures_by_team: Mapping[int, Sequence[Tenure]],
+    resolve: Callable[[str], int | None],
+) -> dict[str, object]:
+    """
+    Hist 场次窗 → 教练面映射率重放（纯函数；六轴教练缝同逻辑）。
+
+    matches = (season, day, home_name, away_name)；每侧经 resolve 折 team_id
+    后按 ``assign_manager_day`` 当日指派。侧级三桶：unresolved_name（折不出
+    队）/ no_tenure（队折出、当日无任期覆盖——荒区形态）/ assigned。率带
+    分母（matches；零场 None 不造率）；逐季分桶供荒区结构报告。
+    """
+    total = len(matches)
+    both = any_side = home_hits = away_hits = 0
+    sides_resolved = sides_no_tenure = sides_unresolved = 0
+    unresolved_names: dict[str, int] = defaultdict(int)
+    season_cells: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"matches": 0, "both_sides": 0, "any_side": 0, "sides_no_tenure": 0}
+    )
+    for season, day, home_name, away_name in matches:
+        cell = season_cells[season]
+        cell["matches"] += 1
+        home_hit = away_hit = False
+        for side, name in (("home", home_name), ("away", away_name)):
+            team_id = resolve(name)
+            if team_id is None:
+                sides_unresolved += 1
+                unresolved_names[name] += 1
+                continue
+            sides_resolved += 1
+            tenures = tenures_by_team.get(team_id)
+            assigned = assign_manager_day(list(tenures), day) if tenures else None
+            if assigned is None:
+                sides_no_tenure += 1
+                cell["sides_no_tenure"] += 1
+                continue
+            if side == "home":
+                home_hit = True
+            else:
+                away_hit = True
+        if home_hit:
+            home_hits += 1
+        if away_hit:
+            away_hits += 1
+        if home_hit or away_hit:
+            any_side += 1
+            cell["any_side"] += 1
+        if home_hit and away_hit:
+            both += 1
+            cell["both_sides"] += 1
+    by_season = [
+        {
+            "season": season,
+            "matches": cell["matches"],
+            "both_sides": cell["both_sides"],
+            "any_side": cell["any_side"],
+            "sides_no_tenure": cell["sides_no_tenure"],
+            "both_sides_rate": (
+                cell["both_sides"] / cell["matches"] if cell["matches"] else None
+            ),
+        }
+        for season, cell in sorted(season_cells.items())
+    ]
+    return {
+        "run_params": {
+            "replay": REPLAY_METHOD,
+            "assignment": "assign_manager_day",
+        },
+        "totals": {
+            "matches": total,
+            "both_sides": both,
+            "any_side": any_side,
+            "home_side": home_hits,
+            "away_side": away_hits,
+            "both_sides_rate": (both / total) if total else None,
+            "any_side_rate": (any_side / total) if total else None,
+            "home_side_rate": (home_hits / total) if total else None,
+            "away_side_rate": (away_hits / total) if total else None,
+            "sides_resolved": sides_resolved,
+            "sides_no_tenure": sides_no_tenure,
+            "sides_unresolved_name": sides_unresolved,
+        },
+        "unresolved_team_names": dict(
+            sorted(unresolved_names.items(), key=lambda kv: -kv[1])
+        ),
+        "by_season": by_season,
+    }
 
 
 class SrctSide(TypedDict):
@@ -925,3 +1077,72 @@ def reconcile_report(
         },
         "adr": "ADR-0012：对账只产报告不硬配；无分母不造率",
     }
+
+
+def coach_mapping_replay_report(
+    conn: sqlite3.Connection,
+    store: CorpusStore,
+    *,
+    season_from: str = REPLAY_DEFAULT_WINDOW[0],
+    season_to: str = REPLAY_DEFAULT_WINDOW[1],
+    competitions: Sequence[str] = REPLAY_DEFAULT_COMPETITIONS,
+    now: str | None = None,
+) -> dict[str, object]:
+    """
+    教练面映射率重放整装（只读；主库 srct 两表物化前的预估读数）。
+
+    语料 bronze 内存解析（silver 纯函数）+ 主库 hist 只读——不依赖主库
+    srct_* 物化进度，合并前后同一命令可复算（数字随语料走）。run_params
+    留窗/联赛域/语料计数（spec story 14：判定可审计）。
+    """
+    careers = latest_bronze_rows(
+        store,
+        srct.SRCT_PROVIDER,
+        srct_tenure.COACH_CAREER_DATASET,
+        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_CAREER_DATASET],
+    )
+    pages = latest_bronze_rows(
+        store,
+        srct.SRCT_PROVIDER,
+        srct_tenure.COACH_PAGE_DATASET,
+        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.COACH_PAGE_DATASET],
+    )
+    leagues = latest_bronze_rows(
+        store,
+        srct.SRCT_PROVIDER,
+        srct_tenure.LEAGUE_SEASON_DATASET,
+        srct_tenure.TENURE_BRONZE_VERSIONS[srct_tenure.LEAGUE_SEASON_DATASET],
+    )
+    tenures, index = replay_inputs_from_bronze(careers, pages, leagues)
+    hist_rows = results_store.hist_rows_in_season_window(
+        conn,
+        season_from=season_from,
+        season_to=season_to,
+        competitions=tuple(competitions),
+    )
+    matches = [
+        (
+            str(row["season"]),
+            str(row["match_date"]),
+            str(row["home_team"]),
+            str(row["away_team"]),
+        )
+        for row in hist_rows
+    ]
+    report = replay_coach_mapping(matches, tenures, index.resolve)
+    run_params = cast("dict[str, object]", report["run_params"])
+    run_params.update(
+        {
+            "window": {"season_from": season_from, "season_to": season_to},
+            "competitions": list(competitions),
+            "corpus": {
+                "coach_career_rows": len(careers),
+                "coach_page_rows": len(pages),
+                "league_season_rows": len(leagues),
+                "tenure_teams": len(tenures),
+            },
+            "silver_version": srct_tenure_silver.SILVER_VERSION,
+            "generated_at": now or utc_now_iso(),
+        }
+    )
+    return report

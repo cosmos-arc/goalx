@@ -523,3 +523,232 @@ def test_tenure_diff_subset_name_matching() -> None:
     assert report["name_unmatched_coaches"] == 2
     assert report["srct_only_intervals"] == 1
     assert report["tm_only_intervals"] == 1
+
+
+# —— 教练面映射率内存重放（票 11：research/10 §3 面的可复算化） ——
+
+from collections.abc import Callable  # noqa: E402
+
+from goalx_backend.data.coach_changes import Tenure  # noqa: E402
+
+
+def _resolver(table: dict[str, int]) -> Callable[[str], int | None]:
+    """合成折表（直配 only——NameIndex 三级行为不在此钉，见 srct_identity 测试）。"""
+
+    def resolve(name: str) -> int | None:
+        return table.get(name)
+
+    return resolve
+
+
+REPLAY_TENURES: dict[int, list[Tenure]] = {
+    # team 19：两名教练全覆盖 2016-2022 窗（含开区间现任）
+    19: [
+        Tenure("manager", "Arsene Wenger", "2016-08-01", "2018-05-13"),
+        Tenure("manager", "Mikel Arteta", "2018-05-14", None),
+    ],
+    # team 20：荒区窗——任期 2021 起（锚点密度形态）
+    20: [Tenure("manager", "Graham Potter", "2021-02-01", None)],
+}
+
+
+def test_replay_coach_mapping_counts() -> None:
+    """双侧/任一侧/逐侧计数 + 逐季分桶 + 未解析名留痕。"""
+    resolve = _resolver({"Arsenal": 19, "Brighton": 20})
+    matches = [
+        ("1617", "2017-03-11", "Arsenal", "Brighton"),  # 主侧指派、客侧荒区
+        ("1617", "2017-04-01", "Arsenal", "West Brom"),  # 客侧=未解析名
+        ("2021", "2021-03-06", "Brighton", "Arsenal"),  # 双侧可指派
+    ]
+    report = rec.replay_coach_mapping(matches, REPLAY_TENURES, resolve)
+    totals = report["totals"]
+    assert totals["matches"] == 3
+    assert totals["both_sides"] == 1
+    assert totals["any_side"] == 3  # 每场至少主侧 Arsenal/Brighton 指派
+    assert totals["home_side"] == 3
+    assert totals["away_side"] == 1
+    assert totals["both_sides_rate"] == 1 / 3
+    # 侧级账：6 侧 = 已解析 5（Arsenal×3 + Brighton×2）+ 未解析 1
+    assert totals["sides_resolved"] == 5
+    assert totals["sides_no_tenure"] == 1  # Brighton 2017-03-11 荒区
+    assert totals["sides_unresolved_name"] == 1
+    assert report["unresolved_team_names"] == {"West Brom": 1}
+    # 逐季分桶：1617 双侧率 0/2、2021 双侧率 1/1
+    by_season = {row["season"]: row for row in report["by_season"]}
+    assert by_season["1617"]["matches"] == 2
+    assert by_season["1617"]["both_sides"] == 0
+    assert by_season["1617"]["sides_no_tenure"] == 1
+    assert by_season["2021"]["both_sides"] == 1
+    assert by_season["2021"]["both_sides_rate"] == 1.0
+    # run_params 留痕（spec story 14：判定可审计）
+    assert report["run_params"]["replay"] == "in_memory_bronze"
+    assert report["run_params"]["assignment"] == "assign_manager_day"
+
+
+def test_replay_coach_mapping_empty_window() -> None:
+    """空窗零场：率=None（无分母不造率），分桶空。"""
+    report = rec.replay_coach_mapping([], REPLAY_TENURES, _resolver({}))
+    assert report["totals"]["matches"] == 0
+    assert report["totals"]["both_sides_rate"] is None
+    assert report["by_season"] == []
+
+
+def test_replay_inputs_from_bronze() -> None:
+    """bronze →（tenures_by_team, hist 名折索引）：幽灵折叠 + 英文名域 + 受控别名。"""
+    careers = {
+        "101": {
+            "payload": {
+                "once_team": None,
+                "now_team": [],
+                "transfers": [],
+                "tenures": [
+                    {
+                        "start": "2018-05-14",
+                        "end": None,
+                        "team_id": 19,
+                        "name_cn": "阿森纳",
+                        "name_tw": "阿仙奴",
+                        "name_en": "Arsenal",
+                        "matches": 10,
+                        "wins": 5,
+                        "draws": 3,
+                        "losses": 2,
+                    },
+                ],
+                "last_update": None,
+            }
+        },
+        # 幽灵教练：同一教练另一 playerInfo id、同区间（tdl coach 变量伪 id 形态）
+        "866275": {
+            "payload": {
+                "once_team": None,
+                "now_team": [],
+                "transfers": [],
+                "tenures": [
+                    {
+                        "start": "2018-05-14",
+                        "end": None,
+                        "team_id": 19,
+                        "name_cn": "阿森纳",
+                        "name_tw": "阿仙奴",
+                        "name_en": "Arsenal",
+                        "matches": 10,
+                        "wins": 5,
+                        "draws": 3,
+                        "losses": 2,
+                    },
+                ],
+                "last_update": None,
+            }
+        },
+    }
+    pages = {
+        "101@19": {
+            "payload": {
+                "name_cn": "米克尔·阿尔特塔",
+                "name_tw": "阿達尼·阿爾特塔",
+                "name_en": "Mikel Arteta",
+                "career_cid": "101",
+                "career_version": "2026111209",
+            }
+        },
+        # 伪 id 的档案页：引用自己的履历串、英文名与真 id 一致（双档案形态）
+        "866275@19": {
+            "payload": {
+                "name_cn": "米克尔·阿尔特塔",
+                "name_tw": "阿達尼·阿爾特塔",
+                "name_en": "Mikel Arteta",
+                "career_cid": "866275",
+                "career_version": "2026111209",
+            }
+        },
+    }
+    leagues = {
+        "2017-2018-s36": {
+            "payload": {
+                "league": {
+                    "league_id": 36,
+                    "name_cn": "英超",
+                    "name_tw": "英超",
+                    "name_en": "Premier League",
+                    "season": "2017-2018",
+                },
+                "teams": [
+                    {
+                        "team_id": 19,
+                        "name_cn": "阿森纳",
+                        "name_tw": "阿仙奴",
+                        "name_en": "Arsenal",
+                    },
+                    {
+                        "team_id": 20,
+                        "name_cn": "布莱顿",
+                        "name_tw": "白禮頓",
+                        "name_en": "Brighton",
+                    },
+                    {
+                        "team_id": 21,
+                        "name_cn": "西布朗",
+                        "name_tw": "西布朗",
+                        "name_en": "West Bromwich(WBA)",
+                    },
+                ],
+                "table_rows": 1,
+                "last_update": None,
+            }
+        },
+    }
+    tenures, index = rec.replay_inputs_from_bronze(careers, pages, leagues)
+    # 幽灵折叠：同 (coach_key, from, to) 双 id → 一条 Tenure
+    assert len(tenures[19]) == 1
+    assert tenures[19][0].coach_name == "Mikel Arteta"
+    # hist 名折：直配 + 受控别名（West Brom → West Bromwich(WBA)）
+    assert index.resolve("Arsenal") == 19
+    assert index.resolve("West Brom") == 21
+    assert index.resolve("Nowhere FC") is None
+
+
+def test_coach_mapping_replay_report_shell(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """重放整装壳：语料+hist 只读 → 双侧率 + run_params 留痕（票 11）。"""
+    import sqlite3
+
+    from goalx_backend import db
+
+    db_path, store, _duck = _seed_synthetic_world(tmp_path)
+    _duck.close()
+    conn = db.connect(db_path)
+    conn.execute(
+        "INSERT INTO hist_matches (competition, season, match_date, home_team,"
+        " away_team, fthg, ftag, ftr) VALUES"
+        " ('E0', '2122', '2022-01-11', 'Arsenal', 'Man United', 2, 0, 'H'),"
+        " ('E0', '2122', '2022-01-18', 'Arsenal', 'Leeds', 2, 1, 'H')"
+    )
+    conn.commit()
+    conn.close()
+
+    reader = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    reader.row_factory = sqlite3.Row
+    report = rec.coach_mapping_replay_report(
+        reader,
+        store,
+        season_from="2122",
+        season_to="2122",
+        competitions=("E0",),
+        now="2026-11-12T12:00:00+00:00",
+    )
+    totals = report["totals"]
+    assert totals["matches"] == 2
+    # Arsenal team 19 → Arteta 2020-12-22 起覆盖两场；对侧名折不出
+    assert totals["home_side"] == 2
+    assert totals["away_side"] == 0
+    assert totals["both_sides"] == 0
+    assert totals["sides_unresolved_name"] == 2
+    assert report["unresolved_team_names"] == {"Leeds": 1, "Man United": 1}
+    params = report["run_params"]
+    assert params["window"] == {"season_from": "2122", "season_to": "2122"}
+    assert params["competitions"] == ["E0"]
+    assert params["corpus"]["coach_career_rows"] == 1
+    assert params["corpus"]["league_season_rows"] == 1
+    assert params["generated_at"] == "2026-11-12T12:00:00+00:00"
+    reader.close()
+    store.close()

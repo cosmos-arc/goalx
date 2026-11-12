@@ -1093,6 +1093,39 @@ def srct_tenure_two_source_report(*, db_path: str | None = None) -> dict[str, ob
         store.close()
 
 
+def srct_tenure_coach_replay(
+    *,
+    db_path: str | None = None,
+    season_from: str = "1617",
+    season_to: str = "2122",
+    competitions: tuple[str, ...] = ("E0", "E1"),
+) -> dict[str, object]:
+    """
+    教练面映射率内存重放（票 11；只读，零请求零主库写）。
+
+    语料 bronze → silver 纯函数 → 六轴教练缝逻辑重放 hist 季窗——主库
+    srct 两表物化前后的同一可复算读数（research/10 §3 面的 CLI 化；
+    run_params 留痕，spec story 14）。
+    """
+    settings = get_settings()
+    resolved = db_path or str(settings.db_path)
+    store = CorpusStore(settings.corpus_root)
+    try:
+        conn = connect(resolved, readonly=True)
+        try:
+            return srct_tenure_reconcile.coach_mapping_replay_report(
+                conn,
+                store,
+                season_from=season_from,
+                season_to=season_to,
+                competitions=competitions,
+            )
+        finally:
+            conn.close()
+    finally:
+        store.close()
+
+
 def tm_coach_sync(
     seasons: tuple[str, ...] | None = None,
     *,
