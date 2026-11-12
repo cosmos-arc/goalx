@@ -335,7 +335,28 @@ def tenure_rows_from_bronze(
                     "materialized_at": materialized,
                 }
             )
-    return rows
+    return _dedupe_same_start(rows)
+
+
+def _dedupe_same_start(rows: list[TenureRow]) -> list[TenureRow]:
+    """
+    同 (coach, team, start) 双记录单行化（UNIQUE 键不撞）。
+
+    站端同一任期可双记录（在任行 games+开放尾 vs 合同行 games=None+封闭尾，
+    真语料 Carrick/Guardiola 形态）；择优=有实绩 > 开放尾 > 场次多。
+    """
+    final: dict[tuple[int, int, str], TenureRow] = {}
+    for row in rows:
+        key = (row["coach_id"], row["team_id"], row["date_from"])
+        prev = final.get(key)
+        if prev is None or _stint_rank(row) > _stint_rank(prev):
+            final[key] = row
+    return list(final.values())
+
+
+def _stint_rank(row: TenureRow) -> tuple[bool, bool, int]:
+    """同键双记录择优序：games 非 None > date_to 开放 > games 大。"""
+    return (row["games"] is not None, row["date_to"] is None, row["games"] or 0)
 
 
 def club_season_rows_from_bronze(

@@ -249,6 +249,34 @@ def test_tenure_rows_identical_duplicates_collapse() -> None:
     assert rows[0]["games"] == 23
 
 
+def test_tenure_rows_same_start_dual_record_single_row() -> None:
+    """同 (coach, team, start) 双记录（真语料 Carrick/Guardiola 形态）：
+    在任行（games+开放尾）当选，合同行（games=None+封闭尾）弃——
+    UNIQUE(coach_id, team_id, date_from) 单行化。"""
+    base = SAMPLE_CAREER_10138["payload"]["tenures"][0]
+    incumbent = dict(base)  # 2026-06-09 起，games=23，end=None
+    contract = {
+        **base,
+        "end": "2028-06-30",
+        "matches": None,
+        "wins": None,
+        "draws": None,
+        "losses": None,
+    }
+    career = {
+        "sid": "1875",
+        "payload": {**SAMPLE_CAREER_10138["payload"], "tenures": [incumbent, contract]},
+    }
+    rows = srct_tenure_silver.tenure_rows_from_bronze(
+        {"1875": career}, {}, now="2026-11-12T00:00:00+00:00"
+    )
+    assert len(rows) == 1
+    assert rows[0]["date_to"] is None
+    assert rows[0]["games"] == 23
+    keys = [(r["coach_id"], r["team_id"], r["date_from"]) for r in rows]
+    assert len(keys) == len(set(keys))
+
+
 def test_club_season_rows_from_bronze() -> None:
     league_row = {
         "sid": "2015-2016-s36",
