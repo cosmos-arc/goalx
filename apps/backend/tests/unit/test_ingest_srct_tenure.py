@@ -74,7 +74,9 @@ SAMPLE_COACH_PAGE = """<!DOCTYPE html>
     <table>
             <tr>
               <td><span class="STYLE13">简体名：</span></td>
-              <td><span class="STYLE13"><strong>迪克&#183;施洛德</strong></span></td>
+              <td width="307" bgcolor="#fbfbfb">
+                <strong>迪克&#183;施洛德</strong>&nbsp;<a>资料</a>
+              </td>
             </tr>
             <tr>
               <td><span class="STYLE13">繁体名：</span></td>
@@ -343,6 +345,15 @@ def test_tenure_shift_three_phase_loop(tmp_path: Path) -> None:
         if row["sid"] == "96203"
     ]
     assert career_rows[0]["parser_version"] == "srct_coach_career_v1"
+    page_rows = [
+        row
+        for row in store.read_bronze(srct.SRCT_PROVIDER, "coach_page")
+        if row["sid"] == "96203@19"
+    ]
+    assert page_rows[0]["parser_version"] == "srct_coach_page_v2"
+    # 96203 的档案页样本=埃迪·豪（简体名行无 <span> 包裹的真实形态）
+    assert page_rows[0]["payload"]["name_cn"] == "埃迪·豪"
+    assert page_rows[0]["payload"]["name_en"] == "Eddie Howe"
     assert career_rows[0]["payload"]["tenures"][0]["team_id"] == 194
     team_rows = [
         row
@@ -402,3 +413,28 @@ def test_tenure_shift_coach_not_found_tolerated(tmp_path: Path) -> None:
     assert stats.coaches_not_found == 1
     assert "404" in stats.failed["coach:404"]
     assert not store.has(srct.SRCT_PROVIDER, "coach_career", "404")
+
+
+def test_tenure_shift_parser_bump_self_heals_from_raw(tmp_path: Path) -> None:
+    """解析器升版：raw 在缓存、bronze 缺新版行 → 零网络重解析回补。"""
+    seen: list[httpx.Request] = []
+    _run(tmp_path, seen, _routes())
+    seen.clear()
+    bumped = {**srct_tenure.TENURE_BRONZE_VERSIONS, "coach_page": "srct_coach_page_v9"}
+    monkey_version = bumped
+    original = srct_tenure.TENURE_BRONZE_VERSIONS
+    srct_tenure.TENURE_BRONZE_VERSIONS.clear()
+    srct_tenure.TENURE_BRONZE_VERSIONS.update(monkey_version)
+    try:
+        stats, store = _run(tmp_path, seen, _routes())
+    finally:
+        srct_tenure.TENURE_BRONZE_VERSIONS.clear()
+        srct_tenure.TENURE_BRONZE_VERSIONS.update(original)
+    assert stats.requests == 0  # 全缓存零网络
+    assert stats.bronze_repaired == 2  # 两页 coach_page 重解析
+    rows = [
+        row
+        for row in store.read_bronze(srct.SRCT_PROVIDER, "coach_page")
+        if row["parser_version"] == "srct_coach_page_v9"
+    ]
+    assert {row["sid"] for row in rows} == {"96203@19", "220708@19"}

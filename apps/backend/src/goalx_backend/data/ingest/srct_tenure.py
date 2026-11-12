@@ -61,7 +61,8 @@ COACH_CAREER_DATASET = "coach_career"
 TENURE_BRONZE_VERSIONS: dict[str, str] = {
     LEAGUE_SEASON_DATASET: "srct_league_season_v1",
     TEAM_DETAIL_DATASET: "srct_team_detail_v1",
-    COACH_PAGE_DATASET: "srct_coach_page_v1",
+    # v2：简体名行实测无 <span> 包裹（v1 全量 name_cn 缺，2026-11-12 首班后修）
+    COACH_PAGE_DATASET: "srct_coach_page_v2",
     COACH_CAREER_DATASET: "srct_coach_career_v1",
 }
 
@@ -79,7 +80,8 @@ TENURE_REQUEST_CAP = 900
 
 # 钉②：档案页名字行标签（简体名/繁体名/英文名共用同一表格形态）
 _PAGE_FIELD_FMT = (
-    r"{label}[：:]\s*</span>\s*</td>\s*<td[^>]*>\s*<span[^>]*><strong>([^<]*)</strong>"
+    r"{label}[：:]\s*</span>\s*</td>\s*<td[^>]*>(?:\s*<span[^>]*>)?\s*"
+    r"<strong>([^<]*)</strong>"
 )
 # 钉③：档案页对履历 jsData 的原样引用（路径形状无关，只认 coach{id}.js?version= 串）
 _CAREER_REF_RE = re.compile(r'src=["\']([^"\']*?coach(\d+)\.js\?version=(\d+))["\']')
@@ -114,6 +116,7 @@ class TenureStats:
     anchor_gb_coaches: int = 0  # 锚点教练中 GB 队过滤后入种子的数目
     tdl_coaches: int = 0  # tdl lineupDetail 现任教练种子数
     coaches_not_found: int = 0  # 档案页 404（死 id/已删档）
+    bronze_repaired: int = 0  # 解析器升版/中断窗：raw 在缓存、bronze 缺行的零网络回补
     failed: dict[str, str] = field(default_factory=dict)
     stopped: str | None = None  # budget/circuit/window_closed；None=全量跑完
 
@@ -378,6 +381,42 @@ def _fetch_and_archive(
     return payload
 
 
+def _reparse_bronze(
+    store: CorpusStore,
+    dataset: str,
+    key: str,
+    parse: Callable[[bytes], dict[str, object]],
+    *,
+    ext: str,
+) -> bool:
+    """
+    缓存 raw 而 bronze 缺当前版行 → 本地重解析回补（零网络，票 08 自愈通道）。
+
+    解析器升版或中断窗重放同一路径（srct._handle_cached 先例）；坏体/
+    撕裂文件返回 False 留待下班（raw 在即不丢数据）。
+    """
+    try:
+        payload = parse(store.read_raw(srct.SRCT_PROVIDER, dataset, key, ext=ext))
+    except (srct.SrctContentError, OSError, EOFError):
+        return False
+    store.append_bronze(
+        srct.SRCT_PROVIDER,
+        dataset,
+        [
+            {
+                "provider": srct.SRCT_PROVIDER,
+                "dataset": dataset,
+                "sid": key,
+                "fetched_at": srct.utc_now_iso(),
+                "parser_version": TENURE_BRONZE_VERSIONS[dataset],
+                "raw_sha": store.raw_sha(srct.SRCT_PROVIDER, dataset, key),
+                "payload": payload,
+            }
+        ],
+    )
+    return True
+
+
 def _is_not_found(exc: httpx.HTTPError) -> bool:
     """404/410 判定（死 id 已删档——确定性，计数不重试本班）。"""
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (
@@ -540,11 +579,39 @@ def run_tenure_shift(  # noqa: C901, PLR0912, PLR0913, PLR0915 三相位接缝�
             if cast("set[str]", entry["teams"]) & gb_team_ids
         )
         stats.anchor_pages = sum(1 for _ in detail_dir.glob("*.html.gz"))
+    career_ver = TENURE_BRONZE_VERSIONS[COACH_CAREER_DATASET]
+    page_ver = TENURE_BRONZE_VERSIONS[COACH_PAGE_DATASET]
     try:
         for cid, team_ctx in sorted(coach_seeds.items()):
-            if store.has(srct.SRCT_PROVIDER, COACH_CAREER_DATASET, cid):
-                continue
             page_key = f"{cid}@{team_ctx}"
+            if store.has(srct.SRCT_PROVIDER, COACH_CAREER_DATASET, cid):
+                # 履历 raw 在缓存：新版 bronze 行缺席即本地重解析回补（升版自愈）
+                if cid not in store.bronze_sids(
+                    srct.SRCT_PROVIDER, COACH_CAREER_DATASET, career_ver
+                ) and _reparse_bronze(
+                    store,
+                    COACH_CAREER_DATASET,
+                    cid,
+                    parse_coach_career,
+                    ext=".js",
+                ):
+                    stats.bronze_repaired += 1
+                if (
+                    store.has(srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_key)
+                    and page_key
+                    not in store.bronze_sids(
+                        srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_ver
+                    )
+                    and _reparse_bronze(
+                        store,
+                        COACH_PAGE_DATASET,
+                        page_key,
+                        parse_coach_page,
+                        ext=".html",
+                    )
+                ):
+                    stats.bronze_repaired += 1
+                continue
             page_new = not store.has(srct.SRCT_PROVIDER, COACH_PAGE_DATASET, page_key)
             try:
                 page_body = _get(
